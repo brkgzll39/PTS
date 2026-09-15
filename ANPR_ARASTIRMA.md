@@ -33,3 +33,19 @@ Sadece GitHub yıldızıyla değil, kendi Türkiye kamera verimizle ölçüm yap
 - Kamera kopması ve yeniden bağlanma süresi
 
 Bu metrikler olmadan “en iyi” iddiası teknik olarak doğrulanamaz; bu nedenle sistemin içine benchmark ve tekrar oynatma testleri de eklenecek.
+
+## Güncelleme (2026-09-15): Kamera bağlanmadan önce yapılabilecekler uygulandı
+
+Fiziksel kamera henüz bağlı değilken, yazılım tarafında doğruluğu artıran iki
+teknik eklendi (ayrıntılar README'de "Tanıma Doğruluğu" bölümünde):
+
+1. Çok kareli oy birleştirme (`backend/camera_reader.py::PlakaOturumTakipcisi`)
+2. Bilinen plakaya göre OCR düzeltmesi / veritabanı çapraz kontrolü
+   (`backend/main.py::_bilinen_plakaya_yakinlik_duzelt`)
+
+Dürüstlük notu: bu ikisi de gerçek doğruluğu ancak kamera donanımı/kurulumu
+(çözünürlük, açı, mesafe, aydınlatma) yeterli olduğunda anlamlı ölçüde
+etkiler — bkz. README'deki Controlware/Carmen Cloud kaynakları. Yukarıdaki
+"Daha iyi ölçümü" metrikleri (plaka karakter/tam plaka doğruluğu, yanlış
+alarm oranı vb.) hâlâ GERÇEK kamera verisiyle ölçülmeyi bekliyor; bu, kamera
+tekrar bağlandığında yapılacak sonraki adım.

@@ -270,3 +270,69 @@ def test_eski_goruntulu_kayit_temizlenir_yeni_olan_korunur(client, yetkili_heade
         for yol in (eski_tam_yol, yeni_tam_yol):
             if os.path.exists(yol):
                 os.remove(yol)
+
+
+# ------------------------------------------------------------------
+# Bilinen plakaya göre OCR düzeltmesi (veritabanı çapraz kontrolü)
+# ------------------------------------------------------------------
+# Bu, doğruluğu artırmak için eklenen bir tekniktir: OCR tek bir karakteri
+# yanlış okusa bile (düşük güvenle), sahada kayıtlı bilinen bir plakayla tek
+# karakter farkı varsa ve başka hiçbir aday bu kadar yakın değilse, o bilinen
+# plakaya düzeltilir. GÜVENLİK AÇISINDAN KRİTİK: bu SADECE erişim vermek için
+# çalışmalı, kara listeye asla uygulanmamalı (aksi halde alakasız bir araç
+# yanlışlıkla engellenebilir).
+
+def test_dusuk_guvenli_tek_karakter_hatasi_bilinen_plakaya_duzeltilir(client, yetkili_header):
+    r = client.post("/kisiler", json={
+        "ad_soyad": "Duzeltme Testi", "plaka_no": "34 DZT 123", "tip": "abone",
+    }, headers=yetkili_header)
+    assert r.status_code == 200, r.text
+
+    # OCR "3" yerine "8" okumuş (tek karakter hatası), düşük güvenle.
+    r2 = client.post("/kayitlar", json={
+        "plaka_no": "34 DZT 128", "kamera_id": "TEST", "yon": "giris", "guven_skoru": 0.55,
+    }, headers=yetkili_header)
+    assert r2.status_code == 200, r2.text
+    sonuc = r2.json()
+    assert sonuc["plaka_no"] == "34 DZT 123", "Bilinen plakaya düzeltilmedi"
+    assert sonuc["ham_plaka_metni"] == "34 DZT 128", "Ham OCR okuması denetim için saklanmalıydı"
+    assert sonuc["yetki_durumu"] == "yetkili", (
+        "Düzeltme uygulandığı halde 'yetkisiz' döndü — düzeltme yetki kontrolünden ÖNCE uygulanmalı"
+    )
+
+
+def test_yuksek_guvenli_okuma_duzeltilmez(client, yetkili_header):
+    """Zaten yüksek güvenli (>= eşik) bir okuma, bilinen bir plakaya yakın olsa
+    bile OLDUĞU GİBİ bırakılmalı — aksi halde doğru bir okuma yanlışlıkla
+    'düzeltilerek' bozulabilir."""
+    r = client.post("/kisiler", json={
+        "ad_soyad": "Yuksek Guven Testi", "plaka_no": "34 YKG 123", "tip": "abone",
+    }, headers=yetkili_header)
+    assert r.status_code == 200, r.text
+
+    r2 = client.post("/kayitlar", json={
+        "plaka_no": "34 YKG 128", "kamera_id": "TEST", "yon": "giris", "guven_skoru": 0.97,
+    }, headers=yetkili_header)
+    assert r2.status_code == 200, r2.text
+    sonuc = r2.json()
+    assert sonuc["plaka_no"] == "34 YKG 128", "Yüksek güvenli okuma yanlışlıkla değiştirildi"
+    assert sonuc["ham_plaka_metni"] is None
+    assert sonuc["yetki_durumu"] == "yetkisiz"
+
+
+def test_kara_listeye_yakinlik_duzeltmesi_uygulanmaz(client, yetkili_header):
+    """Güvenlik regresyon testi: kara listedeki bir plakaya YAKIN ama farklı
+    (ve bilinmeyen) bir plaka, düzeltme mekanizması yüzünden YANLIŞLIKLA
+    engellenmemeli. Düzeltme sadece bilinen (abone/personel) plakalara karşı
+    çalışır, kara listeye karşı hiç çalışmaz."""
+    r = client.post("/kara-listesi", json={"plaka_no": "34 KRY 123", "sebep": "test"}, headers=yetkili_header)
+    assert r.status_code == 200, r.text
+
+    r2 = client.post("/kayitlar", json={
+        "plaka_no": "34 KRY 128", "kamera_id": "TEST", "yon": "giris", "guven_skoru": 0.55,
+    }, headers=yetkili_header)
+    assert r2.status_code == 200, r2.text
+    sonuc = r2.json()
+    assert sonuc["yetki_durumu"] != "kara_liste", (
+        "Kara listedeki bir plakaya yakın farklı bir araç yanlışlıkla kara listeye düzeltildi/engellendi"
+    )

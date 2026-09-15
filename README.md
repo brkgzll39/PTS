@@ -146,6 +146,53 @@ python -c "from camera_reader import tek_gorsel_test; tek_gorsel_test('arac_foto
 Bu, FastAPI sunucusu çalışıyorken tespit edilen plakayı gerçekten `/kayitlar/otomatik`
 uç noktasına gönderir ve panelde görünmesini sağlar.
 
+## Tanıma Doğruluğu: Ticari ANPR Seviyesine Yaklaşma
+
+Piyasadaki ticari ANPR sistemleri gerçek koşullarda genelde **%90-98**,
+kontrollü/optimum koşullarda ise **%99'a yaklaşan veya aşan** doğruluk
+bildiriyor ([Carmen Cloud](https://carmencloud.com/anpr-accuracy-unveiled-how-reliable-is-automatic-number-plate-recognition/)).
+Bunu belirleyen faktörlerin başında —yazılımdan önce— **kamera donanımı ve
+kurulumu** geliyor: plaka görüntüde en az 50-75 piksel genişliğinde olmalı,
+kamera-araç mesafesi mümkünse 40 metrenin altında tutulmalı, yatay/dikey açı
+45 derecenin altında olmalı ve gece/gündüz için yeterli (tercihen IR)
+aydınlatma bulunmalı ([Controlware, "ANPR: %65'ten %99.5'e"](https://www.controlware.com.au/blog-news/apnr-and-how-to-go-from-65-to-995-accuracy)).
+**Bu koşullar yazılımla telafi edilemez** — kamerayı yeniden bağladığınızda
+konum/açı/aydınlatmayı bu ölçütlere göre ayarlamanız, PTS'nin ulaşacağı
+doğruluk tavanını doğrudan belirleyecektir.
+
+Yazılım tarafında, kamera hazır olana kadar da devreye girecek şekilde,
+doğruluğu artıran iki teknik eklendi:
+
+**1) Çok kareli oy birleştirme ("frame consolidation")** — `backend/camera_reader.py`
+içindeki `PlakaOturumTakipcisi`. Bir araç kamerada birkaç kare boyunca
+görünür; tek bir kötü karenin OCR hatasına güvenmek yerine, aynı aracın (veya
+birbirine çok yakın okumaların) TÜM okumaları bir "geçiş oturumunda" toplanır
+ve ağırlıklı çoğunluk oyu kazanır. Düşük güvenli tek kareler (`min_tanima_guveni`
+ayarının altındakiler, varsayılan 0.4) oylamaya hiç girmez. Bu, ticari ANPR
+sistemlerinin tek kareye göre çok daha yüksek doğruluk elde etmesinin başlıca
+tekniklerinden biridir.
+
+**2) Bilinen plakaya göre OCR düzeltmesi (veritabanı çapraz kontrolü)** —
+`backend/metin_araclari.py` + `backend/main.py::_bilinen_plakaya_yakinlik_duzelt`.
+Site girişi gibi KAPALI bir plaka evreninde, "veritabanı çapraz kontrolü"
+(database cross-referencing) doğruluğu artıran bilinen bir tekniktir (bkz.
+yukarıdaki Carmen Cloud kaynağı). OCR düşük güvenle tek bir karakteri yanlış
+okusa bile (örn. "34 ABC 128"), sahada kayıtlı bilinen bir plakayla ("34 ABC 123")
+tek karakter farkı varsa ve başka hiçbir aday bu kadar yakın değilse, o
+plakaya düzeltilir. **Güvenlik sınırları:** düzeltme SADECE erişim vermek
+için çalışır, kara listeye asla uygulanmaz; zaten yüksek güvenli (≥%90)
+okumalara hiç dokunulmaz; birden fazla bilinen plaka eşit derecede yakınsa
+(belirsiz durum) düzeltme yapılmaz. Bir düzeltme uygulandığında hem ham OCR
+metni hem düzeltilmiş plaka kayıtta ayrı ayrı saklanır (denetlenebilirlik
+için) ve panelde olay detayında "OCR DÜZELTMESİ" satırında görünür. Sistem
+Ayarları'ndan `bilinen_plaka_duzeltme_aktif` ile kapatılabilir.
+
+Her ikisi de Sistem Ayarları panelinden ayarlanabilir (`min_tanima_guveni`,
+`bilinen_plaka_duzeltme_aktif`); ayrıca `tests/test_metin_araclari.py` ve
+`tests/test_camera_reader.py` içinde, gerçek kamera olmadan da doğrulanabilen
+kapsamlı testleri var (eşleşen/eşleşmeyen okumalar, belirsizlik durumu,
+eşik altı okumaların elenmesi, vb.).
+
 ## Kamera Bağlantı Güvenilirliği
 
 Bu bölüm, kamera bağlantılarının/araç geçişi görüntülerinin donmaması için yapılan

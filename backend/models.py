@@ -95,6 +95,12 @@ class Kayit(Base):
     yon = Column(String(10), default="giris")
     goruntu_yolu = Column(String(255), nullable=True)
     guven_skoru = Column(Float, nullable=True)
+    # OCR'dan ham gelen metin, sadece bilinen bir plakaya göre DÜZELTİLDİYSE
+    # doldurulur (bkz. main.py::_bilinen_plakaya_yakinlik_duzelt); düzeltme
+    # yapılmadıysa None kalır — plaka_no zaten ham okumanın ta kendisidir.
+    # Denetlenebilirlik için: bir düzeltme uygulandığında hem orijinal hem
+    # düzeltilmiş halin ikisi de kayıtta kalır.
+    ham_plaka_metni = Column(String(20), nullable=True)
     yetki_durumu = Column(String(20), default="bilinmiyor")  # yetkili | yetkisiz | suresi_dolmus | kara_liste
     kisi_id = Column(Integer, ForeignKey("kisiler.id"), nullable=True)
     kisi_tip_anlik = Column(String(20), nullable=True)

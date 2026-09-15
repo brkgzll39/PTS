@@ -34,11 +34,12 @@ class _SahteSonuc:
 class _SahteEngine:
     """Gerçek fast-alpr modeline ihtiyaç duymadan testte kullanılan sahte ANPR motoru."""
 
-    def __init__(self, *a, **kw):
-        pass
+    def __init__(self, *a, plaka="34ABC123", guven=0.95, **kw):
+        self._plaka = plaka
+        self._guven = guven
 
     def tahmin_et(self, frame):
-        return [_SahteSonuc()]
+        return [_SahteSonuc(self._plaka, self._guven)]
 
 
 @pytest.fixture
@@ -163,3 +164,91 @@ def test_durdur_sonrasi_hicbir_thread_kalmaz(sahte_engine, sentetik_video, sahte
 def test_plaka_regex_gecersiz_ocr_ciktisini_reddeder():
     assert camera_reader.plaka_dogrula("gecersiz") is None
     assert camera_reader.plaka_dogrula("34ABC123") == "34 ABC 123"
+
+
+# ------------------------------------------------------------------
+# Çok kareli oy birleştirme (PlakaOturumTakipcisi) — doğruluğu artıran
+# "frame consolidation" mantığının kendisi. Gerçek zamanlamaya bağlı olmasın
+# diye burada sahte (elle verilen) zaman damgaları kullanılır.
+# ------------------------------------------------------------------
+
+def test_ayni_plakanin_tekrarlanan_okumalari_tek_oturumda_birlesir():
+    t = camera_reader.PlakaOturumTakipcisi(oturum_kapanma_sn=1.0)
+    t.guncelle("34 ABC 123", 0.80, simdi=0.0)
+    t.guncelle("34 ABC 123", 0.90, simdi=0.2)
+    t.guncelle("34 ABC 123", 0.60, simdi=0.4)
+    assert t.acik_oturum_sayisi() == 1
+
+    bitmis = t.bitmis_oturumlari_al(simdi=2.0)  # 1.0 sn'den fazla sessizlik → kapanır
+    assert len(bitmis) == 1
+    assert bitmis[0]["plaka"] == "34 ABC 123"
+    assert bitmis[0]["farkli_okuma_sayisi"] == 1
+    assert bitmis[0]["guven"] == 0.90  # görülen en yüksek güven
+
+
+def test_farkli_okumalarin_oydasmasiyla_cogunluk_kazanir():
+    """Aynı aracın karelerinde OCR 2 kere doğru, 1 kere hatalı okursa (tek
+    karaktarlik fark), çoğunluk oyu doğru okumayı kazanmalı — bu, tek bir kötü
+    karenin karar bozmasını engelleyen tam da bu özelliğin amacı."""
+    t = camera_reader.PlakaOturumTakipcisi(oturum_kapanma_sn=1.0, benzerlik_esigi=2)
+    t.guncelle("34 ABC 123", 0.85, simdi=0.0)
+    t.guncelle("34 ABC 128", 0.55, simdi=0.2)   # hatalı tek karakter (OCR gürültüsü)
+    t.guncelle("34 ABC 123", 0.88, simdi=0.4)
+    assert t.acik_oturum_sayisi() == 1, "Benzer okumalar aynı oturumda birleşmeliydi"
+
+    bitmis = t.bitmis_oturumlari_al(simdi=2.0)
+    assert len(bitmis) == 1
+    kazanan = bitmis[0]
+    assert kazanan["plaka"] == "34 ABC 123", "Çoğunluk oyu (2/3) yerine azınlık kazandı"
+    assert kazanan["farkli_okuma_sayisi"] == 2
+
+
+def test_farkli_araclarin_oturumlari_karismaz():
+    t = camera_reader.PlakaOturumTakipcisi(oturum_kapanma_sn=1.0, benzerlik_esigi=2)
+    t.guncelle("34 ABC 123", 0.9, simdi=0.0)
+    t.guncelle("06 ZZZ 999", 0.9, simdi=0.1)  # tamamen farklı bir plaka/araç
+    assert t.acik_oturum_sayisi() == 2
+
+    bitmis = {b["plaka"] for b in t.bitmis_oturumlari_al(simdi=2.0)}
+    assert bitmis == {"34 ABC 123", "06 ZZZ 999"}
+
+
+def test_eski_oturum_yeni_okumayla_sessizce_kaybolmaz():
+    """Regresyon testi: Bir oturum sessizliğe düşüp YENİ bir okuma (aynı plaka,
+    uzun bir aradan sonra) geldiğinde, eski oturumun oyları önce KAZANAN olarak
+    alınmalı; yeni okumayla aynı anahtara sessizce üzerine yazılıp kaybolmamalı."""
+    t = camera_reader.PlakaOturumTakipcisi(oturum_kapanma_sn=1.0)
+    t.guncelle("34 ABC 123", 0.9, simdi=0.0)
+
+    # Aynı plaka, oturum kapanma süresinden çok sonra tekrar görülüyor (ör. bir
+    # sonraki araç ya da aynı aracın çok sonra tekrar geçmesi).
+    onceki_bitmis = t.bitmis_oturumlari_al(simdi=5.0)
+    assert len(onceki_bitmis) == 1, "Eski oturum, yeni okuma işlenmeden ÖNCE kazanan olarak alınabilmeli"
+    assert onceki_bitmis[0]["plaka"] == "34 ABC 123"
+
+    t.guncelle("34 ABC 123", 0.7, simdi=5.1)
+    assert t.acik_oturum_sayisi() == 1  # bu artık YENİ bir oturum
+
+
+def test_zorla_kapatma_bekelemeden_kazanani_dondurur():
+    t = camera_reader.PlakaOturumTakipcisi(oturum_kapanma_sn=100.0)
+    t.guncelle("34 ABC 123", 0.9, simdi=0.0)
+    assert t.bitmis_oturumlari_al(simdi=0.01) == []  # henüz sessizliğe düşmedi
+    bitmis = t.bitmis_oturumlari_al(simdi=0.01, zorla=True)
+    assert len(bitmis) == 1 and bitmis[0]["plaka"] == "34 ABC 123"
+
+
+def test_dusuk_guvenli_okuma_pipeline_isleyisinde_oya_hic_girmez(sahte_engine):
+    """min_guven_skoru eşiğinin altındaki bir okuma oy birikimine hiç
+    girmemeli — pipeline seviyesinde entegrasyon testi."""
+    import numpy as np
+
+    pipeline = camera_reader.KameraPipeline(
+        video_kaynagi="kullanilmiyor.mp4", kamera_id="TEST-ESIK", min_guven_skoru=0.9,
+    )
+    pipeline.motor = _SahteEngine(guven=0.5)
+
+    kare = np.zeros((100, 100, 3), dtype=np.uint8)
+    gonderilenler = pipeline._kareyi_isle(kare, oturumu_hemen_kapat=True)
+    assert gonderilenler == [], "0.5 güvenli okuma, 0.9 eşiğinin altında olmasına rağmen gönderildi"
+    assert pipeline._oturum_takipcisi.acik_oturum_sayisi() == 0

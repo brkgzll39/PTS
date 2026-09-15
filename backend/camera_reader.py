@@ -47,12 +47,18 @@ import tempfile
 import time
 import threading
 import logging
+from collections import Counter
 from typing import Optional
 
 try:
     from backend.anpr_engine import ANPREngine  # proje kökünden çalıştırılınca
 except ImportError:
     from anpr_engine import ANPREngine  # backend/ içinden doğrudan çalıştırılınca
+
+try:
+    from backend.metin_araclari import levenshtein_mesafesi
+except ImportError:
+    from metin_araclari import levenshtein_mesafesi
 
 try:
     import cv2
@@ -75,6 +81,105 @@ _YAZI_KALINLIK = 2
 # Aynı plaka için son görülme zamanlarının ne kadar süre saklanacağı (bellek
 # şişmesin diye budama eşiği = tekrar gecikmesinin birkaç katı).
 _PLAKA_HAFIZA_CARPANI = 4
+
+# ------------------------------------------------------------------
+# ÇOK KARELİ OY BİRLEŞTİRME ("frame consolidation" / "read voting")
+# ------------------------------------------------------------------
+# Ticari ANPR sistemlerinin tek kareye göre çok daha yüksek doğruluk elde
+# etmesinin başlıca sebeplerinden biri budur: bir araç kamerada birkaç kare
+# boyunca görünür, her karede OCR biraz farklı (ve bazen hatalı) bir sonuç
+# üretebilir; tek bir kötü kareye güvenmek yerine aynı aracın TÜM okumaları
+# toplanıp ağırlıklı oy ile "kazanan" belirlenir. Düşük güvenli tek kareler de
+# ayrıca eşikle (min_guven_skoru) elenir.
+#
+# Kaynak/gerekçe: ANPR doğruluğunu artıran teknikler üzerine 2026-09 araştırma
+# notunda (ANPR_ARASTIRMA.md) belirtildiği gibi, doğruluk büyük ölçüde kamera
+# donanımı/konumu tarafından belirlenir; yazılım tarafında en etkili katkı bu
+# çok kareli oydaşma ve aşağıdaki bilinen-plaka çapraz kontrolüdür (bkz.
+# backend/main.py::_bilinen_plakaya_yakinlik_duzelt).
+OTURUM_KAPANMA_SN = 1.2      # bu kadar süre yeni okuma gelmezse oturum kapanır (kazanan gönderilir)
+OTURUM_BENZERLIK_ESIGI = 2   # aynı oturuma dahil edilecek okumalar arası azami Levenshtein mesafesi
+OTURUM_MAX_SURE_SN = 8.0     # bir oturum en fazla bu kadar açık kalır (çok yavaş/duran araç için emniyet)
+VARSAYILAN_MIN_GUVEN_SKORU = 0.4  # bu eşiğin altındaki OCR sonuçları oylamaya hiç girmez
+
+
+class PlakaOyBirikimi:
+    """Tek bir 'geçiş oturumu' (aynı aracın kamera görüş alanında kaldığı süre)
+    boyunca toplanan OCR okumalarını ağırlıklı oyla birleştirir."""
+
+    __slots__ = ("oylar", "ilk_gorulme", "son_gorulme", "en_yuksek_guven", "en_iyi_jpeg")
+
+    def __init__(self, plaka: str, guven: float, simdi: float, jpeg: Optional[bytes] = None):
+        self.oylar: "Counter[str]" = Counter({plaka: guven})
+        self.ilk_gorulme = simdi
+        self.son_gorulme = simdi
+        self.en_yuksek_guven = guven
+        self.en_iyi_jpeg = jpeg
+
+    def ekle(self, plaka: str, guven: float, simdi: float, jpeg: Optional[bytes] = None) -> None:
+        self.oylar[plaka] += guven
+        self.son_gorulme = simdi
+        if jpeg is not None and guven >= self.en_yuksek_guven:
+            self.en_yuksek_guven = guven
+            self.en_iyi_jpeg = jpeg
+        elif guven > self.en_yuksek_guven:
+            self.en_yuksek_guven = guven
+
+    def kazanan(self) -> dict:
+        plaka, _agirlik = self.oylar.most_common(1)[0]
+        return {
+            "plaka": plaka,
+            "guven": self.en_yuksek_guven,
+            "farkli_okuma_sayisi": len(self.oylar),
+            "toplam_oy": round(sum(self.oylar.values()), 3),
+            "jpeg": self.en_iyi_jpeg,
+        }
+
+
+class PlakaOturumTakipcisi:
+    """Aktif geçiş oturumlarını (her biri bir PlakaOyBirikimi) yönetir.
+
+    Yeni bir okuma geldiğinde, hâlâ açık (yakın zamanda güncellenmiş) ve
+    Levenshtein mesafesi eşik altında olan en yakın oturuma eklenir; yoksa
+    yeni bir oturum açılır. `bitmis_oturumlari_al` çağrıldığında sessizliğe
+    düşmüş (veya çok uzun sürmüş) oturumlar kapatılıp kazananları döndürülür.
+    """
+
+    def __init__(self, oturum_kapanma_sn: float = OTURUM_KAPANMA_SN,
+                 benzerlik_esigi: int = OTURUM_BENZERLIK_ESIGI,
+                 max_oturum_sure_sn: float = OTURUM_MAX_SURE_SN):
+        self._acik: dict[str, PlakaOyBirikimi] = {}
+        self.oturum_kapanma_sn = oturum_kapanma_sn
+        self.benzerlik_esigi = benzerlik_esigi
+        self.max_oturum_sure_sn = max_oturum_sure_sn
+
+    def guncelle(self, plaka: str, guven: float, simdi: float, jpeg: Optional[bytes] = None) -> None:
+        en_yakin_anahtar = None
+        en_yakin_mesafe = None
+        for anahtar, birikim in self._acik.items():
+            if simdi - birikim.son_gorulme > self.oturum_kapanma_sn:
+                continue  # zaten sessizliğe düşmüş, bitmis_oturumlari_al ile kapanacak
+            mesafe = levenshtein_mesafesi(plaka, anahtar)
+            if mesafe <= self.benzerlik_esigi and (en_yakin_mesafe is None or mesafe < en_yakin_mesafe):
+                en_yakin_anahtar, en_yakin_mesafe = anahtar, mesafe
+        if en_yakin_anahtar is not None:
+            self._acik[en_yakin_anahtar].ekle(plaka, guven, simdi, jpeg)
+        else:
+            self._acik[plaka] = PlakaOyBirikimi(plaka, guven, simdi, jpeg)
+
+    def bitmis_oturumlari_al(self, simdi: float, zorla: bool = False) -> list:
+        bitmisler = []
+        for anahtar in list(self._acik.keys()):
+            birikim = self._acik[anahtar]
+            sessiz_kaldi = simdi - birikim.son_gorulme > self.oturum_kapanma_sn
+            cok_uzun_surdu = simdi - birikim.ilk_gorulme > self.max_oturum_sure_sn
+            if zorla or sessiz_kaldi or cok_uzun_surdu:
+                bitmisler.append(birikim.kazanan())
+                del self._acik[anahtar]
+        return bitmisler
+
+    def acik_oturum_sayisi(self) -> int:
+        return len(self._acik)
 
 
 def plaka_dogrula(text: str) -> Optional[str]:
@@ -106,7 +211,8 @@ def _kare_uzerine_ciz(frame, tespitler: list) -> None:
 class KameraPipeline:
     def __init__(self, video_kaynagi: str, api_url: str = "http://localhost:8000/kayitlar/otomatik",
                  kamera_id: str = "KAMERA-1", tekrar_gecikme_sn: int = 30, yon: str = "giris",
-                 baglanti_zaman_asimi_sn: float = 8.0, donma_esigi_sn: float = 10.0):
+                 baglanti_zaman_asimi_sn: float = 8.0, donma_esigi_sn: float = 10.0,
+                 min_guven_skoru: float = VARSAYILAN_MIN_GUVEN_SKORU):
         if not KUTUPHANELER_MEVCUT:
             raise RuntimeError(
                 "Gerekli kütüphaneler kurulu değil. "
@@ -123,10 +229,15 @@ class KameraPipeline:
         # örn. sağlık uç noktasına, bilgi amaçlı — yeniden bağlanma zaten yukarıdaki
         # zaman aşımıyla otomatik tetiklenir).
         self.donma_esigi_sn = donma_esigi_sn
+        # Bu güven skorunun altındaki OCR sonuçları oy birikimine hiç girmez.
+        self.min_guven_skoru = min_guven_skoru
 
         self.motor = ANPREngine()
         self.calisiyor = False
         self.son_plaka_zamani: dict = {}
+        # Çok kareli oy birleştirme: bir aracın kamerada kaldığı birden çok
+        # karenin okumaları burada toplanıp oydaşmayla kesinleştirilir.
+        self._oturum_takipcisi = PlakaOturumTakipcisi()
 
         # Gecikme-serbest akış: okuyucu thread sadece en son kareyi tutar
         self._son_kare = None
@@ -236,8 +347,14 @@ class KameraPipeline:
             else:
                 time.sleep(0.05)
 
-    def _kareyi_isle(self, frame) -> list:
-        """Kareyi ANPR motoruna verir, geçerli plakaları API'ye gönderir."""
+    def _kareyi_isle(self, frame, oturumu_hemen_kapat: bool = False) -> list:
+        """Kareyi ANPR motoruna verir. Format olarak geçerli ve yeterince güvenli
+        okumalar oturum takipçisine (çok kareli oy birikimine) beslenir; yalnızca
+        oydaşmayla KESİNLEŞEN sonuçlar API'ye gönderilir (bkz. PlakaOturumTakipcisi).
+
+        `oturumu_hemen_kapat=True`: tek görsel/tek kare testlerinde (bkz.
+        `tek_gorsel_test`) birden fazla kare gelmeyeceği için, bu karedeki
+        okumaların oturumu beklemeden hemen kesinleştirilmesini sağlar."""
         tespitler = []
         for sonuc in self.motor.tahmin_et(frame):
             plaka = plaka_dogrula(sonuc.plaka_no)
@@ -249,35 +366,62 @@ class KameraPipeline:
                 "kutu": list(sonuc.kutu) if sonuc.kutu else None,
             })
 
-        # Kare üstüne tüm tespitleri çiz (overlay kopyası)
+        # Kare üstüne tüm tespitleri çiz (overlay kopyası) — bu, oy birikimine
+        # girme eşiğinden bağımsız olarak operatöre HER geçerli-formatlı ham
+        # okumayı gösterir (şeffaflık için).
         annotated = frame.copy()
         _kare_uzerine_ciz(annotated, tespitler)
         _, buf = cv2.imencode(".jpg", annotated, [cv2.IMWRITE_JPEG_QUALITY, 75])
+        jpeg_bytes = buf.tobytes()
         with self._goruntu_kilit:
-            self._son_goruntu_jpeg = buf.tobytes()
+            self._son_goruntu_jpeg = jpeg_bytes
         self._son_tespitler = tespitler
 
-        gonderilenler = []
+        simdi = time.time()
+
+        # ÖNEMLİ SIRALAMA: yeni okumaları eklemeden ÖNCE, bu kareden önce zaten
+        # sessizliğe düşmüş oturumları kapatıp kazananlarını al. Aksi halde
+        # guncelle() aynı plaka anahtarıyla YENİ bir oturum açıp eskisinin
+        # (henüz gönderilmemiş) birikmiş oylarının üzerine sessizce yazar —
+        # tam da bu depoda daha önce görülen "sessiz üzerine yazma" hata
+        # sınıfının bir başka biçimi olurdu.
+        bitmis_oturumlar = self._oturum_takipcisi.bitmis_oturumlari_al(simdi)
+
         for t in tespitler:
-            plaka = t["plaka"]
-            simdi = time.time()
+            if t["guven"] < self.min_guven_skoru:
+                continue  # düşük güvenli tek kare — oy birikimine hiç girmesin
+            self._oturum_takipcisi.guncelle(t["plaka"], t["guven"], simdi, jpeg_bytes)
+
+        if oturumu_hemen_kapat:
+            bitmis_oturumlar += self._oturum_takipcisi.bitmis_oturumlari_al(simdi, zorla=True)
+
+        gonderilenler = []
+        for oturum in bitmis_oturumlar:
+            plaka = oturum["plaka"]
             if (plaka in self.son_plaka_zamani and
                     simdi - self.son_plaka_zamani[plaka] < self.tekrar_gecikme_sn):
                 continue
             self.son_plaka_zamani[plaka] = simdi
 
+            gonderilecek_jpeg = oturum["jpeg"] or jpeg_bytes
             gecici = os.path.join(tempfile.gettempdir(), f"{plaka.replace(' ', '')}_{int(simdi)}.jpg")
-            cv2.imwrite(gecici, annotated)  # annotated frame gönder
+            with open(gecici, "wb") as f:
+                f.write(gonderilecek_jpeg)
             try:
                 with open(gecici, "rb") as f:
                     requests.post(
                         self.api_url,
                         data={"plaka_no": plaka, "kamera_id": self.kamera_id,
-                              "yon": self.yon, "guven_skoru": round(t["guven"], 3)},
+                              "yon": self.yon, "guven_skoru": round(oturum["guven"], 3)},
                         files={"gorsel": f},
                         timeout=5,
                     )
                 gonderilenler.append(plaka)
+                if oturum["farkli_okuma_sayisi"] > 1:
+                    logger.info(
+                        "[%s] Plaka %d farklı okumanın oydaşmasıyla kesinleşti: %s (güven=%.2f, toplam oy=%.2f)",
+                        self.kamera_id, oturum["farkli_okuma_sayisi"], plaka, oturum["guven"], oturum["toplam_oy"],
+                    )
             except Exception as e:
                 logger.error("[%s] API'ye gönderilemedi: %s", self.kamera_id, e)
             finally:
@@ -394,7 +538,7 @@ def tek_gorsel_test(gorsel_yolu: str, api_url: str = "http://localhost:8000/kayi
     if frame is None:
         raise ValueError(f"Görsel okunamadı: {gorsel_yolu}")
     pipeline = KameraPipeline(video_kaynagi=gorsel_yolu, api_url=api_url, kamera_id=kamera_id, yon=yon)
-    gonderilenler = pipeline._kareyi_isle(frame)
+    gonderilenler = pipeline._kareyi_isle(frame, oturumu_hemen_kapat=True)
     if gonderilenler:
         print(f"Tespit edilip gönderilen plakalar: {gonderilenler}")
     else:

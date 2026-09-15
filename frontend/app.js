@@ -183,6 +183,9 @@ async function olayDetayAc(id) {
   document.getElementById("olayModalDaire").textContent = detay?.daire_departman || "-";
   document.getElementById("olayModalAracTipi").textContent = detay ? (detay.tip === "ziyaretci" ? "Ziyaretçi" : "Tanımlı") : "Tanımsız araç";
   document.getElementById("olayModalGuven").textContent = kayit.guven_skoru ? `${(kayit.guven_skoru * 100).toFixed(0)}%` : "-";
+  document.getElementById("olayModalDuzeltme").textContent = kayit.ham_plaka_metni
+    ? `${kayit.ham_plaka_metni} → ${kayit.plaka_no} (bilinen plakaya göre düzeltildi)`
+    : "-";
   document.getElementById("bariyerAcBtn").onclick = () => alert("Bariyer açma komutu simülasyon modunda gönderildi.");
   bootstrap.Modal.getOrCreateInstance(document.getElementById("olayDetayModal")).show();
 }
@@ -1063,15 +1066,22 @@ async function sistemAyarlariYukle() {
       { key: "supheli_esik", label: "Şüpheli araç eşiği (red/saat)", tip: "number" },
       { key: "goruntu_saklama_gun", label: "Görüntü saklama süresi (gün)", tip: "number" },
       { key: "panel_yenileme_sn", label: "Panel yenileme aralığı (sn)", tip: "number" },
+      { key: "min_tanima_guveni", label: "Min. plaka tanıma güveni (0-1)", tip: "number", step: "0.05" },
     ];
     el.innerHTML = `<form id="sistemAyarlariForm">${satirlar.map(s =>
       `<div class="mb-2"><label class="form-label small">${escapeHtml(s.label)}</label>
-       <input type="number" class="form-control form-control-sm" id="ayar_${s.key}" value="${escapeHtml(String(ayarlar[s.key] ?? ""))}"></div>`
-    ).join("")}<button type="submit" class="btn btn-sm btn-primary w-100 mt-1"><i class="bi bi-save"></i> Kaydet</button></form>`;
+       <input type="number" ${s.step ? `step="${s.step}" min="0" max="1"` : ""} class="form-control form-control-sm" id="ayar_${s.key}" value="${escapeHtml(String(ayarlar[s.key] ?? ""))}"></div>`
+    ).join("")}
+      <div class="form-check mb-2">
+        <input type="checkbox" class="form-check-input" id="ayar_bilinen_plaka_duzeltme_aktif" ${ayarlar.bilinen_plaka_duzeltme_aktif ? "checked" : ""}>
+        <label class="form-check-label small" for="ayar_bilinen_plaka_duzeltme_aktif">Bilinen plakaya göre OCR düzeltmesi (tek karakter hataları)</label>
+      </div>
+      <button type="submit" class="btn btn-sm btn-primary w-100 mt-1"><i class="bi bi-save"></i> Kaydet</button></form>`;
     document.getElementById("sistemAyarlariForm").addEventListener("submit", async (ev) => {
       ev.preventDefault();
       const guncel = {};
       satirlar.forEach(s => { guncel[s.key] = Number(document.getElementById(`ayar_${s.key}`).value); });
+      guncel.bilinen_plaka_duzeltme_aktif = document.getElementById("ayar_bilinen_plaka_duzeltme_aktif").checked;
       await apiCagir("/sistem/ayarlar", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(guncel) });
       toastGoster("Sistem ayarları kaydedildi", "basari");
     });

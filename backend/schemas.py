@@ -225,6 +225,7 @@ class KayitCevap(BaseModel):
     yon: str
     goruntu_yolu: Optional[str] = None
     guven_skoru: Optional[float] = None
+    ham_plaka_metni: Optional[str] = None
     yetki_durumu: str
     kisi_id: Optional[int] = None
     kisi_tip_anlik: Optional[str] = None

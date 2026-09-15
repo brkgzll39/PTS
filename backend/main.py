@@ -39,6 +39,7 @@ from backend import excel_export
 from backend import pdf_export
 from backend import led_panel
 from backend import lisans as lisans_modulu
+from backend.metin_araclari import levenshtein_mesafesi, en_yakin_bilinen_plakayi_bul
 
 # ---------------------- KLASÖR AYARLARI ----------------------
 BACKEND_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -89,6 +90,7 @@ def _veritabani_migrasyon() -> None:
         f"ALTER TABLE kisiler ADD {col_kw}giris_saati_bitis VARCHAR(5)",
         f"ALTER TABLE kisiler ADD {col_kw}izin_verilen_gunler VARCHAR(20)",
         f"ALTER TABLE bariyer_ayarlari ADD {col_kw}auto_ac {bool_tip}",
+        f"ALTER TABLE plaka_kayitlari ADD {col_kw}ham_plaka_metni VARCHAR(20)",
     ]
     with engine.connect() as conn:
         for sql in adimlar:
@@ -114,6 +116,8 @@ _VARSAYILAN_AYARLAR = {
     "tekrar_gecikme_sn": 30,     # aynı plakayı tekrar bildirme gecikmesi
     "auto_bariyer_giris": False, # yetkili girişte otomatik bariyer
     "panel_yenileme_sn": 15,     # frontend polling aralığı
+    "min_tanima_guveni": 0.4,    # bu eşiğin altındaki OCR okumaları hiç değerlendirilmez (0-1)
+    "bilinen_plaka_duzeltme_aktif": True,  # bkz. _bilinen_plakaya_yakinlik_duzelt
 }
 
 
@@ -154,10 +158,13 @@ def _pipeline_baslat(kamera: dict) -> bool:
         if kid in _aktif_pipelineler and _aktif_pipelineler[kid].calisiyor and _aktif_pipelineler[kid].thread_canli_mi():
             return True
         try:
+            min_guven = float(_sistem_ayarlari_oku().get("min_tanima_guveni", 0.4) or 0.0)
+            min_guven = max(0.0, min(1.0, min_guven))  # ayar dosyasından gelen değeri emniyete al
             p = _KameraPipeline(
                 video_kaynagi=kamera["rtsp_url"],
                 kamera_id=kamera["ad"],
                 yon=kamera.get("yon", "giris"),
+                min_guven_skoru=min_guven,
             )
             p.baslat()
             _aktif_pipelineler[kid] = p
@@ -1067,10 +1074,67 @@ def _plaka_yetki_kontrol(db: Session, plaka_no: str):
     return "yetkili", kisi.id, kisi.tip
 
 
+_BILINEN_PLAKA_DUZELTME_GUVEN_TAVANI = 0.90  # bu güvenin ÜZERİNDEKİ okumalar zaten güvenilir, dokunma
+
+
+def _bilinen_plakaya_yakinlik_duzelt(db: Session, ham_plaka: str, guven_skoru: Optional[float]) -> tuple:
+    """OCR'ın tek bir karakteri yanlış okuduğu durumları, sahadaki BİLİNEN
+    (abone/personel) plakalara karşı çapraz kontrol ederek düzeltir.
+
+    Bu, ANPR endüstrisinde doğruluğu artıran standart bir teknik olarak bilinir
+    ("veritabanı çapraz kontrolü / cross-referencing" — bkz. README'deki ANPR
+    doğruluğu bölümü) ve özellikle site girişi gibi KAPALI bir plaka evreni
+    olan sistemlerde etkilidir: OCR "34 ABC 128" okusa bile, sahada kayıtlı
+    "34 ABC 123" ile tek karakter farkı varsa ve başka hiçbir bilinen plaka bu
+    kadar yakın değilse, muhtemelen aynı araçtır.
+
+    Güvenlik notu: bu düzeltme SADECE erişim vermek için kullanılır, asla kara
+    listeye eklemek için değil — kara liste eşleşmesi (_plaka_yetki_kontrol
+    içinde) her zaman TAM eşleşme ister. Böylece bu özellik yanlışlıkla
+    erişimi KISITLAMAZ, sadece meşru bir aracın tesadüfi bir OCR hatası
+    yüzünden yanlışlıkla "yetkisiz" görünmesini engeller.
+
+    Döner: (kullanılacak_plaka, duzeltme_yapildiysa_orijinal_ham_okuma_yoksa_None)
+    """
+    hedef = _plaka_normalize(ham_plaka)
+
+    # Zaten yeterince güvenli bir okuma varsa dokunma — yanlış bir "düzeltme"
+    # ile doğru bir okumayı bozma riskini almayalım.
+    if guven_skoru is not None and guven_skoru >= _BILINEN_PLAKA_DUZELTME_GUVEN_TAVANI:
+        return ham_plaka, None
+
+    # normalize edilmiş (boşluksuz) hal -> orijinal (admin'in girdiği) biçim.
+    # Böylece düzeltme sonucu, sitedeki kayda göre TUTARLI bir biçimde
+    # (örn. "34 ABC 123") döner; ham OCR metninin boşluk düzeni değil.
+    bilinen_plakalar: dict = {}
+    for k in db.query(models.Kisi).filter(models.Kisi.aktif == True).all():  # noqa: E712
+        norm = _plaka_normalize(k.plaka_no)
+        if norm:
+            bilinen_plakalar.setdefault(norm, k.plaka_no)
+    for ek in db.query(models.KisiPlaka).filter(models.KisiPlaka.aktif == True).all():  # noqa: E712
+        norm = _plaka_normalize(ek.plaka_no)
+        if norm:
+            bilinen_plakalar.setdefault(norm, ek.plaka_no)
+
+    en_yakin_norm = en_yakin_bilinen_plakayi_bul(hedef, set(bilinen_plakalar.keys()))
+    if en_yakin_norm is not None:
+        return bilinen_plakalar[en_yakin_norm], ham_plaka
+    return ham_plaka, None
+
+
 def _kayit_olustur_ve_bildir(db: Session, plaka_no: str, kamera_id: str, yon: str,
                               guven_skoru: Optional[float], goruntu_yolu: Optional[str]):
     plaka_no = re.sub(r"[^A-Za-z0-9 ]", "", plaka_no).strip().upper() or "BILINMEYEN"
     kamera_id = re.sub(r"[^A-Za-z0-9 _.\-]", "", str(kamera_id)).strip()[:50] or "KAMERA-1"
+
+    ham_plaka_metni = None
+    if _sistem_ayarlari_oku().get("bilinen_plaka_duzeltme_aktif", True):
+        duzeltilmis, ham = _bilinen_plakaya_yakinlik_duzelt(db, plaka_no, guven_skoru)
+        if ham is not None:
+            logger.info("OCR düzeltmesi uygulandı: '%s' -> bilinen plaka '%s'", ham, duzeltilmis)
+            ham_plaka_metni = ham
+            plaka_no = duzeltilmis
+
     yetki, kisi_id, kisi_tip = _plaka_yetki_kontrol(db, plaka_no)
 
     kayit = models.Kayit(
@@ -1079,6 +1143,7 @@ def _kayit_olustur_ve_bildir(db: Session, plaka_no: str, kamera_id: str, yon: st
         yon=yon,
         guven_skoru=guven_skoru,
         goruntu_yolu=goruntu_yolu,
+        ham_plaka_metni=ham_plaka_metni,
         yetki_durumu=yetki,
         kisi_id=kisi_id,
         kisi_tip_anlik=kisi_tip,
