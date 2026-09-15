@@ -271,6 +271,39 @@ async def _kamera_bekci_dongu() -> None:
 
 
 # ================================================================
+# OTOMATİK GÖRÜNTÜ/KAYIT SAKLAMA — disk sürekli dolup sistemi
+# (kayıt/görüntü yazma hataları yüzünden) yavaşlatmasın/durdurmasın diye
+# "goruntu_saklama_gun" ayarına göre periyodik olarak eski görüntüleri siler.
+# Daha önce sadece manuel bir uç nokta (/sistem/goruntu-temizle) vardı; bir
+# operatör onu çağırmayı unutursa disk sessizce dolabilirdi.
+# ================================================================
+GORUNTU_TEMIZLIK_ARALIK_SN = 6 * 3600  # her 6 saatte bir kontrol et
+
+
+async def _goruntu_temizlik_dongu() -> None:
+    """Sonsuz döngü: periyodik olarak sistem ayarlarındaki saklama süresine
+    göre eski görüntü dosyalarını temizler. Ayar 0 veya negatifse otomatik
+    temizlik devre dışı bırakılmış demektir (manuel uç nokta yine çalışır)."""
+    while True:
+        try:
+            gun = int(_sistem_ayarlari_oku().get("goruntu_saklama_gun") or 0)
+            if gun > 0:
+                db = SessionLocal()
+                try:
+                    silinen, sinir = _goruntu_temizle_calistir(gun, db)
+                    if silinen:
+                        logger.info(
+                            "Görüntü temizliği (otomatik): %d dosya silindi (>%d gün, sınır: %s)",
+                            silinen, gun, sinir.isoformat(),
+                        )
+                finally:
+                    db.close()
+        except Exception as exc:
+            logger.error("[görüntü-temizlik] Otomatik temizlik döngüsünde hata: %s", exc, exc_info=True)
+        await asyncio.sleep(GORUNTU_TEMIZLIK_ARALIK_SN)
+
+
+# ================================================================
 # SSE (Server-Sent Events) YAYINCISI — gerçek zamanlı istemci bildirimi
 # ================================================================
 _sse_istemcileri: list = []
@@ -373,6 +406,13 @@ async def _kamera_bekcisini_baslat():
     """Arka planda sürekli çalışan kamera bekçisini (watchdog) başlatır."""
     asyncio.ensure_future(_kamera_bekci_dongu())
     logger.info("Kamera bekçisi başlatıldı (her %d sn kontrol)", KAMERA_BEKCI_ARALIK_SN)
+
+
+@app.on_event("startup")
+async def _goruntu_temizligini_baslat():
+    """Arka planda sürekli çalışan otomatik görüntü/kayıt saklama görevini başlatır."""
+    asyncio.ensure_future(_goruntu_temizlik_dongu())
+    logger.info("Otomatik görüntü temizliği başlatıldı (her %d sn kontrol)", GORUNTU_TEMIZLIK_ARALIK_SN)
 
 AUTH_SECRET_DOSYASI = os.path.join(BACKEND_DIR, "auth_secret.key")
 
@@ -1997,10 +2037,11 @@ def disk_kullanimi(_: models.Kullanici = Depends(_giris_gerekli)):
     return {"goruntu_mb": round(toplam_mb, 2), "goruntu_sayisi": dosya_sayisi}
 
 
-@app.post("/sistem/goruntu-temizle")
-def goruntu_temizle(gun: int = Query(30, ge=1, le=365), kullanici: models.Kullanici = Depends(_giris_gerekli), db: Session = Depends(get_db)):
-    if kullanici.rol not in ("yonetici", "operatör"):
-        raise HTTPException(403, "Yetki yetersiz")
+def _goruntu_temizle_calistir(gun: int, db: Session) -> tuple[int, "datetime"]:
+    """Paylaşılan temizlik mantığı: hem manuel uç nokta hem de otomatik
+    saklama görevi tarafından kullanılır. `gun`'dan eski, görüntüsü olan
+    kayıtların diskteki dosyasını siler ve kayıttaki goruntu_yolu alanını
+    temizler (kaydın kendisi silinmez, sadece görüntü dosyası)."""
     sinir = datetime.now() - timedelta(days=gun)
     eski_kayitlar = db.query(models.Kayit).filter(
         models.Kayit.tarih_saat < sinir,
@@ -2018,7 +2059,15 @@ def goruntu_temizle(gun: int = Query(30, ge=1, le=365), kullanici: models.Kullan
         except OSError:
             pass
     db.commit()
-    logger.info("Görüntü temizliği: %d dosya silindi (>%d gün)", silinen, gun)
+    return silinen, sinir
+
+
+@app.post("/sistem/goruntu-temizle")
+def goruntu_temizle(gun: int = Query(30, ge=1, le=365), kullanici: models.Kullanici = Depends(_giris_gerekli), db: Session = Depends(get_db)):
+    if kullanici.rol not in ("yonetici", "operatör"):
+        raise HTTPException(403, "Yetki yetersiz")
+    silinen, sinir = _goruntu_temizle_calistir(gun, db)
+    logger.info("Görüntü temizliği (manuel): %d dosya silindi (>%d gün)", silinen, gun)
     return {"silinen_goruntu": silinen, "sinir_tarihi": sinir.isoformat()}
 
 

@@ -7,6 +7,7 @@ olduğu için) çalıştırılamadı — kullanıcının kendi ortamında ya da 
 içinde ayarlanan geçici bir SQLite veritabanı ve sabit test secret'larıyla
 tamamen izole çalışacak şekilde tasarlandı.
 """
+import os
 from datetime import datetime, timedelta
 
 import pytest
@@ -208,3 +209,64 @@ def test_gecersiz_imzali_lisans_reddedilir(client, yetkili_header):
     sahte = "PTS1.eW9rLWJvenVsbXVzLXZlcmk.eW9rLWltemE"
     r = client.post("/lisans/aktive-et", json={"anahtar": sahte}, headers=yetkili_header)
     assert r.status_code == 400
+
+
+# ------------------------------------------------------------------
+# Görüntü saklama / otomatik temizlik
+# ------------------------------------------------------------------
+# NOT: Bu testler `_goruntu_temizle_calistir` fonksiyonunu (hem manuel
+# /sistem/goruntu-temizle uç noktası hem de arka planda periyodik çalışan
+# otomatik saklama görevi tarafından paylaşılan mantık) uçtan uca doğrular.
+# Amaç: disk sürekli dolup sistemi "donmuş" gibi göstermesin diye eklenen bu
+# otomasyonun, YANLIŞLIKLA yeni/güncel kayıtların görüntülerini silmediğini
+# ve gerçekten SADECE eski kayıtları temizlediğini garanti altına almak.
+
+def _test_goruntu_dosyasi_olustur(client, dosya_adi: str) -> str:
+    from backend.main import GORUNTU_KLASORU
+    os.makedirs(GORUNTU_KLASORU, exist_ok=True)
+    tam_yol = os.path.join(GORUNTU_KLASORU, dosya_adi)
+    with open(tam_yol, "wb") as f:
+        f.write(b"sahte-goruntu-verisi")
+    return tam_yol
+
+
+def test_eski_goruntulu_kayit_temizlenir_yeni_olan_korunur(client, yetkili_header):
+    from backend.database import SessionLocal
+    from backend import models
+
+    eski_dosya_adi = "test-eski-goruntu.jpg"
+    yeni_dosya_adi = "test-yeni-goruntu.jpg"
+    eski_tam_yol = _test_goruntu_dosyasi_olustur(client, eski_dosya_adi)
+    yeni_tam_yol = _test_goruntu_dosyasi_olustur(client, yeni_dosya_adi)
+
+    db = SessionLocal()
+    try:
+        eski_kayit = models.Kayit(
+            plaka_no="34 ESK 99", kamera_id="TEST",
+            tarih_saat=datetime.now() - timedelta(days=45),
+            goruntu_yolu=eski_tam_yol,
+        )
+        yeni_kayit = models.Kayit(
+            plaka_no="34 YEN 99", kamera_id="TEST",
+            tarih_saat=datetime.now() - timedelta(hours=1),
+            goruntu_yolu=yeni_tam_yol,
+        )
+        db.add_all([eski_kayit, yeni_kayit])
+        db.commit()
+    finally:
+        db.close()
+
+    try:
+        r = client.post("/sistem/goruntu-temizle", params={"gun": 30}, headers=yetkili_header)
+        assert r.status_code == 200, r.text
+        assert r.json()["silinen_goruntu"] >= 1
+
+        assert not os.path.exists(eski_tam_yol), "30 günden eski görüntü silinmeliydi"
+        assert os.path.exists(yeni_tam_yol), (
+            "1 saat önceki kayıt YANLIŞLIKLA silindi — tarih filtresinde bir "
+            "regresyon olabilir (otomatik saklama görevi de aynı fonksiyonu kullanıyor)"
+        )
+    finally:
+        for yol in (eski_tam_yol, yeni_tam_yol):
+            if os.path.exists(yol):
+                os.remove(yol)

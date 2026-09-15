@@ -277,6 +277,23 @@ artık sessizce main dalına giremez.
   sekmesinden "kamera_arizasi" tetikleyicili bir webhook (N8N/Slack/Teams/kendi
   API'niz) ekleyerek anlık haber alabilirsiniz.
 
+## Otomatik Görüntü/Kayıt Saklama
+
+Daha önce eski geçiş görüntülerini temizlemenin tek yolu `/sistem/goruntu-temizle`
+uç noktasını manuel olarak çağırmaktı — bir operatör bunu unutursa disk sessizce
+dolabilir, bu da (görüntü yazma hataları yüzünden) tıpkı bir kamera donması gibi
+görünen bir "sistem takılması" belirtisine yol açabilirdi.
+
+Artık uygulama açılışında arka planda sürekli çalışan bir görev, Sistem
+Ayarları'ndaki **"Görüntü saklama süresi (gün)"** ayarını (varsayılan: 30 gün)
+her 6 saatte bir kontrol edip bu süreden eski, görüntüsü olan kayıtların
+dosyalarını otomatik olarak siler (kaydın kendisi veritabanında kalır, sadece
+görüntü dosyası ve `goruntu_yolu` alanı temizlenir). Ayarı `0` yaparsanız
+otomatik temizlik devre dışı kalır; manuel uç nokta yine de çalışmaya devam eder.
+Bu işi hem manuel uç nokta hem de otomatik görev aynı paylaşılan fonksiyonu
+(`_goruntu_temizle_calistir`) kullanarak yapar, böylece iki ayrı yerde
+birbirinden farklı davranan iki kopya mantık oluşmaz.
+
 ## LED Panel Bağlama
 
 `backend/led_panel.py` üç mod destekler:
