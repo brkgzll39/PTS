@@ -1,6 +1,31 @@
 const API = "";  // aynı sunucudan servis edildiği için boş bırakıldı
 let sonKayitlarCache = [];
 
+// ---------------------- ROL BAZLI ARAYÜZ (RBAC) ----------------------
+// Backend'deki _rol_dogrula() politikasıyla birebir eşleşir (backend/main.py).
+// izleyici: salt okunur | operatör: günlük işlemler | yonetici: tam yetki
+const ROL_SEVIYE = { izleyici: 0, "operatör": 1, yonetici: 2 };
+let mevcutRol = null;
+
+function rolYeterli(minRol) {
+  return (ROL_SEVIYE[mevcutRol] ?? 0) >= (ROL_SEVIYE[minRol] ?? 0);
+}
+
+function rolBazliArayuzuUygula() {
+  document.querySelectorAll("[data-rol-min]").forEach(el => {
+    const izinli = rolYeterli(el.dataset.rolMin);
+    if (el.dataset.rolDavranis === "gizle") {
+      el.classList.toggle("d-none", !izinli);
+      return;
+    }
+    if (el.tagName === "FORM") {
+      el.querySelectorAll("input, select, textarea, button").forEach(f => { f.disabled = !izinli; });
+    } else {
+      el.disabled = !izinli;
+    }
+  });
+}
+
 function sekmeAc(target) {
   const sekme = document.querySelector(`[data-bs-target="${target}"]`);
   if (sekme && window.bootstrap) bootstrap.Tab.getOrCreateInstance(sekme).show();
@@ -85,13 +110,16 @@ async function authBaslat() {
 function authBasarili(kullanici) {
   document.getElementById("authKapisi").classList.add("d-none");
   document.getElementById("oturumKullanici").textContent = kullanici.kullanici_adi;
+  mevcutRol = kullanici.rol;
+  rolBazliArayuzuUygula();
   uygulamaVerileriniYukle();
 }
 
-function uygulamaVerileriniYukle() {
+async function uygulamaVerileriniYukle() {
   panelYenile(); kayitlariYukle(); kisileriYukle(); ledAyarlariYukle(); lisansYukle(); kameralariYukle();
   grafikYukle(); karaListesiYukle(); bariyerleriYukle(); kullanicilariYukle(); sistemSagliginiYukle();
   bildirimleriYukle();
+  await siteleriYukle(); noktalariYukle();
   sseBaslat();
 }
 
@@ -137,7 +165,7 @@ async function panelYenile() {
     const canliOlaylar = document.getElementById("canliOlaylar");
     if (canliOlaylar) {
       const alarmlar = await apiCagir("/alarmlar?sadece_acik=true&limit=4");
-      const alarmSatirlari = alarmlar.map(a => `<div class="event-row alarm-row"><div class="event-icon blocked"><i class="bi bi-exclamation-triangle-fill"></i></div><div class="event-main"><strong>${escapeHtml(a.plaka_no)}</strong><span>${alarmTipiEtiketi(a.alarm_tipi)}</span></div><button class="btn btn-sm btn-light" title="Okundu işaretle" onclick="alarmOkundu(${a.id})"><i class="bi bi-check2"></i></button></div>`).join("");
+      const alarmSatirlari = alarmlar.map(a => `<div class="event-row alarm-row"><div class="event-icon blocked"><i class="bi bi-exclamation-triangle-fill"></i></div><div class="event-main"><strong>${escapeHtml(a.plaka_no)}</strong><span>${alarmTipiEtiketi(a.alarm_tipi)}</span></div>${rolYeterli("operatör") ? `<button class="btn btn-sm btn-light" title="Okundu işaretle" onclick="alarmOkundu(${a.id})"><i class="bi bi-check2"></i></button>` : ""}</div>`).join("");
       const olaySatirlari = kayitlar.slice(0, 8).map(k => `<button class="event-row event-button" onclick="olayDetayAc(${k.id})"><div class="event-icon ${k.yetki_durumu === "yetkili" ? "allowed" : "blocked"}"><i class="bi ${k.yon === "giris" ? "bi-box-arrow-in-right" : "bi-box-arrow-right"}"></i></div><div class="event-main"><strong>${escapeHtml(k.plaka_no)}</strong><span>${escapeHtml(k.kamera_id)} · ${k.yon === "giris" ? "Giriş" : "Çıkış"}</span></div><div class="event-time">${tarihFormatla(k.tarih_saat).split(",")[1] || "-"}</div></button>`).join("");
       canliOlaylar.innerHTML = alarmSatirlari + olaySatirlari || '<div class="empty-state">Henüz geçiş kaydı yok</div>';
     }
@@ -169,6 +197,15 @@ async function olayDetayAc(id) {
   const kayit = sonKayitlarCache.find(item => item.id === id);
   if (!kayit) return;
   const detay = kayit.kisi_id ? await apiCagir(`/kisiler/${kayit.kisi_id}`).catch(() => null) : null;
+  // Kameranın bağlı olduğu erişim noktasını (ve varsa sitesini/bariyerini) bul —
+  // kameralar ile siteler/bariyerler arasındaki tek bağlantı Nokta kaydıdır.
+  const noktalar = await apiCagir("/noktalar").catch(() => []);
+  const nokta = noktalar.find(n => n.kamera_id && n.kamera_id === kayit.kamera_id) || null;
+  let siteAdi = null;
+  if (nokta) {
+    const siteler = await apiCagir("/siteler").catch(() => []);
+    siteAdi = siteler.find(s => s.id === nokta.site_id)?.ad || null;
+  }
   const gorsel = document.getElementById("olayModalGorsel");
   const gorselYok = document.getElementById("olayModalGorselYok");
   if (kayit.goruntu_yolu) { gorsel.src = `/goruntuler/${gorselAdiAl(kayit.goruntu_yolu)}`; gorsel.classList.remove("d-none"); gorselYok.classList.add("d-none"); } else { gorsel.removeAttribute("src"); gorsel.classList.add("d-none"); gorselYok.classList.remove("d-none"); }
@@ -176,8 +213,8 @@ async function olayDetayAc(id) {
   document.getElementById("olayModalPlaka").textContent = kayit.plaka_no;
   document.getElementById("olayModalTarih").textContent = new Date(kayit.tarih_saat).toLocaleDateString("tr-TR");
   document.getElementById("olayModalSaat").textContent = new Date(kayit.tarih_saat).toLocaleTimeString("tr-TR");
-  document.getElementById("olayModalSite").textContent = "Genel tesis";
-  document.getElementById("olayModalNokta").textContent = kayit.kamera_id;
+  document.getElementById("olayModalSite").textContent = siteAdi || "Bağlı site tanımlı değil";
+  document.getElementById("olayModalNokta").textContent = nokta?.ad || kayit.kamera_id;
   document.getElementById("olayModalYon").textContent = kayit.yon === "giris" ? "Giriş" : "Çıkış";
   document.getElementById("olayModalKisi").textContent = detay?.ad_soyad || "Tanımsız araç";
   document.getElementById("olayModalDaire").textContent = detay?.daire_departman || "-";
@@ -186,8 +223,36 @@ async function olayDetayAc(id) {
   document.getElementById("olayModalDuzeltme").textContent = kayit.ham_plaka_metni
     ? `${kayit.ham_plaka_metni} → ${kayit.plaka_no} (bilinen plakaya göre düzeltildi)`
     : "-";
-  document.getElementById("bariyerAcBtn").onclick = () => alert("Bariyer açma komutu simülasyon modunda gönderildi.");
+  _olayModalBariyerButonunuAyarla(nokta);
   bootstrap.Modal.getOrCreateInstance(document.getElementById("olayDetayModal")).show();
+}
+
+function _olayModalBariyerButonunuAyarla(nokta) {
+  const btn = document.getElementById("bariyerAcBtn");
+  btn.onclick = null;
+  if (!rolYeterli("operatör")) {
+    btn.disabled = true;
+    btn.title = "Bu işlem için yetkiniz yok";
+    return;
+  }
+  if (!nokta || !nokta.bariyer_id) {
+    btn.disabled = true;
+    btn.title = "Bu kameraya bağlı tanımlı bir bariyer yok (Site/Nokta Yönetimi'nden bağlayın)";
+    return;
+  }
+  btn.disabled = false;
+  btn.title = "Bariyeri aç";
+  btn.onclick = async () => {
+    btn.disabled = true;
+    try {
+      const r = await apiCagir(`/bariyer/${nokta.bariyer_id}/ac`, { method: "POST" });
+      toastGoster(r.mesaj, "basari");
+    } catch (err) {
+      toastGoster(err.message, "hata");
+    } finally {
+      btn.disabled = false;
+    }
+  };
 }
 
 async function lisansYukle() {
@@ -225,8 +290,13 @@ async function kameralariYukle() {
             ? `<span class="badge bg-success" title="${saglik.gecikme_ms}ms">${saglik.gecikme_ms}ms</span>`
             : `<span class="badge bg-danger">Erişilemiyor</span>`)
         : `<span class="badge bg-light text-muted">-</span>`;
-      const yenidenBtn = `<button class="btn btn-sm btn-outline-secondary ms-1" title="Pipeline'ı yeniden başlat" onclick="kameraYenidenBaslat('${k.id}')"><i class="bi bi-arrow-repeat"></i></button>`;
-      return `<tr><td><strong>${escapeHtml(k.ad)}</strong></td><td>${k.yon === "giris" ? "Giriş" : "Çıkış"}</td><td class="text-muted small text-truncate" style="max-width: 180px">${escapeHtml(k.rtsp_url)}</td><td>${durum}${yenidenBaglanmaBadge}</td><td>${tcpBadge}</td><td><button class="btn btn-sm btn-outline-danger" title="Kamerayı sil" onclick="kameraSil('${k.id}')"><i class="bi bi-trash"></i></button>${yenidenBtn}</td></tr>`;
+      const yenidenBtn = rolYeterli("operatör")
+        ? `<button class="btn btn-sm btn-outline-secondary ms-1" title="Pipeline'ı yeniden başlat" onclick="kameraYenidenBaslat('${k.id}')"><i class="bi bi-arrow-repeat"></i></button>`
+        : "";
+      const silBtn = rolYeterli("operatör")
+        ? `<button class="btn btn-sm btn-outline-danger" title="Kamerayı sil" onclick="kameraSil('${k.id}')"><i class="bi bi-trash"></i></button>`
+        : "";
+      return `<tr><td><strong>${escapeHtml(k.ad)}</strong></td><td>${k.yon === "giris" ? "Giriş" : "Çıkış"}</td><td class="text-muted small text-truncate" style="max-width: 180px">${escapeHtml(k.rtsp_url)}</td><td>${durum}${yenidenBaglanmaBadge}</td><td>${tcpBadge}</td><td>${silBtn}${yenidenBtn}</td></tr>`;
     }).join("") || '<tr><td colspan="6" class="text-center text-muted py-4">Henüz kamera tanımlanmadı</td></tr>';
     kameraDuvariniGuncelle(kameralar);
   } catch (err) { console.error(err); }
@@ -453,9 +523,11 @@ async function kisileriYukle() {
       <td>${escapeHtml(k.daire_departman) || "-"}</td>
       <td>${k.aktif ? '<span class="badge bg-success">Aktif</span>' : '<span class="badge bg-secondary">Pasif</span>'}</td>
       <td>
+        ${rolYeterli("operatör") ? `
         <button class="btn btn-sm btn-outline-primary" onclick="kisiDuzenleAc(${k.id})" title="Düzenle"><i class="bi bi-pencil"></i></button>
         <button class="btn btn-sm btn-outline-secondary" onclick="kisiDurumDegistir(${k.id}, ${!k.aktif})" title="Aktif/Pasif Yap"><i class="bi bi-toggle2-on"></i></button>
         <button class="btn btn-sm btn-outline-danger" onclick="kisiSil(${k.id})" title="Sil"><i class="bi bi-trash"></i></button>
+        ` : '<span class="text-muted small">-</span>'}
       </td>
     </tr>
   `).join("") || `<tr><td colspan="7" class="text-center text-muted py-3">Kişi bulunamadı</td></tr>`;
@@ -836,7 +908,7 @@ async function karaListesiYukle() {
       <td>${escapeHtml(k.sebep) || "<span class='text-muted'>-</span>"}</td>
       <td>${escapeHtml(k.ekleyen) || "-"}</td>
       <td class="small text-muted">${tarihFormatla(k.olusturma_tarihi)}</td>
-      <td><button class="btn btn-sm btn-outline-success" onclick="karaListedenCikar(${k.id})" title="Listeden çıkar"><i class="bi bi-check-circle"></i></button></td>
+      <td>${rolYeterli("operatör") ? `<button class="btn btn-sm btn-outline-success" onclick="karaListedenCikar(${k.id})" title="Listeden çıkar"><i class="bi bi-check-circle"></i></button>` : '<span class="text-muted small">-</span>'}</td>
     </tr>`).join("") || `<tr><td colspan="5" class="text-center text-muted py-3">Kara listede kayıt yok</td></tr>`;
   } catch (e) { console.error(e); }
 }
@@ -882,8 +954,10 @@ async function bariyerleriYukle() {
       <td><span class="badge bg-secondary">${escapeHtml(b.mod)}</span></td>
       <td class="text-muted small text-truncate" style="max-width:150px">${escapeHtml(b.http_url || "-")}</td>
       <td>
+        ${rolYeterli("operatör") ? `
         <button class="btn btn-sm btn-success" onclick="bariyerAc(${b.id})" title="Bariyeri aç"><i class="bi bi-unlock-fill"></i> Aç</button>
         <button class="btn btn-sm btn-outline-danger ms-1" onclick="bariyerSil(${b.id})"><i class="bi bi-trash"></i></button>
+        ` : '<span class="text-muted small">-</span>'}
       </td>
     </tr>`).join("") || `<tr><td colspan="4" class="text-center text-muted py-3">Bariyer tanımlanmadı</td></tr>`;
   } catch (e) { console.error(e); }
@@ -920,6 +994,129 @@ async function bariyerSil(id) {
 }
 
 // ================================================================
+// SİTE / ERİŞİM NOKTASI YÖNETİMİ
+// ================================================================
+
+let _siteCache = [];
+
+async function siteleriYukle() {
+  try {
+    const siteler = await apiCagir("/siteler");
+    _siteCache = siteler;
+    const tbody = document.getElementById("sitelerTablo");
+    if (tbody) {
+      tbody.innerHTML = siteler.map(s => `<tr>
+        <td><strong>${escapeHtml(s.ad)}</strong></td>
+        <td class="text-muted small">${escapeHtml(s.aciklama) || "-"}</td>
+        <td>${rolYeterli("yonetici") ? `<button class="btn btn-sm btn-outline-danger" onclick="siteSil(${s.id})" title="Sil"><i class="bi bi-trash"></i></button>` : '<span class="text-muted small">-</span>'}</td>
+      </tr>`).join("") || `<tr><td colspan="3" class="text-center text-muted py-3">Henüz site tanımlanmadı</td></tr>`;
+    }
+    const secim = document.getElementById("noktaSiteId");
+    if (secim) {
+      const oncekiDeger = secim.value;
+      secim.innerHTML = siteler.map(s => `<option value="${s.id}">${escapeHtml(s.ad)}</option>`).join("") || '<option value="">- Önce bir site ekleyin -</option>';
+      if (oncekiDeger && siteler.some(s => String(s.id) === oncekiDeger)) secim.value = oncekiDeger;
+    }
+  } catch (e) { console.error(e); }
+}
+
+document.getElementById("siteForm")?.addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const sonuc = document.getElementById("siteSonuc");
+  try {
+    await apiCagir("/siteler", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({
+      ad: document.getElementById("siteAd").value,
+      aciklama: document.getElementById("siteAciklama").value || null,
+    })});
+    sonuc.className = "small mt-3 text-success"; sonuc.textContent = "Site kaydedildi.";
+    e.target.reset(); siteleriYukle();
+  } catch (err) { sonuc.className = "small mt-3 text-danger"; sonuc.textContent = err.message; }
+});
+
+async function siteSil(id) {
+  if (!confirm("Bu siteyi ve bağlı tüm erişim noktalarını silmek istiyor musunuz?")) return;
+  try {
+    await apiCagir(`/siteler/${id}`, { method: "DELETE" });
+    siteleriYukle(); noktalariYukle();
+  } catch (err) { toastGoster(err.message, "hata"); }
+}
+
+async function _kameraSecenekleriniDoldur() {
+  const secim = document.getElementById("noktaKameraId");
+  if (!secim) return;
+  try {
+    const kameralar = await apiCagir("/kameralar");
+    const oncekiDeger = secim.value;
+    secim.innerHTML = '<option value="">- Yok -</option>' + kameralar.map(k => `<option value="${k.id}">${escapeHtml(k.ad)}</option>`).join("");
+    secim.value = oncekiDeger;
+  } catch (e) { console.error(e); }
+}
+
+async function _bariyerSecenekleriniDoldur() {
+  const secim = document.getElementById("noktaBariyerId");
+  if (!secim) return;
+  try {
+    const bariyerler = await apiCagir("/bariyer/ayarlar");
+    const oncekiDeger = secim.value;
+    secim.innerHTML = '<option value="">- Yok -</option>' + bariyerler.map(b => `<option value="${b.id}">${escapeHtml(b.ad)}</option>`).join("");
+    secim.value = oncekiDeger;
+  } catch (e) { console.error(e); }
+}
+
+async function noktalariYukle() {
+  try {
+    const [noktalar, kameralar, bariyerler] = await Promise.all([
+      apiCagir("/noktalar"),
+      apiCagir("/kameralar").catch(() => []),
+      apiCagir("/bariyer/ayarlar").catch(() => []),
+    ]);
+    const tbody = document.getElementById("noktalarTablo");
+    if (tbody) {
+      tbody.innerHTML = noktalar.map(n => {
+        const site = _siteCache.find(s => s.id === n.site_id);
+        const kamera = kameralar.find(k => k.id === n.kamera_id);
+        const bariyer = bariyerler.find(b => b.id === n.bariyer_id);
+        return `<tr>
+          <td>${site ? escapeHtml(site.ad) : "-"}</td>
+          <td><strong>${escapeHtml(n.ad)}</strong></td>
+          <td>${n.yon === "giris" ? "Giriş" : "Çıkış"}</td>
+          <td>${kamera ? escapeHtml(kamera.ad) : '<span class="text-muted">Bağlı değil</span>'}</td>
+          <td>${bariyer ? escapeHtml(bariyer.ad) : '<span class="text-muted">Bağlı değil</span>'}</td>
+          <td>${rolYeterli("yonetici") ? `<button class="btn btn-sm btn-outline-danger" onclick="noktaSil(${n.id})" title="Sil"><i class="bi bi-trash"></i></button>` : '<span class="text-muted small">-</span>'}</td>
+        </tr>`;
+      }).join("") || `<tr><td colspan="6" class="text-center text-muted py-3">Henüz erişim noktası tanımlanmadı</td></tr>`;
+    }
+    await _kameraSecenekleriniDoldur();
+    await _bariyerSecenekleriniDoldur();
+  } catch (e) { console.error(e); }
+}
+
+document.getElementById("noktaForm")?.addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const sonuc = document.getElementById("noktaSonuc");
+  try {
+    await apiCagir("/noktalar", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({
+      site_id: Number(document.getElementById("noktaSiteId").value),
+      ad: document.getElementById("noktaAd").value,
+      yon: document.getElementById("noktaYon").value,
+      kamera_id: document.getElementById("noktaKameraId").value || null,
+      bariyer_id: document.getElementById("noktaBariyerId").value ? Number(document.getElementById("noktaBariyerId").value) : null,
+      aciklama: document.getElementById("noktaAciklama").value || null,
+    })});
+    sonuc.className = "small mt-3 text-success"; sonuc.textContent = "Erişim noktası kaydedildi.";
+    e.target.reset(); noktalariYukle();
+  } catch (err) { sonuc.className = "small mt-3 text-danger"; sonuc.textContent = err.message; }
+});
+
+async function noktaSil(id) {
+  if (!confirm("Bu erişim noktasını silmek istiyor musunuz?")) return;
+  try {
+    await apiCagir(`/noktalar/${id}`, { method: "DELETE" });
+    noktalariYukle();
+  } catch (err) { toastGoster(err.message, "hata"); }
+}
+
+// ================================================================
 // KULLANICI YÖNETİMİ
 // ================================================================
 
@@ -935,8 +1132,10 @@ async function kullanicilariYukle() {
       <td class="small text-muted">${k.son_giris ? tarihFormatla(k.son_giris) : "—"}</td>
       <td>${k.aktif ? '<span class="badge bg-success">Aktif</span>' : '<span class="badge bg-secondary">Pasif</span>'}</td>
       <td>
+        ${rolYeterli("yonetici") ? `
         <button class="btn btn-sm btn-outline-secondary" onclick="kullaniciDurumDegistir(${k.id}, ${!k.aktif})" title="${k.aktif ? "Pasif yap" : "Aktif yap"}"><i class="bi bi-toggle2-on"></i></button>
         <button class="btn btn-sm btn-outline-danger ms-1" onclick="kullaniciSil(${k.id})" title="Sil"><i class="bi bi-trash"></i></button>
+        ` : '<span class="text-muted small">-</span>'}
       </td>
     </tr>`).join("") || `<tr><td colspan="5" class="text-center text-muted py-3">Kullanıcı bulunamadı</td></tr>`;
   } catch (e) {
@@ -1068,7 +1267,7 @@ async function sistemAyarlariYukle() {
       { key: "panel_yenileme_sn", label: "Panel yenileme aralığı (sn)", tip: "number" },
       { key: "min_tanima_guveni", label: "Min. plaka tanıma güveni (0-1)", tip: "number", step: "0.05" },
     ];
-    el.innerHTML = `<form id="sistemAyarlariForm">${satirlar.map(s =>
+    el.innerHTML = `<form id="sistemAyarlariForm" data-rol-min="yonetici">${satirlar.map(s =>
       `<div class="mb-2"><label class="form-label small">${escapeHtml(s.label)}</label>
        <input type="number" ${s.step ? `step="${s.step}" min="0" max="1"` : ""} class="form-control form-control-sm" id="ayar_${s.key}" value="${escapeHtml(String(ayarlar[s.key] ?? ""))}"></div>`
     ).join("")}
@@ -1076,6 +1275,7 @@ async function sistemAyarlariYukle() {
         <input type="checkbox" class="form-check-input" id="ayar_bilinen_plaka_duzeltme_aktif" ${ayarlar.bilinen_plaka_duzeltme_aktif ? "checked" : ""}>
         <label class="form-check-label small" for="ayar_bilinen_plaka_duzeltme_aktif">Bilinen plakaya göre OCR düzeltmesi (tek karakter hataları)</label>
       </div>
+      ${rolYeterli("yonetici") ? '' : '<p class="small text-muted mb-2"><i class="bi bi-lock-fill"></i> Bu ayarları sadece yönetici değiştirebilir.</p>'}
       <button type="submit" class="btn btn-sm btn-primary w-100 mt-1"><i class="bi bi-save"></i> Kaydet</button></form>`;
     document.getElementById("sistemAyarlariForm").addEventListener("submit", async (ev) => {
       ev.preventDefault();
@@ -1085,6 +1285,7 @@ async function sistemAyarlariYukle() {
       await apiCagir("/sistem/ayarlar", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(guncel) });
       toastGoster("Sistem ayarları kaydedildi", "basari");
     });
+    rolBazliArayuzuUygula();
   } catch (e) { console.error(e); }
 }
 
@@ -1128,9 +1329,11 @@ async function bildirimleriYukle() {
       <td><span class="badge bg-secondary">${escapeHtml(tetikEtiket[b.tetikleyici] || b.tetikleyici)}</span></td>
       <td>${b.aktif ? '<span class="badge bg-success">Aktif</span>' : '<span class="badge bg-secondary">Pasif</span>'}</td>
       <td class="text-nowrap">
+        ${rolYeterli("yonetici") ? `
         <button class="btn btn-sm btn-outline-info" title="Test gönder" onclick="bildirimTestGonder(${b.id})"><i class="bi bi-send"></i></button>
         <button class="btn btn-sm btn-outline-secondary ms-1" title="${b.aktif ? "Pasif yap" : "Aktif yap"}" onclick="bildirimToggle(${b.id})"><i class="bi bi-toggle2-on"></i></button>
         <button class="btn btn-sm btn-outline-danger ms-1" onclick="bildirimSil(${b.id})"><i class="bi bi-trash"></i></button>
+        ` : '<span class="text-muted small">-</span>'}
       </td>
     </tr>`).join("") || `<tr><td colspan="5" class="text-center text-muted py-3">Henüz webhook tanımlanmadı</td></tr>`;
   } catch (e) { console.error(e); }

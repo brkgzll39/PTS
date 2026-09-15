@@ -132,7 +132,7 @@ body {
 .vehicle-facts b { background: #eef2f5; border-right: 1px solid #c5ced5; }
 .vehicle-facts span { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .person-facts { margin-top: .8rem; }
-.detail-table { display: grid; grid-template-columns: repeat(6, 1fr); border: 1px solid #bbc7d0; font-size: .72rem; }
+.detail-table { display: grid; grid-template-columns: repeat(5, 1fr); border: 1px solid #bbc7d0; font-size: .72rem; }
 .detail-table > div { display: flex; flex-direction: column; border-right: 1px solid #bbc7d0; }
 .detail-table > div:last-child { border-right: 0; }
 .detail-table b, .detail-table span { padding: .42rem .5rem; }

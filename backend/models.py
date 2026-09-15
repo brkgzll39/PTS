@@ -39,6 +39,10 @@ class Nokta(Base):
     site_id = Column(Integer, ForeignKey("siteler.id"), nullable=False, index=True)
     ad = Column(String(120), nullable=False)
     yon = Column(String(10), default="giris")
+    # cameras.json'daki kamera "id"si (UUID string) — SQL FK değil, çünkü
+    # kameralar veritabanında değil ayrı bir JSON dosyasında tutuluyor.
+    kamera_id = Column(String(64), nullable=True)
+    bariyer_id = Column(Integer, ForeignKey("bariyer_ayarlari.id"), nullable=True)
     aciklama = Column(Text)
     aktif = Column(Boolean, default=True)
     olusturma_tarihi = Column(DateTime, default=datetime.now)

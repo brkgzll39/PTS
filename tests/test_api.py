@@ -38,6 +38,37 @@ def yetkili_header(admin_token):
     return {"Authorization": f"Bearer {admin_token}"}
 
 
+def _rol_ile_kullanici_olustur_ve_giris_yap(client, yetkili_header, kullanici_adi: str, rol: str) -> dict:
+    """Verilen role sahip yeni bir kullanıcı oluşturur (yönetici gerektirir),
+    onunla giriş yapar ve Authorization header'ını döner. RBAC testlerinde
+    kullanılır."""
+    r = client.post("/kullanicilar", json={
+        "kullanici_adi": kullanici_adi, "parola": "GucluParola123!", "rol": rol,
+    }, headers=yetkili_header)
+    assert r.status_code == 200, r.text
+    r2 = client.post("/auth/giris", json={"kullanici_adi": kullanici_adi, "parola": "GucluParola123!"})
+    assert r2.status_code == 200, r2.text
+    return {"Authorization": f"Bearer {r2.json()['token']}"}
+
+
+@pytest.fixture(scope="module")
+def izleyici_header(client, admin_token):
+    # NOT: module-scope bir fixture, fonksiyon-scope'lu `yetkili_header`'a değil
+    # doğrudan module-scope `admin_token`'a bağımlı olmalı (aksi halde pytest
+    # "ScopeMismatch" hatası verir — daha dar scope'lu bir fixture'a bağımlı
+    # olamaz).
+    return _rol_ile_kullanici_olustur_ve_giris_yap(
+        client, {"Authorization": f"Bearer {admin_token}"}, "rbac-izleyici", "izleyici"
+    )
+
+
+@pytest.fixture(scope="module")
+def operator_header(client, admin_token):
+    return _rol_ile_kullanici_olustur_ve_giris_yap(
+        client, {"Authorization": f"Bearer {admin_token}"}, "rbac-operator", "operatör"
+    )
+
+
 # ------------------------------------------------------------------
 # Sağlık / temel
 # ------------------------------------------------------------------
@@ -336,3 +367,126 @@ def test_kara_listeye_yakinlik_duzeltmesi_uygulanmaz(client, yetkili_header):
     assert sonuc["yetki_durumu"] != "kara_liste", (
         "Kara listedeki bir plakaya yakın farklı bir araç yanlışlıkla kara listeye düzeltildi/engellendi"
     )
+
+
+# ------------------------------------------------------------------
+# Rol bazlı yetkilendirme (RBAC)
+# ------------------------------------------------------------------
+# Daha önce sadece kullanıcı yönetimi / sistem ayarları / DB yedeği / görüntü
+# temizleme rol kontrolü yapıyordu; kamera/kişi/kara liste/bariyer açma/webhook
+# gibi geri kalan HER YAZMA işlemi sadece giriş yapmış olmayı yeterli
+# sayıyordu — yani "izleyici" (salt okunur) rolündeki bir kullanıcı bile
+# bariyer açabiliyor, kamera silebiliyor, lisans aktive edebiliyordu. Bu
+# testler _rol_dogrula() ile eklenen kısıtlamaları uçtan uca doğrular.
+
+def test_izleyici_hicbir_yazma_islemi_yapamaz(client, izleyici_header):
+    """İzleyici (salt okunur) rolü GERÇEKTEN salt okunur olmalı."""
+    denemeler = [
+        ("post", "/kisiler", {"ad_soyad": "X", "plaka_no": "34 RBC 001", "tip": "abone"}),
+        ("post", "/kameralar", {"ad": "X", "rtsp_url": "rtsp://127.0.0.1/x", "yon": "giris"}),
+        ("post", "/kara-listesi", {"plaka_no": "34 RBC 002", "sebep": "test"}),
+        ("post", "/bariyer/ayarlar", {"ad": "X", "mod": "simulate"}),
+        ("post", "/lisans/aktive-et", {"anahtar": "PTS1.x.y"}),
+        ("post", "/bildirim/ayarlar", {"ad": "X", "hedef": "https://example.com"}),
+        ("put", "/sistem/ayarlar", {"supheli_esik": 5}),
+        ("post", "/kullanicilar", {"kullanici_adi": "baska", "parola": "GucluParola123!", "rol": "izleyici"}),
+        ("post", "/siteler", {"ad": "X"}),
+    ]
+    for metot, yol, govde in denemeler:
+        r = getattr(client, metot)(yol, json=govde, headers=izleyici_header)
+        assert r.status_code == 403, f"{metot.upper()} {yol}: izleyici 403 almalıydı, {r.status_code} aldı ({r.text})"
+
+
+def test_izleyici_okuma_uc_noktalarina_erisebilir(client, izleyici_header):
+    """Kısıtlama SADECE yazma işlemlerinde olmalı; izleyici okuyabilmeli."""
+    for yol in ("/kisiler", "/kameralar", "/kara-listesi", "/kayitlar", "/bariyer/ayarlar"):
+        r = client.get(yol, headers=izleyici_header)
+        assert r.status_code == 200, f"GET {yol}: izleyici erişemedi ({r.status_code})"
+
+
+def test_operator_gunluk_islemleri_yapabilir_ama_yonetim_islemlerini_yapamaz(client, operator_header):
+    """Operatör günlük operasyonu (kişi/kamera/kara liste/bariyer açma) yapabilmeli,
+    ama yönetici'ye özel işlemleri (kullanıcı yönetimi, sistem ayarları, webhook
+    yapılandırması, lisans) YAPAMAMALI."""
+    r = client.post("/kisiler", json={
+        "ad_soyad": "Operator Testi", "plaka_no": "34 RBC 003", "tip": "abone",
+    }, headers=operator_header)
+    assert r.status_code == 200, f"Operatör kişi ekleyemedi: {r.text}"
+
+    r2 = client.post("/kara-listesi", json={"plaka_no": "34 RBC 004", "sebep": "test"}, headers=operator_header)
+    assert r2.status_code == 200, f"Operatör kara listeye ekleyemedi: {r2.text}"
+
+    yonetim_denemeleri = [
+        ("post", "/kullanicilar", {"kullanici_adi": "baska2", "parola": "GucluParola123!", "rol": "izleyici"}),
+        ("put", "/sistem/ayarlar", {"supheli_esik": 5}),
+        ("post", "/bildirim/ayarlar", {"ad": "X", "hedef": "https://example.com"}),
+        ("post", "/lisans/aktive-et", {"anahtar": "PTS1.x.y"}),
+        # Site/Nokta yönetimi de sadece yönetici'ye açık — operatör günlük
+        # operasyon yapar ama yerleşke topolojisini değiştiremez.
+        ("post", "/siteler", {"ad": "Operatör Sitesi"}),
+        ("post", "/noktalar", {"site_id": 1, "ad": "X"}),
+    ]
+    for metot, yol, govde in yonetim_denemeleri:
+        r3 = getattr(client, metot)(yol, json=govde, headers=operator_header)
+        assert r3.status_code == 403, f"{metot.upper()} {yol}: operatör 403 almalıydı, {r3.status_code} aldı"
+
+
+# ------------------------------------------------------------------
+# Site / Erişim Noktası (kamera ↔ bariyer bağlantısı)
+# ------------------------------------------------------------------
+# Nokta, kameralar (cameras.json'da tutulan) ile bariyerler (SQL tablosu)
+# arasındaki TEK bağlantıdır — bu yüzden her iki foreign key de (var
+# olduklarında) gerçekten var olan kayıtları göstermeli, aksi halde panel
+# sessizce geçersiz bir bağlantı gösterir (bkz. main.py::nokta_ekle).
+
+def test_site_olusturulur_ve_listelenir(client, yetkili_header):
+    r = client.post("/siteler", json={"ad": "Test Yerleşkesi", "aciklama": "RBAC testi için"}, headers=yetkili_header)
+    assert r.status_code == 200, r.text
+    site_id = r.json()["id"]
+
+    r2 = client.get("/siteler", headers=yetkili_header)
+    assert r2.status_code == 200
+    assert any(s["id"] == site_id for s in r2.json())
+
+
+def test_nokta_olmayan_bariyer_id_ile_reddedilir(client, yetkili_header):
+    site = client.post("/siteler", json={"ad": "Nokta Test Sitesi 1"}, headers=yetkili_header).json()
+    r = client.post("/noktalar", json={
+        "site_id": site["id"], "ad": "Nizamiye", "bariyer_id": 999999,
+    }, headers=yetkili_header)
+    assert r.status_code == 404
+
+
+def test_nokta_olmayan_kamera_id_ile_reddedilir(client, yetkili_header):
+    site = client.post("/siteler", json={"ad": "Nokta Test Sitesi 2"}, headers=yetkili_header).json()
+    r = client.post("/noktalar", json={
+        "site_id": site["id"], "ad": "Nizamiye", "kamera_id": "olmayan-kamera-uuid",
+    }, headers=yetkili_header)
+    assert r.status_code == 404
+
+
+def test_nokta_gecerli_bariyerle_olusturulur_ve_bariyer_acmaya_baglanir(client, yetkili_header):
+    site = client.post("/siteler", json={"ad": "Nokta Test Sitesi 3"}, headers=yetkili_header).json()
+    bariyer = client.post("/bariyer/ayarlar", json={"ad": "Nizamiye Bariyeri", "mod": "simulate"}, headers=yetkili_header).json()
+
+    r = client.post("/noktalar", json={
+        "site_id": site["id"], "ad": "Nizamiye Giriş", "yon": "giris", "bariyer_id": bariyer["id"],
+    }, headers=yetkili_header)
+    assert r.status_code == 200, r.text
+    nokta = r.json()
+    assert nokta["bariyer_id"] == bariyer["id"]
+
+    # Panelin "Bariyer Aç" akışının dayandığı gerçek zincir: nokta -> bariyer_id -> /bariyer/{id}/ac
+    r2 = client.post(f"/bariyer/{nokta['bariyer_id']}/ac", headers=yetkili_header)
+    assert r2.status_code == 200, r2.text
+
+
+def test_site_silinince_bagli_nokta_da_silinir(client, yetkili_header):
+    site = client.post("/siteler", json={"ad": "Silinecek Site"}, headers=yetkili_header).json()
+    nokta = client.post("/noktalar", json={"site_id": site["id"], "ad": "Silinecek Nokta"}, headers=yetkili_header).json()
+
+    r = client.delete(f"/siteler/{site['id']}", headers=yetkili_header)
+    assert r.status_code == 200, r.text
+
+    kalanlar = client.get("/noktalar", headers=yetkili_header).json()
+    assert not any(n["id"] == nokta["id"] for n in kalanlar), "Site silindiğinde bağlı nokta da silinmeliydi (cascade)"

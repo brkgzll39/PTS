@@ -113,6 +113,24 @@ sekmesinden bu plakayı girip "yetkili" olarak tanındığını görebilirsiniz.
 | **Kişiler** | Abone, personel, ziyaretçi ekleme/düzenleme/silme |
 | **LED Panel** | Bağlantı modu (Simülasyon/Seri/TCP) ayarı ve test mesajı gönderme |
 | **Test Kaydı Ekle** | Gerçek kamera olmadan manuel plaka kaydı oluşturup sistemi test etme |
+| **Site / Erişim Noktası** *(sadece yönetici)* | Yerleşke (site) tanımlama ve her erişim noktasını (nokta) bir kameraya ve bir bariyere bağlama — olay detayındaki "Bariyer Aç" butonu bu bağlantıyı kullanır |
+
+## Rol Bazlı Yetkilendirme (RBAC)
+
+Sistemde üç rol var, hem backend (her yazma uç noktasında `_rol_dogrula()`) hem
+de panel arayüzünde (`data-rol-min` özniteliği + `rolYeterli()` — bkz.
+`frontend/app.js`) aynı politikayı uygular:
+
+| Rol | Yetkisi |
+|---|---|
+| **izleyici** | Sadece okuma: kayıtları, kameraları, kişileri, kara listeyi görüntüleyebilir. Hiçbir yazma/silme/bariyer açma işlemi yapamaz. |
+| **operatör** | Günlük operasyon: kişi/kara liste/kamera/bariyer/LED kaydı ekleyip düzenleyebilir, bariyer açabilir, test kaydı oluşturabilir. Kullanıcı yönetimi, sistem ayarları, lisans, webhook ve site/nokta topolojisi gibi yönetimsel işlemlere erişemez. |
+| **yonetici** | Tam yetki: yukarıdakilerin hepsi + kullanıcı yönetimi, sistem ayarları, lisans aktivasyonu, webhook yapılandırması, veritabanı yedeği, site/nokta yönetimi. |
+
+Panel tarafında yetkisiz bir aksiyon için buton/form tamamen gizlenir ya da
+devre dışı bırakılır (backend zaten aynı isteği 403 ile reddeder — arayüz
+kısıtlaması sadece kullanıcı deneyimi içindir, gerçek güvenlik sınırı
+backend'deki `_rol_dogrula()` kontrolüdür).
 
 ## Gerçek ANPR Kamera Bağlama
 
@@ -274,6 +292,40 @@ Python/Markdown hata vermeden "çalışıyormuş gibi" görünüyordu) — bu y�
 edilmeleri zordu. `tests/test_schemas.py::test_schemas_dosyasinda_tekrarlanan_sinif_tanimi_yok`
 artık bu spesifik hata sınıfının (aynı isimde tekrar sınıf tanımı) schemas.py'de
 bir daha sessizce geri dönmemesini garanti eder.
+
+## Panel Denetiminde Bulunan ve Düzeltilen Sorunlar (2026-09-15)
+
+Kamera fiziksel olarak bağlanana kadar panelin profesyonel kullanıma hazır
+olup olmadığı denetlendi. Bulunan ve düzeltilen sorunlar:
+
+- **RBAC (rol bazlı yetkilendirme) fiilen yoktu.** Arayüz "izleyici / operatör
+  / yönetici" rollerini belgeliyordu ama backend'de kullanıcı yönetimi, sistem
+  ayarları, DB yedeği ve görüntü temizleme dışındaki HİÇBİR yazma uç noktası
+  rol kontrolü yapmıyordu — giriş yapmış olmak yetiyordu. Somut sonucu:
+  "izleyici" (salt okunur) rolündeki bir kullanıcı bile bariyer açabiliyor,
+  kamera silebiliyor, lisans aktive edebiliyordu. `_rol_dogrula()` yardımcı
+  fonksiyonu eklenip ~20 uç noktaya uygulandı; panel tarafında da aynı
+  politika `data-rol-min` özniteliği ve `rolYeterli()` ile birebir uygulandı
+  (bkz. yukarıdaki "Rol Bazlı Yetkilendirme" bölümü). `tests/test_api.py`'de
+  üç uçtan uca RBAC testiyle doğrulandı.
+- **"Bariyer Aç" butonu sahte bir `alert()` idi.** Olay detayı penceresindeki
+  buton hiçbir gerçek bariyeri açmıyor, sadece "gönderildi" diye bir mesaj
+  kutusu gösteriyordu — çünkü kameralar (JSON dosyası) ile bariyerler (SQL
+  tablosu) arasında hiçbir veri bağlantısı yoktu. `Nokta` modeli `kamera_id`
+  ve `bariyer_id` alanlarıyla genişletildi, yeni "Site / Erişim Noktası"
+  sekmesi bu bağlantıyı kurmayı sağlıyor, buton artık gerçekten
+  `POST /bariyer/{id}/ac` çağırıyor (bağlı bariyer yoksa açıkça "bağlı bariyer
+  yok" diyor, sahte başarı mesajı göstermiyor).
+- **Ölü/sahte arayüz alanları kaldırıldı.** Olay detayında hiçbir zaman
+  doldurulmayan MARKA/MODEL/RENK alanları (sistemde araç görsel tanıma yok,
+  sadece plaka OCR var) ve hardcoded "OTOPARK: Genel" / tekrarlanan
+  "SİTE: Genel tesis" metinleri kaldırıldı; SİTE alanı artık kameranın bağlı
+  olduğu gerçek `Nokta`/`Site` kaydından geliyor.
+- **Sürüm numarası tutarsızlığı düzeltildi.** Kenar çubuğu "v1.0" gösteriyordu,
+  backend (`FastAPI(version=...)`) "2.0" döndürüyordu; ikisi eşitlendi.
+- **Yan menüde aynı sekmeye giden 3 ayrı bağlantı vardı** ("Geçiş Kayıtları",
+  "Geçiş Raporu", "Veri Aktarımı" — üçü de `#kayitlar-sekme`). Gereksiz
+  tekrar kaldırıldı, tek bağlantı kaldı.
 
 ## Kalıcı Test Altyapısı
 

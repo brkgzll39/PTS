@@ -26,6 +26,8 @@ class NoktaOlustur(BaseModel):
     site_id: int
     ad: str
     yon: str = "giris"
+    kamera_id: Optional[str] = None
+    bariyer_id: Optional[int] = None
     aciklama: Optional[str] = None
 
 
@@ -34,6 +36,8 @@ class NoktaCevap(BaseModel):
     site_id: int
     ad: str
     yon: str
+    kamera_id: Optional[str] = None
+    bariyer_id: Optional[int] = None
     aciklama: Optional[str] = None
     aktif: bool
     olusturma_tarihi: datetime
