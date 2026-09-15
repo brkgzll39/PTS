@@ -235,3 +235,5 @@ bu doküman yalnızca genel bilgilendirme amaçlıdır.
   port deneyin, ardından `http://localhost:8001` adresine gidin.
 - **Veritabanını sıfırlamak isterseniz**: `veritabani/pts.db` dosyasını silin,
   sunucuyu yeniden başlattığınızda boş bir veritabanı otomatik oluşturulur.
+#   P T S  
+ 
