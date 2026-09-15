@@ -196,6 +196,87 @@ sayısı hep 1'de kaldı) ve tespit edilen plakanın gerçek bir HTTP sunucusuna
 POST edildiği doğrulandı. Gerçek kamerayı taktığınızda aynı davranışı
 `/kameralar/{id}/saglik` ve panel üzerinden gözlemleyebilirsiniz.
 
+## Bu Sürümde Bulunan ve Düzeltilen Diğer Hatalar
+
+Kamera modülündeki kritik hatayı ararken aynı sınıftan iki hata daha bulundu —
+üçü de "bir dosyanın/bloğun yanlışlıkla iki kez yazılıp ikinci kopyanın ilkini
+sessizce ezmesi" örüntüsüne sahip. Şeffaflık için burada listeleniyor:
+
+- **`backend/schemas.py` — saat/gün bazlı erişim özelliği tamamen çalışmıyordu.**
+  `KisiOlustur`, `KisiGuncelle`, `KisiCevap` ve `KullaniciCevap` şemaları dosyada
+  yanlışlıkla iki kez tanımlanmıştı. Python bir sınıfın ikinci tanımını hatasız
+  şekilde birincinin üzerine yazar; dosyanın sonundaki (eksik) ikinci tanımlar
+  kazanıyordu. Sonuç: veritabanı modeli, `_plaka_yetki_kontrol` iş mantığı ve
+  arayüz (Kişi ekleme formundaki saat/gün seçimi) bu özelliği tam destekliyor
+  olmasına rağmen, API katmanı `giris_saati_baslangic`, `giris_saati_bitis` ve
+  `izin_verilen_gunler` alanlarını ne kabul ediyor ne de geri döndürüyordu —
+  yani "sadece 08:00–18:00 arası" veya "sadece hafta içi" gibi bir kısıtlama
+  panelden hiçbir zaman gerçek olarak kaydedilemiyordu. Şemalar temizlendi;
+  bu özelliğin gerçekten çalıştığı `tests/test_api.py::test_saat_disi_erisim_yetkisiz_sayilir`
+  ile doğrulandı.
+- **`GET /auth/me` iki kez tanımlanmıştı** (`mevcut_kullanici` ve `beni_getir`).
+  Davranışı etkilemiyordu (FastAPI ilk kaydı kullanıyordu) ama ikinci tanım
+  kod tabanında kafa karıştırıcı, asla çalışmayan ölü koddu; kaldırıldı.
+- **`README.md` dosyasının sonunda bozuk, UTF-16 kodlamalı bir bayt dizisi vardı**
+  (muhtemelen bir düzenleme aracının kodlama hatası). Dosya bu yüzden bazı
+  araçlarda metin yerine "ikili (binary) dosya" olarak algılanabiliyordu.
+  Temizlendi.
+
+Bu üçü de derlemeyi/çalışmayı engellemiyordu (schemas.py ve README.md için
+Python/Markdown hata vermeden "çalışıyormuş gibi" görünüyordu) — bu yüzden fark
+edilmeleri zordu. `tests/test_schemas.py::test_schemas_dosyasinda_tekrarlanan_sinif_tanimi_yok`
+artık bu spesifik hata sınıfının (aynı isimde tekrar sınıf tanımı) schemas.py'de
+bir daha sessizce geri dönmemesini garanti eder.
+
+## Kalıcı Test Altyapısı
+
+`tests/` klasöründe pytest tabanlı bir test paketi var:
+
+- `test_plaka_dogrula.py`, `test_lisans.py`, `test_schemas.py`, `test_camera_reader.py`:
+  bağımlılığı hafif (fastapi/sqlalchemy gerektirmez), yalnızca pydantic/opencv/requests
+  yeterlidir.
+- `test_api.py`: FastAPI `TestClient` + geçici bir SQLite veritabanı kullanarak
+  kimlik doğrulama, plaka yetki kontrolü (yetkili/yetkisiz/kara liste/süresi
+  dolmuş/saat kısıtlaması), lisans aktivasyonu ve kamera limiti gibi uçtan uca
+  akışları test eder. Gerçek bir kurulumun `license.json`/`cameras.json`
+  dosyalarını ezmemesi için bu dosyaların yolu `PTS_LICENSE_FILE` /
+  `PTS_CAMERAS_FILE` / `PTS_SISTEM_AYARLARI_FILE` ortam değişkenleriyle test
+  sırasında geçici bir dizine yönlendirilir (bkz. `tests/conftest.py`).
+
+Çalıştırmak için:
+```bash
+pip install -r backend/requirements.txt -r backend/requirements-dev.txt
+pytest
+```
+
+`.github/workflows/tests.yml` bu paketi her `push`/pull request'te otomatik
+çalıştırır — camera_reader.py'nin import edilemez hale geldiği veya
+schemas.py'de bir sınıfın yanlışlıkla tekrar tanımlandığı türden bir regresyon
+artık sessizce main dalına giremez.
+
+## Üretim Güvenliği Sertleştirmeleri
+
+- **CORS**: Varsayılan olarak artık hiçbir çapraz kaynağa (cross-origin) izin
+  verilmiyor (panel zaten aynı sunucudan servis edildiği için buna ihtiyaç
+  yok). Panele başka bir origin'den erişilmesi gerekiyorsa `PTS_CORS_ORIGINS`
+  ortam değişkenine virgülle ayrılmış origin listesi yazın.
+- **Hız sınırlama (rate limiting)**: `/auth/giris` (kullanıcı adı bazlı
+  kilitlemeye ek olarak IP başına dakikada 20 deneme) ve `/kayitlar/otomatik`
+  (kimlik doğrulaması olmayan, kameraların doğrudan POST ettiği tek uç nokta;
+  IP başına dakikada 120 istek) artık bellek-içi bir sınırlayıcıdan geçiyor.
+  `/kayitlar/otomatik` için ayrıca `PTS_KAMERA_ANAHTARI` ortam değişkeniyle
+  paylaşılan bir anahtar da zorunlu tutulabilir (zaten mevcut bir özellikti).
+- **Kamera adresi doğrulama**: `/kameralar` artık yalnızca `rtsp://`, `rtsps://`,
+  `http://`, `https://` şemalarını ve `giris`/`cikis` yönünü kabul ediyor.
+- **HTTPS hatırlatması**: Uygulama açılışta, ters vekil (reverse proxy) arkasında
+  TLS sonlandırması yapılandırılmadıysa bunu `loglar/pts.log`'a bir kez
+  hatırlatma olarak yazar (zaten yapılandırdıysanız `PTS_ARKASINDA_TERS_VEKIL=1`
+  ile susturabilirsiniz).
+- **Kamera arızası bildirimi**: Kamera bekçisinin (watchdog) tespit ettiği uzun
+  süreli arızalar artık mevcut webhook bildirim sistemine bağlı — Bildirimler
+  sekmesinden "kamera_arizasi" tetikleyicili bir webhook (N8N/Slack/Teams/kendi
+  API'niz) ekleyerek anlık haber alabilirsiniz.
+
 ## LED Panel Bağlama
 
 `backend/led_panel.py` üç mod destekler:
@@ -285,5 +366,3 @@ bu doküman yalnızca genel bilgilendirme amaçlıdır.
   port deneyin, ardından `http://localhost:8001` adresine gidin.
 - **Veritabanını sıfırlamak isterseniz**: `veritabani/pts.db` dosyasını silin,
   sunucuyu yeniden başlattığınızda boş bir veritabanı otomatik oluşturulur.
-#   P T S  
- 

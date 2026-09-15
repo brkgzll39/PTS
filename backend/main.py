@@ -12,13 +12,13 @@ import hmac
 import json
 import logging
 from logging.handlers import RotatingFileHandler
-import platform
 import secrets
 import threading
 import time
 import uuid
 import base64
 import asyncio
+from collections import deque
 from urllib.parse import urlsplit, urlunsplit
 from datetime import datetime, timedelta
 from typing import Optional, List
@@ -38,6 +38,7 @@ from backend.database import SQLALCHEMY_DATABASE_URL
 from backend import excel_export
 from backend import pdf_export
 from backend import led_panel
+from backend import lisans as lisans_modulu
 
 # ---------------------- KLASÖR AYARLARI ----------------------
 BACKEND_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -45,8 +46,11 @@ PROJE_KOKU = os.path.dirname(BACKEND_DIR)
 GORUNTU_KLASORU = os.path.join(PROJE_KOKU, "goruntuler")
 DISA_AKTAR_KLASORU = os.path.join(PROJE_KOKU, "disa_aktarilanlar")
 FRONTEND_KLASORU = os.path.join(PROJE_KOKU, "frontend")
-LISANS_DOSYASI = os.path.join(BACKEND_DIR, "license.json")
-KAMERA_DOSYASI = os.path.join(BACKEND_DIR, "cameras.json")
+# PTS_LICENSE_FILE / PTS_CAMERAS_FILE: normalde ayarlamanıza gerek yok (varsayılan
+# yol kullanılır). Test paketi, gerçek bir kurulumun license.json/cameras.json
+# dosyalarını ezmemek için bunları geçici bir dizine yönlendirir.
+LISANS_DOSYASI = os.getenv("PTS_LICENSE_FILE") or os.path.join(BACKEND_DIR, "license.json")
+KAMERA_DOSYASI = os.getenv("PTS_CAMERAS_FILE") or os.path.join(BACKEND_DIR, "cameras.json")
 LOG_KLASORU = os.path.join(PROJE_KOKU, "loglar")
 os.makedirs(GORUNTU_KLASORU, exist_ok=True)
 os.makedirs(DISA_AKTAR_KLASORU, exist_ok=True)
@@ -63,6 +67,13 @@ if not logger.handlers:
 
 Base.metadata.create_all(bind=engine)
 logger.info("PTS uygulaması başlatıldı")
+if os.getenv("PTS_ARKASINDA_TERS_VEKIL", "").strip().lower() not in ("1", "true", "evet"):
+    logger.warning(
+        "HTTPS hatırlatması: PTS varsayılan olarak düz HTTP ile çalışır. İnternete açık veya "
+        "güvenilmeyen bir ağdaysanız IIS/nginx gibi bir ters vekil arkasında TLS sonlandırması "
+        "yapılandırın (bkz. README 'Üretim Ortamı Notları'). Bunu zaten yaptıysanız bu uyarıyı "
+        "susturmak için PTS_ARKASINDA_TERS_VEKIL=1 ortam değişkenini ayarlayabilirsiniz."
+    )
 
 # ================================================================
 # VERİTABANI MİGRASYONU — mevcut tablolara yeni sütun ekler
@@ -96,7 +107,7 @@ _veritabani_migrasyon()
 # SİSTEM AYARLARI (JSON dosyasında saklanan yapılandırma)
 # ================================================================
 
-SISTEM_AYARLARI_DOSYASI = os.path.join(BACKEND_DIR, "sistem_ayarlari.json")
+SISTEM_AYARLARI_DOSYASI = os.getenv("PTS_SISTEM_AYARLARI_FILE") or os.path.join(BACKEND_DIR, "sistem_ayarlari.json")
 _VARSAYILAN_AYARLAR = {
     "supheli_esik": 3,           # saatte kaç red → şüpheli alarm
     "goruntu_saklama_gun": 30,   # görüntü saklama süresi (gün)
@@ -195,6 +206,27 @@ def _kamera_ariza_alarmi_olustur(kamera_ad: str, kamera_id: str, mesaj: str) -> 
         ))
         db.commit()
         logger.error("Kamera arıza alarmı oluşturuldu: %s — %s", kamera_ad, mesaj)
+
+        # Mevcut webhook bildirim sistemine bağla (hepsi | kamera_arizasi tetikleyicili olanlar)
+        try:
+            ayarlar = db.query(models.BildirimAyarlari).filter(
+                models.BildirimAyarlari.aktif == True,  # noqa: E712
+                models.BildirimAyarlari.tip == "webhook",
+                models.BildirimAyarlari.tetikleyici.in_(["hepsi", "kamera_arizasi"]),
+            ).all()
+            for a in ayarlar:
+                threading.Thread(
+                    target=_webhook_gonder_sync,
+                    args=(a.hedef, a.http_metot, {
+                        "olay": "kamera_arizasi",
+                        "kamera_id": kamera_id,
+                        "kamera_ad": kamera_ad,
+                        "mesaj": mesaj,
+                    }),
+                    daemon=True,
+                ).start()
+        except Exception as exc:
+            logger.error("Kamera arıza webhook bildirimi hazırlanamadı: %s", exc)
     except Exception as exc:
         logger.error("Kamera arıza alarmı DB'ye yazılamadı: %s", exc)
     finally:
@@ -261,12 +293,68 @@ async def _sse_yayinla(olay_turu: str, veri: dict) -> None:
 
 app = FastAPI(title="PTS - Plaka Tanıma Sistemi", version="2.0")
 
+
+def _cors_origin_listesi() -> list[str]:
+    """PTS_CORS_ORIGINS ortam değişkeni yoksa varsayılan olarak hiçbir çapraz
+    kaynak (cross-origin) isteğe izin verilmez — panel zaten aynı FastAPI
+    sunucusundan servis edildiği için buna normalde gerek yoktur. Panel
+    dışarıdaki farklı bir origin'den (örn. ayrı bir kiosk/entegrasyon
+    uygulaması) çağrılacaksa, virgülle ayrılmış origin listesini bu değişkene
+    yazın (örn. "https://panel.example.com,https://kiosk.example.com").
+    "*" verilirse tüm origin'lere izin verilir ama bu üretimde önerilmez."""
+    deger = os.getenv("PTS_CORS_ORIGINS", "").strip()
+    if not deger:
+        return []
+    if deger == "*":
+        logger.warning("PTS_CORS_ORIGINS='*' — tüm origin'lere izin veriliyor, üretimde önerilmez")
+        return ["*"]
+    return [o.strip() for o in deger.split(",") if o.strip()]
+
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_origins=_cors_origin_listesi(),
+    allow_credentials=False,
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE"],
+    allow_headers=["Authorization", "Content-Type"],
 )
+
+
+# ================================================================
+# BASİT BELLEK-İÇİ HIZ SINIRLAMA (rate limiting)
+# ================================================================
+# Tek instance/tek process kurulumlar için yeterlidir (PTS tipik olarak tek
+# bir sahada/sunucuda çalışır). Çok sunuculu bir yayılıma geçilirse paylaşımlı
+# bir depoya (Redis vb.) taşınmalıdır.
+
+def _hiz_siniri_olustur(limit: int, pencere_sn: float):
+    """IP başına sabit pencereli hız sınırlayıcı bağımlılığı üretir."""
+    kayitlar: dict[str, "deque"] = {}
+    kilit = threading.Lock()
+
+    def bagimlilik(request: Request) -> None:
+        istemci = request.client.host if request.client else "bilinmeyen"
+        simdi = time.monotonic()
+        with kilit:
+            kuyruk = kayitlar.setdefault(istemci, deque())
+            while kuyruk and simdi - kuyruk[0] > pencere_sn:
+                kuyruk.popleft()
+            if len(kuyruk) >= limit:
+                raise HTTPException(429, "Çok fazla istek gönderildi, lütfen biraz sonra tekrar deneyin.")
+            kuyruk.append(simdi)
+
+    return bagimlilik
+
+
+# /auth/giris: kullanıcı adı bazlı kilitlemeye (yukarıda) ek olarak, IP başına
+# da sınır koyar — farklı kullanıcı adlarıyla otomatik deneme (enumeration) saldırısını yavaşlatır.
+_hiz_sinir_giris = _hiz_siniri_olustur(limit=20, pencere_sn=60)
+
+# /kayitlar/otomatik: kimlik doğrulaması olmayan, kameraların/NVR'ların doğrudan
+# POST ettiği tek uç nokta. Normal kullanımda kamera başına birkaç saniyede bir
+# istek yeterlidir; limit bunun oldukça üzerinde tutulup asıl amaç (bir cihazın
+# arızalanıp saniyede yüzlerce istek göndermesi ya da kötü niyetli akış) engellenir.
+_hiz_sinir_otomatik_kayit = _hiz_siniri_olustur(limit=120, pencere_sn=60)
 
 app.mount("/static", StaticFiles(directory=FRONTEND_KLASORU), name="static")
 app.mount("/goruntuler", StaticFiles(directory=GORUNTU_KLASORU), name="goruntuler")
@@ -393,7 +481,7 @@ def auth_durumu(db: Session = Depends(get_db)):
     return {"kurulum_tamamlandi": db.query(models.Kullanici).count() > 0}
 
 
-@app.post("/auth/giris")
+@app.post("/auth/giris", dependencies=[Depends(_hiz_sinir_giris)])
 def giris_yap(istek: schemas.GirisIstegi, db: Session = Depends(get_db)):
     kullanici_adi = istek.kullanici_adi.strip()
     kalan_kilit = _giris_kilitli_mi(kullanici_adi)
@@ -445,8 +533,7 @@ def saglik_kontrolu(db: Session = Depends(get_db)):
 # ==================================================================
 
 def _cihaz_kodu() -> str:
-    kaynak = f"{platform.node()}-{uuid.getnode()}-{platform.system()}"
-    return hashlib.sha256(kaynak.encode("utf-8")).hexdigest()[:16].upper()
+    return lisans_modulu.cihaz_kodu()
 
 
 def _lisans_durumunu_oku() -> dict:
@@ -481,23 +568,9 @@ def _lisans_aktif_mi() -> bool:
 
 def _lisans_anahtarini_coz(anahtar: str) -> dict:
     try:
-        versiyon, govde, imza = anahtar.strip().split(".", 2)
-        if versiyon != "PTS1":
-            raise ValueError
-        secret = os.getenv("PTS_LICENSE_SECRET", "gelistirme-lisans-anahtari-degistir")
-        beklenen = base64.urlsafe_b64encode(
-            hmac.new(secret.encode("utf-8"), govde.encode("ascii"), hashlib.sha256).digest()
-        ).decode("ascii").rstrip("=")
-        if not hmac.compare_digest(imza, beklenen):
-            raise ValueError
-        payload = json.loads(base64.urlsafe_b64decode(govde + "=" * (-len(govde) % 4)))
-        if payload.get("cihaz_kodu") and payload["cihaz_kodu"] != _cihaz_kodu():
-            raise ValueError
-        if datetime.fromisoformat(payload["bitis_tarihi"]).date() < datetime.now().date():
-            raise ValueError
-        return payload
-    except (ValueError, KeyError, TypeError, json.JSONDecodeError):
-        raise HTTPException(400, "Lisans anahtarı geçersiz veya süresi dolmuş")
+        return lisans_modulu.coz(anahtar, beklenen_cihaz_kodu=_cihaz_kodu())
+    except lisans_modulu.LisansGecersiz as exc:
+        raise HTTPException(400, str(exc))
 
 
 def _lisans_durumunu_yaz(durum: dict) -> None:
@@ -652,6 +725,9 @@ def kamera_son_plaka(kamera_id: str, _: models.Kullanici = Depends(_giris_gerekl
     return {"tespitler": pipeline.son_tespitler_al()}
 
 
+_GECERLI_KAMERA_SEMALARI = ("rtsp", "rtsps", "http", "https")
+
+
 @app.post("/kameralar")
 def kamera_ekle(kamera: dict = Body(...), _: models.Kullanici = Depends(_giris_gerekli)):
     lisans = _lisans_durumunu_oku()
@@ -663,11 +739,25 @@ def kamera_ekle(kamera: dict = Body(...), _: models.Kullanici = Depends(_giris_g
     gerekli_alanlar = ("ad", "rtsp_url", "yon")
     if any(not str(kamera.get(alan, "")).strip() for alan in gerekli_alanlar):
         raise HTTPException(400, "Kamera adı, RTSP adresi ve yön zorunludur")
+
+    rtsp_url = str(kamera["rtsp_url"]).strip()
+    sema = urlsplit(rtsp_url).scheme.lower()
+    if sema not in _GECERLI_KAMERA_SEMALARI:
+        raise HTTPException(
+            400,
+            f"Desteklenmeyen adres türü ('{sema or '?'}'). Adres şunlardan biriyle "
+            f"başlamalı: {', '.join(s + '://' for s in _GECERLI_KAMERA_SEMALARI)}",
+        )
+
+    yon = str(kamera["yon"]).strip().lower()
+    if yon not in ("giris", "cikis"):
+        raise HTTPException(400, "Yön 'giris' veya 'cikis' olmalıdır")
+
     yeni_kamera = {
         "id": str(uuid.uuid4()),
         "ad": str(kamera["ad"]).strip(),
-        "rtsp_url": str(kamera["rtsp_url"]).strip(),
-        "yon": str(kamera["yon"]).strip(),
+        "rtsp_url": rtsp_url,
+        "yon": yon,
         "aktif": True,
     }
     kameralar.append(yeni_kamera)
@@ -1086,7 +1176,7 @@ def kayit_ekle_manuel(kayit: schemas.KayitManuel, db: Session = Depends(get_db),
     )
 
 
-@app.post("/kayitlar/otomatik", response_model=schemas.KayitCevap)
+@app.post("/kayitlar/otomatik", response_model=schemas.KayitCevap, dependencies=[Depends(_hiz_sinir_otomatik_kayit)])
 async def kayit_ekle_otomatik(
     plaka_no: str = Form(...),
     kamera_id: str = Form("KAMERA-1"),
@@ -1421,11 +1511,6 @@ def led_test_mesaji(mesaj: str = Query("PTS SİSTEMİ TEST MESAJI"), _: models.K
 # ==================================================================
 # KULLANICI YÖNETİMİ
 # ==================================================================
-
-@app.get("/auth/me", response_model=schemas.KullaniciCevap)
-def beni_getir(kullanici: models.Kullanici = Depends(_giris_gerekli)):
-    return kullanici
-
 
 @app.get("/kullanicilar", response_model=List[schemas.KullaniciCevap])
 def kullanicilari_listele(db: Session = Depends(get_db), kullanici: models.Kullanici = Depends(_giris_gerekli)):

@@ -1,0 +1,11 @@
+# PTS - Test/geliştirme bağımlılıkları
+# Kurulum: pip install -r backend/requirements.txt -r backend/requirements-dev.txt
+# Testleri çalıştırma: proje kökünden `pytest`
+
+pytest==8.3.3
+httpx==0.27.2          # FastAPI TestClient bunu kullanır (starlette >= 0.36)
+
+# camera_reader.py testleri için (ağır fast-alpr/onnx modeline gerek yok,
+# testler sahte/basit bir ANPR motoru kullanır — sadece opencv + requests yeterli)
+opencv-python-headless==4.10.0.84
+requests==2.32.3

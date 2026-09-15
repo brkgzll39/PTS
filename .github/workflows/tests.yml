@@ -1,0 +1,36 @@
+name: Testler
+
+# Her push ve pull request'te otomatik çalışır. Amaç: camera_reader.py'de
+# 2026-09'da bulunan türden bir hatanın (dosya bozuk/import edilemez hale
+# gelmiş ama kimse fark etmemiş) veya schemas.py'deki tekrar tanımlanmış
+# sınıf hatasının bir daha sessizce fark edilmeden geçmesini önlemek.
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch: {}
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Python kur
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Bağımlılıkları kur
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r backend/requirements.txt
+          pip install -r backend/requirements-dev.txt
+
+      - name: Tüm backend .py dosyalarının söz dizimini kontrol et
+        run: |
+          python -m py_compile backend/*.py
+
+      - name: Testleri çalıştır
+        run: pytest -v

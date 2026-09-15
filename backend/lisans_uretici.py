@@ -5,36 +5,21 @@
 
 Üretim ortamında PTS_LICENSE_SECRET ortam değişkenini lisans sunucusunda
 ve doğrulama yapan uygulamada aynı, güçlü değerle ayarlayın.
+
+İmzalama/doğrulama mantığının kendisi backend/lisans.py içindedir — bu dosya
+sadece o modülün ince bir komut satırı arayüzüdür (main.py da aynı modülü
+kullanır, böylece iki taraf birbirinden asla sapmaz).
 """
 import argparse
-import base64
-import hashlib
-import hmac
-import json
-import os
-import secrets
-from datetime import date, timedelta
 
-
-def _b64(veri: bytes) -> str:
-    return base64.urlsafe_b64encode(veri).decode("ascii").rstrip("=")
+try:
+    from backend import lisans  # proje kökünden çalıştırılınca
+except ImportError:
+    import lisans  # backend/ içinden doğrudan çalıştırılınca
 
 
 def lisans_uret(musteri: str, kamera_limiti: int, gun: int, cihaz_kodu: str | None = None) -> str:
-    if kamera_limiti < 1 or gun < 1:
-        raise ValueError("Kamera limiti ve gün sayısı 1 veya daha büyük olmalıdır")
-    payload = {
-        "lisans_id": secrets.token_hex(8).upper(),
-        "musteri": musteri.strip(),
-        "cihaz_kodu": cihaz_kodu.strip().upper() if cihaz_kodu else None,
-        "kamera_limiti": kamera_limiti,
-        "baslangic_tarihi": date.today().isoformat(),
-        "bitis_tarihi": (date.today() + timedelta(days=gun)).isoformat(),
-    }
-    govde = _b64(json.dumps(payload, ensure_ascii=True, separators=(",", ":")).encode("utf-8"))
-    secret = os.getenv("PTS_LICENSE_SECRET", "gelistirme-lisans-anahtari-degistir")
-    imza = _b64(hmac.new(secret.encode("utf-8"), govde.encode("ascii"), hashlib.sha256).digest())
-    return f"PTS1.{govde}.{imza}"
+    return lisans.uret(musteri, kamera_limiti, gun, cihaz_kodu)
 
 
 def main() -> None:

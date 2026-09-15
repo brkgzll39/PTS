@@ -1111,7 +1111,7 @@ async function bildirimleriYukle() {
     const liste = await apiCagir("/bildirim/ayarlar");
     const el = document.getElementById("bildirimTablo");
     if (!el) return;
-    const tetikEtiket = { hepsi: "Her geçiş", yetkisiz: "Yetkisiz", kara_liste: "Kara Liste", suresi_dolmus: "Süresi Dolmuş" };
+    const tetikEtiket = { hepsi: "Her geçiş", yetkisiz: "Yetkisiz", kara_liste: "Kara Liste", suresi_dolmus: "Süresi Dolmuş", kamera_arizasi: "Kamera Arızası" };
     el.innerHTML = liste.map(b => `<tr>
       <td><strong>${escapeHtml(b.ad)}</strong></td>
       <td class="text-muted small text-truncate" style="max-width:160px">${escapeHtml(b.hedef)}</td>
