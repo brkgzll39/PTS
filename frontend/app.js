@@ -1,0 +1,1194 @@
+const API = "";  // aynı sunucudan servis edildiği için boş bırakıldı
+let sonKayitlarCache = [];
+
+function sekmeAc(target) {
+  const sekme = document.querySelector(`[data-bs-target="${target}"]`);
+  if (sekme && window.bootstrap) bootstrap.Tab.getOrCreateInstance(sekme).show();
+  document.querySelectorAll(".side-link").forEach(link => link.classList.toggle("active", link.dataset.target === target));
+}
+
+document.querySelectorAll("[data-target]").forEach(link => link.addEventListener("click", () => sekmeAc(link.dataset.target)));
+
+// ---------------------- YARDIMCI FONKSİYONLAR ----------------------
+
+function gorselAdiAl(yol) {
+  // Windows ("\") ve Linux/Mac ("/") yol ayırıcılarının ikisini de destekler
+  return yol.split(/[\\/]/).pop();
+}
+
+function escapeHtml(deger) {
+  // Kamera/kullanıcı kaynaklı verileri innerHTML'e basmadan önce kaçış karakterlerine çevirir (XSS önlemi).
+  return String(deger ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+}
+
+function tarihFormatla(iso) {
+  const d = new Date(iso);
+  return d.toLocaleString("tr-TR", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" });
+}
+
+function durumRozeti(durum) {
+  const etiketler = { yetkili: "Yetkili", yetkisiz: "Yetkisiz", suresi_dolmus: "Süresi Dolmuş", bilinmiyor: "Bilinmiyor", kara_liste: "Kara Liste" };
+  return `<span class="badge badge-${durum}">${etiketler[durum] || escapeHtml(durum)}</span>`;
+}
+
+function tipRozeti(tip) {
+  if (!tip) return '<span class="text-muted">-</span>';
+  const etiketler = { abone: "Abone", personel: "Personel", ziyaretci: "Ziyaretçi" };
+  return `<span class="badge badge-${tip}">${etiketler[tip] || escapeHtml(tip)}</span>`;
+}
+
+function saatiGuncelle() {
+  const el = document.getElementById("saatGosterge");
+  if (el) el.textContent = new Date().toLocaleString("tr-TR");
+}
+setInterval(saatiGuncelle, 1000);
+saatiGuncelle();
+
+async function apiCagir(yol, secenekler = {}) {
+  const token = sessionStorage.getItem("pts_token");
+  secenekler.headers = { ...(secenekler.headers || {}), ...(token ? { Authorization: `Bearer ${token}` } : {}) };
+  const cevap = await fetch(API + yol, secenekler);
+  if (!cevap.ok) {
+    const hata = await cevap.json().catch(() => ({ detail: "Bilinmeyen hata" }));
+    throw new Error(hata.detail || "İstek başarısız");
+  }
+  return cevap.status === 204 ? null : cevap.json();
+}
+
+async function authBaslat() {
+  const durum = await apiCagir("/auth/durum");
+  if (!durum.kurulum_tamamlandi) {
+    document.getElementById("authBaslik").textContent = "Yönetici hesabı oluştur";
+    document.getElementById("authAciklama").textContent = "Bu PTS kurulumu için ilk yönetici hesabını belirleyin.";
+    document.getElementById("authButon").textContent = "Hesabı oluştur";
+    document.getElementById("authForm").dataset.ilkKurulum = "true";
+  }
+  document.getElementById("authForm").addEventListener("submit", authFormGonder);
+  const token = sessionStorage.getItem("pts_token");
+  if (token) {
+    try { const kullanici = await apiCagir("/auth/me"); authBasarili(kullanici); return true; } catch { sessionStorage.removeItem("pts_token"); }
+  }
+  return false;
+}
+
+function authBasarili(kullanici) {
+  document.getElementById("authKapisi").classList.add("d-none");
+  document.getElementById("oturumKullanici").textContent = kullanici.kullanici_adi;
+  uygulamaVerileriniYukle();
+}
+
+function uygulamaVerileriniYukle() {
+  panelYenile(); kayitlariYukle(); kisileriYukle(); ledAyarlariYukle(); lisansYukle(); kameralariYukle();
+  grafikYukle(); karaListesiYukle(); bariyerleriYukle(); kullanicilariYukle(); sistemSagliginiYukle();
+  bildirimleriYukle();
+  sseBaslat();
+}
+
+async function authFormGonder(e) {
+  e.preventDefault();
+  const form = e.target;
+  const sonuc = document.getElementById("authSonuc");
+  const govde = { kullanici_adi: document.getElementById("authKullanici").value, parola: document.getElementById("authParola").value };
+  try {
+    const yol = form.dataset.ilkKurulum === "true" ? "/auth/ilk-yonetici" : "/auth/giris";
+    const cevap = await apiCagir(yol, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(govde) });
+    if (yol === "/auth/ilk-yonetici") {
+      form.dataset.ilkKurulum = "false";
+      document.getElementById("authBaslik").textContent = "Güvenli giriş";
+      document.getElementById("authAciklama").textContent = "Yönetici hesabınız oluşturuldu. Giriş yapın.";
+      document.getElementById("authButon").textContent = "Giriş yap";
+      sonuc.className = "small mt-3 text-success"; sonuc.textContent = "Hesap hazır.";
+    } else { sessionStorage.setItem("pts_token", cevap.token); authBasarili(cevap.kullanici); }
+  } catch (err) { sonuc.className = "small mt-3 text-danger"; sonuc.textContent = err.message; }
+}
+
+// ---------------------- PANEL (DASHBOARD) ----------------------
+
+async function panelYenile() {
+  try {
+    const ist = await apiCagir("/kayitlar/istatistik");
+    document.getElementById("istToplam").textContent = ist.toplam_kayit;
+    document.getElementById("istBugun").textContent = ist.bugunku_kayit;
+    document.getElementById("istYetkisiz").textContent = ist.yetkisiz_giris_denemesi;
+    document.getElementById("istKisi").textContent = ist.aktif_kisi_sayisi;
+    const elKL = document.getElementById("istKaraListe");
+    if (elKL) elKL.textContent = ist.kara_liste_gecis ?? 0;
+    const elKLS = document.getElementById("istKaraListeSayisi");
+    if (elKLS) elKLS.textContent = ist.kara_liste_kayit_sayisi ?? 0;
+
+    // Araç içeride sayısı
+    apiCagir("/araclar/iceridedurum").then(d => {
+      const el = document.getElementById("istIceride");
+      if (el) el.textContent = d.iceride_sayisi;
+    }).catch(() => {});
+
+    const kayitlar = await apiCagir("/kayitlar?limit=10");
+    const canliOlaylar = document.getElementById("canliOlaylar");
+    if (canliOlaylar) {
+      const alarmlar = await apiCagir("/alarmlar?sadece_acik=true&limit=4");
+      const alarmSatirlari = alarmlar.map(a => `<div class="event-row alarm-row"><div class="event-icon blocked"><i class="bi bi-exclamation-triangle-fill"></i></div><div class="event-main"><strong>${escapeHtml(a.plaka_no)}</strong><span>${a.alarm_tipi === "yetkisiz_arac" ? "Yetkisiz araç" : "Süresi dolmuş ziyaretçi"}</span></div><button class="btn btn-sm btn-light" title="Okundu işaretle" onclick="alarmOkundu(${a.id})"><i class="bi bi-check2"></i></button></div>`).join("");
+      const olaySatirlari = kayitlar.slice(0, 8).map(k => `<button class="event-row event-button" onclick="olayDetayAc(${k.id})"><div class="event-icon ${k.yetki_durumu === "yetkili" ? "allowed" : "blocked"}"><i class="bi ${k.yon === "giris" ? "bi-box-arrow-in-right" : "bi-box-arrow-right"}"></i></div><div class="event-main"><strong>${escapeHtml(k.plaka_no)}</strong><span>${escapeHtml(k.kamera_id)} · ${k.yon === "giris" ? "Giriş" : "Çıkış"}</span></div><div class="event-time">${tarihFormatla(k.tarih_saat).split(",")[1] || "-"}</div></button>`).join("");
+      canliOlaylar.innerHTML = alarmSatirlari + olaySatirlari || '<div class="empty-state">Henüz geçiş kaydı yok</div>';
+    }
+    sonKayitlarCache = kayitlar;
+    const canliYenileme = document.getElementById("canliYenileme");
+    if (canliYenileme) canliYenileme.textContent = new Date().toLocaleTimeString("tr-TR");
+    const tbody = document.getElementById("sonKayitlarTablo");
+    tbody.innerHTML = kayitlar.map(k => `
+      <tr>
+        <td>${k.goruntu_yolu ? `<img class="thumb" src="/goruntuler/${gorselAdiAl(k.goruntu_yolu)}" onclick="window.open(this.src)">` : '<span class="text-muted small">Görsel yok</span>'}</td>
+        <td class="fw-bold"><button class="plate-link" onclick="olayDetayAc(${k.id})">${escapeHtml(k.plaka_no)}</button></td>
+        <td>${tarihFormatla(k.tarih_saat)}</td>
+        <td>${k.yon === "giris" ? "Giriş" : "Çıkış"}</td>
+        <td>${durumRozeti(k.yetki_durumu)}</td>
+        <td>${tipRozeti(k.kisi_tip_anlik)}</td>
+      </tr>
+    `).join("") || `<tr><td colspan="6" class="text-center text-muted py-3">Henüz kayıt yok</td></tr>`;
+  } catch (e) {
+    console.error(e);
+  }
+}
+
+async function alarmOkundu(id) {
+  await apiCagir(`/alarmlar/${id}/okundu`, { method: "PATCH" });
+  panelYenile();
+}
+
+async function olayDetayAc(id) {
+  const kayit = sonKayitlarCache.find(item => item.id === id);
+  if (!kayit) return;
+  const detay = kayit.kisi_id ? await apiCagir(`/kisiler/${kayit.kisi_id}`).catch(() => null) : null;
+  const gorsel = document.getElementById("olayModalGorsel");
+  const gorselYok = document.getElementById("olayModalGorselYok");
+  if (kayit.goruntu_yolu) { gorsel.src = `/goruntuler/${gorselAdiAl(kayit.goruntu_yolu)}`; gorsel.classList.remove("d-none"); gorselYok.classList.add("d-none"); } else { gorsel.removeAttribute("src"); gorsel.classList.add("d-none"); gorselYok.classList.remove("d-none"); }
+  document.getElementById("olayModalTur").textContent = kayit.yetki_durumu === "yetkili" ? "TANIMLI ARAÇ" : kayit.yetki_durumu === "suresi_dolmus" ? "ZİYARETÇİ GİRİŞİ" : "YETKİSİZ ARAÇ";
+  document.getElementById("olayModalPlaka").textContent = kayit.plaka_no;
+  document.getElementById("olayModalTarih").textContent = new Date(kayit.tarih_saat).toLocaleDateString("tr-TR");
+  document.getElementById("olayModalSaat").textContent = new Date(kayit.tarih_saat).toLocaleTimeString("tr-TR");
+  document.getElementById("olayModalSite").textContent = "Genel tesis";
+  document.getElementById("olayModalNokta").textContent = kayit.kamera_id;
+  document.getElementById("olayModalYon").textContent = kayit.yon === "giris" ? "Giriş" : "Çıkış";
+  document.getElementById("olayModalKisi").textContent = detay?.ad_soyad || "Tanımsız araç";
+  document.getElementById("olayModalDaire").textContent = detay?.daire_departman || "-";
+  document.getElementById("olayModalAracTipi").textContent = detay ? (detay.tip === "ziyaretci" ? "Ziyaretçi" : "Tanımlı") : "Tanımsız araç";
+  document.getElementById("olayModalGuven").textContent = kayit.guven_skoru ? `${(kayit.guven_skoru * 100).toFixed(0)}%` : "-";
+  document.getElementById("bariyerAcBtn").onclick = () => alert("Bariyer açma komutu simülasyon modunda gönderildi.");
+  bootstrap.Modal.getOrCreateInstance(document.getElementById("olayDetayModal")).show();
+}
+
+async function lisansYukle() {
+  try {
+    const lisans = await apiCagir("/lisans");
+    const durumMetni = lisans.aktif ? "Aktif" : "Aktivasyon bekliyor";
+    const durumEl = document.getElementById("lisansDurum");
+    if (durumEl) durumEl.innerHTML = `<div class="license-icon ${lisans.aktif ? "active" : "pending"}"><i class="bi ${lisans.aktif ? "bi-shield-check" : "bi-shield-exclamation"}"></i></div><div><strong>${durumMetni}</strong><span>${lisans.aktif ? "Kamera bağlantıları kullanılabilir" : "Kamera kullanımını etkinleştirmek için anahtar girin"}</span></div>`;
+    document.getElementById("lisansMiniDurum").innerHTML = `<i class="bi ${lisans.aktif ? "bi-shield-check" : "bi-shield-exclamation"}"></i> Lisans ${lisans.aktif ? "aktif" : "pasif"}`;
+    document.getElementById("lisansMiniDurum").classList.toggle("active", lisans.aktif);
+    document.getElementById("cihazKodu").textContent = lisans.cihaz_kodu;
+    document.getElementById("kameraLimiti").textContent = lisans.aktif ? `${lisans.kamera_limiti} kamera` : "0 kamera";
+    document.getElementById("lisansBitisi").textContent = lisans.bitis_tarihi || "Aktif değil";
+  } catch (err) { console.error(err); }
+}
+
+async function kameralariYukle() {
+  try {
+    const kameralar = await apiCagir("/kameralar");
+    document.getElementById("kameraSayac").textContent = `${kameralar.length} kamera tanımlı`;
+    document.getElementById("kameralarTablo").innerHTML = kameralar.map(k => {
+      const durum = !k.kutuphaneler_mevcut
+        ? `<span class="badge bg-warning text-dark" title="fast-alpr + opencv kurulu değil">Kütüphane Yok</span>`
+        : k.pipeline_calisiyor
+          ? `<span class="badge bg-success">Çalışıyor</span>`
+          : `<span class="badge bg-danger">Durdu</span>`;
+      const saglik = _kameraSaglikCache[k.id];
+      const tcpBadge = saglik
+        ? (saglik.tcp_erisim
+            ? `<span class="badge bg-success" title="${saglik.gecikme_ms}ms">${saglik.gecikme_ms}ms</span>`
+            : `<span class="badge bg-danger">Erişilemiyor</span>`)
+        : `<span class="badge bg-light text-muted">-</span>`;
+      const yenidenBtn = `<button class="btn btn-sm btn-outline-secondary ms-1" title="Pipeline'ı yeniden başlat" onclick="kameraYenidenBaslat('${k.id}')"><i class="bi bi-arrow-repeat"></i></button>`;
+      return `<tr><td><strong>${escapeHtml(k.ad)}</strong></td><td>${k.yon === "giris" ? "Giriş" : "Çıkış"}</td><td class="text-muted small text-truncate" style="max-width: 180px">${escapeHtml(k.rtsp_url)}</td><td>${durum}</td><td>${tcpBadge}</td><td><button class="btn btn-sm btn-outline-danger" title="Kamerayı sil" onclick="kameraSil('${k.id}')"><i class="bi bi-trash"></i></button>${yenidenBtn}</td></tr>`;
+    }).join("") || '<tr><td colspan="6" class="text-center text-muted py-4">Henüz kamera tanımlanmadı</td></tr>';
+    kameraDuvariniGuncelle(kameralar);
+  } catch (err) { console.error(err); }
+}
+
+let _kameraGoruntuleriInterval = null;
+
+function kameraDuvariniGuncelle(kameralar) {
+  const duvar = document.getElementById("kameraDuvari");
+  const sayacBtn = document.getElementById("kameraSayacBtn");
+  if (!duvar) return;
+  if (sayacBtn) sayacBtn.innerHTML = `<i class="bi bi-grid-2x2"></i> ${kameralar.length} Kamera`;
+  if (!kameralar.length) {
+    duvar.innerHTML = `<div class="camera-tile camera-simulated"><div class="camera-label"><span><i class="bi bi-camera-video-fill me-1"></i>KAMERA TANIMLI DEĞİL</span><span class="camera-status">Simülasyon</span></div><div class="camera-empty"><i class="bi bi-camera-video"></i><strong>Henüz kamera eklenmedi</strong><small>Kamera Yönetimi ekranından RTSP kamera ekleyin</small></div></div>`;
+    if (_kameraGoruntuleriInterval) { clearInterval(_kameraGoruntuleriInterval); _kameraGoruntuleriInterval = null; }
+    return;
+  }
+  duvar.innerHTML = kameralar.map(k => {
+    const statusClass = k.pipeline_calisiyor ? "camera-live" : "camera-simulated";
+    const statusText = k.pipeline_calisiyor ? "Canlı" : (k.kutuphaneler_mevcut ? "Bağlanmıyor" : "Simülasyon");
+    return `<div class="camera-tile ${statusClass}" id="tile-${k.id}"><div class="camera-label"><span><i class="bi bi-camera-video-fill me-1"></i>${escapeHtml(k.ad).toUpperCase()}</span><span class="camera-status">${statusText}</span></div><div class="camera-empty" id="frame-${k.id}"><i class="bi bi-camera-video"></i><strong>${k.yon === "giris" ? "Giriş" : "Çıkış"} kamerası</strong><small>${k.pipeline_calisiyor ? "Görüntü yükleniyor..." : (k.kutuphaneler_mevcut ? "Pipeline başlatılamadı" : "opencv + fast-alpr gerekli")}</small></div></div>`;
+  }).join("");
+
+  // Pipeline çalışan kameralar için anlık görüntü çek
+  if (_kameraGoruntuleriInterval) clearInterval(_kameraGoruntuleriInterval);
+  const canliKameralar = kameralar.filter(k => k.pipeline_calisiyor);
+  if (canliKameralar.length) {
+    const _kareleriYenile = () => {
+      canliKameralar.forEach(k => {
+        const el = document.getElementById(`frame-${k.id}`);
+        if (!el) return;
+        const ts = Date.now();
+        const token = sessionStorage.getItem("pts_token");
+        fetch(`/kameralar/${k.id}/goruntu?t=${ts}`, { headers: { Authorization: `Bearer ${token}` } })
+          .then(r => r.ok ? r.blob() : null)
+          .then(blob => {
+            if (!blob) return;
+            const url = URL.createObjectURL(blob);
+            el.innerHTML = `<img src="${url}" style="width:100%;height:100%;object-fit:cover" onload="URL.revokeObjectURL(this.src)">`;
+            el.style.padding = "0";
+          })
+          .catch(() => {});
+      });
+    };
+    _kareleriYenile();
+    _kameraGoruntuleriInterval = setInterval(_kareleriYenile, 3000);
+
+    // Son plaka overlay — 2 sn'de bir güncelle
+    const _plakalariGuncelle = () => {
+      canliKameralar.forEach(async k => {
+        try {
+          const token = sessionStorage.getItem("pts_token");
+          const r = await fetch(`/kameralar/${k.id}/son-plaka`, { headers: { Authorization: `Bearer ${token}` } });
+          if (!r.ok) return;
+          const veri = await r.json();
+          const tile = document.getElementById(`tile-${k.id}`);
+          if (!tile) return;
+          let overlay = tile.querySelector(".plaka-overlay");
+          if (veri.tespitler?.length) {
+            const t = veri.tespitler[0];
+            if (!overlay) {
+              overlay = document.createElement("div");
+              overlay.className = "plaka-overlay";
+              tile.appendChild(overlay);
+            }
+            overlay.textContent = `${t.plaka}  ${(t.guven * 100).toFixed(0)}%`;
+            overlay.className = "plaka-overlay";
+            overlay._timeout && clearTimeout(overlay._timeout);
+            overlay._timeout = setTimeout(() => overlay.remove(), 8000);
+          }
+        } catch {}
+      });
+    };
+    setInterval(_plakalariGuncelle, 2000);
+  }
+}
+
+document.getElementById("kameraForm").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const sonuc = document.getElementById("kameraSonuc");
+  try {
+    await apiCagir("/kameralar", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ad: document.getElementById("kameraAd").value, rtsp_url: document.getElementById("kameraRtsp").value, yon: document.getElementById("kameraYon").value }) });
+    sonuc.className = "small mt-3 text-success"; sonuc.textContent = "Kamera kaydedildi."; e.target.reset(); kameralariYukle();
+  } catch (err) { sonuc.className = "small mt-3 text-danger"; sonuc.textContent = err.message; }
+});
+
+async function kameraSil(id) {
+  if (!confirm("Bu kamerayı silmek istediğinize emin misiniz?")) return;
+  await apiCagir(`/kameralar/${id}`, { method: "DELETE" });
+  kameralariYukle();
+}
+async function kameraYenidenBaslat(id) {
+  try {
+    const sonuc = await apiCagir(`/kameralar/${id}/yeniden-baslat`, { method: "POST" });
+    if (sonuc.basarili) {
+      alert("Pipeline yeniden başlatıldı.");
+    } else if (!sonuc.kutuphaneler_mevcut) {
+      alert("Gerekli kütüphaneler kurulu değil.\npip install \"fast-alpr[onnx]\" opencv-python requests");
+    } else {
+      alert("Pipeline başlatılamadı. Log dosyasını kontrol edin.");
+    }
+    kameralariYukle();
+  } catch (err) { alert(err.message); }
+}
+document.getElementById("lisansForm").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const sonuc = document.getElementById("lisansSonuc");
+  try { await apiCagir("/lisans/aktive-et", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ anahtar: document.getElementById("lisansAnahtari").value }) }); sonuc.className = "small mt-2 text-success"; sonuc.textContent = "Lisans başarıyla aktive edildi."; lisansYukle(); } catch (err) { sonuc.className = "small mt-2 text-danger"; sonuc.textContent = err.message; }
+});
+
+// ---------------------- KAYITLAR (sayfalama destekli) ----------------------
+
+let _kayitlarSayfa = 0;
+const _kayitlarLimit = 50;
+
+function filtreParametreleri() {
+  const params = new URLSearchParams();
+  const plaka = document.getElementById("filtrePlaka").value.trim();
+  const baslangic = document.getElementById("filtreBaslangic").value;
+  const bitis = document.getElementById("filtreBitis").value;
+  const durum = document.getElementById("filtreDurum").value;
+  if (plaka) params.set("plaka", plaka);
+  if (baslangic) params.set("baslangic", baslangic);
+  if (bitis) params.set("bitis", bitis);
+  if (durum) params.set("yetki_durumu", durum);
+  params.set("limit", _kayitlarLimit);
+  params.set("offset", _kayitlarSayfa * _kayitlarLimit);
+  return params;
+}
+
+async function kayitlariYukle(sifirla = true) {
+  if (sifirla) _kayitlarSayfa = 0;
+  const params = filtreParametreleri();
+  const [kayitlar, sayfaBilgisi] = await Promise.all([
+    apiCagir(`/kayitlar?${params.toString()}`),
+    apiCagir(`/kayitlar/sayfa-bilgisi?${new URLSearchParams({
+      plaka: document.getElementById("filtrePlaka").value.trim(),
+      baslangic: document.getElementById("filtreBaslangic").value,
+      bitis: document.getElementById("filtreBitis").value,
+      yetki_durumu: document.getElementById("filtreDurum").value,
+      limit: _kayitlarLimit,
+    }).toString()}`),
+  ]);
+  sonKayitlarCache = [...sonKayitlarCache.filter(k => !kayitlar.find(n => n.id === k.id)), ...kayitlar];
+  const el = document.getElementById("kayitlarSayac");
+  if (el) el.textContent = `${sayfaBilgisi.toplam} kayıt · Sayfa ${_kayitlarSayfa + 1}/${sayfaBilgisi.sayfa_sayisi}`;
+  const tbody = document.getElementById("kayitlarTablo");
+  tbody.innerHTML = kayitlar.map(k => `
+    <tr>
+      <td>${k.goruntu_yolu ? `<img class="thumb" src="/goruntuler/${gorselAdiAl(k.goruntu_yolu)}" onclick="window.open(this.src)">` : '<span class="text-muted small">-</span>'}</td>
+      <td>${k.id}</td>
+      <td class="fw-bold"><button class="plate-link" onclick="plakaAnalizAc('${escapeHtml(k.plaka_no)}')">${escapeHtml(k.plaka_no)}</button></td>
+      <td>${tarihFormatla(k.tarih_saat)}</td>
+      <td>${escapeHtml(k.kamera_id)}</td>
+      <td>${k.yon === "giris" ? "Giriş" : "Çıkış"}</td>
+      <td>${durumRozeti(k.yetki_durumu)}</td>
+      <td>${tipRozeti(k.kisi_tip_anlik)}</td>
+      <td>${k.guven_skoru ? (k.guven_skoru * 100).toFixed(0) + "%" : "-"}</td>
+      <td><button class="btn btn-sm btn-outline-danger" onclick="kayitPdfIndir(${k.id})"><i class="bi bi-file-earmark-pdf"></i></button></td>
+    </tr>
+  `).join("") || `<tr><td colspan="10" class="text-center text-muted py-3">Kayıt bulunamadı</td></tr>`;
+
+  // Sayfalama kontrolleri
+  const sayfaEl = document.getElementById("sayfalama");
+  if (sayfaEl) {
+    const onceki = _kayitlarSayfa > 0;
+    const sonraki = _kayitlarSayfa < sayfaBilgisi.sayfa_sayisi - 1;
+    sayfaEl.innerHTML = `
+      <div class="d-flex gap-2">
+        <button class="btn btn-sm btn-outline-secondary" ${!onceki ? "disabled" : ""} onclick="sayfaDegistir(-1)"><i class="bi bi-chevron-left"></i> Önceki</button>
+        <button class="btn btn-sm btn-outline-secondary" ${!sonraki ? "disabled" : ""} onclick="sayfaDegistir(1)">Sonraki <i class="bi bi-chevron-right"></i></button>
+      </div>
+      <span class="small text-muted">${_kayitlarSayfa * _kayitlarLimit + 1}–${Math.min((_kayitlarSayfa + 1) * _kayitlarLimit, sayfaBilgisi.toplam)} / ${sayfaBilgisi.toplam}</span>`;
+  }
+}
+
+function sayfaDegistir(delta) {
+  _kayitlarSayfa = Math.max(0, _kayitlarSayfa + delta);
+  kayitlariYukle(false);
+}
+
+function disaAktar(tur) {
+  const params = filtreParametreleri();
+  window.open(`/disa-aktar/${tur}/kayitlar?${params.toString()}`, "_blank");
+}
+
+function kayitPdfIndir(id) {
+  window.open(`/disa-aktar/pdf/kayit/${id}`, "_blank");
+}
+
+// ---------------------- KİŞİLER ----------------------
+
+let aktifTipFiltre = "";
+
+function ziyaretciAlanGoster() {
+  const tip = document.getElementById("kisiTip").value;
+  document.getElementById("ziyaretciBitisAlani").classList.toggle("d-none", tip !== "ziyaretci");
+  document.getElementById("daireEtiket").textContent = tip === "personel" ? "Departman" : "Daire No";
+}
+
+function kisiTipFiltrele(tip, btn) {
+  aktifTipFiltre = tip;
+  document.querySelectorAll(".tip-filtre").forEach(b => b.classList.remove("active"));
+  btn.classList.add("active");
+  kisileriYukle();
+}
+
+async function kisileriYukle() {
+  const params = new URLSearchParams();
+  if (aktifTipFiltre) params.set("tip", aktifTipFiltre);
+  const kisiler = await apiCagir(`/kisiler?${params.toString()}`);
+  const tbody = document.getElementById("kisilerTablo");
+  tbody.innerHTML = kisiler.map(k => `
+    <tr>
+      <td>${escapeHtml(k.ad_soyad)}</td>
+      <td class="fw-bold">${escapeHtml(k.plaka_no)}</td>
+      <td>${tipRozeti(k.tip)}</td>
+      <td>${escapeHtml(k.telefon) || "-"}</td>
+      <td>${escapeHtml(k.daire_departman) || "-"}</td>
+      <td>${k.aktif ? '<span class="badge bg-success">Aktif</span>' : '<span class="badge bg-secondary">Pasif</span>'}</td>
+      <td>
+        <button class="btn btn-sm btn-outline-primary" onclick="kisiDuzenleAc(${k.id})" title="Düzenle"><i class="bi bi-pencil"></i></button>
+        <button class="btn btn-sm btn-outline-secondary" onclick="kisiDurumDegistir(${k.id}, ${!k.aktif})" title="Aktif/Pasif Yap"><i class="bi bi-toggle2-on"></i></button>
+        <button class="btn btn-sm btn-outline-danger" onclick="kisiSil(${k.id})" title="Sil"><i class="bi bi-trash"></i></button>
+      </td>
+    </tr>
+  `).join("") || `<tr><td colspan="7" class="text-center text-muted py-3">Kişi bulunamadı</td></tr>`;
+}
+
+document.getElementById("kisiForm").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const secilenGunler = [...document.querySelectorAll("#kisiGunler input:checked")].map(c => c.value);
+  const gövde = {
+    ad_soyad: document.getElementById("kisiAdSoyad").value,
+    plaka_no: document.getElementById("kisiPlaka").value,
+    tip: document.getElementById("kisiTip").value,
+    telefon: document.getElementById("kisiTelefon").value || null,
+    daire_departman: document.getElementById("kisiDaire").value || null,
+    aciklama: document.getElementById("kisiAciklama").value || null,
+    bitis_tarihi: document.getElementById("kisiBitisTarihi").value || null,
+    giris_saati_baslangic: document.getElementById("kisiSaatBaslangic").value || null,
+    giris_saati_bitis: document.getElementById("kisiSaatBitis").value || null,
+    izin_verilen_gunler: secilenGunler.length ? secilenGunler.join(",") : null,
+  };
+  try {
+    await apiCagir("/kisiler", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(gövde) });
+    document.getElementById("kisiForm").reset();
+    ziyaretciAlanGoster();
+    kisileriYukle(); panelYenile();
+  } catch (err) { alert("Hata: " + err.message); }
+});
+
+async function kisiDurumDegistir(id, yeniDurum) {
+  await apiCagir(`/kisiler/${id}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ aktif: yeniDurum }),
+  });
+  kisileriYukle();
+  panelYenile();
+}
+
+async function kisiSil(id) {
+  if (!confirm("Bu kişiyi silmek istediğinize emin misiniz?")) return;
+  await apiCagir(`/kisiler/${id}`, { method: "DELETE" });
+  kisileriYukle();
+  panelYenile();
+}
+
+function kisilerExcelIndir() {
+  const params = new URLSearchParams();
+  if (aktifTipFiltre) params.set("tip", aktifTipFiltre);
+  window.open(`/disa-aktar/excel/kisiler?${params.toString()}`, "_blank");
+}
+
+function duzenleZiyaretciAlanGoster() {
+  const tip = document.getElementById("duzenleTip").value;
+  document.getElementById("duzenleZiyaretciBitisAlani").classList.toggle("d-none", tip !== "ziyaretci");
+  document.getElementById("duzenleDaireEtiket").textContent = tip === "personel" ? "Departman" : "Daire No";
+}
+
+async function kisiDuzenleAc(id) {
+  const kisi = await apiCagir(`/kisiler/${id}`);
+  document.getElementById("duzenleId").value = kisi.id;
+  document.getElementById("duzenleTip").value = kisi.tip;
+  document.getElementById("duzenleAdSoyad").value = kisi.ad_soyad;
+  document.getElementById("duzenlePlaka").value = kisi.plaka_no;
+  document.getElementById("duzenleTelefon").value = kisi.telefon || "";
+  document.getElementById("duzenleDaire").value = kisi.daire_departman || "";
+  document.getElementById("duzenleAciklama").value = kisi.aciklama || "";
+  document.getElementById("duzenleBitisTarihi").value = kisi.bitis_tarihi ? kisi.bitis_tarihi.slice(0, 16) : "";
+  document.getElementById("duzenleSonuc").textContent = "";
+  duzenleZiyaretciAlanGoster();
+  bootstrap.Modal.getOrCreateInstance(document.getElementById("kisiDuzenleModal")).show();
+}
+
+document.getElementById("kisiDuzenleForm").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const id = document.getElementById("duzenleId").value;
+  const sonuc = document.getElementById("duzenleSonuc");
+  const gövde = {
+    ad_soyad: document.getElementById("duzenleAdSoyad").value,
+    plaka_no: document.getElementById("duzenlePlaka").value,
+    tip: document.getElementById("duzenleTip").value,
+    telefon: document.getElementById("duzenleTelefon").value || null,
+    daire_departman: document.getElementById("duzenleDaire").value || null,
+    aciklama: document.getElementById("duzenleAciklama").value || null,
+    bitis_tarihi: document.getElementById("duzenleBitisTarihi").value || null,
+  };
+  try {
+    await apiCagir(`/kisiler/${id}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(gövde),
+    });
+    bootstrap.Modal.getInstance(document.getElementById("kisiDuzenleModal")).hide();
+    kisileriYukle();
+    panelYenile();
+  } catch (err) {
+    sonuc.className = "small text-danger"; sonuc.textContent = err.message;
+  }
+});
+
+// ---------------------- LED PANEL ----------------------
+
+function ledModDegisti() {
+  const mod = document.getElementById("ledMod").value;
+  document.getElementById("ledSerialAlani").classList.toggle("d-none", mod !== "serial");
+  document.getElementById("ledTcpAlani").classList.toggle("d-none", mod !== "tcp");
+}
+
+async function ledAyarlariYukle() {
+  const ayarlar = await apiCagir("/led/ayarlar");
+  document.getElementById("ledMod").value = ayarlar.led_mod;
+  document.getElementById("ledSerialPort").value = ayarlar.serial_port;
+  document.getElementById("ledBaudrate").value = ayarlar.serial_baudrate;
+  document.getElementById("ledTcpHost").value = ayarlar.tcp_host;
+  document.getElementById("ledTcpPort").value = ayarlar.tcp_port;
+  ledModDegisti();
+}
+
+document.getElementById("ledForm").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const gövde = {
+    led_mod: document.getElementById("ledMod").value,
+    serial_port: document.getElementById("ledSerialPort").value,
+    serial_baudrate: parseInt(document.getElementById("ledBaudrate").value) || 9600,
+    tcp_host: document.getElementById("ledTcpHost").value,
+    tcp_port: parseInt(document.getElementById("ledTcpPort").value) || 5000,
+  };
+  await apiCagir("/led/ayarlar", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(gövde),
+  });
+  alert("LED ayarları kaydedildi.");
+});
+
+async function ledTestGonder() {
+  const mesaj = document.getElementById("ledTestMesaj").value;
+  const sonuc = await apiCagir(`/led/test?mesaj=${encodeURIComponent(mesaj)}`, { method: "POST" });
+  document.getElementById("ledTestSonuc").innerHTML = sonuc.basarili
+    ? `<div class="alert alert-success mb-0">Mesaj gönderildi: "${escapeHtml(sonuc.mesaj)}"</div>`
+    : `<div class="alert alert-danger mb-0">Mesaj gönderilemedi. Ayarları ve bağlantıyı kontrol edin.</div>`;
+}
+
+// ---------------------- TEST KAYDI EKLE ----------------------
+
+document.getElementById("testKayitForm").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const gövde = {
+    plaka_no: document.getElementById("testPlaka").value,
+    kamera_id: document.getElementById("testKamera").value,
+    yon: document.getElementById("testYon").value,
+  };
+  try {
+    const kayit = await apiCagir("/kayitlar", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(gövde),
+    });
+    document.getElementById("testSonuc").innerHTML = `
+      <div class="alert alert-info">
+        Kayıt oluşturuldu: <b>${escapeHtml(kayit.plaka_no)}</b> — Durum: ${durumRozeti(kayit.yetki_durumu)}
+      </div>`;
+    document.getElementById("testKayitForm").reset();
+    panelYenile();
+  } catch (err) {
+    alert("Hata: " + err.message);
+  }
+});
+
+// ---------------------- BAŞLANGIÇ ----------------------
+
+authBaslat().then(() => {
+  ziyaretciAlanGoster();
+  // SSE bağlıysa polling azaltılır; bağlı değilse 15 sn'de yenile
+  setInterval(() => { if (sessionStorage.getItem("pts_token") && !_sseAktif) panelYenile(); }, 15000);
+});
+
+// ================================================================
+// TOAST BİLDİRİMLER
+// ================================================================
+
+function toastGoster(mesaj, tip = "bilgi") {
+  const renkler = { bilgi: "bg-primary", basari: "bg-success", uyari: "bg-warning text-dark", hata: "bg-danger", kara: "bg-dark" };
+  const id = "toast_" + Date.now();
+  const html = `<div id="${id}" class="toast align-items-center text-white ${renkler[tip] || "bg-primary"} border-0" role="alert" aria-live="assertive" data-bs-delay="5000">
+    <div class="d-flex"><div class="toast-body fw-semibold">${escapeHtml(mesaj)}</div>
+    <button type="button" class="btn-close btn-close-white me-2 m-auto" data-bs-dismiss="toast"></button></div></div>`;
+  const kont = document.getElementById("toastKonteyneri");
+  kont.insertAdjacentHTML("beforeend", html);
+  const el = document.getElementById(id);
+  bootstrap.Toast.getOrCreateInstance(el).show();
+  el.addEventListener("hidden.bs.toast", () => el.remove());
+}
+
+// ================================================================
+// SSE — GERÇEK ZAMANLI PLAKA BİLDİRİMLERİ
+// ================================================================
+
+let _sseAktif = false;
+let _sseYenidenBaglaSayaci = 0;
+
+function sseBaslat() {
+  const token = sessionStorage.getItem("pts_token");
+  if (!token || _sseAktif) return;
+
+  const es = new EventSource(`/olaylar/sse`, {});
+  // EventSource Authorization header desteklemez; token query param ile taşıyoruz
+  // Alternatif: token'ı cookie'ye koyup cookie ile auth (şu an fetch-based)
+  // Şimdilik polling fallback varken SSE ayrı bir fetch EventSource wrapper ile yapılacak
+  _sseBaslatFetch(token);
+}
+
+function _sseBaslatFetch(token) {
+  if (_sseAktif) return;
+  _sseAktif = true;
+  _sseYenidenBaglaSayaci++;
+
+  const ctrl = new AbortController();
+  fetch("/olaylar/sse", { headers: { Authorization: `Bearer ${token}` }, signal: ctrl.signal })
+    .then(async (r) => {
+      if (!r.ok || !r.body) throw new Error("SSE bağlantısı kurulamadı");
+      const reader = r.body.getReader();
+      const dec = new TextDecoder();
+      let tampon = "";
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        tampon += dec.decode(value, { stream: true });
+        const satirlar = tampon.split("\n");
+        tampon = satirlar.pop();
+        let olay = "", veri = "";
+        for (const satir of satirlar) {
+          if (satir.startsWith("event: ")) olay = satir.slice(7).trim();
+          else if (satir.startsWith("data: ")) veri = satir.slice(6).trim();
+          else if (satir === "" && veri) {
+            try {
+              const nesne = JSON.parse(veri);
+              if (olay === "kayit") _sseKayitAl(nesne);
+            } catch { }
+            olay = ""; veri = "";
+          }
+        }
+      }
+    })
+    .catch(() => { })
+    .finally(() => {
+      _sseAktif = false;
+      // Yeniden bağlan (max 5 dk bekleme)
+      const bekleme = Math.min(2000 * Math.pow(1.5, _sseYenidenBaglaSayaci - 1), 300000);
+      setTimeout(() => { if (sessionStorage.getItem("pts_token")) _sseBaslatFetch(sessionStorage.getItem("pts_token")); }, bekleme);
+    });
+}
+
+function _sseKayitAl(kayit) {
+  sonKayitlarCache.unshift(kayit);
+  if (sonKayitlarCache.length > 500) sonKayitlarCache.pop();
+
+  const tip = kayit.yetki_durumu === "yetkili" ? "basari"
+    : kayit.yetki_durumu === "kara_liste" ? "kara"
+    : "uyari";
+  const yon = kayit.yon === "giris" ? "Giriş" : "Çıkış";
+  toastGoster(`${kayit.plaka_no} · ${yon} · ${kayit.kamera_id}`, tip);
+
+  // Panel'deki canlı olay listesini anlık güncelle
+  const canliOlaylar = document.getElementById("canliOlaylar");
+  if (canliOlaylar) {
+    const yeniSatir = `<button class="event-row event-button" onclick="olayDetayAc(${kayit.id})"><div class="event-icon ${kayit.yetki_durumu === "yetkili" ? "allowed" : "blocked"}"><i class="bi ${kayit.yon === "giris" ? "bi-box-arrow-in-right" : "bi-box-arrow-right"}"></i></div><div class="event-main"><strong>${escapeHtml(kayit.plaka_no)}</strong><span>${escapeHtml(kayit.kamera_id)} · ${yon}</span></div><div class="event-time">${new Date(kayit.tarih_saat).toLocaleTimeString("tr-TR")}</div></button>`;
+    canliOlaylar.insertAdjacentHTML("afterbegin", yeniSatir);
+    // 8'den fazla satır varsa sonuncuları kaldır
+    const satirlar = canliOlaylar.querySelectorAll(".event-button");
+    if (satirlar.length > 8) satirlar[satirlar.length - 1].remove();
+  }
+
+  // Yenileme zamanını güncelle
+  const el = document.getElementById("canliYenileme");
+  if (el) el.textContent = new Date().toLocaleTimeString("tr-TR");
+}
+
+// ================================================================
+// DASHBOARD GRAFİKLERİ (Chart.js)
+// ================================================================
+
+let _gunlukGrafik = null;
+let _yetkiPie = null;
+
+async function grafikYukle() {
+  const gun = document.getElementById("grafikGunSec")?.value || 7;
+  try {
+    const veri = await apiCagir(`/kayitlar/grafik?gun=${gun}`);
+    _gunlukGrafigCiz(veri.gunluk);
+    _yetkiPieCiz(veri.yetki_dagilimi);
+  } catch (e) { console.error(e); }
+}
+
+function _gunlukGrafigCiz(gunluk) {
+  const etiketler = Object.keys(gunluk).sort();
+  const toplam = etiketler.map(g => gunluk[g].toplam);
+  const yetkili = etiketler.map(g => gunluk[g].yetkili);
+  const yetkisiz = etiketler.map(g => gunluk[g].yetkisiz + (gunluk[g].kara_liste || 0));
+
+  if (_gunlukGrafik) _gunlukGrafik.destroy();
+  const ctx = document.getElementById("gunlukGrafik");
+  if (!ctx) return;
+  _gunlukGrafik = new Chart(ctx, {
+    type: "bar",
+    data: {
+      labels: etiketler.map(g => g.slice(5)),
+      datasets: [
+        { label: "Toplam", data: toplam, backgroundColor: "#6ea8fe55", borderColor: "#6ea8fe", borderWidth: 1 },
+        { label: "Yetkili", data: yetkili, backgroundColor: "#75b79855", borderColor: "#75b798", borderWidth: 1 },
+        { label: "Yetkisiz/Engel", data: yetkisiz, backgroundColor: "#ea868f55", borderColor: "#ea868f", borderWidth: 1 },
+      ],
+    },
+    options: { responsive: true, plugins: { legend: { position: "top" } }, scales: { y: { beginAtZero: true, ticks: { precision: 0 } } } },
+  });
+}
+
+function _yetkiPieCiz(dagilim) {
+  if (_yetkiPie) _yetkiPie.destroy();
+  const ctx = document.getElementById("yetkiPie");
+  if (!ctx) return;
+  _yetkiPie = new Chart(ctx, {
+    type: "doughnut",
+    data: {
+      labels: ["Yetkili", "Yetkisiz", "Kara Liste", "Süresi Dolmuş"],
+      datasets: [{ data: [dagilim.yetkili, dagilim.yetkisiz, dagilim.kara_liste, dagilim.suresi_dolmus], backgroundColor: ["#75b798", "#ea868f", "#343a40", "#ffc107"] }],
+    },
+    options: { responsive: true, plugins: { legend: { position: "bottom" } } },
+  });
+}
+
+// ================================================================
+// PLAKA ANALİZİ
+// ================================================================
+
+async function plakaAnalizAc(plaka) {
+  document.getElementById("analizPlaka").textContent = plaka;
+  document.getElementById("analizIcerik").innerHTML = '<div class="text-center py-4"><div class="spinner-border"></div></div>';
+  bootstrap.Modal.getOrCreateInstance(document.getElementById("plakaAnalizModal")).show();
+  try {
+    const v = await apiCagir(`/kayitlar/analiz/${encodeURIComponent(plaka)}`);
+    const karaRozet = v.kara_listesinde
+      ? `<span class="badge bg-danger ms-2">KARA LİSTEDE</span>`
+      : `<span class="badge bg-success ms-2">Temiz</span>`;
+    const kisiBlok = v.kisi
+      ? `<div class="alert alert-success py-2 mb-3"><b>${escapeHtml(v.kisi.ad_soyad)}</b> · ${escapeHtml(v.kisi.tip)} ${v.kisi.telefon ? " · " + escapeHtml(v.kisi.telefon) : ""}</div>`
+      : `<div class="alert alert-warning py-2 mb-3">Sistemde kayıtlı kişi yok</div>`;
+    const satirlar = v.son_kayitlar.map(k =>
+      `<tr><td>${tarihFormatla(k.tarih_saat)}</td><td>${k.yon === "giris" ? "Giriş" : "Çıkış"}</td><td>${escapeHtml(k.kamera_id)}</td><td>${durumRozeti(k.yetki_durumu)}</td></tr>`
+    ).join("");
+    document.getElementById("analizIcerik").innerHTML = `
+      <div class="d-flex gap-3 mb-3 flex-wrap">
+        <div class="stat-card card flex-fill text-center py-2"><div class="text-muted small">Toplam Geçiş</div><div class="fs-3 fw-bold">${v.toplam_gecis}</div></div>
+        <div class="stat-card card flex-fill text-center py-2"><div class="text-muted small">Son Geçiş</div><div class="small">${v.son_gecis ? tarihFormatla(v.son_gecis) : "—"}</div></div>
+        <div class="stat-card card flex-fill text-center py-2"><div class="text-muted small">Kara Liste</div>${karaRozet}</div>
+      </div>
+      ${kisiBlok}
+      ${v.kara_sebep ? `<div class="alert alert-danger py-2 mb-3">Engel sebebi: ${escapeHtml(v.kara_sebep)}</div>` : ""}
+      <table class="table table-sm"><thead class="table-light"><tr><th>Tarih/Saat</th><th>Yön</th><th>Kamera</th><th>Durum</th></tr></thead><tbody>${satirlar || "<tr><td colspan='4' class='text-center text-muted'>Kayıt yok</td></tr>"}</tbody></table>
+      <div class="d-flex gap-2 mt-2">
+        ${!v.kara_listesinde ? `<button class="btn btn-sm btn-danger" onclick="karaListeyeEkleModal('${escapeHtml(v.plaka_no)}')">Kara Listeye Ekle</button>` : ""}
+      </div>`;
+  } catch (e) {
+    document.getElementById("analizIcerik").innerHTML = `<div class="alert alert-danger">${escapeHtml(e.message)}</div>`;
+  }
+}
+
+// ================================================================
+// KARA LİSTE
+// ================================================================
+
+async function karaListesiYukle() {
+  try {
+    const liste = await apiCagir("/kara-listesi");
+    const el = document.getElementById("karaListeTablo");
+    if (!el) return;
+    el.innerHTML = liste.map(k => `<tr>
+      <td class="fw-bold"><button class="plate-link" onclick="plakaAnalizAc('${escapeHtml(k.plaka_no)}')">${escapeHtml(k.plaka_no)}</button></td>
+      <td>${escapeHtml(k.sebep) || "<span class='text-muted'>-</span>"}</td>
+      <td>${escapeHtml(k.ekleyen) || "-"}</td>
+      <td class="small text-muted">${tarihFormatla(k.olusturma_tarihi)}</td>
+      <td><button class="btn btn-sm btn-outline-success" onclick="karaListedenCikar(${k.id})" title="Listeden çıkar"><i class="bi bi-check-circle"></i></button></td>
+    </tr>`).join("") || `<tr><td colspan="5" class="text-center text-muted py-3">Kara listede kayıt yok</td></tr>`;
+  } catch (e) { console.error(e); }
+}
+
+document.getElementById("karaListeForm")?.addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const sonuc = document.getElementById("karaListeSonuc");
+  try {
+    await apiCagir("/kara-listesi", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ plaka_no: document.getElementById("karaPlaka").value, sebep: document.getElementById("karaSebep").value || null }) });
+    sonuc.className = "small mt-2 text-success"; sonuc.textContent = "Araç kara listeye eklendi.";
+    e.target.reset(); karaListesiYukle(); panelYenile();
+  } catch (err) { sonuc.className = "small mt-2 text-danger"; sonuc.textContent = err.message; }
+});
+
+async function karaListedenCikar(id) {
+  if (!confirm("Bu aracı kara listeden çıkarmak istiyor musunuz?")) return;
+  await apiCagir(`/kara-listesi/${id}`, { method: "DELETE" });
+  karaListesiYukle(); panelYenile();
+}
+
+function karaListeyeEkleModal(plaka) {
+  bootstrap.Modal.getInstance(document.getElementById("plakaAnalizModal"))?.hide();
+  document.getElementById("karaPlaka").value = plaka;
+  sekmeAc("#karaliste-sekme");
+}
+
+// ================================================================
+// BARİYER KONTROLÜ
+// ================================================================
+
+function bariyerModDegisti() {
+  const mod = document.getElementById("bariyerMod").value;
+  document.getElementById("bariyerHttpAlani").classList.toggle("d-none", mod !== "http");
+}
+
+async function bariyerleriYukle() {
+  try {
+    const bariyerler = await apiCagir("/bariyer/ayarlar");
+    const el = document.getElementById("bariyerTablo");
+    if (!el) return;
+    el.innerHTML = bariyerler.map(b => `<tr>
+      <td><strong>${escapeHtml(b.ad)}</strong></td>
+      <td><span class="badge bg-secondary">${escapeHtml(b.mod)}</span></td>
+      <td class="text-muted small text-truncate" style="max-width:150px">${escapeHtml(b.http_url || "-")}</td>
+      <td>
+        <button class="btn btn-sm btn-success" onclick="bariyerAc(${b.id})" title="Bariyeri aç"><i class="bi bi-unlock-fill"></i> Aç</button>
+        <button class="btn btn-sm btn-outline-danger ms-1" onclick="bariyerSil(${b.id})"><i class="bi bi-trash"></i></button>
+      </td>
+    </tr>`).join("") || `<tr><td colspan="4" class="text-center text-muted py-3">Bariyer tanımlanmadı</td></tr>`;
+  } catch (e) { console.error(e); }
+}
+
+document.getElementById("bariyerForm")?.addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const sonuc = document.getElementById("bariyerSonuc");
+  try {
+    await apiCagir("/bariyer/ayarlar", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({
+      ad: document.getElementById("bariyerAd").value,
+      mod: document.getElementById("bariyerMod").value,
+      http_url: document.getElementById("bariyerUrl").value || null,
+      http_metot: document.getElementById("bariyerMetot").value,
+      http_govde: document.getElementById("bariyerGovde").value || null,
+      auto_ac: document.getElementById("bariyerAutoAc").checked,
+    })});
+    sonuc.className = "small mt-2 text-success"; sonuc.textContent = "Bariyer kaydedildi.";
+    e.target.reset(); bariyerleriYukle();
+  } catch (err) { sonuc.className = "small mt-2 text-danger"; sonuc.textContent = err.message; }
+});
+
+async function bariyerAc(id) {
+  try {
+    const r = await apiCagir(`/bariyer/${id}/ac`, { method: "POST" });
+    toastGoster(r.mesaj, "basari");
+  } catch (e) { toastGoster(e.message, "hata"); }
+}
+
+async function bariyerSil(id) {
+  if (!confirm("Bu bariyer kaydını silmek istiyor musunuz?")) return;
+  await apiCagir(`/bariyer/ayarlar/${id}`, { method: "DELETE" });
+  bariyerleriYukle();
+}
+
+// ================================================================
+// KULLANICI YÖNETİMİ
+// ================================================================
+
+async function kullanicilariYukle() {
+  try {
+    const kullanicilar = await apiCagir("/kullanicilar");
+    const el = document.getElementById("kullanicilarTablo");
+    if (!el) return;
+    const roller = { yonetici: "bg-danger", "operatör": "bg-warning text-dark", izleyici: "bg-secondary" };
+    el.innerHTML = kullanicilar.map(k => `<tr>
+      <td><strong>${escapeHtml(k.kullanici_adi)}</strong></td>
+      <td><span class="badge ${roller[k.rol] || "bg-secondary"}">${escapeHtml(k.rol)}</span></td>
+      <td class="small text-muted">${k.son_giris ? tarihFormatla(k.son_giris) : "—"}</td>
+      <td>${k.aktif ? '<span class="badge bg-success">Aktif</span>' : '<span class="badge bg-secondary">Pasif</span>'}</td>
+      <td>
+        <button class="btn btn-sm btn-outline-secondary" onclick="kullaniciDurumDegistir(${k.id}, ${!k.aktif})" title="${k.aktif ? "Pasif yap" : "Aktif yap"}"><i class="bi bi-toggle2-on"></i></button>
+        <button class="btn btn-sm btn-outline-danger ms-1" onclick="kullaniciSil(${k.id})" title="Sil"><i class="bi bi-trash"></i></button>
+      </td>
+    </tr>`).join("") || `<tr><td colspan="5" class="text-center text-muted py-3">Kullanıcı bulunamadı</td></tr>`;
+  } catch (e) {
+    const el = document.getElementById("kullanicilarTablo");
+    if (el) el.innerHTML = `<tr><td colspan="5" class="text-center text-muted py-3">Bu sekmeyi sadece yönetici görebilir</td></tr>`;
+  }
+}
+
+document.getElementById("kullaniciForm")?.addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const sonuc = document.getElementById("kullaniciSonuc");
+  try {
+    await apiCagir("/kullanicilar", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({
+      kullanici_adi: document.getElementById("yeniKullanici").value,
+      parola: document.getElementById("yeniParola").value,
+      rol: document.getElementById("yeniRol").value,
+    })});
+    sonuc.className = "small mt-2 text-success"; sonuc.textContent = "Kullanıcı oluşturuldu.";
+    e.target.reset(); kullanicilariYukle();
+  } catch (err) { sonuc.className = "small mt-2 text-danger"; sonuc.textContent = err.message; }
+});
+
+async function kullaniciDurumDegistir(id, yeniDurum) {
+  try {
+    await apiCagir(`/kullanicilar/${id}`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ aktif: yeniDurum }) });
+    kullanicilariYukle();
+  } catch (e) { toastGoster(e.message, "hata"); }
+}
+
+async function kullaniciSil(id) {
+  if (!confirm("Bu kullanıcıyı silmek istediğinize emin misiniz?")) return;
+  try {
+    await apiCagir(`/kullanicilar/${id}`, { method: "DELETE" });
+    kullanicilariYukle();
+  } catch (e) { toastGoster(e.message, "hata"); }
+}
+
+// ================================================================
+// SİSTEM SAĞLIĞI & LOGLAR
+// ================================================================
+
+async function sistemSagliginiYukle() {
+  try {
+    const s = await apiCagir("/sistem/saglik");
+    const el = document.getElementById("sistemSaglikPaneli");
+    if (!el) return;
+    const ikon = (ok) => ok ? '<i class="bi bi-check-circle-fill text-success"></i>' : '<i class="bi bi-x-circle-fill text-danger"></i>';
+    el.innerHTML = `
+      <div class="info-row">${ikon(s.durum === "cevrimici")} <span>Uygulama</span><strong>${s.durum}</strong></div>
+      <div class="info-row">${ikon(s.veritabani === "ok")} <span>Veritabanı</span><strong>${s.veritabani}</strong></div>
+      <div class="info-row"><i class="bi bi-camera-video text-primary"></i> <span>Aktif Pipeline</span><strong>${s.aktif_pipeline}</strong></div>
+      <div class="info-row"><i class="bi bi-wifi text-primary"></i> <span>SSE İstemci</span><strong>${s.sse_istemci}</strong></div>
+      <div class="info-row">${ikon(s.kutuphaneler_mevcut)} <span>ANPR Kütüp.</span><strong>${s.kutuphaneler_mevcut ? "Kurulu" : "Kurulu değil"}</strong></div>
+      <div class="info-row"><i class="bi bi-code text-muted"></i> <span>Sürüm</span><strong>PTS v${s.surum}</strong></div>
+      <div class="text-muted small mt-2">${new Date(s.zaman).toLocaleString("tr-TR")}</div>`;
+  } catch (e) { console.error(e); }
+}
+
+async function loglariYukle() {
+  try {
+    const r = await apiCagir("/sistem/loglar?satir=300");
+    const el = document.getElementById("logKonteyneri");
+    if (!el) return;
+    el.textContent = r.satirlar.join("\n");
+    el.scrollTop = el.scrollHeight;
+  } catch (e) { console.error(e); }
+}
+
+// Sistem sekmesi açıldığında logları ve sağlık bilgisini otomatik yükle
+document.querySelector('[data-bs-target="#sistem-sekme"]')?.addEventListener("click", () => {
+  sistemSagliginiYukle(); loglariYukle(); sistemAyarlariYukle(); diskBilgisiYukle();
+});
+
+// ================================================================
+// KAMERA DUVARI — TAM EKRAN
+// ================================================================
+
+function kameraDuvariFullscreen() {
+  const duvar = document.getElementById("kameraDuvari");
+  if (!duvar) return;
+  if (!document.fullscreenElement) {
+    duvar.requestFullscreen().catch(err => console.warn("Fullscreen reddedildi:", err));
+  } else {
+    document.exitFullscreen();
+  }
+}
+
+document.addEventListener("fullscreenchange", () => {
+  const btn = document.getElementById("fullscreenBtn");
+  if (!btn) return;
+  btn.innerHTML = document.fullscreenElement
+    ? '<i class="bi bi-fullscreen-exit"></i> Küçült'
+    : '<i class="bi bi-arrows-fullscreen"></i> Tam ekran';
+});
+
+// Çift tıkla tek kamera tam ekran
+document.addEventListener("dblclick", (e) => {
+  const tile = e.target.closest(".camera-tile");
+  if (!tile) return;
+  if (!document.fullscreenElement) {
+    tile.requestFullscreen().catch(() => {});
+  } else {
+    document.exitFullscreen();
+  }
+});
+
+// ================================================================
+// TÜMÜNÜ OKUNDU
+// ================================================================
+
+async function alarmHepsiniOku() {
+  const r = await apiCagir("/alarmlar/tumu-okundu", { method: "POST" });
+  toastGoster(`${r.guncellenen} alarm okundu işaretlendi`, "basari");
+  panelYenile();
+}
+
+// ================================================================
+// SİSTEM AYARLARI
+// ================================================================
+
+async function sistemAyarlariYukle() {
+  try {
+    const ayarlar = await apiCagir("/sistem/ayarlar");
+    const el = document.getElementById("sistemAyarlariPaneli");
+    if (!el) return;
+    const satirlar = [
+      { key: "supheli_esik", label: "Şüpheli araç eşiği (red/saat)", tip: "number" },
+      { key: "goruntu_saklama_gun", label: "Görüntü saklama süresi (gün)", tip: "number" },
+      { key: "panel_yenileme_sn", label: "Panel yenileme aralığı (sn)", tip: "number" },
+    ];
+    el.innerHTML = `<form id="sistemAyarlariForm">${satirlar.map(s =>
+      `<div class="mb-2"><label class="form-label small">${escapeHtml(s.label)}</label>
+       <input type="number" class="form-control form-control-sm" id="ayar_${s.key}" value="${escapeHtml(String(ayarlar[s.key] ?? ""))}"></div>`
+    ).join("")}<button type="submit" class="btn btn-sm btn-primary w-100 mt-1"><i class="bi bi-save"></i> Kaydet</button></form>`;
+    document.getElementById("sistemAyarlariForm").addEventListener("submit", async (ev) => {
+      ev.preventDefault();
+      const guncel = {};
+      satirlar.forEach(s => { guncel[s.key] = Number(document.getElementById(`ayar_${s.key}`).value); });
+      await apiCagir("/sistem/ayarlar", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(guncel) });
+      toastGoster("Sistem ayarları kaydedildi", "basari");
+    });
+  } catch (e) { console.error(e); }
+}
+
+// ================================================================
+// DİSK YÖNETİMİ
+// ================================================================
+
+async function diskBilgisiYukle() {
+  try {
+    const d = await apiCagir("/sistem/disk-kullanimi");
+    const el = document.getElementById("diskBilgisi");
+    if (el) el.innerHTML = `<span class="fw-bold">${d.goruntu_mb} MB</span> — ${d.goruntu_sayisi} görüntü dosyası`;
+  } catch (e) {}
+}
+
+async function goruntuleriTemizle() {
+  const gun = document.getElementById("temizleGun")?.value || 30;
+  if (!confirm(`${gun} günden eski görüntüler silinecek. Emin misiniz?`)) return;
+  const r = await apiCagir(`/sistem/goruntu-temizle?gun=${gun}`, { method: "POST" });
+  toastGoster(`${r.silinen_goruntu} görüntü silindi`, "basari");
+  diskBilgisiYukle();
+}
+
+function veritabaniIndir() {
+  window.open("/sistem/yedek", "_blank");
+}
+
+// ================================================================
+// BİLDİRİM AYARLARI (Webhook)
+// ================================================================
+
+async function bildirimleriYukle() {
+  try {
+    const liste = await apiCagir("/bildirim/ayarlar");
+    const el = document.getElementById("bildirimTablo");
+    if (!el) return;
+    const tetikEtiket = { hepsi: "Her geçiş", yetkisiz: "Yetkisiz", kara_liste: "Kara Liste", suresi_dolmus: "Süresi Dolmuş" };
+    el.innerHTML = liste.map(b => `<tr>
+      <td><strong>${escapeHtml(b.ad)}</strong></td>
+      <td class="text-muted small text-truncate" style="max-width:160px">${escapeHtml(b.hedef)}</td>
+      <td><span class="badge bg-secondary">${escapeHtml(tetikEtiket[b.tetikleyici] || b.tetikleyici)}</span></td>
+      <td>${b.aktif ? '<span class="badge bg-success">Aktif</span>' : '<span class="badge bg-secondary">Pasif</span>'}</td>
+      <td class="text-nowrap">
+        <button class="btn btn-sm btn-outline-info" title="Test gönder" onclick="bildirimTestGonder(${b.id})"><i class="bi bi-send"></i></button>
+        <button class="btn btn-sm btn-outline-secondary ms-1" title="${b.aktif ? "Pasif yap" : "Aktif yap"}" onclick="bildirimToggle(${b.id})"><i class="bi bi-toggle2-on"></i></button>
+        <button class="btn btn-sm btn-outline-danger ms-1" onclick="bildirimSil(${b.id})"><i class="bi bi-trash"></i></button>
+      </td>
+    </tr>`).join("") || `<tr><td colspan="5" class="text-center text-muted py-3">Henüz webhook tanımlanmadı</td></tr>`;
+  } catch (e) { console.error(e); }
+}
+
+document.getElementById("bildirimForm")?.addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const sonuc = document.getElementById("bildirimSonuc");
+  try {
+    await apiCagir("/bildirim/ayarlar", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({
+      ad: document.getElementById("bildirimAd").value,
+      hedef: document.getElementById("bildirimHedef").value,
+      tetikleyici: document.getElementById("bildirimTetikleyici").value,
+      http_metot: document.getElementById("bildirimMetot").value,
+    })});
+    sonuc.className = "small mt-2 text-success"; sonuc.textContent = "Webhook kaydedildi.";
+    e.target.reset(); bildirimleriYukle();
+  } catch (err) { sonuc.className = "small mt-2 text-danger"; sonuc.textContent = err.message; }
+});
+
+async function bildirimTestGonder(id) {
+  try {
+    const r = await apiCagir(`/bildirim/test/${id}`, { method: "POST" });
+    toastGoster(r.basarili ? "Test isteği gönderildi ✓" : "Test isteği gönderilemedi", r.basarili ? "basari" : "hata");
+  } catch (e) { toastGoster(e.message, "hata"); }
+}
+
+async function bildirimToggle(id) {
+  await apiCagir(`/bildirim/ayarlar/${id}/aktif`, { method: "PATCH" });
+  bildirimleriYukle();
+}
+
+async function bildirimSil(id) {
+  if (!confirm("Bu webhook'u silmek istediğinize emin misiniz?")) return;
+  await apiCagir(`/bildirim/ayarlar/${id}`, { method: "DELETE" });
+  bildirimleriYukle();
+}
+
+// ================================================================
+// KAMERA SAĞLIK KONTROLÜ
+// ================================================================
+
+let _kameraSaglikCache = {};
+
+async function tumKameralarSaglikKontrol() {
+  toastGoster("Kameralar kontrol ediliyor…", "bilgi");
+  try {
+    const sonuclar = await apiCagir("/kameralar/saglik/tumu");
+    _kameraSaglikCache = {};
+    sonuclar.forEach(s => { _kameraSaglikCache[s.id] = s; });
+    kameralariYukle(); // tabloyu saglik bilgisiyle yenile
+    toastGoster(`${sonuclar.filter(s => s.tcp_erisim).length}/${sonuclar.length} kamera erişilebilir`, "basari");
+  } catch (e) { toastGoster(e.message, "hata"); }
+}
+
+// ================================================================
+// TOPLU EXCEL İÇE AKTARMA
+// ================================================================
+
+async function topluImport(input) {
+  if (!input.files?.length) return;
+  const dosya = input.files[0];
+  const formData = new FormData();
+  formData.append("dosya", dosya);
+  try {
+    toastGoster("İçe aktarma başladı…", "bilgi");
+    const token = sessionStorage.getItem("pts_token");
+    const cevap = await fetch("/kisiler/toplu-import", {
+      method: "POST",
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+      body: formData,
+    });
+    if (!cevap.ok) {
+      const hata = await cevap.json().catch(() => ({ detail: "Bilinmeyen hata" }));
+      throw new Error(hata.detail);
+    }
+    const sonuc = await cevap.json();
+    input.value = "";
+    let mesaj = `${sonuc.eklendi} kişi eklendi.`;
+    if (sonuc.hatalar?.length) mesaj += ` ${sonuc.hatalar.length} satırda hata.`;
+    toastGoster(mesaj, sonuc.eklendi > 0 ? "basari" : "uyari");
+    if (sonuc.hatalar?.length) {
+      console.warn("İçe aktarma hataları:", sonuc.hatalar);
+      alert("Bazı satırlarda hata:\n" + sonuc.hatalar.slice(0, 5).join("\n"));
+    }
+    kisileriYukle(); panelYenile();
+  } catch (err) {
+    input.value = "";
+    toastGoster(err.message, "hata");
+  }
+}
+

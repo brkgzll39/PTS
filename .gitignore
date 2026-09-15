@@ -1,0 +1,14 @@
+.venv/
+__pycache__/
+*.pyc
+
+backend/license.json
+backend/cameras.json
+backend/config.json
+backend/database_config.json
+backend/auth_secret.key
+veritabani/*.db
+disa_aktarilanlar/*
+goruntuler/*
+installer/output/
+loglar/*

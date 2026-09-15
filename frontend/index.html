@@ -1,0 +1,752 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>TPAO - Plaka Tanıma Sistemi</title>
+<link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+<link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.css" rel="stylesheet">
+<link href="/static/style.css" rel="stylesheet">
+<link rel="manifest" href="/static/manifest.json">
+<meta name="theme-color" content="#30384d">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+</head>
+<body>
+
+<!-- Toast bildirim konteyneri -->
+<div id="toastKonteyneri" class="toast-container position-fixed top-0 end-0 p-3" style="z-index:9999"></div>
+
+<!-- Plaka analiz modal -->
+<div class="modal fade" id="plakaAnalizModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-lg modal-dialog-centered">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title"><i class="bi bi-search me-2"></i>Plaka Analizi: <span id="analizPlaka">-</span></h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body" id="analizIcerik"><div class="text-center py-4"><div class="spinner-border"></div></div></div>
+    </div>
+  </div>
+</div>
+<div id="authKapisi" class="auth-gate">
+  <div class="auth-panel">
+    <div class="auth-mark"><i class="bi bi-camera-video-fill"></i></div>
+    <div class="auth-kicker">TPAO PTS</div>
+    <h1 id="authBaslik">Güvenli giriş</h1>
+    <p id="authAciklama" class="text-muted small">PTS yönetim paneline devam etmek için giriş yapın.</p>
+    <form id="authForm">
+      <label class="form-label small">Kullanıcı adı</label><input class="form-control mb-3" id="authKullanici" autocomplete="username" required>
+      <label class="form-label small">Parola</label><input type="password" class="form-control mb-3" id="authParola" autocomplete="current-password" minlength="8" required>
+      <button class="btn btn-primary w-100" type="submit"><i class="bi bi-box-arrow-in-right"></i> <span id="authButon">Giriş yap</span></button>
+      <div id="authSonuc" class="small mt-3"></div>
+    </form>
+  </div>
+</div>
+<div class="modal fade" id="olayDetayModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-xl modal-dialog-centered"><div class="modal-content event-detail-modal">
+    <div class="modal-header" id="olayModalBaslik"><h5 class="modal-title" id="olayModalTur">TANIMLI ARAÇ</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
+    <div class="modal-body"><div class="row g-3"><div class="col-lg-8"><div class="event-image-wrap"><img id="olayModalGorsel" alt="Araç geçiş görseli"><div id="olayModalGorselYok" class="empty-state">Bu kayıt için görsel bulunmuyor</div></div><div class="detail-table mt-3"><div><b>TARİH</b><span id="olayModalTarih">-</span></div><div><b>SAAT</b><span id="olayModalSaat">-</span></div><div><b>SİTE</b><span id="olayModalSite">-</span></div><div><b>OTOPARK</b><span>Genel</span></div><div><b>NOKTA</b><span id="olayModalNokta">-</span></div><div><b>YÖN</b><span id="olayModalYon">-</span></div></div></div><div class="col-lg-4"><div class="plate-display" id="olayModalPlaka">-</div><div class="vehicle-facts"><div><b>MARKA</b><span id="olayModalMarka">-</span></div><div><b>MODEL</b><span id="olayModalModel">-</span></div><div><b>RENK</b><span id="olayModalRenk">-</span></div><div><b>ARAÇ TİPİ</b><span id="olayModalAracTipi">-</span></div></div><div class="vehicle-facts person-facts"><div><b>İSİM</b><span id="olayModalKisi">-</span></div><div><b>SİTE</b><span>Genel tesis</span></div><div><b>DAİRE / BLOK</b><span id="olayModalDaire">-</span></div><div><b>GÜVEN SKORU</b><span id="olayModalGuven">-</span></div></div><div class="modal-actions"><button class="btn btn-success" id="bariyerAcBtn"><i class="bi bi-unlock-fill"></i> Bariyer Aç</button><button class="btn btn-outline-secondary" data-bs-dismiss="modal">Kapat</button></div></div></div></div>
+  </div></div>
+</div>
+
+<div class="modal fade" id="kisiDuzenleModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered"><div class="modal-content">
+    <div class="modal-header"><h5 class="modal-title">Kişiyi Düzenle</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
+    <form id="kisiDuzenleForm">
+      <div class="modal-body">
+        <input type="hidden" id="duzenleId">
+        <div class="mb-2">
+          <label class="form-label small">Tip</label>
+          <select class="form-select" id="duzenleTip" required onchange="duzenleZiyaretciAlanGoster()">
+            <option value="abone">Abone (Site Sakini)</option>
+            <option value="personel">Personel</option>
+            <option value="ziyaretci">Ziyaretçi</option>
+          </select>
+        </div>
+        <div class="mb-2">
+          <label class="form-label small">Ad Soyad</label>
+          <input type="text" class="form-control" id="duzenleAdSoyad" required>
+        </div>
+        <div class="mb-2">
+          <label class="form-label small">Plaka No</label>
+          <input type="text" class="form-control" id="duzenlePlaka" required>
+        </div>
+        <div class="mb-2">
+          <label class="form-label small">Telefon</label>
+          <input type="text" class="form-control" id="duzenleTelefon">
+        </div>
+        <div class="mb-2">
+          <label class="form-label small" id="duzenleDaireEtiket">Daire No</label>
+          <input type="text" class="form-control" id="duzenleDaire">
+        </div>
+        <div class="mb-2 d-none" id="duzenleZiyaretciBitisAlani">
+          <label class="form-label small">Ziyaret Bitiş Tarihi/Saati</label>
+          <input type="datetime-local" class="form-control" id="duzenleBitisTarihi">
+        </div>
+        <div class="mb-2">
+          <label class="form-label small">Açıklama</label>
+          <textarea class="form-control" id="duzenleAciklama" rows="2"></textarea>
+        </div>
+        <div id="duzenleSonuc" class="small"></div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Vazgeç</button>
+        <button type="submit" class="btn btn-primary"><i class="bi bi-check-circle"></i> Kaydet</button>
+      </div>
+    </form>
+  </div></div>
+</div>
+
+<nav class="navbar navbar-dark navbar-pts px-3">
+  <span class="navbar-brand mb-0 h1"><i class="bi bi-camera-video-fill me-2"></i>TPAO PTS <small>Canlı İzleme</small></span>
+  <span class="text-white-50 small d-none d-md-inline"><span id="oturumKullanici"></span> <span id="saatGosterge"></span></span>
+</nav>
+
+<div class="app-layout">
+  <aside class="pts-sidebar">
+    <div class="sidebar-section-label">ÇALIŞMA ALANI</div>
+    <button class="side-link active" data-target="#canli-sekme"><i class="bi bi-display"></i>Canlı İzleme</button>
+    <button class="side-link" data-target="#panel-sekme"><i class="bi bi-house-door"></i>Anasayfa</button>
+    <button class="side-link" data-target="#kayitlar-sekme"><i class="bi bi-list-ul"></i>Geçiş Kayıtları</button>
+    <button class="side-link" data-target="#kisiler-sekme"><i class="bi bi-people"></i>Aboneler ve Kişiler</button>
+    <button class="side-link" data-target="#karaliste-sekme"><i class="bi bi-slash-circle"></i>Kara Liste</button>
+    <div class="sidebar-section-label">YÖNETİM</div>
+    <button class="side-link" data-target="#kamera-sekme"><i class="bi bi-camera-video"></i>Kameralar</button>
+    <button class="side-link" data-target="#bariyer-sekme"><i class="bi bi-door-open"></i>Bariyer Kontrolü</button>
+    <button class="side-link" data-target="#bildirim-sekme"><i class="bi bi-bell"></i>Webhook Bildirimleri</button>
+    <button class="side-link" data-target="#lisans-sekme"><i class="bi bi-key"></i>Lisans Yönetimi</button>
+    <button class="side-link" data-target="#led-sekme"><i class="bi bi-broadcast-pin"></i>LED Paneller</button>
+    <button class="side-link" data-target="#kullanicilar-sekme"><i class="bi bi-person-gear"></i>Kullanıcılar</button>
+    <div class="sidebar-section-label">RAPORLAR</div>
+    <button class="side-link" data-target="#kayitlar-sekme"><i class="bi bi-bar-chart"></i>Geçiş Raporu</button>
+    <button class="side-link" data-target="#kayitlar-sekme"><i class="bi bi-file-earmark-excel"></i>Veri Aktarımı</button>
+    <button class="side-link" data-target="#sistem-sekme"><i class="bi bi-terminal"></i>Sistem / Log</button>
+    <div class="sidebar-footer"><span class="status-led"></span> Sistem çevrimiçi<br><small>TPAO PTS · v1.0</small></div>
+  </aside>
+  <main class="container-fluid app-main">
+  <ul class="nav nav-tabs" id="anaSekme" role="tablist">
+    <li class="nav-item"><button class="nav-link active" data-bs-toggle="tab" data-bs-target="#canli-sekme" type="button"><i class="bi bi-grid-3x3-gap-fill me-1"></i>Canlı</button></li>
+    <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#panel-sekme" type="button"><i class="bi bi-speedometer2 me-1"></i>Panel</button></li>
+    <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#kayitlar-sekme" type="button"><i class="bi bi-list-columns-reverse me-1"></i>Kayıtlar</button></li>
+    <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#kisiler-sekme" type="button"><i class="bi bi-people-fill me-1"></i>Kişiler</button></li>
+    <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#karaliste-sekme" type="button"><i class="bi bi-slash-circle me-1"></i>Kara Liste</button></li>
+    <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#kamera-sekme" type="button"><i class="bi bi-camera-video me-1"></i>Kameralar</button></li>
+    <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#bariyer-sekme" type="button"><i class="bi bi-door-open me-1"></i>Bariyer</button></li>
+    <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#bildirim-sekme" type="button"><i class="bi bi-bell me-1"></i>Bildirim</button></li>
+    <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#led-sekme" type="button"><i class="bi bi-display me-1"></i>LED</button></li>
+    <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#kullanicilar-sekme" type="button"><i class="bi bi-person-gear me-1"></i>Kullanıcılar</button></li>
+    <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#test-sekme" type="button"><i class="bi bi-plus-circle me-1"></i>Test</button></li>
+    <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#lisans-sekme" type="button"><i class="bi bi-key-fill me-1"></i>Lisans</button></li>
+    <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#sistem-sekme" type="button"><i class="bi bi-terminal me-1"></i>Sistem</button></li>
+  </ul>
+
+  <div class="tab-content pt-3">
+
+    <!-- ================= CANLI İZLEME ================= -->
+    <div class="tab-pane fade show active" id="canli-sekme">
+      <div class="live-toolbar d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3">
+        <div><span class="live-dot"></span><strong>Canlı İzleme</strong><span class="text-muted ms-2 small">Kamera bağlantıları ve son geçişler</span></div>
+        <div class="d-flex align-items-center gap-3 small"><span id="lisansMiniDurum" class="license-pill"><i class="bi bi-shield-check"></i> Lisans kontrol ediliyor</span><span class="text-muted"><i class="bi bi-wifi"></i> Sistem çevrimiçi</span></div>
+      </div>
+      <div class="row g-3">
+        <div class="col-xl-8">
+          <div class="camera-wall" id="kameraDuvari">
+            <div class="camera-tile camera-simulated"><div class="camera-label"><span><i class="bi bi-camera-video-fill me-1"></i>KAMERALAR YÜKLENİYOR</span><span class="camera-status">-</span></div></div>
+          </div>
+          <div class="camera-controls mt-3"><button class="btn btn-dark active" id="kameraSayacBtn"><i class="bi bi-grid-2x2"></i> -</button><button class="btn btn-outline-secondary" onclick="kameraDuvariFullscreen()" id="fullscreenBtn"><i class="bi bi-arrows-fullscreen"></i> Tam ekran</button><span class="ms-auto text-muted small"><i class="bi bi-clock-history me-1"></i>Son yenileme: <span id="canliYenileme">-</span></span></div>
+        </div>
+        <div class="col-xl-4">
+          <div class="card event-card h-100"><div class="card-header d-flex justify-content-between"><span><i class="bi bi-bell-fill me-1"></i>Son Geçişler</span><div class="d-flex gap-1"><button class="btn btn-sm btn-light" onclick="alarmHepsiniOku()" title="Tüm alarmları okundu işaretle"><i class="bi bi-check2-all"></i></button><button class="btn btn-sm btn-light" onclick="panelYenile()"><i class="bi bi-arrow-clockwise"></i></button></div></div><div class="card-body p-0"><div id="canliOlaylar" class="event-list"><div class="empty-state">Henüz geçiş kaydı yok</div></div></div></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ================= PANEL (DASHBOARD) ================= -->
+    <div class="tab-pane fade" id="panel-sekme">
+      <div class="dashboard-heading"><div><span class="eyebrow">GENEL BAKIŞ</span><h1>Kontrol Merkezi</h1><p>Plaka hareketleri ve sistem durumunu tek ekrandan yönetin.</p></div><button class="btn btn-outline-secondary" onclick="panelYenile()"><i class="bi bi-arrow-clockwise"></i> Yenile</button></div>
+      <div class="quick-grid mb-4"><button class="quick-tile blue" data-target="#canli-sekme"><i class="bi bi-display"></i><strong>Canlı İzleme</strong><span>Kamera duvarı</span></button><button class="quick-tile green" data-target="#kayitlar-sekme"><i class="bi bi-arrow-left-right"></i><strong>Geçiş Kayıtları</strong><span>Hareket geçmişi</span></button><button class="quick-tile amber" data-target="#kisiler-sekme"><i class="bi bi-person-badge"></i><strong>Kişiler</strong><span>Yetkili plakalar</span></button><button class="quick-tile slate" data-target="#kamera-sekme"><i class="bi bi-camera-video"></i><strong>Kamera Yönetimi</strong><span>RTSP bağlantıları</span></button><button class="quick-tile red" data-target="#lisans-sekme"><i class="bi bi-shield-lock"></i><strong>Lisans</strong><span>Durum ve limitler</span></button></div>
+      <div class="row g-3 mb-3">
+        <div class="col-6 col-md-3">
+          <div class="card stat-card"><div class="card-body">
+            <div class="text-muted small">Toplam Kayıt</div>
+            <div class="fs-2 fw-bold" id="istToplam">-</div>
+          </div></div>
+        </div>
+        <div class="col-6 col-md-3">
+          <div class="card stat-card"><div class="card-body">
+            <div class="text-muted small">Bugünkü Geçiş</div>
+            <div class="fs-2 fw-bold" id="istBugun">-</div>
+          </div></div>
+        </div>
+        <div class="col-6 col-md-3">
+          <div class="card stat-card border-danger"><div class="card-body">
+            <div class="text-muted small">Yetkisiz Giriş</div>
+            <div class="fs-2 fw-bold text-danger" id="istYetkisiz">-</div>
+          </div></div>
+        </div>
+        <div class="col-6 col-md-3">
+          <div class="card stat-card border-dark"><div class="card-body">
+            <div class="text-muted small">Kara Liste Geçiş</div>
+            <div class="fs-2 fw-bold text-dark" id="istKaraListe">-</div>
+          </div></div>
+        </div>
+        <div class="col-6 col-md-3">
+          <div class="card stat-card border-success"><div class="card-body">
+            <div class="text-muted small">Şu An İçeride</div>
+            <div class="fs-2 fw-bold text-success" id="istIceride">-</div>
+          </div></div>
+        </div>
+        <div class="col-6 col-md-3">
+          <div class="card stat-card"><div class="card-body">
+            <div class="text-muted small">Aktif Kişi</div>
+            <div class="fs-2 fw-bold" id="istKisi">-</div>
+          </div></div>
+        </div>
+        <div class="col-6 col-md-3">
+          <div class="card stat-card"><div class="card-body">
+            <div class="text-muted small">Kara Listede</div>
+            <div class="fs-2 fw-bold" id="istKaraListeSayisi">-</div>
+          </div></div>
+        </div>
+      </div>
+
+      <div class="row g-3 mb-3">
+        <div class="col-lg-8">
+          <div class="card"><div class="card-header d-flex justify-content-between align-items-center">
+            <span><i class="bi bi-bar-chart-fill me-1"></i>Günlük Geçiş Grafiği</span>
+            <select class="form-select form-select-sm w-auto" id="grafikGunSec" onchange="grafikYukle()">
+              <option value="7">Son 7 gün</option><option value="14">Son 14 gün</option><option value="30">Son 30 gün</option>
+            </select>
+          </div><div class="card-body"><canvas id="gunlukGrafik" height="120"></canvas></div></div>
+        </div>
+        <div class="col-lg-4">
+          <div class="card"><div class="card-header"><i class="bi bi-pie-chart-fill me-1"></i>Yetki Dağılımı</div>
+          <div class="card-body d-flex justify-content-center"><canvas id="yetkiPie" height="180" width="180"></canvas></div></div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-header d-flex justify-content-between align-items-center">
+          <span><i class="bi bi-clock-history me-1"></i>Son Kayıtlar</span>
+          <button class="btn btn-sm btn-outline-secondary" onclick="panelYenile()"><i class="bi bi-arrow-clockwise"></i> Yenile</button>
+        </div>
+        <div class="card-body p-0">
+          <div class="table-responsive">
+            <table class="table table-hover mb-0 align-middle">
+              <thead class="table-light">
+                <tr><th>Görsel</th><th>Plaka</th><th>Tarih/Saat</th><th>Yön</th><th>Durum</th><th>Kişi/Tip</th></tr>
+              </thead>
+              <tbody id="sonKayitlarTablo"></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ================= KAYITLAR ================= -->
+    <div class="tab-pane fade" id="kayitlar-sekme">
+      <div class="card mb-3">
+        <div class="card-body">
+          <div class="row g-2 align-items-end">
+            <div class="col-md-3">
+              <label class="form-label small">Plaka Ara</label>
+              <input type="text" class="form-control" id="filtrePlaka" placeholder="örn. 34 ABC">
+            </div>
+            <div class="col-md-2">
+              <label class="form-label small">Başlangıç Tarihi</label>
+              <input type="date" class="form-control" id="filtreBaslangic">
+            </div>
+            <div class="col-md-2">
+              <label class="form-label small">Bitiş Tarihi</label>
+              <input type="date" class="form-control" id="filtreBitis">
+            </div>
+            <div class="col-md-2">
+              <label class="form-label small">Yetki Durumu</label>
+              <select class="form-select" id="filtreDurum">
+                <option value="">Tümü</option>
+                <option value="yetkili">Yetkili</option>
+                <option value="yetkisiz">Yetkisiz</option>
+                <option value="suresi_dolmus">Süresi Dolmuş</option>
+              </select>
+            </div>
+            <div class="col-md-3 d-flex gap-2">
+              <button class="btn btn-primary flex-fill" onclick="kayitlariYukle()"><i class="bi bi-search"></i> Filtrele</button>
+            </div>
+          </div>
+          <div class="mt-2 d-flex gap-2 flex-wrap align-items-center">
+            <button class="btn btn-success btn-sm" onclick="disaAktar('excel')"><i class="bi bi-file-earmark-excel"></i> Excel</button>
+            <button class="btn btn-danger btn-sm" onclick="disaAktar('pdf')"><i class="bi bi-file-earmark-pdf"></i> PDF</button>
+            <span class="ms-auto small text-muted" id="kayitlarSayac">-</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-body p-0">
+          <div class="table-responsive">
+            <table class="table table-hover mb-0 align-middle">
+              <thead class="table-light">
+                <tr><th>Görsel</th><th>ID</th><th>Plaka</th><th>Tarih/Saat</th><th>Kamera</th><th>Yön</th><th>Durum</th><th>Kişi/Tip</th><th>Güven</th><th></th></tr>
+              </thead>
+              <tbody id="kayitlarTablo"></tbody>
+            </table>
+          </div>
+          <div id="sayfalama" class="d-flex justify-content-between align-items-center px-3 py-2 border-top"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ================= KİŞİLER ================= -->
+    <div class="tab-pane fade" id="kisiler-sekme">
+      <div class="row g-3">
+        <div class="col-lg-4">
+          <div class="card">
+            <div class="card-header"><i class="bi bi-person-plus-fill me-1"></i>Yeni Kişi Ekle</div>
+            <div class="card-body">
+              <form id="kisiForm">
+                <div class="mb-2">
+                  <label class="form-label small">Tip</label>
+                  <select class="form-select" id="kisiTip" required onchange="ziyaretciAlanGoster()">
+                    <option value="abone">Abone (Site Sakini)</option>
+                    <option value="personel">Personel</option>
+                    <option value="ziyaretci">Ziyaretçi</option>
+                  </select>
+                </div>
+                <div class="mb-2">
+                  <label class="form-label small">Ad Soyad</label>
+                  <input type="text" class="form-control" id="kisiAdSoyad" required>
+                </div>
+                <div class="mb-2">
+                  <label class="form-label small">Plaka No</label>
+                  <input type="text" class="form-control" id="kisiPlaka" placeholder="34 ABC 123" required>
+                </div>
+                <div class="mb-2">
+                  <label class="form-label small">Telefon</label>
+                  <input type="text" class="form-control" id="kisiTelefon">
+                </div>
+                <div class="mb-2">
+                  <label class="form-label small" id="daireEtiket">Daire No</label>
+                  <input type="text" class="form-control" id="kisiDaire">
+                </div>
+                <div class="mb-2 d-none" id="ziyaretciBitisAlani">
+                  <label class="form-label small">Ziyaret Bitiş Tarihi/Saati</label>
+                  <input type="datetime-local" class="form-control" id="kisiBitisTarihi">
+                </div>
+                <div class="mb-2">
+                  <label class="form-label small">Açıklama</label>
+                  <textarea class="form-control" id="kisiAciklama" rows="2"></textarea>
+                </div>
+                <details class="mb-2">
+                  <summary class="small text-muted" style="cursor:pointer">Saat/Gün Kısıtlaması (opsiyonel)</summary>
+                  <div class="mt-2">
+                    <div class="row g-2">
+                      <div class="col-6"><label class="form-label small">Giriş Başlangıç</label><input type="time" class="form-control form-control-sm" id="kisiSaatBaslangic"></div>
+                      <div class="col-6"><label class="form-label small">Giriş Bitiş</label><input type="time" class="form-control form-control-sm" id="kisiSaatBitis"></div>
+                    </div>
+                    <label class="form-label small mt-2">İzin Verilen Günler</label>
+                    <div class="d-flex flex-wrap gap-1" id="kisiGunler">
+                      <label class="badge bg-light text-dark border" style="cursor:pointer"><input type="checkbox" value="0" class="me-1">Pzt</label>
+                      <label class="badge bg-light text-dark border" style="cursor:pointer"><input type="checkbox" value="1" class="me-1">Sal</label>
+                      <label class="badge bg-light text-dark border" style="cursor:pointer"><input type="checkbox" value="2" class="me-1">Çrş</label>
+                      <label class="badge bg-light text-dark border" style="cursor:pointer"><input type="checkbox" value="3" class="me-1">Per</label>
+                      <label class="badge bg-light text-dark border" style="cursor:pointer"><input type="checkbox" value="4" class="me-1">Cum</label>
+                      <label class="badge bg-light text-dark border" style="cursor:pointer"><input type="checkbox" value="5" class="me-1">Cmt</label>
+                      <label class="badge bg-light text-dark border" style="cursor:pointer"><input type="checkbox" value="6" class="me-1">Paz</label>
+                    </div>
+                  </div>
+                </details>
+                <button type="submit" class="btn btn-primary w-100"><i class="bi bi-check-circle"></i> Kaydet</button>
+              </form>
+            </div>
+          </div>
+        </div>
+
+        <div class="col-lg-8">
+          <div class="card">
+            <div class="card-header d-flex justify-content-between align-items-center flex-wrap gap-2">
+              <div class="btn-group" role="group">
+                <button class="btn btn-sm btn-outline-secondary tip-filtre active" data-tip="" onclick="kisiTipFiltrele('', this)">Tümü</button>
+                <button class="btn btn-sm btn-outline-secondary tip-filtre" data-tip="abone" onclick="kisiTipFiltrele('abone', this)">Abone</button>
+                <button class="btn btn-sm btn-outline-secondary tip-filtre" data-tip="personel" onclick="kisiTipFiltrele('personel', this)">Personel</button>
+                <button class="btn btn-sm btn-outline-secondary tip-filtre" data-tip="ziyaretci" onclick="kisiTipFiltrele('ziyaretci', this)">Ziyaretçi</button>
+              </div>
+              <button class="btn btn-sm btn-success" onclick="kisilerExcelIndir()"><i class="bi bi-file-earmark-excel"></i> Excel İndir</button>
+              <label class="btn btn-sm btn-outline-primary mb-0" title="Excel'den toplu kişi içe aktar">
+                <i class="bi bi-upload"></i> Excel İçe Aktar
+                <input type="file" id="topluImportDosya" accept=".xlsx,.xls" class="d-none" onchange="topluImport(this)">
+              </label>
+            </div>
+            <div class="card-body p-0">
+              <div class="table-responsive">
+                <table class="table table-hover mb-0 align-middle">
+                  <thead class="table-light">
+                    <tr><th>Ad Soyad</th><th>Plaka</th><th>Tip</th><th>Telefon</th><th>Daire/Departman</th><th>Durum</th><th></th></tr>
+                  </thead>
+                  <tbody id="kisilerTablo"></tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ================= LED PANEL ================= -->
+    <div class="tab-pane fade" id="led-sekme">
+      <div class="row">
+        <div class="col-lg-6">
+          <div class="card">
+            <div class="card-header"><i class="bi bi-gear-fill me-1"></i>LED Panel Bağlantı Ayarları</div>
+            <div class="card-body">
+              <form id="ledForm">
+                <div class="mb-3">
+                  <label class="form-label small">Bağlantı Modu</label>
+                  <select class="form-select" id="ledMod" onchange="ledModDegisti()">
+                    <option value="simulate">Simülasyon (donanım yok, sadece test)</option>
+                    <option value="serial">Seri Port (RS232/USB)</option>
+                    <option value="tcp">Ağ (TCP/IP)</option>
+                  </select>
+                </div>
+                <div id="ledSerialAlani" class="d-none">
+                  <div class="mb-2">
+                    <label class="form-label small">Seri Port</label>
+                    <input type="text" class="form-control" id="ledSerialPort" placeholder="COM3 veya /dev/ttyUSB0">
+                  </div>
+                  <div class="mb-2">
+                    <label class="form-label small">Baud Rate</label>
+                    <input type="number" class="form-control" id="ledBaudrate" value="9600">
+                  </div>
+                </div>
+                <div id="ledTcpAlani" class="d-none">
+                  <div class="mb-2">
+                    <label class="form-label small">IP Adresi</label>
+                    <input type="text" class="form-control" id="ledTcpHost" placeholder="192.168.1.50">
+                  </div>
+                  <div class="mb-2">
+                    <label class="form-label small">Port</label>
+                    <input type="number" class="form-control" id="ledTcpPort" value="5000">
+                  </div>
+                </div>
+                <button type="submit" class="btn btn-primary"><i class="bi bi-save"></i> Ayarları Kaydet</button>
+              </form>
+            </div>
+          </div>
+        </div>
+        <div class="col-lg-6">
+          <div class="card">
+            <div class="card-header"><i class="bi bi-send-fill me-1"></i>Test Mesajı Gönder</div>
+            <div class="card-body">
+              <input type="text" class="form-control mb-2" id="ledTestMesaj" value="PTS SİSTEMİ TEST MESAJI">
+              <button class="btn btn-outline-primary" onclick="ledTestGonder()"><i class="bi bi-broadcast"></i> Gönder</button>
+              <div id="ledTestSonuc" class="mt-3"></div>
+              <hr>
+              <p class="small text-muted">
+                LED panelinizin desteklediği protokole göre <code>backend/led_panel.py</code>
+                dosyasındaki gönderim fonksiyonunu uyarlamanız gerekebilir. Varsayılan modda
+                (Simülasyon) mesajlar konsola ve veritabanına yazılır, gerçek donanım gerekmez.
+              </p>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ================= TEST KAYDI EKLE ================= -->
+    <div class="tab-pane fade" id="test-sekme">
+      <div class="row">
+        <div class="col-lg-6">
+          <div class="card">
+            <div class="card-header"><i class="bi bi-camera-fill me-1"></i>Manuel / Test Plaka Kaydı Ekle</div>
+            <div class="card-body">
+              <p class="small text-muted">
+                Gerçek bir ANPR kamera bağlamadan sistemi test etmek için buradan
+                elle bir plaka geçiş kaydı oluşturabilirsiniz. Sistem plakayı Kişiler
+                listesiyle otomatik karşılaştırıp yetki durumunu belirleyecek ve
+                LED panele bildirim gönderecektir.
+              </p>
+              <form id="testKayitForm">
+                <div class="mb-2">
+                  <label class="form-label small">Plaka No</label>
+                  <input type="text" class="form-control" id="testPlaka" placeholder="34 ABC 123" required>
+                </div>
+                <div class="mb-2">
+                  <label class="form-label small">Kamera ID</label>
+                  <input type="text" class="form-control" id="testKamera" value="GIRIS-KAMERA-1">
+                </div>
+                <div class="mb-2">
+                  <label class="form-label small">Yön</label>
+                  <select class="form-select" id="testYon">
+                    <option value="giris">Giriş</option>
+                    <option value="cikis">Çıkış</option>
+                  </select>
+                </div>
+                <button type="submit" class="btn btn-primary"><i class="bi bi-plus-circle"></i> Kayıt Oluştur</button>
+              </form>
+              <div id="testSonuc" class="mt-3"></div>
+            </div>
+          </div>
+        </div>
+        <div class="col-lg-6">
+          <div class="card">
+            <div class="card-header"><i class="bi bi-info-circle-fill me-1"></i>Gerçek Kamera Entegrasyonu</div>
+            <div class="card-body small">
+              <p>Gerçek bir ANPR/RTSP kamera bağlamak için iki yol var:</p>
+              <ol>
+                <li><b>Kameranın kendi ANPR motoru:</b> Çoğu ticari ANPR kamerası plakayı
+                kendi içinde okuyup sonucu HTTP ile gönderebilir. Kameranızın
+                "Event Notification" ayarından, tespit sonucunu şu adrese
+                <code>POST</code> edecek şekilde yapılandırın:<br>
+                <code>http://&lt;bu-bilgisayarın-ip'si&gt;:8000/kayitlar/otomatik</code></li>
+                <li><b>Python pipeline (backend/camera_reader.py):</b> RTSP video akışını
+                YOLO ile tespit edip EasyOCR ile okuyan hazır bir iskelet mevcut.
+                Kurulum ve kullanım talimatları dosyanın en üstünde açıklanmıştır.</li>
+              </ol>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ================= LİSANS ================= -->
+    <div class="tab-pane fade" id="lisans-sekme">
+      <div class="row g-3">
+        <div class="col-lg-7">
+          <div class="card license-card"><div class="card-header"><i class="bi bi-key-fill me-1"></i>Lisans Yönetimi</div><div class="card-body"><div id="lisansDurum" class="license-status mb-4"></div><form id="lisansForm"><label class="form-label small">Lisans Anahtarı</label><div class="input-group"><input class="form-control" id="lisansAnahtari" placeholder="PTS-XXXX-XXXX-XXXX" autocomplete="off"><button class="btn btn-primary" type="submit"><i class="bi bi-link-45deg"></i> Aktive Et</button></div><div id="lisansSonuc" class="small mt-2"></div></form></div></div>
+        </div>
+        <div class="col-lg-5"><div class="card h-100"><div class="card-header"><i class="bi bi-pc-display me-1"></i>Cihaz Bilgileri</div><div class="card-body small"><div class="info-row"><span>Cihaz kodu</span><strong id="cihazKodu">-</strong></div><div class="info-row"><span>Kamera limiti</span><strong id="kameraLimiti">-</strong></div><div class="info-row"><span>Lisans bitişi</span><strong id="lisansBitisi">-</strong></div><p class="text-muted mt-4 mb-0">Lisans, bu cihazın kimliğiyle eşleştirilir. Aktivasyon anahtarı olmadan gerçek kamera bağlantıları etkinleştirilmez.</p></div></div></div>
+      </div>
+    </div>
+
+    <!-- ================= KAMERALAR ================= -->
+    <div class="tab-pane fade" id="kamera-sekme">
+      <div class="row g-3">
+        <div class="col-lg-5"><div class="card"><div class="card-header"><i class="bi bi-camera-video-fill me-1"></i>Kamera Ekle</div><div class="card-body"><form id="kameraForm"><div class="mb-3"><label class="form-label small">Kamera adı</label><input class="form-control" id="kameraAd" placeholder="Nizamiye Giriş" required></div><div class="mb-3"><label class="form-label small">RTSP adresi</label><input class="form-control" id="kameraRtsp" placeholder="rtsp://kullanici:sifre@192.168.1.20:554/..." required></div><div class="mb-3"><label class="form-label small">Yön</label><select class="form-select" id="kameraYon"><option value="giris">Giriş</option><option value="cikis">Çıkış</option></select></div><button class="btn btn-primary" type="submit"><i class="bi bi-plus-circle"></i> Kamerayı Kaydet</button></form><div id="kameraSonuc" class="small mt-3"></div></div></div></div>
+        <div class="col-lg-7"><div class="card"><div class="card-header d-flex justify-content-between"><span><i class="bi bi-list-ul me-1"></i>Tanımlı Kameralar</span><div class="d-flex gap-2 align-items-center"><span id="kameraSayac" class="small text-muted">-</span><button class="btn btn-sm btn-outline-info" onclick="tumKameralarSaglikKontrol()" title="Tüm kameraları ping'le"><i class="bi bi-activity"></i> Sağlık</button></div></div><div class="card-body p-0"><div class="table-responsive"><table class="table table-hover mb-0 align-middle"><thead class="table-light"><tr><th>Ad</th><th>Yön</th><th>RTSP adresi</th><th>Pipeline</th><th>TCP</th><th></th></tr></thead><tbody id="kameralarTablo"></tbody></table></div></div></div></div>
+      </div>
+    </div>
+
+    <!-- ================= KARA LİSTE ================= -->
+    <div class="tab-pane fade" id="karaliste-sekme">
+      <div class="row g-3">
+        <div class="col-lg-4">
+          <div class="card">
+            <div class="card-header"><i class="bi bi-slash-circle-fill me-1"></i>Kara Listeye Ekle</div>
+            <div class="card-body">
+              <form id="karaListeForm">
+                <div class="mb-2"><label class="form-label small">Plaka No</label>
+                  <input type="text" class="form-control" id="karaPlaka" placeholder="34 ABC 123" required></div>
+                <div class="mb-2"><label class="form-label small">Engelleme Sebebi</label>
+                  <input type="text" class="form-control" id="karaSebep" placeholder="Hırsızlık şüphelisi vb."></div>
+                <button type="submit" class="btn btn-danger w-100"><i class="bi bi-plus-circle"></i> Kara Listeye Ekle</button>
+              </form>
+              <div id="karaListeSonuc" class="small mt-3"></div>
+            </div>
+          </div>
+        </div>
+        <div class="col-lg-8">
+          <div class="card">
+            <div class="card-header d-flex justify-content-between"><span><i class="bi bi-list-ul me-1"></i>Engellenen Araçlar</span>
+              <button class="btn btn-sm btn-outline-secondary" onclick="karaListesiYukle()"><i class="bi bi-arrow-clockwise"></i></button></div>
+            <div class="card-body p-0">
+              <table class="table table-hover mb-0 align-middle">
+                <thead class="table-light"><tr><th>Plaka</th><th>Sebep</th><th>Ekleyen</th><th>Tarih</th><th></th></tr></thead>
+                <tbody id="karaListeTablo"></tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ================= BARİYER KONTROLÜ ================= -->
+    <div class="tab-pane fade" id="bariyer-sekme">
+      <div class="row g-3">
+        <div class="col-lg-5">
+          <div class="card">
+            <div class="card-header"><i class="bi bi-plus-circle me-1"></i>Yeni Bariyer Ekle</div>
+            <div class="card-body">
+              <form id="bariyerForm">
+                <div class="mb-2"><label class="form-label small">Ad</label>
+                  <input type="text" class="form-control" id="bariyerAd" placeholder="Nizamiye Bariyeri" required></div>
+                <div class="mb-2"><label class="form-label small">Mod</label>
+                  <select class="form-select" id="bariyerMod" onchange="bariyerModDegisti()">
+                    <option value="simulate">Simülasyon</option>
+                    <option value="http">HTTP Webhook</option>
+                  </select>
+                </div>
+                <div id="bariyerHttpAlani" class="d-none">
+                  <div class="mb-2"><label class="form-label small">URL</label>
+                    <input type="text" class="form-control" id="bariyerUrl" placeholder="http://192.168.1.x/open"></div>
+                  <div class="mb-2"><label class="form-label small">HTTP Metot</label>
+                    <select class="form-select" id="bariyerMetot"><option>GET</option><option>POST</option></select></div>
+                  <div class="mb-2"><label class="form-label small">Gövde (JSON, opsiyonel)</label>
+                    <input type="text" class="form-control" id="bariyerGovde" placeholder='{"cmd":"open"}'></div>
+                </div>
+                <div class="form-check mb-3">
+                  <input class="form-check-input" type="checkbox" id="bariyerAutoAc">
+                  <label class="form-check-label small" for="bariyerAutoAc">Yetkili araç girişinde otomatik aç</label>
+                </div>
+                <button type="submit" class="btn btn-primary w-100"><i class="bi bi-save"></i> Kaydet</button>
+              </form>
+              <div id="bariyerSonuc" class="small mt-2"></div>
+            </div>
+          </div>
+        </div>
+        <div class="col-lg-7">
+          <div class="card">
+            <div class="card-header"><i class="bi bi-door-open-fill me-1"></i>Tanımlı Bariyerler</div>
+            <div class="card-body p-0">
+              <table class="table table-hover mb-0 align-middle">
+                <thead class="table-light"><tr><th>Ad</th><th>Mod</th><th>URL</th><th></th></tr></thead>
+                <tbody id="bariyerTablo"></tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ================= KULLANICI YÖNETİMİ ================= -->
+    <div class="tab-pane fade" id="kullanicilar-sekme">
+      <div class="row g-3">
+        <div class="col-lg-4">
+          <div class="card">
+            <div class="card-header"><i class="bi bi-person-plus-fill me-1"></i>Yeni Kullanıcı</div>
+            <div class="card-body">
+              <form id="kullaniciForm">
+                <div class="mb-2"><label class="form-label small">Kullanıcı Adı</label>
+                  <input type="text" class="form-control" id="yeniKullanici" minlength="3" required></div>
+                <div class="mb-2"><label class="form-label small">Parola</label>
+                  <input type="password" class="form-control" id="yeniParola" minlength="8" required></div>
+                <div class="mb-2"><label class="form-label small">Rol</label>
+                  <select class="form-select" id="yeniRol">
+                    <option value="izleyici">İzleyici (salt okunur)</option>
+                    <option value="operatör">Operatör</option>
+                    <option value="yonetici">Yönetici (tam yetki)</option>
+                  </select>
+                </div>
+                <button type="submit" class="btn btn-primary w-100"><i class="bi bi-person-check"></i> Kullanıcı Oluştur</button>
+              </form>
+              <div id="kullaniciSonuc" class="small mt-2"></div>
+            </div>
+          </div>
+        </div>
+        <div class="col-lg-8">
+          <div class="card">
+            <div class="card-header d-flex justify-content-between">
+              <span><i class="bi bi-people-fill me-1"></i>Sistem Kullanıcıları</span>
+              <button class="btn btn-sm btn-outline-secondary" onclick="kullanicilariYukle()"><i class="bi bi-arrow-clockwise"></i></button>
+            </div>
+            <div class="card-body p-0">
+              <table class="table table-hover mb-0 align-middle">
+                <thead class="table-light"><tr><th>Kullanıcı Adı</th><th>Rol</th><th>Son Giriş</th><th>Durum</th><th></th></tr></thead>
+                <tbody id="kullanicilarTablo"></tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ================= BİLDİRİM AYARLARI ================= -->
+    <div class="tab-pane fade" id="bildirim-sekme">
+      <div class="row g-3">
+        <div class="col-lg-5">
+          <div class="card">
+            <div class="card-header"><i class="bi bi-bell-fill me-1"></i>Yeni Webhook Ekle</div>
+            <div class="card-body">
+              <form id="bildirimForm">
+                <div class="mb-2"><label class="form-label small">Ad</label>
+                  <input type="text" class="form-control" id="bildirimAd" placeholder="N8N / Slack / Teams vb." required></div>
+                <div class="mb-2"><label class="form-label small">Webhook URL</label>
+                  <input type="url" class="form-control" id="bildirimHedef" placeholder="https://..." required></div>
+                <div class="mb-2"><label class="form-label small">Tetikleyici</label>
+                  <select class="form-select" id="bildirimTetikleyici">
+                    <option value="hepsi">Her geçiş</option>
+                    <option value="yetkisiz">Sadece yetkisiz</option>
+                    <option value="kara_liste">Sadece kara liste</option>
+                    <option value="suresi_dolmus">Sadece süresi dolmuş</option>
+                  </select>
+                </div>
+                <div class="mb-2"><label class="form-label small">HTTP Metot</label>
+                  <select class="form-select" id="bildirimMetot"><option>POST</option><option>GET</option></select></div>
+                <button type="submit" class="btn btn-primary w-100"><i class="bi bi-save"></i> Kaydet</button>
+              </form>
+              <div id="bildirimSonuc" class="small mt-2"></div>
+              <hr>
+              <p class="small text-muted mb-0">Tetikleyici koşulu oluştuğunda JSON gövdeli bir HTTP isteği gönderilir. N8N, Zapier, Make, Slack Incoming Webhook veya kendi API'nize bağlanabilir.</p>
+            </div>
+          </div>
+        </div>
+        <div class="col-lg-7">
+          <div class="card">
+            <div class="card-header d-flex justify-content-between">
+              <span><i class="bi bi-list-ul me-1"></i>Tanımlı Webhook'lar</span>
+              <button class="btn btn-sm btn-outline-secondary" onclick="bildirimleriYukle()"><i class="bi bi-arrow-clockwise"></i></button>
+            </div>
+            <div class="card-body p-0">
+              <table class="table table-hover mb-0 align-middle">
+                <thead class="table-light"><tr><th>Ad</th><th>URL</th><th>Tetikleyici</th><th>Durum</th><th></th></tr></thead>
+                <tbody id="bildirimTablo"></tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ================= SİSTEM / LOG ================= -->
+    <div class="tab-pane fade" id="sistem-sekme">
+      <div class="row g-3">
+        <div class="col-lg-4">
+          <div class="card mb-3">
+            <div class="card-header"><i class="bi bi-activity me-1"></i>Sistem Durumu</div>
+            <div class="card-body" id="sistemSaglikPaneli">
+              <div class="text-center text-muted py-3"><div class="spinner-border spinner-border-sm"></div> Kontrol ediliyor…</div>
+            </div>
+          </div>
+          <div class="card mb-3">
+            <div class="card-header"><i class="bi bi-gear-fill me-1"></i>Sistem Ayarları</div>
+            <div class="card-body" id="sistemAyarlariPaneli">
+              <div class="text-center text-muted py-2"><div class="spinner-border spinner-border-sm"></div></div>
+            </div>
+          </div>
+          <div class="card">
+            <div class="card-header"><i class="bi bi-hdd me-1"></i>Disk Yönetimi</div>
+            <div class="card-body">
+              <div id="diskBilgisi" class="small text-muted mb-3">Yükleniyor…</div>
+              <div class="d-flex gap-2 flex-wrap">
+                <div class="input-group input-group-sm" style="max-width:180px">
+                  <input type="number" class="form-control" id="temizleGun" value="30" min="1" max="365">
+                  <span class="input-group-text">gün+</span>
+                </div>
+                <button class="btn btn-sm btn-outline-warning" onclick="goruntuleriTemizle()"><i class="bi bi-trash"></i> Temizle</button>
+                <button class="btn btn-sm btn-outline-primary" onclick="veritabaniIndir()"><i class="bi bi-download"></i> DB Yedek</button>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="col-lg-8">
+          <div class="card h-100">
+            <div class="card-header d-flex justify-content-between">
+              <span><i class="bi bi-terminal-fill me-1"></i>Uygulama Logları</span>
+              <button class="btn btn-sm btn-outline-secondary" onclick="loglariYukle()"><i class="bi bi-arrow-clockwise"></i> Yenile</button>
+            </div>
+            <div class="card-body p-0">
+              <pre id="logKonteyneri" style="height:560px;overflow-y:auto;font-size:.72rem;background:#1a1d21;color:#a8b3b8;margin:0;padding:.75rem;border-radius:0 0 .5rem .5rem"></pre>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+  </main>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.2/dist/chart.umd.min.js"></script>
+<script src="/static/app.js"></script>
+</body>
+</html>
