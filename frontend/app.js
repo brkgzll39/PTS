@@ -31,6 +31,17 @@ function durumRozeti(durum) {
   return `<span class="badge badge-${durum}">${etiketler[durum] || escapeHtml(durum)}</span>`;
 }
 
+function alarmTipiEtiketi(tip) {
+  const etiketler = {
+    yetkisiz_arac: "Yetkisiz araç",
+    suresi_dolmus: "Süresi dolmuş ziyaretçi",
+    kara_liste: "Kara liste geçişi",
+    supheli_arac: "Şüpheli araç (tekrarlı red)",
+    kamera_arizasi: "Kamera arızası / bağlantı sorunu",
+  };
+  return etiketler[tip] || escapeHtml(tip || "Bilinmeyen alarm");
+}
+
 function tipRozeti(tip) {
   if (!tip) return '<span class="text-muted">-</span>';
   const etiketler = { abone: "Abone", personel: "Personel", ziyaretci: "Ziyaretçi" };
@@ -126,7 +137,7 @@ async function panelYenile() {
     const canliOlaylar = document.getElementById("canliOlaylar");
     if (canliOlaylar) {
       const alarmlar = await apiCagir("/alarmlar?sadece_acik=true&limit=4");
-      const alarmSatirlari = alarmlar.map(a => `<div class="event-row alarm-row"><div class="event-icon blocked"><i class="bi bi-exclamation-triangle-fill"></i></div><div class="event-main"><strong>${escapeHtml(a.plaka_no)}</strong><span>${a.alarm_tipi === "yetkisiz_arac" ? "Yetkisiz araç" : "Süresi dolmuş ziyaretçi"}</span></div><button class="btn btn-sm btn-light" title="Okundu işaretle" onclick="alarmOkundu(${a.id})"><i class="bi bi-check2"></i></button></div>`).join("");
+      const alarmSatirlari = alarmlar.map(a => `<div class="event-row alarm-row"><div class="event-icon blocked"><i class="bi bi-exclamation-triangle-fill"></i></div><div class="event-main"><strong>${escapeHtml(a.plaka_no)}</strong><span>${alarmTipiEtiketi(a.alarm_tipi)}</span></div><button class="btn btn-sm btn-light" title="Okundu işaretle" onclick="alarmOkundu(${a.id})"><i class="bi bi-check2"></i></button></div>`).join("");
       const olaySatirlari = kayitlar.slice(0, 8).map(k => `<button class="event-row event-button" onclick="olayDetayAc(${k.id})"><div class="event-icon ${k.yetki_durumu === "yetkili" ? "allowed" : "blocked"}"><i class="bi ${k.yon === "giris" ? "bi-box-arrow-in-right" : "bi-box-arrow-right"}"></i></div><div class="event-main"><strong>${escapeHtml(k.plaka_no)}</strong><span>${escapeHtml(k.kamera_id)} · ${k.yon === "giris" ? "Giriş" : "Çıkış"}</span></div><div class="event-time">${tarihFormatla(k.tarih_saat).split(",")[1] || "-"}</div></button>`).join("");
       canliOlaylar.innerHTML = alarmSatirlari + olaySatirlari || '<div class="empty-state">Henüz geçiş kaydı yok</div>';
     }
@@ -197,9 +208,14 @@ async function kameralariYukle() {
     document.getElementById("kameralarTablo").innerHTML = kameralar.map(k => {
       const durum = !k.kutuphaneler_mevcut
         ? `<span class="badge bg-warning text-dark" title="fast-alpr + opencv kurulu değil">Kütüphane Yok</span>`
-        : k.pipeline_calisiyor
-          ? `<span class="badge bg-success">Çalışıyor</span>`
-          : `<span class="badge bg-danger">Durdu</span>`;
+        : !k.pipeline_calisiyor
+          ? `<span class="badge bg-danger">Durdu</span>`
+          : k.donmus
+            ? `<span class="badge bg-warning text-dark" title="${k.son_kare_yasi_sn != null ? k.son_kare_yasi_sn + ' sn önceki kare' : ''}"><i class="bi bi-exclamation-triangle-fill"></i> Görüntü Donmuş</span>`
+            : `<span class="badge bg-success">Çalışıyor</span>`;
+      const yenidenBaglanmaBadge = (k.yeniden_baglanma_sayisi > 0)
+        ? `<span class="badge bg-light text-muted ms-1" title="Bu oturumda yeniden bağlanma denemesi">↻ ${k.yeniden_baglanma_sayisi}</span>`
+        : "";
       const saglik = _kameraSaglikCache[k.id];
       const tcpBadge = saglik
         ? (saglik.tcp_erisim
@@ -207,7 +223,7 @@ async function kameralariYukle() {
             : `<span class="badge bg-danger">Erişilemiyor</span>`)
         : `<span class="badge bg-light text-muted">-</span>`;
       const yenidenBtn = `<button class="btn btn-sm btn-outline-secondary ms-1" title="Pipeline'ı yeniden başlat" onclick="kameraYenidenBaslat('${k.id}')"><i class="bi bi-arrow-repeat"></i></button>`;
-      return `<tr><td><strong>${escapeHtml(k.ad)}</strong></td><td>${k.yon === "giris" ? "Giriş" : "Çıkış"}</td><td class="text-muted small text-truncate" style="max-width: 180px">${escapeHtml(k.rtsp_url)}</td><td>${durum}</td><td>${tcpBadge}</td><td><button class="btn btn-sm btn-outline-danger" title="Kamerayı sil" onclick="kameraSil('${k.id}')"><i class="bi bi-trash"></i></button>${yenidenBtn}</td></tr>`;
+      return `<tr><td><strong>${escapeHtml(k.ad)}</strong></td><td>${k.yon === "giris" ? "Giriş" : "Çıkış"}</td><td class="text-muted small text-truncate" style="max-width: 180px">${escapeHtml(k.rtsp_url)}</td><td>${durum}${yenidenBaglanmaBadge}</td><td>${tcpBadge}</td><td><button class="btn btn-sm btn-outline-danger" title="Kamerayı sil" onclick="kameraSil('${k.id}')"><i class="bi bi-trash"></i></button>${yenidenBtn}</td></tr>`;
     }).join("") || '<tr><td colspan="6" class="text-center text-muted py-4">Henüz kamera tanımlanmadı</td></tr>';
     kameraDuvariniGuncelle(kameralar);
   } catch (err) { console.error(err); }
@@ -226,9 +242,14 @@ function kameraDuvariniGuncelle(kameralar) {
     return;
   }
   duvar.innerHTML = kameralar.map(k => {
-    const statusClass = k.pipeline_calisiyor ? "camera-live" : "camera-simulated";
-    const statusText = k.pipeline_calisiyor ? "Canlı" : (k.kutuphaneler_mevcut ? "Bağlanmıyor" : "Simülasyon");
-    return `<div class="camera-tile ${statusClass}" id="tile-${k.id}"><div class="camera-label"><span><i class="bi bi-camera-video-fill me-1"></i>${escapeHtml(k.ad).toUpperCase()}</span><span class="camera-status">${statusText}</span></div><div class="camera-empty" id="frame-${k.id}"><i class="bi bi-camera-video"></i><strong>${k.yon === "giris" ? "Giriş" : "Çıkış"} kamerası</strong><small>${k.pipeline_calisiyor ? "Görüntü yükleniyor..." : (k.kutuphaneler_mevcut ? "Pipeline başlatılamadı" : "opencv + fast-alpr gerekli")}</small></div></div>`;
+    const statusClass = !k.pipeline_calisiyor ? "camera-simulated" : (k.donmus ? "camera-frozen" : "camera-live");
+    const statusText = !k.pipeline_calisiyor
+      ? (k.kutuphaneler_mevcut ? "Bağlanmıyor" : "Simülasyon")
+      : (k.donmus ? "Görüntü Donmuş" : "Canlı");
+    const donmusUyarisi = (k.pipeline_calisiyor && k.donmus)
+      ? `<div class="camera-frozen-banner"><i class="bi bi-exclamation-triangle-fill"></i> Görüntü ${k.son_kare_yasi_sn != null ? Math.round(k.son_kare_yasi_sn) + " sn" : ""} önceden beri güncellenmiyor — sistem otomatik yeniden bağlanmayı deniyor</div>`
+      : "";
+    return `<div class="camera-tile ${statusClass}" id="tile-${k.id}"><div class="camera-label"><span><i class="bi bi-camera-video-fill me-1"></i>${escapeHtml(k.ad).toUpperCase()}</span><span class="camera-status">${statusText}</span></div>${donmusUyarisi}<div class="camera-empty" id="frame-${k.id}"><i class="bi bi-camera-video"></i><strong>${k.yon === "giris" ? "Giriş" : "Çıkış"} kamerası</strong><small>${k.pipeline_calisiyor ? "Görüntü yükleniyor..." : (k.kutuphaneler_mevcut ? "Pipeline başlatılamadı" : "opencv + fast-alpr gerekli")}</small></div></div>`;
   }).join("");
 
   // Pipeline çalışan kameralar için anlık görüntü çek

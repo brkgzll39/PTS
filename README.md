@@ -146,6 +146,56 @@ python -c "from camera_reader import tek_gorsel_test; tek_gorsel_test('arac_foto
 Bu, FastAPI sunucusu çalışıyorken tespit edilen plakayı gerçekten `/kayitlar/otomatik`
 uç noktasına gönderir ve panelde görünmesini sağlar.
 
+## Kamera Bağlantı Güvenilirliği
+
+Bu bölüm, kamera bağlantılarının/araç geçişi görüntülerinin donmaması için yapılan
+sağlamlaştırma çalışmasını özetler.
+
+**Bulunan ve düzeltilen kritik hata:** `backend/camera_reader.py` dosyası bozuk bir
+kopyalama nedeniyle içeriğini iki kez barındırıyordu ve bu yüzden **Python
+tarafından import edilemiyordu** (`SyntaxError`). `main.py` bu import hatasını sessizce
+yutup `_CAM_LIBS = False` yapan bir `try/except` içinde çalıştığı için sistem hiçbir
+zaman gerçek bir kamera pipeline'ı başlatamıyordu — opencv/fast-alpr kurulu olsa bile.
+Muhtemelen yaşanan "kamera bağlanmıyor / görüntü hiç gelmiyor" sorunlarının kök nedeni
+budur. Dosya temizlenip yeniden yazıldı; artık hatasız import ediliyor.
+
+**Ayrıca eklenen sağlamlaştırmalar:**
+- **Thread sızıntısı düzeltmesi**: Eskiden her yeniden bağlanmada eski kare-okuyucu
+  thread hiç durdurulmuyor, kapatılmış bağlantı üzerinde sonsuza kadar dönmeye devam
+  ediyordu. Artık her bağlantının bir "nesli" var; eski nesil thread'ler yeni bağlantı
+  açılınca kendiliğinden ve temiz şekilde sonlanıyor.
+- **Görüntü donması (frozen image) tespiti**: `pipeline_calisiyor=true` artık tek başına
+  yeterli sayılmıyor — pipeline son karenin üzerinden ne kadar süre geçtiğini
+  (`son_kare_yasi_sn`) izliyor ve gerçekten donmuş mu (`donmus`) diye ayrı raporluyor.
+  Eskiden TCP bağlantısı açık kalıp görüntü aslında donmuş olsa bile arayüzde hâlâ
+  "Canlı" yazabiliyordu.
+- **Otomatik kendi kendini iyileştirme (watchdog)**: `main.py` içine her 20 saniyede bir
+  çalışan bir kamera bekçisi eklendi. Pipeline thread'i beklenmedik şekilde çökerse
+  (örn. yakalanmamış bir istisna) veya kamera uzun süre (90 sn+) donuk kalırsa, bekçi
+  bunu tespit edip otomatik olarak yeniden başlatır ve gerekirse Alarmlar listesine
+  "Kamera arızası" kaydı düşer — operatörün fark etmesi beklenmeden.
+- **Log entegrasyonu**: Kamera modülündeki tüm çalışma zamanı olayları artık
+  `print()` yerine uygulamanın kendi logger'ı üzerinden `loglar/pts.log` dosyasına
+  yazılıyor (sorun giderme için tek yer).
+- **Bellek hijyeni**: Tekrar-filtreleme için tutulan "son görülen plaka" sözlüğü
+  artık periyodik olarak budanıyor; çok uzun süre (günler/haftalar) kesintisiz
+  çalışan kurulumlarda yavaş bellek büyümesini önler.
+
+**Yeni API alanları** (`/kameralar`, `/kameralar/{id}/saglik`, `/kameralar/saglik/tumu`):
+`son_kare_yasi_sn` (son karenin saniye cinsinden yaşı), `donmus` (bool),
+`yeniden_baglanma_sayisi`, `calisma_suresi_sn`, ve özet `durum` alanı
+(`canli` | `donmus` | `bagli_degil` | `kapali`). Panel arayüzü (Kamera Yönetimi
+tablosu ve Canlı İzleme kamera duvarı) bu alanları kullanarak "Görüntü Donmuş"
+uyarısını turuncu bir rozet/banner ile gösterir.
+
+**Kamera olmadan doğrulama:** Fiziksel kamera bağlı değilken bu değişiklikler kısa bir
+sentetik video dosyasını "kamera" gibi kullanan bağımsız bir test betiğiyle uçtan uca
+doğrulandı: video bilerek EOF'a düşürülüp kesinti/donma simüle edildi, pipeline'ın
+otomatik yeniden bağlandığı, hiçbir thread'in sızmadığı (eşzamanlı okuyucu thread
+sayısı hep 1'de kaldı) ve tespit edilen plakanın gerçek bir HTTP sunucusuna başarıyla
+POST edildiği doğrulandı. Gerçek kamerayı taktığınızda aynı davranışı
+`/kameralar/{id}/saglik` ve panel üzerinden gözlemleyebilirsiniz.
+
 ## LED Panel Bağlama
 
 `backend/led_panel.py` üç mod destekler:

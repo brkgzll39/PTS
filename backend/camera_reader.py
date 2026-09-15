@@ -1,4 +1,4 @@
-﻿"""
+"""
 OPSİYONEL MODÜL: Gerçek ANPR/RTSP kamera hattı (FastALPR motoru ile).
 
 Bu dosya sistemin ZORUNLU bir parçası değildir; ana uygulama (main.py) bu modül
@@ -27,12 +27,26 @@ Gerçek kamera bağlamak isterseniz:
   (çoğu Hikvision/Dahua ANPR modeli gibi), bu Python pipeline'ına hiç gerek
   kalmaz — kameranın "Event Notification / ANPR Result Push" özelliğini doğrudan
   POST /kayitlar/otomatik uç noktasına yönlendirmeniz yeterlidir.
+
+Sağlamlık notları (üretim/7-24 çalışma için):
+  - Kare-okuyucu thread her zaman en son kareyi tutar (RTSP tamponu birikmez,
+    böylece görüntü zamanla "gecikmeye" düşmez).
+  - Her yeniden bağlanmada eski okuyucu thread bir "nesil" (generation) sayacıyla
+    kapatılır; eski thread sonsuza kadar dönmez (thread sızıntısı yok).
+  - `son_kare_yasi_sn()` en son karenin üstünden geçen süreyi verir; bu sayede
+    "bağlantı TCP olarak açık ama görüntü donmuş" durumu da tespit edilebilir
+    (main.py bunu /kameralar/{id}/saglik uç noktasında kullanır).
+  - Tüm çalışma zamanı olayları `logging` üzerinden `pts.camera` logger'ına yazılır
+    (uygulamanın `loglar/pts.log` dosyasına düşer); `print()` kullanılmaz.
+  - `son_plaka_zamani` sözlüğü periyodik olarak budanır (çok uzun süre çalışan
+    sistemlerde sınırsız büyümesin diye).
 """
 import os
 import re
 import tempfile
 import time
 import threading
+import logging
 from typing import Optional
 
 try:
@@ -48,6 +62,8 @@ except ImportError:
     KUTUPHANELER_MEVCUT = False
 
 
+logger = logging.getLogger("pts.camera")
+
 PLAKA_REGEX = re.compile(r'^(\d{2})([A-PR-VYZ]{1,3})(\d{2,4})$')
 
 # Plaka overlay stilleri
@@ -55,6 +71,10 @@ _OVERLAY_RENK = (0, 220, 80)       # yeşil kutu / metin
 _OVERLAY_ARKA = (0, 0, 0)          # metin arkaplanı
 _YAZI_OLCEK = 0.8
 _YAZI_KALINLIK = 2
+
+# Aynı plaka için son görülme zamanlarının ne kadar süre saklanacağı (bellek
+# şişmesin diye budama eşiği = tekrar gecikmesinin birkaç katı).
+_PLAKA_HAFIZA_CARPANI = 4
 
 
 def plaka_dogrula(text: str) -> Optional[str]:
@@ -85,7 +105,8 @@ def _kare_uzerine_ciz(frame, tespitler: list) -> None:
 
 class KameraPipeline:
     def __init__(self, video_kaynagi: str, api_url: str = "http://localhost:8000/kayitlar/otomatik",
-                 kamera_id: str = "KAMERA-1", tekrar_gecikme_sn: int = 30, yon: str = "giris"):
+                 kamera_id: str = "KAMERA-1", tekrar_gecikme_sn: int = 30, yon: str = "giris",
+                 baglanti_zaman_asimi_sn: float = 8.0, donma_esigi_sn: float = 10.0):
         if not KUTUPHANELER_MEVCUT:
             raise RuntimeError(
                 "Gerekli kütüphaneler kurulu değil. "
@@ -96,6 +117,13 @@ class KameraPipeline:
         self.kamera_id = kamera_id
         self.yon = yon
         self.tekrar_gecikme_sn = tekrar_gecikme_sn
+        # Kare akmayı bırakırsa bu kadar saniye sonra yeniden bağlanılır.
+        self.baglanti_zaman_asimi_sn = baglanti_zaman_asimi_sn
+        # Bu kadar saniyedir taze kare yoksa "donmuş" olarak raporlanır (dışarıya,
+        # örn. sağlık uç noktasına, bilgi amaçlı — yeniden bağlanma zaten yukarıdaki
+        # zaman aşımıyla otomatik tetiklenir).
+        self.donma_esigi_sn = donma_esigi_sn
+
         self.motor = ANPREngine()
         self.calisiyor = False
         self.son_plaka_zamani: dict = {}
@@ -104,6 +132,10 @@ class KameraPipeline:
         self._son_kare = None
         self._kare_kilit = threading.Lock()
         self._kare_guncellendi = threading.Event()
+        # Okuyucu thread'lerin "nesli" — her yeniden bağlanmada artar, eski
+        # thread'ler kendi neslinin geçersiz olduğunu görüp sonlanır (sızıntı yok).
+        self._gen = 0
+        self._gen_kilit = threading.Lock()
 
         # Son annotated frame (goruntu endpoint'i için)
         self._goruntu_kilit = threading.Lock()
@@ -111,6 +143,12 @@ class KameraPipeline:
 
         # Son tespit sonuçları (frontend overlay için)
         self._son_tespitler: list = []
+
+        # Gözlemlenebilirlik / durum bilgisi
+        self._son_kare_zamani: Optional[float] = None  # time.monotonic()
+        self._baslangic_zamani: Optional[float] = None
+        self._yeniden_baglanma_sayisi = 0
+        self._dongu_thread: Optional[threading.Thread] = None
 
     # ------------------------------------------------------------------
     # Dışarıya açık: son JPEG kareyi döner (pipeline çalışırken hızlı)
@@ -123,30 +161,77 @@ class KameraPipeline:
     def son_tespitler_al(self) -> list:
         return list(self._son_tespitler)
 
+    def son_kare_yasi_sn(self) -> Optional[float]:
+        """Son alınan karenin üzerinden geçen süre (sn). Hiç kare gelmediyse None."""
+        if self._son_kare_zamani is None:
+            return None
+        return max(0.0, time.monotonic() - self._son_kare_zamani)
+
+    def thread_canli_mi(self) -> bool:
+        """Döngü thread'i gerçekten hayatta mı? (calisiyor bayrağı tek başına yeterli
+        değildir: thread beklenmedik bir istisnayla ölmüş olsa bile bayrak True kalabilir.
+        Dışarıdaki bekçi/gözetleyici bu metodla gerçek canlılığı kontrol etmelidir.)"""
+        return self._dongu_thread is not None and self._dongu_thread.is_alive()
+
+    def durum_bilgisi(self) -> dict:
+        """Sağlık kontrolü / arayüz için tek çağrıda tüm pipeline durumu."""
+        yas = self.son_kare_yasi_sn()
+        donmus = self.calisiyor and (yas is None or yas > self.donma_esigi_sn)
+        calisma_suresi = (time.monotonic() - self._baslangic_zamani) if self._baslangic_zamani else 0.0
+        return {
+            "calisiyor": self.calisiyor,
+            "son_kare_yasi_sn": round(yas, 1) if yas is not None else None,
+            "donmus": donmus,
+            "yeniden_baglanma_sayisi": self._yeniden_baglanma_sayisi,
+            "calisma_suresi_sn": round(calisma_suresi, 0),
+        }
+
     # ------------------------------------------------------------------
     # Pipeline kontrolü
     # ------------------------------------------------------------------
 
     def baslat(self) -> None:
         self.calisiyor = True
-        threading.Thread(target=self._dongu, daemon=True, name=f"pts-pipeline-{self.kamera_id}").start()
-        print(f"Kamera pipeline başlatıldı: {self.kamera_id}")
+        self._baslangic_zamani = time.monotonic()
+        self._dongu_thread = threading.Thread(target=self._dongu, daemon=True, name=f"pts-pipeline-{self.kamera_id}")
+        self._dongu_thread.start()
+        logger.info("Kamera pipeline başlatıldı: %s (%s)", self.kamera_id, self.video_kaynagi)
 
     def durdur(self) -> None:
         self.calisiyor = False
+        # Okuyucu/döngü thread'lerinin kendi kendine çıkması için nesli geçersiz kıl.
+        with self._gen_kilit:
+            self._gen += 1
+        if self._dongu_thread is not None:
+            self._dongu_thread.join(timeout=3.0)
+        logger.info("Kamera pipeline durduruldu: %s", self.kamera_id)
 
     # ------------------------------------------------------------------
     # İç metodlar
     # ------------------------------------------------------------------
 
-    def _kare_okuyucu(self, cap) -> None:
+    def _kare_okuyucu(self, cap, gen: int) -> None:
         """Ayrı thread: RTSP tamponunu sürekli boşaltır, sadece en son kareyi saklar.
-        Bu sayede işleyici thread her zaman gecikme-serbest taze kareyle çalışır."""
-        while self.calisiyor:
-            ret, frame = cap.read()
+        Bu sayede işleyici thread her zaman gecikme-serbest taze kareyle çalışır.
+
+        `gen` bu thread'in ait olduğu bağlantı neslidir; pipeline yeniden bağlanıp
+        `self._gen`'i artırdığında bu thread bir sonraki turda kendini durdurur —
+        böylece eski (kapatılmış) cap nesnesi üzerinde sonsuza kadar dönmez."""
+        ardarda_hata = 0
+        while self.calisiyor and gen == self._gen:
+            try:
+                ret, frame = cap.read()
+            except Exception as exc:
+                ardarda_hata += 1
+                if ardarda_hata == 1:
+                    logger.warning("[%s] Kare okuma hatası: %s", self.kamera_id, exc)
+                time.sleep(0.2)
+                continue
             if ret and frame is not None:
+                ardarda_hata = 0
                 with self._kare_kilit:
                     self._son_kare = frame
+                self._son_kare_zamani = time.monotonic()
                 self._kare_guncellendi.set()
             else:
                 time.sleep(0.05)
@@ -194,234 +279,108 @@ class KameraPipeline:
                     )
                 gonderilenler.append(plaka)
             except Exception as e:
-                print(f"API'ye gönderilemedi: {e}")
+                logger.error("[%s] API'ye gönderilemedi: %s", self.kamera_id, e)
             finally:
                 try:
                     os.remove(gecici)
                 except OSError:
                     pass
 
+        self._plaka_hafizasini_buda()
         return gonderilenler
 
-    def _dongu(self) -> None:
+    def _plaka_hafizasini_buda(self) -> None:
+        """son_plaka_zamani sözlüğü süresiz büyümesin diye eski girdileri temizler."""
+        if len(self.son_plaka_zamani) < 200:
+            return
+        esik = time.time() - (self.tekrar_gecikme_sn * _PLAKA_HAFIZA_CARPANI)
+        eskiler = [p for p, t in self.son_plaka_zamani.items() if t < esik]
+        for p in eskiler:
+            self.son_plaka_zamani.pop(p, None)
+
+    def _cap_ac(self):
         os.environ.setdefault("OPENCV_FFMPEG_LOGLEVEL", "quiet")
-
-        def _cap_ac():
-            cap = cv2.VideoCapture(self.video_kaynagi, cv2.CAP_FFMPEG)
+        cap = cv2.VideoCapture(self.video_kaynagi, cv2.CAP_FFMPEG)
+        try:
             cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
-            return cap
+        except Exception:
+            pass
+        return cap
 
-        cap = _cap_ac()
-        okuyucu = threading.Thread(target=self._kare_okuyucu, args=(cap,), daemon=True,
-                                   name=f"pts-okuyucu-{self.kamera_id}")
+    def _yeniden_baglan(self, eski_cap) -> tuple:
+        """Eski cap'i kapatır, yeni bağlantı açar, yeni nesil ile okuyucu thread başlatır."""
+        with self._gen_kilit:
+            self._gen += 1
+            gen = self._gen
+        try:
+            eski_cap.release()
+        except Exception:
+            pass
+        cap = self._cap_ac()
+        okuyucu = threading.Thread(target=self._kare_okuyucu, args=(cap, gen), daemon=True,
+                                    name=f"pts-okuyucu-{self.kamera_id}-{gen}")
         okuyucu.start()
+        return cap, gen
 
-        yeniden_baglanma = 0
-        while self.calisiyor:
-            # Taze kare gelene kadar bekle (max 3 sn)
-            guncellendi = self._kare_guncellendi.wait(timeout=3.0)
-            if not guncellendi:
-                # 3 sn kare gelmedi → yeniden bağlan
-                yeniden_baglanma += 1
-                print(f"[{self.kamera_id}] Kare gelmedi, yeniden bağlanıyor ({yeniden_baglanma})…")
-                cap.release()
-                time.sleep(min(2 * yeniden_baglanma, 15))
-                cap = _cap_ac()
-                okuyucu = threading.Thread(target=self._kare_okuyucu, args=(cap,), daemon=True,
-                                           name=f"pts-okuyucu-{self.kamera_id}")
-                okuyucu.start()
-                continue
+    def _dongu(self) -> None:
+        """Ana pipeline döngüsü. Tamamı try/except ile sarılı: beklenmeyen bir
+        istisna thread'i sessizce öldürmez, önce loglanır — dışarıdaki bekçi
+        (main.py) `thread_canli_mi()` ile gerçek ölümü tespit edip yeniden başlatabilir."""
+        cap = None
+        try:
+            cap = self._cap_ac()
+            if not cap.isOpened():
+                logger.warning("[%s] İlk bağlantı açılamadı, yeniden denenecek…", self.kamera_id)
+            with self._gen_kilit:
+                gen = self._gen
+            okuyucu = threading.Thread(target=self._kare_okuyucu, args=(cap, gen), daemon=True,
+                                        name=f"pts-okuyucu-{self.kamera_id}-{gen}")
+            okuyucu.start()
 
-            self._kare_guncellendi.clear()
-            with self._kare_kilit:
-                kare = self._son_kare
+            while self.calisiyor:
+                # Taze kare gelene kadar bekle (zaman aşımı = baglanti_zaman_asimi_sn)
+                guncellendi = self._kare_guncellendi.wait(timeout=self.baglanti_zaman_asimi_sn)
+                if not self.calisiyor:
+                    break
+                if not guncellendi:
+                    # Süre içinde kare gelmedi → yeniden bağlan
+                    self._yeniden_baglanma_sayisi += 1
+                    logger.warning("[%s] %.0f sn kare gelmedi, yeniden bağlanıyor (deneme #%d)…",
+                                    self.kamera_id, self.baglanti_zaman_asimi_sn, self._yeniden_baglanma_sayisi)
+                    time.sleep(min(2 * self._yeniden_baglanma_sayisi, 15))
+                    if not self.calisiyor:
+                        break
+                    cap, _ = self._yeniden_baglan(cap)
+                    continue
 
-            if kare is not None:
-                yeniden_baglanma = 0
+                self._kare_guncellendi.clear()
+                with self._kare_kilit:
+                    kare = self._son_kare
+
+                if kare is not None:
+                    if self._yeniden_baglanma_sayisi:
+                        logger.info("[%s] Bağlantı toparlandı.", self.kamera_id)
+                    self._yeniden_baglanma_sayisi = 0
+                    try:
+                        self._kareyi_isle(kare)
+                    except Exception as exc:
+                        logger.error("[%s] Kare işleme hatası: %s", self.kamera_id, exc)
+
+                # Tam akış → sadece ANPR frekansını sınırla, görüntü okuyucu thread'i yavaşlamıyor
+                time.sleep(0.25)
+        except Exception as exc:
+            logger.error("[%s] Pipeline döngüsü beklenmedik şekilde çöktü: %s", self.kamera_id, exc, exc_info=True)
+            self.calisiyor = False
+        finally:
+            if cap is not None:
                 try:
-                    self._kareyi_isle(kare)
-                except Exception as exc:
-                    print(f"[{self.kamera_id}] Kare işleme hatası: {exc}")
-
-            # Tam akış → sadece ANPR frekansını sınırla, görüntü okuyucu thread'i yavaşlamıyor
-            time.sleep(0.25)
-
-        cap.release()
+                    cap.release()
+                except Exception:
+                    pass
 
 
 def tek_gorsel_test(gorsel_yolu: str, api_url: str = "http://localhost:8000/kayitlar/otomatik",
                     kamera_id: str = "TEST-KAMERA", yon: str = "giris"):
-    """Kamera/video olmadan tek bir görsel üzerinde pipeline'ı uçtan uca doğrular.
-
-    Örnek: python -c "from camera_reader import tek_gorsel_test; tek_gorsel_test('arac.jpg')"
-    """
-    if not KUTUPHANELER_MEVCUT:
-        raise RuntimeError(
-            "Gerekli kütüphaneler kurulu değil. "
-            "Kurulum: pip install \"fast-alpr[onnx]\" opencv-python requests"
-        )
-    frame = cv2.imread(gorsel_yolu)
-    if frame is None:
-        raise ValueError(f"Görsel okunamadı: {gorsel_yolu}")
-    pipeline = KameraPipeline(video_kaynagi=gorsel_yolu, api_url=api_url, kamera_id=kamera_id, yon=yon)
-    gonderilenler = pipeline._kareyi_isle(frame)
-    if gonderilenler:
-        print(f"Tespit edilip gönderilen plakalar: {gonderilenler}")
-    else:
-        print("Görselde geçerli formatta bir plaka tespit edilemedi.")
-    return gonderilenler
-
-Bu dosya sistemin ZORUNLU bir parçası değildir; ana uygulama (main.py) bu modül
-kurulu olmasa da tamamen çalışır (manuel kayıt / API üzerinden kayıt ekleme ile).
-
-Gerçek kamera bağlamak isterseniz:
-  1) pip install "fast-alpr[onnx]" opencv-python requests  (Windows GPU için: fast-alpr[onnx-directml])
-  2) Aşağıdaki KameraPipeline sınıfını RTSP adresinizle başlatın:
-
-       from camera_reader import KameraPipeline
-       pipeline = KameraPipeline(
-           video_kaynagi="rtsp://kullanici:sifre@kamera-ip:554/Streaming/Channels/101",
-           kamera_id="GIRIS-KAMERA-1",
-       )
-       pipeline.baslat()
-
-  Pipeline, tespit ettiği her plakayı otomatik olarak çalışan FastAPI sunucusundaki
-  POST /kayitlar/otomatik uç noktasına (görselle birlikte) gönderir; sistem geri
-  kalanını (yetki kontrolü, veritabanı, LED panel bildirimi) kendisi halleder.
-
-  Kamera/video yokken pipeline'ı doğrulamak için `video_kaynagi` yerine tek bir
-  görsel dosya yolu da verilebilir (bkz. `tek_gorsel_test`); bu, kamera bağlamadan
-  tespit + doğrulama + API gönderimi zincirini uçtan uca test etmeyi sağlar.
-
-  Alternatif: Eğer ANPR kameranız plaka okumayı kendi içinde (edge) yapıyorsa
-  (çoğu Hikvision/Dahua ANPR modeli gibi), bu Python pipeline'ına hiç gerek
-  kalmaz — kameranın "Event Notification / ANPR Result Push" özelliğini doğrudan
-  POST /kayitlar/otomatik uç noktasına yönlendirmeniz yeterlidir.
-"""
-import os
-import re
-import tempfile
-import time
-import threading
-
-try:
-    from backend.anpr_engine import ANPREngine  # proje kökünden çalıştırılınca
-except ImportError:
-    from anpr_engine import ANPREngine  # backend/ içinden doğrudan çalıştırılınca
-
-try:
-    import cv2
-    import requests
-    KUTUPHANELER_MEVCUT = True
-except ImportError:
-    KUTUPHANELER_MEVCUT = False
-
-
-PLAKA_REGEX = re.compile(r'^(\d{2})([A-PR-VYZ]{1,3})(\d{2,4})$')
-
-
-def plaka_dogrula(text: str):
-    """OCR çıktısını Türk plaka formatına göre doğrular/temizler. Geçersizse None döner."""
-    temiz = text.upper().replace(" ", "")
-    eslesme = PLAKA_REGEX.match(temiz)
-    if eslesme:
-        il_kodu = int(eslesme.group(1))
-        if 1 <= il_kodu <= 81:
-            return f"{eslesme.group(1)} {eslesme.group(2)} {eslesme.group(3)}"
-    return None
-
-
-class KameraPipeline:
-    def __init__(self, video_kaynagi, api_url="http://localhost:8000/kayitlar/otomatik",
-                 kamera_id="KAMERA-1", tekrar_gecikme_sn=30, yon="giris"):
-        if not KUTUPHANELER_MEVCUT:
-            raise RuntimeError(
-                "Gerekli kütüphaneler kurulu değil. "
-                "Kurulum: pip install \"fast-alpr[onnx]\" opencv-python requests"
-            )
-        self.video_kaynagi = video_kaynagi
-        self.api_url = api_url
-        self.kamera_id = kamera_id
-        self.yon = yon
-        self.tekrar_gecikme_sn = tekrar_gecikme_sn
-        self.motor = ANPREngine()
-        self.calisiyor = False
-        self.son_plaka_zamani = {}
-
-    def baslat(self):
-        self.calisiyor = True
-        threading.Thread(target=self._dongu, daemon=True).start()
-        print(f"Kamera pipeline başlatıldı: {self.kamera_id}")
-
-    def durdur(self):
-        self.calisiyor = False
-
-    def _kareyi_isle(self, frame) -> list:
-        """Bir kareyi işler, geçerli plakaları API'ye gönderir; gönderilen plaka listesini döndürür."""
-        gonderilenler = []
-        for sonuc in self.motor.tahmin_et(frame):
-            plaka = plaka_dogrula(sonuc.plaka_no)
-            if not plaka:
-                continue
-
-            simdi = time.time()
-            if (plaka in self.son_plaka_zamani and
-                    simdi - self.son_plaka_zamani[plaka] < self.tekrar_gecikme_sn):
-                continue
-            self.son_plaka_zamani[plaka] = simdi
-
-            gecici_gorsel = os.path.join(tempfile.gettempdir(), f"{plaka.replace(' ', '')}_{int(simdi)}.jpg")
-            cv2.imwrite(gecici_gorsel, frame)
-
-            try:
-                with open(gecici_gorsel, "rb") as f:
-                    requests.post(
-                        self.api_url,
-                        data={
-                            "plaka_no": plaka,
-                            "kamera_id": self.kamera_id,
-                            "yon": self.yon,
-                            "guven_skoru": round(sonuc.guven_skoru, 3),
-                        },
-                        files={"gorsel": f},
-                        timeout=5,
-                    )
-                gonderilenler.append(plaka)
-            except Exception as e:
-                print(f"API'ye gönderilemedi: {e}")
-            finally:
-                try:
-                    os.remove(gecici_gorsel)
-                except OSError:
-                    pass
-        return gonderilenler
-
-    def _dongu(self):
-        import os as _os
-        # ffmpeg RTP uyarılarını bastır (bad cseq, PTx gibi zararsız log'lar)
-        _os.environ.setdefault("OPENCV_FFMPEG_LOGLEVEL", "quiet")
-        cap = cv2.VideoCapture(self.video_kaynagi, cv2.CAP_FFMPEG)
-        hatali_kare = 0
-        while self.calisiyor:
-            ret, frame = cap.read()
-            if not ret:
-                hatali_kare += 1
-                if hatali_kare >= 3:
-                    cap.release()
-                    time.sleep(2)
-                    cap = cv2.VideoCapture(self.video_kaynagi, cv2.CAP_FFMPEG)
-                    hatali_kare = 0
-                else:
-                    time.sleep(0.5)
-                continue
-            hatali_kare = 0
-            self._kareyi_isle(frame)
-            time.sleep(0.3)
-        cap.release()
-
-
-def tek_gorsel_test(gorsel_yolu: str, api_url="http://localhost:8000/kayitlar/otomatik",
-                     kamera_id="TEST-KAMERA", yon="giris"):
     """Kamera/video olmadan tek bir görsel üzerinde pipeline'ı uçtan uca doğrular.
 
     Örnek: python -c "from camera_reader import tek_gorsel_test; tek_gorsel_test('arac.jpg')"

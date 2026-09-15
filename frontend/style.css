@@ -51,6 +51,10 @@ body {
 .camera-simulated { background: radial-gradient(circle at 35% 28%, #aebfc3, #64767c 72%); }
 .camera-live { background: #000; }
 .camera-live .camera-status { color: #4dff9a; }
+.camera-frozen { background: #000; outline: 3px solid #ffb020; outline-offset: -3px; animation: camera-frozen-blink 1.6s ease-in-out infinite; }
+.camera-frozen .camera-status { color: #ffb020; }
+@keyframes camera-frozen-blink { 0%, 100% { outline-color: #ffb020; } 50% { outline-color: rgba(255, 176, 32, .25); } }
+.camera-frozen-banner { position: absolute; z-index: 2; top: 2.2rem; left: 0; right: 0; background: rgba(133, 77, 0, .92); color: #fff; font-size: .72rem; padding: .4rem .7rem; text-align: center; }
 .camera-label { position: absolute; z-index: 1; inset: 0 0 auto; display: flex; justify-content: space-between; background: rgba(28, 37, 43, .84); color: #fff; padding: .55rem .7rem; font-size: .75rem; }
 .camera-status { color: #f2cf70; }
 .camera-empty { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; flex-direction: column; color: #eef5f5; text-align: center; padding: 2rem; background: rgba(37, 50, 55, .3); }

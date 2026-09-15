@@ -33,7 +33,7 @@ from sqlalchemy import desc
 
 from backend import models
 from backend import schemas
-from backend.database import engine, get_db, Base
+from backend.database import engine, get_db, Base, SessionLocal
 from backend.database import SQLALCHEMY_DATABASE_URL
 from backend import excel_export
 from backend import pdf_export
@@ -140,7 +140,7 @@ def _pipeline_baslat(kamera: dict) -> bool:
         return False
     kid = kamera["id"]
     with _pipeline_kilit:
-        if kid in _aktif_pipelineler and _aktif_pipelineler[kid].calisiyor:
+        if kid in _aktif_pipelineler and _aktif_pipelineler[kid].calisiyor and _aktif_pipelineler[kid].thread_canli_mi():
             return True
         try:
             p = _KameraPipeline(
@@ -163,6 +163,79 @@ def _pipeline_durdur(kamera_id: str) -> None:
         if p:
             p.durdur()
             logger.info("Pipeline durduruldu: %s", kamera_id)
+
+
+# ================================================================
+# KAMERA BEKÇİSİ (watchdog) — pipeline'ın gerçekten canlı olduğunu ve
+# görüntünün donmadığını periyodik olarak doğrular, gerekirse kendi kendine
+# yeniden başlatır. Amaç: kamera bağlantısında/görüntüde operatör müdahalesi
+# gerektiren bir "takılma" durumunun sessizce kalıcı olmaması.
+# ================================================================
+KAMERA_BEKCI_ARALIK_SN = 20
+KAMERA_UZUN_SURELI_DONMA_ESIK_SN = 90   # bu kadar süre kesintisiz donuk kalırsa alarm oluştur
+KAMERA_ALARM_TEKRAR_ARALIK_SN = 3600     # aynı kamera için alarmı en fazla saatte bir tekrar oluştur
+
+_kamera_donuk_baslangic: dict = {}   # kamera_id -> ilk donma zamanı (monotonic)
+_kamera_son_alarm_zamani: dict = {}  # kamera_id -> son "kamera_arizasi" alarmının zamanı (monotonic)
+
+
+def _kamera_ariza_alarmi_olustur(kamera_ad: str, kamera_id: str, mesaj: str) -> None:
+    simdi = time.monotonic()
+    son = _kamera_son_alarm_zamani.get(kamera_id)
+    if son and (simdi - son) < KAMERA_ALARM_TEKRAR_ARALIK_SN:
+        return  # aynı kamera için kısa süre içinde tekrar alarm oluşturma (spam önleme)
+    _kamera_son_alarm_zamani[kamera_id] = simdi
+    db = SessionLocal()
+    try:
+        db.add(models.Alarm(
+            kayit_id=None,
+            plaka_no=kamera_ad or kamera_id,
+            alarm_tipi="kamera_arizasi",
+            mesaj=mesaj,
+        ))
+        db.commit()
+        logger.error("Kamera arıza alarmı oluşturuldu: %s — %s", kamera_ad, mesaj)
+    except Exception as exc:
+        logger.error("Kamera arıza alarmı DB'ye yazılamadı: %s", exc)
+    finally:
+        db.close()
+
+
+async def _kamera_bekci_dongu() -> None:
+    """Sonsuz döngü: aktif olması gereken her kamera için pipeline'ın gerçekten
+    çalıştığını (thread canlı) ve görüntünün taze olduğunu kontrol eder."""
+    while True:
+        try:
+            for kamera in _kameralari_oku():
+                if not kamera.get("aktif", True):
+                    continue
+                kid = kamera["id"]
+                p = _aktif_pipelineler.get(kid)
+
+                if p is None or not p.calisiyor or not p.thread_canli_mi():
+                    logger.warning("[bekci] Kamera pipeline çalışmıyor/çökmüş, yeniden başlatılıyor: %s", kamera["ad"])
+                    _pipeline_durdur(kid)
+                    basarili = await asyncio.get_event_loop().run_in_executor(None, _pipeline_baslat, kamera)
+                    if not basarili:
+                        _kamera_ariza_alarmi_olustur(
+                            kamera["ad"], kid,
+                            f"KAMERA ÇEVRİMDIŞI: {kamera['ad']} pipeline'ı başlatılamadı (log dosyasını kontrol edin)",
+                        )
+                    continue
+
+                durum = p.durum_bilgisi()
+                if durum["donmus"]:
+                    ilk = _kamera_donuk_baslangic.setdefault(kid, time.monotonic())
+                    if time.monotonic() - ilk >= KAMERA_UZUN_SURELI_DONMA_ESIK_SN:
+                        _kamera_ariza_alarmi_olustur(
+                            kamera["ad"], kid,
+                            f"KAMERA GÖRÜNTÜSÜ DONDU: {kamera['ad']} {KAMERA_UZUN_SURELI_DONMA_ESIK_SN:.0f} sn üzerinde taze kare almıyor",
+                        )
+                else:
+                    _kamera_donuk_baslangic.pop(kid, None)
+        except Exception as exc:
+            logger.error("[bekci] Kamera bekçisi döngüsünde hata: %s", exc, exc_info=True)
+        await asyncio.sleep(KAMERA_BEKCI_ARALIK_SN)
 
 
 # ================================================================
@@ -205,6 +278,13 @@ async def _kameralari_otomatik_baslat():
     for kamera in _kameralari_oku():
         if kamera.get("aktif", True):
             _pipeline_baslat(kamera)
+
+
+@app.on_event("startup")
+async def _kamera_bekcisini_baslat():
+    """Arka planda sürekli çalışan kamera bekçisini (watchdog) başlatır."""
+    asyncio.ensure_future(_kamera_bekci_dongu())
+    logger.info("Kamera bekçisi başlatıldı (her %d sn kontrol)", KAMERA_BEKCI_ARALIK_SN)
 
 AUTH_SECRET_DOSYASI = os.path.join(BACKEND_DIR, "auth_secret.key")
 
@@ -487,8 +567,15 @@ def kameralari_getir(_: models.Kullanici = Depends(_giris_gerekli)):
     sonuclar = []
     for k in kameralar:
         gorunum = _kamera_guvenli_gorunum(k)
-        gorunum["pipeline_calisiyor"] = k["id"] in _aktif_pipelineler and _aktif_pipelineler[k["id"]].calisiyor
+        p = _aktif_pipelineler.get(k["id"])
+        canli_thread = p is not None and p.calisiyor and p.thread_canli_mi()
+        gorunum["pipeline_calisiyor"] = canli_thread
         gorunum["kutuphaneler_mevcut"] = _CAM_LIBS
+        if p is not None:
+            gorunum.update({k2: v2 for k2, v2 in p.durum_bilgisi().items() if k2 != "calisiyor"})
+        else:
+            gorunum.update({"son_kare_yasi_sn": None, "donmus": False,
+                             "yeniden_baglanma_sayisi": 0, "calisma_suresi_sn": 0})
         sonuclar.append(gorunum)
     return sonuclar
 
@@ -1584,7 +1671,23 @@ async def kamera_saglik_kontrol(kamera_id: str, _: models.Kullanici = Depends(_g
         except (OSError, socket.timeout):
             gecikme_ms = None
 
-    pipeline_calisiyor = kamera_id in _aktif_pipelineler and _aktif_pipelineler[kamera_id].calisiyor
+    p = _aktif_pipelineler.get(kamera_id)
+    pipeline_calisiyor = p is not None and p.calisiyor and p.thread_canli_mi()
+    durum_bilgisi = p.durum_bilgisi() if p is not None else {
+        "son_kare_yasi_sn": None, "donmus": False, "yeniden_baglanma_sayisi": 0, "calisma_suresi_sn": 0,
+    }
+
+    if not kamera.get("aktif", True):
+        durum = "kapali"
+    elif not tcp_ok:
+        durum = "bagli_degil"
+    elif not pipeline_calisiyor:
+        durum = "bagli_degil"
+    elif durum_bilgisi.get("donmus"):
+        durum = "donmus"
+    else:
+        durum = "canli"
+
     return {
         "id": kamera_id,
         "ad": kamera["ad"],
@@ -1593,6 +1696,10 @@ async def kamera_saglik_kontrol(kamera_id: str, _: models.Kullanici = Depends(_g
         "tcp_erisim": tcp_ok,
         "gecikme_ms": gecikme_ms,
         "pipeline_calisiyor": pipeline_calisiyor,
+        "son_kare_yasi_sn": durum_bilgisi.get("son_kare_yasi_sn"),
+        "yeniden_baglanma_sayisi": durum_bilgisi.get("yeniden_baglanma_sayisi", 0),
+        "calisma_suresi_sn": durum_bilgisi.get("calisma_suresi_sn", 0),
+        "durum": durum,  # canli | donmus | bagli_degil | kapali — frontend'in göstereceği tek özet alan
         "rtsp_url_maskelendi": _kamera_guvenli_gorunum(kamera)["rtsp_url"],
     }
 
@@ -1622,12 +1729,24 @@ async def tum_kameralar_saglik(_: models.Kullanici = Depends(_giris_gerekli)):
                 gecikme_ms = round((time.monotonic() - t0) * 1000, 1)
             except Exception:
                 pass
+        p = _aktif_pipelineler.get(k["id"])
+        pipeline_calisiyor = p is not None and p.calisiyor and p.thread_canli_mi()
+        donmus = bool(p.durum_bilgisi().get("donmus")) if p is not None else False
+        if not k.get("aktif", True):
+            durum = "kapali"
+        elif not tcp_ok or not pipeline_calisiyor:
+            durum = "bagli_degil"
+        elif donmus:
+            durum = "donmus"
+        else:
+            durum = "canli"
         sonuclar.append({
             "id": k["id"],
             "ad": k["ad"],
             "tcp_erisim": tcp_ok,
             "gecikme_ms": gecikme_ms,
-            "pipeline_calisiyor": k["id"] in _aktif_pipelineler and _aktif_pipelineler[k["id"]].calisiyor,
+            "pipeline_calisiyor": pipeline_calisiyor,
+            "durum": durum,
         })
     return sonuclar
 
