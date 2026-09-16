@@ -45,6 +45,13 @@ class _SahteEngine:
 @pytest.fixture
 def sahte_engine(monkeypatch):
     monkeypatch.setattr(camera_reader, "ANPREngine", _SahteEngine)
+    # Tüm kameralar arasında paylaşılan motor artık modül seviyesinde tekil
+    # (singleton) olarak önbelleğe alınıyor (bkz. camera_reader._paylasilan_motoru_al
+    # — çoklu kamerada GPU sürücüsü çökmesini önlemek için eklendi). Bu önbellek
+    # sıfırlanmazsa önceki bir testte oluşturulmuş motor kalıcı kalır ve bu testin
+    # yukarıdaki monkeypatch'ini sessizce görmezden gelir; monkeypatch ile
+    # sıfırlıyoruz ki test sonunda otomatik olarak eski haline dönsün.
+    monkeypatch.setattr(camera_reader, "_paylasilan_motor", None)
 
 
 @pytest.fixture

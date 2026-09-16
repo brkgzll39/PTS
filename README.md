@@ -164,6 +164,31 @@ python -c "from camera_reader import tek_gorsel_test; tek_gorsel_test('arac_foto
 Bu, FastAPI sunucusu çalışıyorken tespit edilen plakayı gerçekten `/kayitlar/otomatik`
 uç noktasına gönderir ve panelde görünmesini sağlar.
 
+### Birden Fazla Kamera ve GPU Kararlılığı
+
+`fast-alpr[onnx-directml]` (Windows'ta GPU hızlandırması) kuruluysa, plaka
+tespiti/OCR modelleri GPU üzerinde (DirectML) çalışır. **Tüm kameralar TEK bir
+ANPR motorunu (dolayısıyla tek bir GPU oturumunu) paylaşır ve her çıkarım
+çağrısı serileştirilir** — böylece kaç kamera bağlı olursa olsun GPU'ya aynı
+anda yalnızca tek bir istek gider. Bu, ikinci bir kamera eklendiğinde
+gözlemlenen bir GPU sürücüsü çökmesi/sıfırlanması sorununu (onnxruntime
+`DXGI_ERROR_DEVICE_HUNG` hatası, ardından bozuk veri hataları ve bazı
+donanımlarda tüm sistemin donup kendini yeniden başlatması) önlemek için
+eklendi — kök neden, her kameranın kendi bağımsız GPU oturumunu açıp aynı
+anda GPU'ya iş göndermesiydi.
+
+GPU sürücünüz/donanımınız hâlâ kararsızsa (ör. eski sürücü, düşük VRAM),
+çıkarımı tamamen CPU'ya zorlayabilirsiniz:
+```bash
+set PTS_ANPR_PROVIDERS=cpu   # Windows (cmd)
+$env:PTS_ANPR_PROVIDERS="cpu"  # Windows (PowerShell)
+```
+Birkaç kamera için CPU'da çalıştırmak tipik olarak yeterince hızlıdır (canlı
+görüntü zaten periyodik JPEG anlık görüntüsü olarak akıyor, gerçek zamanlı
+video işleme değil). Ayrıca GPU sürücünüzü güncel tutmanız önerilir —
+DirectML tabanlı çoklu-model iş yükleri eski sürücülerde daha sık kararsızlık
+gösterir.
+
 ## Tanıma Doğruluğu: Ticari ANPR Seviyesine Yaklaşma
 
 Piyasadaki ticari ANPR sistemleri gerçek koşullarda genelde **%90-98**,

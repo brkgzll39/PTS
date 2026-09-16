@@ -3,6 +3,7 @@
 FastALPR is the preferred open-source backend when installed. The adapter keeps
 the camera service independent from a particular detector or OCR implementation.
 """
+import os
 import re
 from dataclasses import dataclass
 from typing import Any, Optional
@@ -21,7 +22,22 @@ class ANPREngine:
             from fast_alpr import ALPR
         except ImportError as exc:
             raise RuntimeError("FastALPR kurulu değil. Kurulum: pip install fast-alpr[onnx]") from exc
-        self._alpr = ALPR(detector_model=detector_model, ocr_model=ocr_model)
+        ek_parametreler: dict = {}
+        # PTS_ANPR_PROVIDERS=cpu ortam değişkeni GPU hızlandırmasını (DirectML/CUDA)
+        # tamamen devre dışı bırakır. Bazı GPU sürücüleri, aynı anda birden fazla
+        # kamera GPU üzerinde çıkarım yaptığında kararsızlaşabiliyor (gözlemlenen
+        # semptom: onnxruntime "DXGI_ERROR_DEVICE_HUNG" / "GPU başka komutlara
+        # yanıt vermeyecek" hatası verip GPU sürücüsünün sıfırlanması, bu da bazı
+        # sistemlerde tüm bilgisayarın donup kendini yeniden başlatmasına yol açar).
+        # camera_reader.py artık tüm kameralar arasında TEK bir ANPREngine paylaşıp
+        # çağrıları serileştiriyor (bkz. `_paylasilan_motoru_al`), bu riski büyük
+        # ölçüde azaltır; ama sürücü/donanım hâlâ kararsızsa bu değişkenle CPU'ya
+        # tamamen zorlanabilir (birkaç kamera için tipik olarak yeterince hızlıdır).
+        if os.environ.get("PTS_ANPR_PROVIDERS", "").strip().lower() in ("cpu", "cpu_only", "cpu-only"):
+            ek_parametreler["detector_providers"] = ["CPUExecutionProvider"]
+            ek_parametreler["ocr_providers"] = ["CPUExecutionProvider"]
+            ek_parametreler["ocr_device"] = "cpu"
+        self._alpr = ALPR(detector_model=detector_model, ocr_model=ocr_model, **ek_parametreler)
 
     def tahmin_et(self, frame: Any) -> list[PlakaSonucu]:
         """Frame üzerinde plaka bulur; motorun sonuç nesnelerini PTS tipine çevirir."""

@@ -68,6 +68,40 @@ except ImportError:
     KUTUPHANELER_MEVCUT = False
 
 
+# ================================================================
+# PAYLAŞILAN ANPR MOTORU
+# ================================================================
+# ÖNEMLİ: Her KameraPipeline eskiden KENDİ ANPREngine'ini (dolayısıyla kendi
+# onnxruntime GPU oturumunu) oluşturuyordu. Tek kamerayla bu sorunsuz çalışıyordu;
+# ikinci bir kamera eklenince iki BAĞIMSIZ onnxruntime/DirectML oturumu aynı anda
+# GPU'ya iş göndermeye başladı — bu, sahada gözlemlenen "DXGI_ERROR_DEVICE_HUNG"
+# (GPU sürücüsü komutlara zamanında yanıt veremeyip Windows tarafından sıfırlanıyor)
+# ve ardından gelen bozuk-veri/istisna hatalarının en olası nedenidir; bazı
+# donanım/sürücü kombinasyonlarında bu tür bir sürücü sıfırlanması tüm sistemin
+# donup kendini yeniden başlatmasına kadar gidebiliyor.
+#
+# Çözüm: kamera sayısından bağımsız olarak TEK bir ANPREngine (tek GPU oturumu)
+# paylaşılır ve her çıkarım çağrısı aşağıdaki kilitle serileştirilir — böylece
+# GPU'ya HER ZAMAN aynı anda yalnızca tek bir istek gider (tek kameralı, sorunsuz
+# çalışan önceki durumla birebir aynı GPU yükü). Ayrıca toplamda tek bir model
+# seti belleğe yüklendiği için VRAM kullanımı da yarıya iner.
+#
+# Sürücü/donanım GPU'da hâlâ kararsızsa `PTS_ANPR_PROVIDERS=cpu` ortam
+# değişkeniyle (bkz. anpr_engine.py) çıkarım tamamen CPU'ya zorlanabilir.
+_paylasilan_motor: Optional["ANPREngine"] = None
+_motor_olusturma_kilit = threading.Lock()
+_motor_cagri_kilit = threading.Lock()
+
+
+def _paylasilan_motoru_al() -> "ANPREngine":
+    global _paylasilan_motor
+    if _paylasilan_motor is None:
+        with _motor_olusturma_kilit:
+            if _paylasilan_motor is None:
+                _paylasilan_motor = ANPREngine()
+    return _paylasilan_motor
+
+
 logger = logging.getLogger("pts.camera")
 
 PLAKA_REGEX = re.compile(r'^(\d{2})([A-PR-VYZ]{1,3})(\d{2,4})$')
@@ -232,7 +266,7 @@ class KameraPipeline:
         # Bu güven skorunun altındaki OCR sonuçları oy birikimine hiç girmez.
         self.min_guven_skoru = min_guven_skoru
 
-        self.motor = ANPREngine()
+        self.motor = _paylasilan_motoru_al()
         self.calisiyor = False
         self.son_plaka_zamani: dict = {}
         # Çok kareli oy birleştirme: bir aracın kamerada kaldığı birden çok
@@ -356,7 +390,12 @@ class KameraPipeline:
         `tek_gorsel_test`) birden fazla kare gelmeyeceği için, bu karedeki
         okumaların oturumu beklemeden hemen kesinleştirilmesini sağlar."""
         tespitler = []
-        for sonuc in self.motor.tahmin_et(frame):
+        # GPU'ya (varsa DirectML/CUDA) aynı anda yalnızca TEK bir kameranın çıkarım
+        # isteği gitmesini garanti eder — bkz. modül başındaki "PAYLAŞILAN ANPR
+        # MOTORU" notu (çoklu kamerada GPU sürücüsü çökmesi/sıfırlanması riski).
+        with _motor_cagri_kilit:
+            motor_sonuclari = self.motor.tahmin_et(frame)
+        for sonuc in motor_sonuclari:
             plaka = plaka_dogrula(sonuc.plaka_no)
             if not plaka:
                 continue
