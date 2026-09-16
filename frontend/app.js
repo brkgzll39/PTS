@@ -732,10 +732,13 @@ function sseBaslat() {
   const token = sessionStorage.getItem("pts_token");
   if (!token || _sseAktif) return;
 
-  const es = new EventSource(`/olaylar/sse`, {});
-  // EventSource Authorization header desteklemez; token query param ile taşıyoruz
-  // Alternatif: token'ı cookie'ye koyup cookie ile auth (şu an fetch-based)
-  // Şimdilik polling fallback varken SSE ayrı bir fetch EventSource wrapper ile yapılacak
+  // NOT: Tarayıcının yerleşik EventSource API'si Authorization header'ı
+  // desteklemez, bu yüzden burada KULLANILMIYOR — token'ı gerçekten taşıyan
+  // ve akışı işleyen tek mekanizma aşağıdaki fetch tabanlı _sseBaslatFetch().
+  // (Önceden burada kimliksiz bir `new EventSource(...)` de oluşturuluyordu;
+  // backend'e header'sız gerçek bir istek atıp her seferinde 401 ile
+  // reddediliyordu ve hiçbir yerde kullanılmıyordu — konsolu kirleten ölü
+  // koddu, kaldırıldı.)
   _sseBaslatFetch(token);
 }
 
