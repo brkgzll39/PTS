@@ -164,6 +164,39 @@ python -c "from camera_reader import tek_gorsel_test; tek_gorsel_test('arac_foto
 Bu, FastAPI sunucusu çalışıyorken tespit edilen plakayı gerçekten `/kayitlar/otomatik`
 uç noktasına gönderir ve panelde görünmesini sağlar.
 
+### Kamera Olmadan Test: Bir Klasöre Fotoğraf Bırakarak Otomatik Kayıt (2026-09-16)
+
+`tek_gorsel_test` her fotoğraf için elle bir komut çalıştırmanızı gerektirir. Kamera
+bağlı değilken (ya da bağlıyken bile) birden fazla fotoğrafı tek tek komut yazmadan,
+sadece bir klasöre SÜRÜKLEYİP BIRAKARAK sisteme "gerçek bir araç geçişi" gibi
+kaydettirmek isterseniz, `PTS_GORSEL_IZLEME_DIZINI` ortam değişkenini bir klasöre
+ayarlayın:
+```bash
+set PTS_GORSEL_IZLEME_DIZINI=C:\pts-fotograf-izleme   # Windows (cmd)
+$env:PTS_GORSEL_IZLEME_DIZINI="C:\pts-fotograf-izleme"  # Windows (PowerShell)
+```
+Uygulama açılışında bu klasörü (yoksa) otomatik oluşturur ve her ~5 saniyede bir
+tarar:
+
+- Klasörün **doğrudan içine** bıraktığınız fotoğraflar **GİRİŞ** olarak,
+- `cikis\` alt klasörüne bıraktıklarınız **ÇIKIŞ** olarak işlenir.
+- İşlenen her fotoğraf (başarılı ya da başarısız) `islenenler\` alt klasörüne
+  taşınır ki bir daha işlenmesin; tespit **başarısız** olduysa dosya adının başına
+  `TESPIT_EDILEMEDI_` eklenir.
+- Bir dosya, boyutu İKİ ARDIŞIK taramada aynı görülene kadar işlenmez (yarım
+  kopyalanmış/bozuk bir dosyayı okumamak için kasıtlı bir gecikme) — yani bir
+  fotoğrafın işlenmesi birkaç saniye sürebilir, bu normaldir.
+
+Bu, gerçek bir kamera pipeline'ının kullandığı AYNI tespit + yetki kontrolü +
+veritabanı kaydı + LED panel bildirimi yolunu kullanır — yani panelde tıpkı
+gerçek bir kamera geçişiymiş gibi görünür. Ayrıca **"araç net görünüyor ama hiç
+kayda düşmüyor"** türü sorunları kamera bağlamadan, elinizdeki gerçek/sorunlu
+fotoğraflarla tekrar tekrar deneyerek teşhis etmek için de kullanışlıdır: bir
+fotoğraf `TESPIT_EDILEMEDI_` ile işaretlenirse, `PTS_ANPR_DETECTOR_ESIGI`
+değişkenini düşürüp aynı fotoğrafı `islenenler\` klasöründen tekrar izleme
+klasörüne taşıyarak yeniden deneyebilirsiniz. Sistem sekmesindeki "Sistem Durumu"
+paneli, klasör izlemenin aktif olup olmadığını gösterir.
+
 ### Canlı Görüntü: Gerçek Zamanlı Akış (2026-09-16)
 
 Panel eskiden canlı kamera karesini 3 saniyede bir ayrı bir HTTP isteğiyle
@@ -658,6 +691,22 @@ betik de:
   çalıştırılabilir izni eksikti (`chmod +x`) — README'de belgelenen
   `./calistir.sh` komutu bu olmadan "İzin reddedildi" hatası verirdi; artık
   düzeltildi.
+
+**2026-09-16 (devam) — klasöre fotoğraf bırakarak kayıt oluşturma + bir güvenlik başlığı hatası:**
+
+- Yukarıda "Kamera Olmadan Test: Bir Klasöre Fotoğraf Bırakarak Otomatik
+  Kayıt" bölümünde belgelenen `PTS_GORSEL_IZLEME_DIZINI` özelliği eklendi
+  (bkz. `camera_reader.py::KlasorIzleyici`).
+- **Bulunan ve düzeltilen bir hata:** `camera_reader.py`'deki gerçek kamera
+  pipeline'ı, tespit ettiği bir plakayı `/kayitlar/otomatik`'e gönderirken
+  `X-PTS-Kamera-Anahtari` başlığını HİÇ göndermiyordu — oysa bu uç nokta,
+  `PTS_KAMERA_ANAHTARI` ayarlıysa (README'nin kendisinin, backend farklı bir
+  ağdaysa önerdiği bir sıkılaştırma) tam olarak bu başlığı zorunlu kılıyor.
+  Yani bu öneriyi uygulayan bir kurulumda, Python pipeline'ının tespit ettiği
+  HER plaka sessizce 401 ile reddedilir hale gelirdi — "kamera görüntü
+  alıyor, plakayı doğru okuyor, ama yine de hiçbir zaman kayda düşmüyor"
+  sınıfından, teşhisi zor bir kayıp. Artık pipeline da aynı ortam
+  değişkenini okuyup başlığı ekliyor.
 
 ## Otomatik Görüntü/Kayıt Saklama
 

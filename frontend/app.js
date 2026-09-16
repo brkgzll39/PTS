@@ -1350,6 +1350,12 @@ async function sistemSagliginiYukle() {
     const yedekSatiri = s.yedek?.izleniyor
       ? `<div class="info-row">${ikon(!s.yedek.yedek_gecikmis)} <span>SQL Yedek</span><strong>${s.yedek.son_yedek_zamani ? tarihFormatla(s.yedek.son_yedek_zamani) : "Hiç yedek yok"}</strong></div>`
       : "";
+    // PTS_GORSEL_IZLEME_DIZINI ayarlanmamışsa "gorsel_izleme.aktif" false döner
+    // ve bu satır hiç gösterilmez (bkz. main.py::_klasor_izlemeyi_baslat_gerekirse,
+    // camera_reader.py::KlasorIzleyici).
+    const gorselIzlemeSatiri = s.gorsel_izleme?.aktif
+      ? `<div class="info-row"><i class="bi bi-folder-check text-primary"></i> <span>Klasör İzleme</span><strong title="${escapeHtml(s.gorsel_izleme.klasor)}">Aktif</strong></div>`
+      : "";
     el.innerHTML = `
       <div class="info-row">${ikon(s.durum === "cevrimici")} <span>Uygulama</span><strong>${s.durum}</strong></div>
       <div class="info-row">${ikon(s.veritabani === "ok")} <span>Veritabanı</span><strong>${s.veritabani}</strong></div>
@@ -1357,6 +1363,7 @@ async function sistemSagliginiYukle() {
       <div class="info-row"><i class="bi bi-wifi text-primary"></i> <span>SSE İstemci</span><strong>${s.sse_istemci}</strong></div>
       <div class="info-row">${ikon(s.kutuphaneler_mevcut)} <span>ANPR Kütüp.</span><strong>${s.kutuphaneler_mevcut ? "Kurulu" : "Kurulu değil"}</strong></div>
       ${yedekSatiri}
+      ${gorselIzlemeSatiri}
       <div class="info-row"><i class="bi bi-code text-muted"></i> <span>Sürüm</span><strong>PTS v${s.surum}</strong></div>
       <div class="text-muted small mt-2">${new Date(s.zaman).toLocaleString("tr-TR")}</div>`;
   } catch (e) { console.error(e); }

@@ -309,3 +309,102 @@ def test_bos_tespit_disinda_ham_kare_kaydedilmez(monkeypatch, tmp_path, sahte_en
     pipeline._kareyi_isle(kare, oturumu_hemen_kapat=True)
 
     assert not dizin.exists() or list(dizin.glob("*.jpg")) == []
+
+
+# ================================================================
+# KlasorIzleyici — "bir fotoğrafı klasöre bırakınca gerçek bir kamera
+# geçişiymiş gibi kaydedilsin" özelliği
+# ================================================================
+
+def _ornek_gorsel_yaz(yol) -> None:
+    """Gerçek, cv2.imread ile okunabilir küçük bir JPEG dosyası yazar."""
+    kare = np.full((80, 120, 3), (40, 40, 40), dtype=np.uint8)
+    cv2.imwrite(str(yol), kare)
+
+
+def test_klasor_izleyici_alt_klasorleri_otomatik_olusturur(tmp_path, sahte_engine):
+    kok = tmp_path / "izleme"
+    izleyici = camera_reader.KlasorIzleyici(str(kok))
+    assert kok.is_dir()
+    assert (kok / "cikis").is_dir()
+    assert (kok / "islenenler").is_dir()
+
+
+def test_klasor_izleyici_kopyalanmakta_olan_dosyayi_islemez(tmp_path, sahte_engine):
+    """Boyutu taramalar arasında DEĞİŞEN (hâlâ kopyalanıyor olabilecek) bir
+    dosya, boyutu sabitlenene kadar asla işlenmemeli."""
+    kok = tmp_path / "izleme"
+    izleyici = camera_reader.KlasorIzleyici(str(kok))
+    dosya = kok / "arac.jpg"
+
+    dosya.write_bytes(b"x" * 100)
+    izleyici._tek_tur()
+    assert dosya.exists(), "ilk görüldüğü turda hiç işlenmemeli (kararlılık kontrolü)"
+
+    dosya.write_bytes(b"x" * 250)  # hâlâ büyüyor -- kopyalama devam ediyormuş gibi
+    izleyici._tek_tur()
+    assert dosya.exists(), "boyutu hâlâ değişen bir dosya işlenmemeli"
+    assert list((kok / "islenenler").iterdir()) == []
+
+
+def test_klasor_izleyici_iki_ardisik_ayni_boyutta_basarili_tespit_on_eksiz_tasinir(tmp_path, sahte_engine, sahte_api):
+    kok = tmp_path / "izleme"
+    izleyici = camera_reader.KlasorIzleyici(str(kok), api_url=sahte_api.url)
+    dosya = kok / "arac.jpg"
+    _ornek_gorsel_yaz(dosya)
+
+    izleyici._tek_tur()  # 1. tur: yeni görüldü, henüz işlenmedi
+    assert dosya.exists()
+    izleyici._tek_tur()  # 2. tur: boyut aynı -> kararlı sayılıp işlenir
+
+    assert not dosya.exists(), "işlendikten sonra kök klasörde kalmamalı"
+    islenenler = list((kok / "islenenler").glob("*.jpg"))
+    assert len(islenenler) == 1
+    assert "TESPIT_EDILEMEDI_" not in islenenler[0].name, "başarılı tespit yanlışlıkla başarısız olarak işaretlendi"
+
+
+def test_klasor_izleyici_tespit_basarisizsa_on_ekle_isaretlenir(tmp_path, sahte_engine, sahte_api):
+    kok = tmp_path / "izleme"
+    izleyici = camera_reader.KlasorIzleyici(str(kok), api_url=sahte_api.url)
+    # Dedektörün hiçbir aday bulamadığı gerçek sahne durumunu simüle et.
+    izleyici._pipeline_al("giris").motor = _BosSonucDondurenEngine()
+
+    dosya = kok / "arac.jpg"
+    _ornek_gorsel_yaz(dosya)
+
+    izleyici._tek_tur()
+    izleyici._tek_tur()
+
+    assert not dosya.exists()
+    islenenler = list((kok / "islenenler").glob("TESPIT_EDILEMEDI_*.jpg"))
+    assert len(islenenler) == 1
+
+
+def test_klasor_izleyici_cikis_alt_klasorune_birakilan_dosya_cikis_yonuyle_islenir(tmp_path, sahte_engine, sahte_api):
+    kok = tmp_path / "izleme"
+    izleyici = camera_reader.KlasorIzleyici(str(kok), api_url=sahte_api.url)
+    dosya = kok / "cikis" / "arac.jpg"
+    _ornek_gorsel_yaz(dosya)
+
+    izleyici._tek_tur()
+    izleyici._tek_tur()
+
+    assert not dosya.exists()
+    assert list((kok / "islenenler").glob("*.jpg")), "cikis/ alt klasöründeki dosya da işlenmeli"
+    assert izleyici._pipelinelar["cikis"].yon == "cikis"
+
+
+def test_klasor_izleyici_bozuk_gorsel_dosyasi_tespit_edilemedi_olarak_isaretlenir(tmp_path, sahte_engine, sahte_api):
+    """Görsel formatı olarak okunamayan (cv2.imread None dönen) bir dosya da
+    -- tıpkı tespit başarısızlığı gibi -- 'islenenler/'e taşınmalı, sonsuza
+    kadar tekrar tekrar denenmemeli."""
+    kok = tmp_path / "izleme"
+    izleyici = camera_reader.KlasorIzleyici(str(kok), api_url=sahte_api.url)
+    dosya = kok / "bozuk.jpg"
+    dosya.write_bytes(b"bu gecerli bir JPEG degil")
+
+    izleyici._tek_tur()
+    izleyici._tek_tur()
+
+    assert not dosya.exists()
+    assert list((kok / "islenenler").glob("TESPIT_EDILEMEDI_*.jpg"))

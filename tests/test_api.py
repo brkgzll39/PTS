@@ -621,3 +621,26 @@ def test_beklenmeyen_hata_loglanir_ve_tutarli_500_doner(client, caplog):
     assert "kaçınılmaz test hatası" not in r.text  # istemciye traceback sızmamalı
     assert "Beklenmeyen hata" in caplog.text  # ama sunucu logunda İZİ olmalı
     assert "kaçınılmaz test hatası" in caplog.text  # traceback sunucu logunda GÖRÜNÜR olmalı
+
+
+def test_gorsel_izleme_ayarlanmamissa_pasif_raporlanir(client, izleyici_header):
+    """PTS_GORSEL_IZLEME_DIZINI test ortamında ayarlı değil, dolayısıyla
+    _klasor_izleyici hiç başlatılmamış olmalı (bkz. main.py::
+    _klasor_izlemeyi_baslat_gerekirse) — varsayılan/eski davranış korunur."""
+    r = client.get("/sistem/saglik", headers=izleyici_header)
+    assert r.status_code == 200, r.text
+    assert r.json()["gorsel_izleme"] == {"aktif": False, "klasor": None}
+
+
+def test_gorsel_izleme_aktifken_klasoruyle_birlikte_raporlanir(client, izleyici_header, monkeypatch):
+    """Klasör izleyici çalışıyorken /sistem/saglik bunu ve hangi klasörü
+    izlediğini bildirmeli (panelin Sistem sekmesindeki satır buna dayanır)."""
+
+    class _SahteKlasorIzleyici:
+        calisiyor = True
+        kok_klasor = "/tmp/ornek-izleme-klasoru"
+
+    monkeypatch.setattr(pts_main, "_klasor_izleyici", _SahteKlasorIzleyici())
+    r = client.get("/sistem/saglik", headers=izleyici_header)
+    assert r.status_code == 200, r.text
+    assert r.json()["gorsel_izleme"] == {"aktif": True, "klasor": "/tmp/ornek-izleme-klasoru"}

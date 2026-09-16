@@ -556,12 +556,26 @@ class KameraPipeline:
             with open(gecici, "wb") as f:
                 f.write(gonderilecek_jpeg)
             try:
+                # GÜVENLİK/DOĞRULUK: /kayitlar/otomatik uç noktası PTS_KAMERA_ANAHTARI
+                # ayarlıysa X-PTS-Kamera-Anahtari başlığını zorunlu kılıyor (bkz.
+                # main.py::kayit_ekle_otomatik) — ama bu istek daha önce bu başlığı
+                # HİÇ göndermiyordu. Yani bir kullanıcı README'nin kendi önerdiği
+                # güvenlik sıkılaştırmasını (backend farklı bir ağdaysa
+                # PTS_KAMERA_ANAHTARI ayarlamak) uygularsa, kendi Python
+                # pipeline'ının tespit ettiği HER plaka sessizce 401 ile
+                # reddedilir hale gelirdi (kamera görüntü alıyor, tespit ediyor,
+                # ama hiçbir zaman kayda düşmüyor — tam da bu depoda defalarca
+                # peşine düşülen semptom sınıfı). Artık aynı ortam değişkeni
+                # burada da okunup başlığa ekleniyor.
+                _kamera_anahtari = os.getenv("PTS_KAMERA_ANAHTARI")
+                _istek_basliklari = {"X-PTS-Kamera-Anahtari": _kamera_anahtari} if _kamera_anahtari else {}
                 with open(gecici, "rb") as f:
                     yanit = requests.post(
                         self.api_url,
                         data={"plaka_no": plaka, "kamera_id": self.kamera_id,
                               "yon": self.yon, "guven_skoru": round(oturum["guven"], 3)},
                         files={"gorsel": f},
+                        headers=_istek_basliklari,
                         timeout=5,
                     )
                 if yanit.status_code >= 400:
@@ -739,6 +753,171 @@ class KameraPipeline:
                     cap.release()
                 except Exception:
                     pass
+
+
+class KlasorIzleyici:
+    """Gerçek bir kamera bağlı olmadan (ya da bağlıyken bile) bir klasöre
+    bırakılan araç fotoğraflarını, sanki gerçek bir kameradan gelmiş gibi
+    otomatik olarak tespit edip kaydeden arka plan görevi.
+
+    Kullanım: `PTS_GORSEL_IZLEME_DIZINI` ortam değişkenini bir klasöre
+    ayarlayın (main.py açılışta bu sınıfı otomatik başlatır). Kök klasörün
+    DOĞRUDAN içine bırakılan fotoğraflar GİRİŞ, `cikis/` alt klasörüne
+    bırakılanlar ÇIKIŞ olarak işlenir. İşlenen (başarılı ya da başarısız)
+    her dosya `islenenler/` alt klasörüne taşınır ki bir daha işlenmesin ve
+    kullanıcı ne olduğunu görebilsin (tespit başarısızsa dosya adının başına
+    `TESPIT_EDILEMEDI_` eklenir — bu, dedektör eşiğini gerçek, sorunlu
+    fotoğraflarla test etmek için özellikle kullanışlıdır, bkz. README
+    "Araç net görünüyor ama hiç kayda düşmüyor" bölümü).
+
+    Bir dosyanın hâlâ kopyalanmakta (yarım yazılmış) olabileceğini hesaba
+    katar: bir dosya yalnızca İKİ ARDIŞIK taramada AYNI boyutta görülürse
+    "tamamlanmış" sayılıp işlenir. Bu yüzden bir fotoğrafın işlenmesi en az
+    bir tarama aralığı kadar gecikir — kasıtlıdır, yarım/bozuk dosya okuma
+    riskini ortadan kaldırır.
+
+    Tespit için gerçek `KameraPipeline._kareyi_isle()` yolunu (paylaşılan
+    ANPR motoru + oturum/oydaşma mantığı + `/kayitlar/otomatik` API çağrısı
+    dahil) kullanır — yani yetki kontrolü, veritabanı kaydı ve LED panel
+    bildirimi de dahil olmak üzere sistemin geri kalanı, gerçek bir kameradan
+    gelen tespit ile TAMAMEN aynı şekilde işler."""
+
+    DESTEKLENEN_UZANTILAR = (".jpg", ".jpeg", ".jpe", ".png", ".bmp")
+
+    def __init__(self, kok_klasor: str, api_url: str = "http://localhost:8000/kayitlar/otomatik",
+                 tarama_araligi_sn: float = 5.0):
+        if not KUTUPHANELER_MEVCUT:
+            raise RuntimeError(
+                "Gerekli kütüphaneler kurulu değil. "
+                "Kurulum: pip install \"fast-alpr[onnx]\" opencv-python requests"
+            )
+        self.kok_klasor = kok_klasor
+        self.api_url = api_url
+        self.tarama_araligi_sn = tarama_araligi_sn
+        self.calisiyor = False
+        self._thread: Optional[threading.Thread] = None
+        # Yön başına kalıcı KameraPipeline nesnesi — ardışık fotoğraflar
+        # arasında oturum/oydaşma ve "aynı plakayı kısa sürede tekrar
+        # kaydetme" (tekrar_gecikme_sn) durumunu korumak için (gerçek bir
+        # kameranın aynı aracı birden çok karede görmesiyle aynı mantık).
+        self._pipelinelar: dict = {}
+        # Boyutu henüz kararlı hale gelmemiş aday dosyalar: yol -> son görülen boyut
+        self._adaylar: dict = {}
+
+        os.makedirs(self.kok_klasor, exist_ok=True)
+        os.makedirs(os.path.join(self.kok_klasor, "cikis"), exist_ok=True)
+        os.makedirs(os.path.join(self.kok_klasor, "islenenler"), exist_ok=True)
+
+    def baslat(self) -> None:
+        self.calisiyor = True
+        self._thread = threading.Thread(target=self._dongu, daemon=True, name="pts-klasor-izleyici")
+        self._thread.start()
+        logger.info(
+            "Klasör izleyici başlatıldı: %s (her %s sn bir taranır; kök=giriş, cikis/=çıkış)",
+            self.kok_klasor, self.tarama_araligi_sn,
+        )
+
+    def durdur(self) -> None:
+        self.calisiyor = False
+        if self._thread is not None:
+            self._thread.join(timeout=3.0)
+
+    def _pipeline_al(self, yon: str) -> "KameraPipeline":
+        if yon not in self._pipelinelar:
+            self._pipelinelar[yon] = KameraPipeline(
+                video_kaynagi=f"klasor-izleme:{yon}",  # gerçek bir RTSP/dosya kaynağı değil, sadece etiket
+                api_url=self.api_url,
+                kamera_id=f"KLASOR-{'GIRIS' if yon == 'giris' else 'CIKIS'}",
+                yon=yon,
+            )
+        return self._pipelinelar[yon]
+
+    def _aday_dosyalari_tara(self) -> list:
+        """Kök klasördeki (giriş) ve `cikis/` alt klasöründeki görsel dosyaları
+        listeler. `islenenler/` klasörünün kendisi taranmaz (yalnızca hedef)."""
+        adaylar = []
+        for yon, klasor in (("giris", self.kok_klasor), ("cikis", os.path.join(self.kok_klasor, "cikis"))):
+            try:
+                dosyalar = os.listdir(klasor)
+            except OSError:
+                continue
+            for ad in sorted(dosyalar):
+                if not ad.lower().endswith(self.DESTEKLENEN_UZANTILAR):
+                    continue
+                tam_yol = os.path.join(klasor, ad)
+                if not os.path.isfile(tam_yol):
+                    continue
+                adaylar.append((yon, tam_yol))
+        return adaylar
+
+    def _tek_tur(self) -> None:
+        mevcut_yollar = set()
+        for yon, tam_yol in self._aday_dosyalari_tara():
+            mevcut_yollar.add(tam_yol)
+            try:
+                boyut = os.path.getsize(tam_yol)
+            except OSError:
+                continue
+            onceki = self._adaylar.get(tam_yol)
+            if onceki is None or onceki != boyut:
+                # Yeni görülen ya da hâlâ büyüyen (muhtemelen kopyalanıyor) bir
+                # dosya — boyutunu kaydet, bir sonraki turda tekrar bakılacak.
+                self._adaylar[tam_yol] = boyut
+                continue
+            # İki ardışık tarama aynı boyutu gördü -> kopyalama tamamlanmış say.
+            del self._adaylar[tam_yol]
+            self._dosyayi_isle(yon, tam_yol)
+
+        # Artık var olmayan (işlenmiş/silinmiş/elle kaldırılmış) dosyaları
+        # takip listesinden temizle ki sonsuza kadar birikmesin.
+        for yol in list(self._adaylar):
+            if yol not in mevcut_yollar:
+                del self._adaylar[yol]
+
+    def _dosyayi_isle(self, yon: str, tam_yol: str) -> None:
+        frame = cv2.imread(tam_yol)
+        if frame is None:
+            logger.warning(
+                "Klasör izleyici: görsel okunamadı (bozuk/desteklenmeyen format olabilir): %s", tam_yol,
+            )
+            self._islenenlere_tasi(tam_yol, basarili=False)
+            return
+        try:
+            pipeline = self._pipeline_al(yon)
+            gonderilenler = pipeline._kareyi_isle(frame, oturumu_hemen_kapat=True)
+        except Exception:
+            logger.exception("Klasör izleyici: %s işlenirken beklenmeyen hata", tam_yol)
+            self._islenenlere_tasi(tam_yol, basarili=False)
+            return
+        if gonderilenler:
+            logger.info("Klasör izleyici: %s -> tespit edilip kaydedildi: %s", os.path.basename(tam_yol), gonderilenler)
+        else:
+            logger.warning(
+                "Klasör izleyici: %s içinde geçerli formatta/yeterli güvende bir plaka tespit "
+                "edilemedi (gerçek bir kamerada da aynı fotoğraf aynı sonucu verirdi — dedektör "
+                "güven eşiğini düşürmeyi deneyin: PTS_ANPR_DETECTOR_ESIGI, bkz. anpr_engine.py)",
+                os.path.basename(tam_yol),
+            )
+        self._islenenlere_tasi(tam_yol, basarili=bool(gonderilenler))
+
+    def _islenenlere_tasi(self, tam_yol: str, basarili: bool) -> None:
+        islenenler_klasoru = os.path.join(self.kok_klasor, "islenenler")
+        os.makedirs(islenenler_klasoru, exist_ok=True)
+        taban_ad = os.path.basename(tam_yol)
+        on_ek = "" if basarili else "TESPIT_EDILEMEDI_"
+        hedef = os.path.join(islenenler_klasoru, f"{on_ek}{int(time.time())}_{taban_ad}")
+        try:
+            os.replace(tam_yol, hedef)
+        except OSError as exc:
+            logger.warning("Klasör izleyici: %s taşınamadı: %s", tam_yol, exc)
+
+    def _dongu(self) -> None:
+        while self.calisiyor:
+            try:
+                self._tek_tur()
+            except Exception:
+                logger.exception("Klasör izleyici turunda beklenmeyen hata")
+            time.sleep(self.tarama_araligi_sn)
 
 
 def tek_gorsel_test(gorsel_yolu: str, api_url: str = "http://localhost:8000/kayitlar/otomatik",

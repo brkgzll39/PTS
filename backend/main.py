@@ -562,6 +562,34 @@ async def _goruntu_temizligini_baslat():
     asyncio.ensure_future(_goruntu_temizlik_dongu())
     logger.info("Otomatik görüntü temizliği başlatıldı (her %d sn kontrol)", GORUNTU_TEMIZLIK_ARALIK_SN)
 
+
+_klasor_izleyici = None  # bkz. _klasor_izlemeyi_baslat_gerekirse — /sistem/saglik'te de raporlanır
+
+
+@app.on_event("startup")
+async def _klasor_izlemeyi_baslat_gerekirse():
+    """`PTS_GORSEL_IZLEME_DIZINI` ayarlıysa, bu klasöre bırakılan araç
+    fotoğraflarını gerçek bir kamera geçişiymiş gibi otomatik işleyen arka
+    plan görevini başlatır (bkz. camera_reader.py::KlasorIzleyici). Kamera
+    bağlanmadan sistemi uçtan uca test etmek ya da gerçek, sorunlu bir
+    fotoğrafı dedektör eşiğine karşı denemek için kullanışlıdır."""
+    global _klasor_izleyici
+    dizin = os.getenv("PTS_GORSEL_IZLEME_DIZINI", "").strip()
+    if not dizin:
+        return
+    if not _CAM_LIBS:
+        logger.warning(
+            "PTS_GORSEL_IZLEME_DIZINI ayarlanmış ama kamera kütüphaneleri kurulu değil "
+            "(pip install \"fast-alpr[onnx]\" opencv-python requests) — klasör izleme başlatılamadı."
+        )
+        return
+    try:
+        from backend.camera_reader import KlasorIzleyici as _KlasorIzleyici
+        _klasor_izleyici = _KlasorIzleyici(dizin)
+        _klasor_izleyici.baslat()
+    except Exception:
+        logger.exception("Klasör izleyici başlatılamadı: %s", dizin)
+
 AUTH_SECRET_DOSYASI = os.path.join(BACKEND_DIR, "auth_secret.key")
 
 
@@ -2142,6 +2170,10 @@ async def sistem_sagligi(db: Session = Depends(get_db)):
         "zaman": datetime.now().isoformat(),
         "surum": "2.0",
         "yedek": _son_yedek_bilgisini_al(),
+        "gorsel_izleme": {
+            "aktif": _klasor_izleyici is not None and _klasor_izleyici.calisiyor,
+            "klasor": _klasor_izleyici.kok_klasor if _klasor_izleyici else None,
+        },
     }
 
 
