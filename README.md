@@ -623,7 +623,41 @@ artık sessizce main dalına giremez.
   yalnızca fare tıklamasıyla büyütülebiliyordu (bir `<img>` öntanımlı olarak
   klavyeyle odaklanamaz/tetiklenemez); artık `role="button" tabindex="0"` ve bir
   klavye (Enter/Boşluk) olay dinleyicisiyle klavye/ekran okuyucu kullanıcıları
-  için de erişilebilir.
+  için de erişilebilir. Ayrıca panelin TÜM formlarındaki `<label>` etiketleri
+  (55 adet) artık ilgili giriş alanına `for="..."` ile eşleşiyor — önceden
+  yalnızca görsel yakınlıkla ilişkiliydi, ekran okuyucu kullanıcıları için bir
+  etikete tıklamak/odaklanmak ilgili alanı seçmiyordu.
+
+**2026-09-16 (devam) — başlatma betikleri (`calistir.bat`/`calistir.sh`) sertleştirmesi:**
+
+Sahada canlı olarak şu belirti gözlemlendi: 8000 portu başka bir işlem
+(örn. PTS'in kapatılmamış eski bir kopyası, ya da hem NSSM/Windows Servisi
+hem de elle çalıştırılan `calistir.bat`'ın aynı anda çalışması) tarafından
+zaten kullanılıyorken `calistir.bat` her 5 saniyede bir "PTS beklenmedik
+şekilde durdu, yeniden başlatılıyor" mesajıyla SONSUZA KADAR yeniden
+başlatmayı deniyordu — kullanıcıya gerçek nedeni (`WinError 10048`: port
+zaten kullanımda) hiçbir zaman anlaşılır biçimde söylemeden. Artık her iki
+betik de:
+
+- Başlamadan ÖNCE 8000 portunun zaten kullanımda olup olmadığını kontrol
+  ediyor; doluysa hangi PID'nin tuttuğunu ve ne yapılması gerektiğini
+  (o süreci doğrulayıp kapatma komutu dahil) açıkça yazıp duruyor —
+  garantili başarısız bir başlatma denemesi yapmıyor.
+- Uvicorn gerçekten beklenmedik şekilde çökerse otomatik olarak yeniden
+  başlatmaya devam ediyor (bu faydalı davranış korundu), AMA art arda 5 kez
+  KISA sürede (60 saniyeden az çalışıp) çökerse -- ki bu kalıcı bir
+  yapılandırma sorununa işaret eder -- sonsuz döngüye girmeden durup
+  `loglar/pts.log`'a bakılmasını öneriyor. En az 60 saniye sorunsuz
+  çalıştıktan sonraki bir çökme GEÇİCİ sayılır ve deneme sayacı sıfırlanır
+  (yani yıllarca kararlı çalışan bir kurulum, ara sıra yaşanan tek seferlik
+  bir ağ kesintisinde bu korumaya takılıp tamamen durmaz).
+- `calistir.sh` ayrıca artık proje kökünden (`backend/` alt klasöründen
+  değil) çalışıyor ve `uvicorn backend.main:app` modül yolunu kullanıyor —
+  bu, zaten `calistir.bat`'ın kullandığı ve testlerin (`tests/test_api.py`)
+  varsaydığı tek doğru içe aktarma yoludur. Ayrıca dosyanın Git'teki
+  çalıştırılabilir izni eksikti (`chmod +x`) — README'de belgelenen
+  `./calistir.sh` komutu bu olmadan "İzin reddedildi" hatası verirdi; artık
+  düzeltildi.
 
 ## Otomatik Görüntü/Kayıt Saklama
 
