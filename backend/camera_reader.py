@@ -136,6 +136,13 @@ OTURUM_BENZERLIK_ESIGI = 2   # aynı oturuma dahil edilecek okumalar arası azam
 OTURUM_MAX_SURE_SN = 8.0     # bir oturum en fazla bu kadar açık kalır (çok yavaş/duran araç için emniyet)
 VARSAYILAN_MIN_GUVEN_SKORU = 0.4  # bu eşiğin altındaki OCR sonuçları oylamaya hiç girmez
 
+# Dedektör ardı ardına hiçbir plaka adayı bulamazsa (bkz. _kareyi_isle), bunu en
+# fazla bu sıklıkta (saniye) özetleyen TEK bir log satırı yazılır. Amaç spam
+# değil, "pipeline canlı ve kare işliyor ama dedektör gerçekten hiçbir şey mi
+# bulamıyor" sorusuna en azından kaba bir gözlemlenebilirlik kazandırmaktır —
+# bkz. anpr_engine.py::PTS_ANPR_DETECTOR_ESIGI notu.
+BOS_TESPIT_LOG_ARALIK_SN = 120
+
 
 class PlakaOyBirikimi:
     """Tek bir 'geçiş oturumu' (aynı aracın kamera görüş alanında kaldığı süre)
@@ -269,6 +276,14 @@ class KameraPipeline:
         self.motor = _paylasilan_motoru_al()
         self.calisiyor = False
         self.son_plaka_zamani: dict = {}
+        # GÖZLEMLENEBİLİRLİK: dedektör hiçbir plaka bulamazsa (sonuc listesi
+        # tamamen boşsa) bunu HER karede loglamak günlük dosyasını gereksiz
+        # şişirir (boş yol/trafiksiz an normaldir); ama hiç loglamamak da
+        # "dedektör gerçekten çalışıyor mu, hiç mi tespit etmiyor" sorusunu
+        # tamamen görünmez bırakır. Bu yüzden en fazla BOS_TESPIT_LOG_ARALIK_SN'de
+        # bir, art arda süregelen boş sonuç durumunda özet bir satır loglanır.
+        self._son_bos_tespit_log_zamani: float = 0.0
+        self._bos_tespit_sayaci_son_logdan_beri: int = 0
         # Çok kareli oy birleştirme: bir aracın kamerada kaldığı birden çok
         # karenin okumaları burada toplanıp oydaşmayla kesinleştirilir.
         self._oturum_takipcisi = PlakaOturumTakipcisi()
@@ -395,6 +410,32 @@ class KameraPipeline:
         # MOTORU" notu (çoklu kamerada GPU sürücüsü çökmesi/sıfırlanması riski).
         with _motor_cagri_kilit:
             motor_sonuclari = self.motor.tahmin_et(frame)
+
+        if not motor_sonuclari:
+            # GÖZLEMLENEBİLİRLİK: dedektör bu karede TEK bir plaka adayı bile
+            # bulamadı — bu, aşağıdaki format/güven filtrelerinden ÖNCEKİ bir
+            # aşamadır (FastALPR'ın kendi dahili detector_conf_thresh eşiği;
+            # bkz. anpr_engine.py). "Araç net görünüyor ama hiç kayda düşmüyor"
+            # şikayetlerinde, sorun bizim OCR-sonrası filtrelerimizde DEĞİL de
+            # burada (dedektör hiçbir kutu önermiyor) olabilir — ve o durumda
+            # camera_reader.py'deki diğer üç log noktası da (format uyuşmazlığı,
+            # düşük OCR güveni, API reddi) SESSİZ kalır, çünkü hiçbiri hiç
+            # tetiklenmez. Bu satır o görünmez boşluğu en azından kaba biçimde
+            # açığa çıkarır.
+            self._bos_tespit_sayaci_son_logdan_beri += 1
+            _simdi_mono = time.monotonic()
+            if _simdi_mono - self._son_bos_tespit_log_zamani >= BOS_TESPIT_LOG_ARALIK_SN:
+                logger.info(
+                    "[%s] Son %.0f sn içinde dedektör %d karede hiçbir plaka adayı "
+                    "bulamadı (OCR'a hiç ulaşmadan elendi). Bu her zaman normaldir "
+                    "(trafiksiz an); ama net görünen bir araç yine de hiç kayda "
+                    "düşmüyorsa PTS_ANPR_DETECTOR_ESIGI ortam değişkenini "
+                    "düşürmeyi deneyin (bkz. anpr_engine.py, varsayılan 0.4).",
+                    self.kamera_id, BOS_TESPIT_LOG_ARALIK_SN, self._bos_tespit_sayaci_son_logdan_beri,
+                )
+                self._son_bos_tespit_log_zamani = _simdi_mono
+                self._bos_tespit_sayaci_son_logdan_beri = 0
+
         for sonuc in motor_sonuclari:
             plaka = plaka_dogrula(sonuc.plaka_no)
             if not plaka:

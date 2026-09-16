@@ -425,21 +425,54 @@ bırakmadan:
   artık HTTP durum kodu kontrol ediliyor ve reddedilirse loglanıyor.
 
 Bu üçü sayesinde bir sonraki "araç göründü ama kayda düşmedi" vakasında
-Sistem/Log ekranı artık kaybın TAM OLARAK nerede olduğunu (dedektör hiç
-tespit etmedi mi, OCR yanlış okudu mu, güven düşük mü, yoksa API mi reddetti)
-gösterecek.
+Sistem/Log ekranı kaybın nerede olduğunu (OCR yanlış okudu mu, güven düşük mü,
+yoksa API mi reddetti) gösterir — AMA bu üçü de yalnızca dedektörün BULDUĞU
+adaylar üzerinde çalışır (bkz. bir sonraki madde).
 
-**Olası bağımsız neden — kamera açısı/çözünürlüğü:** Yukarıdaki "Tanıma
-Doğruluğu" bölümünde belirtildiği gibi, plaka dedektöre verilen karede en az
-~50-75 piksel genişliğinde olmalı. Giriş kamerasından gelen örnek görüntüler
-çok GENİŞ AÇILI (kapı, refüj, ağaçlar, park alanı — sahnenin büyük bölümü)
-çekilmiş; plaka bir insan gözüyle net görünse de, dedektör modeline
-gönderilmeden önce küçük bir çözünürlüğe (ör. 384×384) indirgendiğinde plaka
-bölgesi birkaç piksele kadar küçülüp okunamaz hale gelebilir. Bu, kod
-hatasından bağımsız, saf kamera konumlandırma/kadraj sorunu olabilir —
-kameranın aracın geçtiği şeride daha dar/yakın kadrajlanması (dijital zoom
-veya fiziksel lens/konum değişikliği ile) tespit oranını önemli ölçüde
-artırabilir.
+**~~Olası bağımsız neden — kamera açısı/çözünürlüğü~~ (2026-09-16: bu teşhis
+YANLIŞ ÇIKTI, düzeltiliyor):** Önceki bir sürümde burada, giriş/çıkış
+kameralarının geniş açılı kadrajının plakayı dedektör için "çok küçük"
+kıldığı ve bunun kamera konumlandırma/zoom değişikliği gerektirdiği
+belirtilmişti. Sahadan gelen kanıt bu teşhisi çürüttü: AYNI kameralardan AYNI
+video akışını işleyen bağımsız bir başka yazılım (üçüncü taraf bir PTS
+istemcisi), tam olarak sorun yaşadığımız plakaları (ör. "06 FVV 494") dahil
+olmak üzere sorunsuz okuyabiliyor — hem giriş hem çıkış kamerasında. Bu,
+kameranın fiziksel görüş açısının/çözünürlüğünün YETERLİ olduğunu, sorunun
+kamerada değil YAZILIM tarafında (bizim dedektör/eşik yapılandırmamızda)
+olması gerektiğini kanıtlıyor. Kamerada zoom/konum değişikliği YAPILAMAYACAĞI
+(ve zaten gerekmediği) için bu öneri tamamen geri çekilmiştir.
+
+**Gerçek neden adayı — dedektörün kendi (gizli) güven eşiği:** `_kareyi_isle`
+içindeki üç log noktası da yalnızca FastALPR'ın `ALPR.predict()` metodunun
+DÖNDÜRDÜĞÜ sonuçlar üzerinde çalışır. Ancak FastALPR'ın kendi YOLO tabanlı
+plaka DEDEKTÖRÜ, kendi dahili `detector_conf_thresh` eşiğinin (kütüphane
+varsayılanı: **0.4**) altında kalan aday kutuları OCR'a hiç göndermeden
+tamamen eler — bu durumda `predict()` o kare için doğrudan BOŞ liste döner ve
+yukarıdaki üç log noktasının HİÇBİRİ tetiklenmez (loglayacak hiçbir "sonuç"
+yoktur). Önceki kod tabanında bu eşik hiç açığa çıkarılmıyordu (sabit/örtülü
+0.4). Bu, "kamera görüntü akıyor, araç net görünüyor, hiçbir hata/log yok,
+yine de kayda düşmüyor" şikayetinin en olası açıklamasıdır: bizim özel kamera
+açı/mesafe/aydınlatma koşullarımızda dedektörün ürettiği ham güven skoru
+0.4'ün altında kalıyor olabilir (üçüncü taraf yazılımın kendi dedektörü farklı
+bir model/eşik kullandığı için aynı karede başarılı olabiliyor).
+
+Bunu doğrulamak/ayarlamak için iki araç eklendi:
+
+1. **`PTS_ANPR_DETECTOR_ESIGI` ortam değişkeni** (bkz. `backend/anpr_engine.py`):
+   dedektörün `detector_conf_thresh` değerini geçersiz kılar. Örn.
+   `PTS_ANPR_DETECTOR_ESIGI=0.15` ile sunucuyu yeniden başlatıp aynı araçların
+   geçişini tekrar deneyin. Not: bu, `min_tanima_guveni` (Sistem Ayarları'ndaki
+   OCR-sonrası eşik) ile KARIŞTIRILMAMALI — ikisi tamamen farklı, art arda
+   çalışan iki filtredir; bu yenisi daha ÖNCE (dedektör aşamasında) devreye
+   girer. Motor tüm kameralar arasında PAYLAŞILDIĞI için bu değer yalnızca
+   sunucu (yeniden) başlarken okunur, çalışırken değiştirilemez.
+2. **"Boş tespit" özet logu** (bkz. `camera_reader.py::BOS_TESPIT_LOG_ARALIK_SN`):
+   dedektör art arda hiçbir aday bulamazsa en fazla 2 dakikada bir Sistem/Log
+   ekranında özet bir satır görünür. Bu her zaman normaldir (trafiksiz an);
+   ama net görünen bir aracın geçtiği ANDA bu log satırı sürekli görünüyorsa,
+   dedektörün gerçekten hiçbir şey bulamadığının (yukarıdaki hipotezin)
+   doğrulanmış kanıtıdır — bu durumda `PTS_ANPR_DETECTOR_ESIGI`'yi düşürmek
+   doğru adımdır.
 
 ## Kalıcı Test Altyapısı
 

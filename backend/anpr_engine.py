@@ -37,6 +37,40 @@ class ANPREngine:
             ek_parametreler["detector_providers"] = ["CPUExecutionProvider"]
             ek_parametreler["ocr_providers"] = ["CPUExecutionProvider"]
             ek_parametreler["ocr_device"] = "cpu"
+        # ------------------------------------------------------------------
+        # DEDEKTÖR GÜVEN EŞİĞİ (detector_conf_thresh) — camera_reader.py'deki
+        # min_guven_skoru'ndan (OCR sonrası, bizim kendi filtremiz) TAMAMEN
+        # AYRI ve ondan ÖNCE devreye giren bir eşiktir: FastALPR'ın kendi YOLO
+        # tabanlı plaka DEDEKTÖRÜ, bu eşiğin altında kalan kutuları OCR'a hiç
+        # göndermeden eler; ALPR.predict() o kareler için doğrudan BOŞ liste
+        # döner. Bu, kütüphanenin resmi API referansında varsayılanı 0.4
+        # olarak belgelenmiş bir parametredir ve önceki kod tabanında HİÇ
+        # açığa çıkarılmıyordu (üstü örtülü, sabit 0.4).
+        #
+        # Neden önemli: "araç kamerada net/okunaklı görünüyor ama sistemde HİÇ
+        # iz bırakmadan kayboluyor" şikayetlerinin bir kısmı, bizim kendi
+        # loglarımızın (format uyuşmazlığı / düşük OCR güveni / API reddi —
+        # bkz. camera_reader.py) hiçbirine düşmüyordu; çünkü bu üç log noktası
+        # da yalnızca ALPR.predict()'in DÖNDÜRDÜĞÜ sonuçlar üzerinde çalışır.
+        # Dedektör bir kareyi kendi iç eşiğinde elediğinde, o kare bizim
+        # kodumuza hiç ulaşmıyor — dolayısıyla hiçbir log satırı üretilmiyordu.
+        # (camera_reader.py'deki "boş tespit" loglaması bu görünmez durumu
+        # ortaya çıkarmak için eklenmiştir.)
+        #
+        # Aynı kameradan aynı anda okuma yapabilen FARKLI bir yazılımın
+        # (başka bir dedektör modeli/eşiğiyle) başarılı olması, bu değerin
+        # BİZİM özel kamera açı/mesafe/aydınlatma koşullarımız için çok katı
+        # olabileceğine işaret eder. PTS_ANPR_DETECTOR_ESIGI ortam değişkeniyle
+        # (0.0-1.0 arası) düşürülebilir; örn. PTS_ANPR_DETECTOR_ESIGI=0.15.
+        # Belirtilmezse kütüphanenin kendi varsayılanı (0.4) kullanılır —
+        # davranış değişmez, sadece ayarlanabilir hâle getirilmiştir.
+        detektor_esigi_ham = os.environ.get("PTS_ANPR_DETECTOR_ESIGI", "").strip()
+        if detektor_esigi_ham:
+            try:
+                detektor_esigi = float(detektor_esigi_ham)
+                ek_parametreler["detector_conf_thresh"] = max(0.0, min(1.0, detektor_esigi))
+            except ValueError:
+                pass  # geçersiz değer verilirse kütüphane varsayılanına sessizce düş
         self._alpr = ALPR(detector_model=detector_model, ocr_model=ocr_model, **ek_parametreler)
 
     def tahmin_et(self, frame: Any) -> list[PlakaSonucu]:
