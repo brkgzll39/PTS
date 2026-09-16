@@ -444,6 +444,18 @@ class KameraPipeline:
 
     def _cap_ac(self):
         os.environ.setdefault("OPENCV_FFMPEG_LOGLEVEL", "quiet")
+        # RTSP varsayılan olarak UDP üzerinden akar; H.264 gibi büyük I-frame'li
+        # kodeklerde tek bir kayıp UDP paketi tüm GOP'u (sonraki keyframe'e kadar
+        # olan tüm kareleri) bozar — ekranda görülen "takılma/donma" efektinin en
+        # yaygın nedeni budur. TCP'ye zorlamak (paket kaybını TCP'nin kendi
+        # retransmit mekanizmasına bırakarak) bunu büyük ölçüde ortadan kaldırır;
+        # bedeli birkaç yüz ms ek gecikmedir, ANPR için ihmal edilebilir.
+        # stimeout: soket okuma zaman aşımı (mikrosaniye) — kamera susarsa
+        # OpenCV'nin süresiz beklemek yerine makul bir sürede hata vermesini sağlar.
+        os.environ.setdefault(
+            "OPENCV_FFMPEG_CAPTURE_OPTIONS",
+            "rtsp_transport;tcp|stimeout;5000000|max_delay;500000",
+        )
         cap = cv2.VideoCapture(self.video_kaynagi, cv2.CAP_FFMPEG)
         try:
             cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)

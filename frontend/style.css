@@ -98,6 +98,30 @@ body {
   min-height: 0;
   height: calc(50vh - 8px);
 }
+.camera-frame-img { width: 100%; height: 100%; object-fit: cover; }
+/* Tam ekranda kare KIRPILMADAN (object-fit: cover yerine contain) tam
+   gösterilsin — küçük ızgara görünümünde kırpma kabul edilebilir ama tam
+   ekranda kullanıcı görüntünün tamamını görmeyi bekler; en/boy oranı
+   kamerayla eşleşmiyorsa üstte/altta (ya da yanlarda) siyah şerit kalır. */
+.camera-wall:fullscreen .camera-frame-img,
+.camera-wall:-webkit-full-screen .camera-frame-img,
+.camera-wall:-moz-full-screen .camera-frame-img,
+.camera-tile:fullscreen .camera-frame-img,
+.camera-tile:-webkit-full-screen .camera-frame-img,
+.camera-tile:-moz-full-screen .camera-frame-img {
+  object-fit: contain;
+  background: #000;
+}
+/* Çift tıkla TEK kamerayı tam ekrana alma (kameraDuvariFullscreen'den ayrı,
+   bkz. app.js dblclick dinleyicisi) da aynı şekilde kırpmadan göstermeli. */
+.camera-tile:fullscreen,
+.camera-tile:-webkit-full-screen,
+.camera-tile:-moz-full-screen {
+  background: #000;
+  min-height: 0;
+  width: 100vw;
+  height: 100vh;
+}
 .event-card .card-header { background: #4c5a63; color: #fff; border-radius: 0; }
 .event-row { display: flex; align-items: center; gap: .7rem; padding: .8rem 1rem; border-bottom: 1px solid #edf0f2; }
 .event-button { width: 100%; border: 0; background: #fff; text-align: left; cursor: pointer; }

@@ -340,7 +340,7 @@ function kameraDuvariniGuncelle(kameralar) {
           .then(blob => {
             if (!blob) return;
             const url = URL.createObjectURL(blob);
-            el.innerHTML = `<img src="${url}" style="width:100%;height:100%;object-fit:cover" onload="URL.revokeObjectURL(this.src)">`;
+            el.innerHTML = `<img src="${url}" class="camera-frame-img" onload="URL.revokeObjectURL(this.src)">`;
             el.style.padding = "0";
           })
           .catch(() => {});
