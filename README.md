@@ -327,6 +327,33 @@ olup olmadığı denetlendi. Bulunan ve düzeltilen sorunlar:
   "Geçiş Raporu", "Veri Aktarımı" — üçü de `#kayitlar-sekme`). Gereksiz
   tekrar kaldırıldı, tek bağlantı kaldı.
 
+## Fiziksel Kamera Bağlantısı Sonrası Bulunan ve Düzeltilen Sorunlar (2026-09-16)
+
+- **Konsolda tekrarlayan sahte 401 hatası.** `sseBaslat()` içinde kullanılmayan,
+  hiçbir zaman çalışmayan bir `new EventSource('/olaylar/sse', {})` çağrısı
+  vardı. Tarayıcının `EventSource` API'si özel başlık (Authorization) taşıyamaz,
+  bu yüzden bu istek her zaman 401 ile reddediliyor ve konsolu kirletiyordu.
+  Gerçek SSE mekanizması zaten token'lı `fetch()` ile ayrı bir yolla
+  (`_sseBaslatFetch`) çalışıyordu; ölü kod kaldırıldı.
+- **Tam ekranda kamera görüntüsü kırpılıyordu.** Canlı kamera karesi
+  `object-fit: cover` ile gösteriliyordu; bu tam ekranda görüntünün kenarlarını
+  kırpıyordu. Tam ekran modunda (`:fullscreen`) `object-fit: contain` uygulanacak
+  şekilde CSS düzeltildi, artık tüm kare siyah kenarlıklarla görülüyor.
+- **H.264 kameralarda geçişlerde takılma.** OpenCV'nin FFmpeg RTSP istemcisi
+  varsayılan olarak UDP kullanıyordu; H.264'te tek bir kayıp UDP paketi tüm
+  GOP'u (bir sonraki keyframe'e kadar olan kareleri) bozar. `camera_reader.py`
+  artık her bağlantıda `OPENCV_FFMPEG_CAPTURE_OPTIONS` ile RTSP'yi TCP'ye
+  zorluyor ve soket zaman aşımları ekliyor. Not: canlı görüntü zaten 3 saniyede
+  bir JPEG anlık görüntüsü çektiği için bu, ağın/kameranın kendi kalitesini
+  değiştirmez — sadece paket kaybından kaynaklanan bozulmayı azaltır.
+- **"DB Yedek" butonu "Bearer token gerekli" hatası veriyordu.** `veritabaniIndir()`
+  fonksiyonu `window.open("/sistem/yedek", "_blank")` kullanıyordu; bu yeni bir
+  sekme/üst düzey gezinme başlattığı için `apiCagir()`'ın normalde
+  `sessionStorage`'daki token'dan eklediği `Authorization: Bearer ...` başlığını
+  TAŞIMIYORDU, backend de haklı olarak reddediyordu. Düzeltme: dosya artık
+  token başlığıyla `fetch()` edilip blob olarak indiriliyor (gerçek bir dosya
+  indirme butonu gibi çalışıyor, sekme açıp hata göstermiyor).
+
 ## Kalıcı Test Altyapısı
 
 `tests/` klasöründe pytest tabanlı bir test paketi var:

@@ -1312,8 +1312,38 @@ async function goruntuleriTemizle() {
   diskBilgisiYukle();
 }
 
-function veritabaniIndir() {
-  window.open("/sistem/yedek", "_blank");
+async function veritabaniIndir() {
+  // NOT: window.open(...) burada KULLANILAMAZ — yeni sekme açılışı taze bir
+  // üst düzey (top-level) gezinme başlatır ve apiCagir()'ın sessionStorage'daki
+  // token'dan enjekte ettiği "Authorization: Bearer ..." başlığını taşımaz.
+  // Bu yüzden backend "Bearer token gerekli" hatası veriyordu. Doğru yöntem:
+  // token'ı elle ekleyerek fetch ile indirip, gelen dosyayı blob olarak
+  // tarayıcıya indirtmek.
+  const token = sessionStorage.getItem("pts_token");
+  try {
+    const cevap = await fetch(API + "/sistem/yedek", {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    });
+    if (!cevap.ok) {
+      const hata = await cevap.json().catch(() => ({ detail: "Yedek alınamadı" }));
+      throw new Error(hata.detail || "Yedek alınamadı");
+    }
+    const blob = await cevap.blob();
+    let dosyaAdi = "pts_yedek.db";
+    const icerikBaslik = cevap.headers.get("Content-Disposition") || "";
+    const eslesme = icerikBaslik.match(/filename="?([^";]+)"?/i);
+    if (eslesme) dosyaAdi = eslesme[1];
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = dosyaAdi;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  } catch (e) {
+    toastGoster(e.message || "Veritabanı yedeği indirilemedi", "hata");
+  }
 }
 
 // ================================================================
