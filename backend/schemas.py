@@ -1,6 +1,6 @@
 import re
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 from datetime import datetime
 from typing import Optional, List
 
@@ -43,8 +43,7 @@ class SiteCevap(BaseModel):
     aktif: bool
     olusturma_tarihi: datetime
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class NoktaOlustur(BaseModel):
@@ -67,8 +66,7 @@ class NoktaCevap(BaseModel):
     aktif: bool
     olusturma_tarihi: datetime
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class IlkYoneticiOlustur(BaseModel):
@@ -93,8 +91,7 @@ class KullaniciCevap(BaseModel):
     son_giris: Optional[datetime] = None
     olusturma_tarihi: Optional[datetime] = None
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class KullaniciOlustur(BaseModel):
@@ -141,8 +138,7 @@ class KisiPlakaCevap(BaseModel):
     aktif: bool
     olusturma_tarihi: datetime
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class KisiOlustur(BaseModel):
@@ -213,8 +209,7 @@ class KisiCevap(BaseModel):
     olusturma_tarihi: datetime
     ek_plakalar: List[KisiPlakaCevap] = []
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class KaraListesiOlustur(BaseModel):
@@ -235,8 +230,7 @@ class KaraListesiCevap(BaseModel):
     aktif: bool
     olusturma_tarihi: datetime
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class KayitManuel(BaseModel):
@@ -259,8 +253,7 @@ class KayitCevap(BaseModel):
     kisi_id: Optional[int] = None
     kisi_tip_anlik: Optional[str] = None
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class AlarmCevap(BaseModel):
@@ -272,8 +265,7 @@ class AlarmCevap(BaseModel):
     okundu: bool
     tarih_saat: datetime
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class BariyerAyarlariCevap(BaseModel):
@@ -286,8 +278,7 @@ class BariyerAyarlariCevap(BaseModel):
     gpio_pin: Optional[int] = None
     aktif: bool
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class BariyerAyarlariGuncelle(BaseModel):

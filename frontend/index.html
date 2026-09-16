@@ -23,7 +23,7 @@
     <div class="modal-content">
       <div class="modal-header">
         <h5 class="modal-title"><i class="bi bi-search me-2"></i>Plaka Analizi: <span id="analizPlaka">-</span></h5>
-        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Kapat"></button>
       </div>
       <div class="modal-body" id="analizIcerik"><div class="text-center py-4"><div class="spinner-border"></div></div></div>
     </div>
@@ -45,14 +45,14 @@
 </div>
 <div class="modal fade" id="olayDetayModal" tabindex="-1" aria-hidden="true">
   <div class="modal-dialog modal-xl modal-dialog-centered"><div class="modal-content event-detail-modal">
-    <div class="modal-header" id="olayModalBaslik"><h5 class="modal-title" id="olayModalTur">TANIMLI ARAÇ</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
+    <div class="modal-header" id="olayModalBaslik"><h5 class="modal-title" id="olayModalTur">TANIMLI ARAÇ</h5><button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Kapat"></button></div>
     <div class="modal-body"><div class="row g-3"><div class="col-lg-8"><div class="event-image-wrap"><img id="olayModalGorsel" alt="Araç geçiş görseli"><div id="olayModalGorselYok" class="empty-state">Bu kayıt için görsel bulunmuyor</div></div><div class="detail-table mt-3"><div><b>TARİH</b><span id="olayModalTarih">-</span></div><div><b>SAAT</b><span id="olayModalSaat">-</span></div><div><b>SİTE</b><span id="olayModalSite">-</span></div><div><b>NOKTA</b><span id="olayModalNokta">-</span></div><div><b>YÖN</b><span id="olayModalYon">-</span></div></div></div><div class="col-lg-4"><div class="plate-display" id="olayModalPlaka">-</div><div class="vehicle-facts"><div><b>ARAÇ TİPİ</b><span id="olayModalAracTipi">-</span></div></div><div class="vehicle-facts person-facts"><div><b>İSİM</b><span id="olayModalKisi">-</span></div><div><b>DAİRE / BLOK</b><span id="olayModalDaire">-</span></div><div><b>GÜVEN SKORU</b><span id="olayModalGuven">-</span></div><div><b>OCR DÜZELTMESİ</b><span id="olayModalDuzeltme">-</span></div></div><div class="modal-actions"><button class="btn btn-success" id="bariyerAcBtn"><i class="bi bi-unlock-fill"></i> Bariyer Aç</button><button class="btn btn-outline-secondary" data-bs-dismiss="modal">Kapat</button></div></div></div></div>
   </div></div>
 </div>
 
 <div class="modal fade" id="kisiDuzenleModal" tabindex="-1" aria-hidden="true">
   <div class="modal-dialog modal-dialog-centered"><div class="modal-content">
-    <div class="modal-header"><h5 class="modal-title">Kişiyi Düzenle</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
+    <div class="modal-header"><h5 class="modal-title">Kişiyi Düzenle</h5><button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Kapat"></button></div>
     <form id="kisiDuzenleForm" data-rol-min="operatör">
       <div class="modal-body">
         <input type="hidden" id="duzenleId">
@@ -156,7 +156,7 @@
           <div class="camera-controls mt-3"><button class="btn btn-dark active" id="kameraSayacBtn"><i class="bi bi-grid-2x2"></i> -</button><button class="btn btn-outline-secondary" onclick="kameraDuvariFullscreen()" id="fullscreenBtn"><i class="bi bi-arrows-fullscreen"></i> Tam ekran</button><span class="ms-auto text-muted small"><i class="bi bi-clock-history me-1"></i>Son yenileme: <span id="canliYenileme">-</span></span></div>
         </div>
         <div class="col-xl-4">
-          <div class="card event-card h-100"><div class="card-header d-flex justify-content-between"><span><i class="bi bi-bell-fill me-1"></i>Son Geçişler</span><div class="d-flex gap-1"><button class="btn btn-sm btn-light" onclick="alarmHepsiniOku()" title="Tüm alarmları okundu işaretle" data-rol-min="operatör"><i class="bi bi-check2-all"></i></button><button class="btn btn-sm btn-light" onclick="panelYenile()"><i class="bi bi-arrow-clockwise"></i></button></div></div><div class="card-body p-0"><div id="canliOlaylar" class="event-list"><div class="empty-state">Henüz geçiş kaydı yok</div></div></div></div>
+          <div class="card event-card h-100"><div class="card-header d-flex justify-content-between"><span><i class="bi bi-bell-fill me-1"></i>Son Geçişler</span><div class="d-flex gap-1"><button class="btn btn-sm btn-light" onclick="alarmHepsiniOku()" title="Tüm alarmları okundu işaretle" aria-label="Tüm alarmları okundu işaretle" data-rol-min="operatör"><i class="bi bi-check2-all"></i></button><button class="btn btn-sm btn-light" onclick="panelYenile()" title="Yenile" aria-label="Yenile"><i class="bi bi-arrow-clockwise"></i></button></div></div><div class="card-body p-0"><div id="canliOlaylar" class="event-list"><div class="empty-state">Henüz geçiş kaydı yok</div></div></div></div>
         </div>
       </div>
     </div>
@@ -544,7 +544,7 @@
           </div>
           <div class="card">
             <div class="card-header d-flex justify-content-between"><span><i class="bi bi-list-ul me-1"></i>Siteler</span>
-              <button class="btn btn-sm btn-outline-secondary" onclick="siteleriYukle()"><i class="bi bi-arrow-clockwise"></i></button></div>
+              <button class="btn btn-sm btn-outline-secondary" onclick="siteleriYukle()" title="Yenile" aria-label="Yenile"><i class="bi bi-arrow-clockwise"></i></button></div>
             <div class="card-body p-0">
               <table class="table table-hover mb-0 align-middle">
                 <thead class="table-light"><tr><th>Ad</th><th>Açıklama</th><th></th></tr></thead>
@@ -579,7 +579,7 @@
           </div>
           <div class="card">
             <div class="card-header d-flex justify-content-between"><span><i class="bi bi-list-ul me-1"></i>Erişim Noktaları</span>
-              <button class="btn btn-sm btn-outline-secondary" onclick="noktalariYukle()"><i class="bi bi-arrow-clockwise"></i></button></div>
+              <button class="btn btn-sm btn-outline-secondary" onclick="noktalariYukle()" title="Yenile" aria-label="Yenile"><i class="bi bi-arrow-clockwise"></i></button></div>
             <div class="card-body p-0">
               <div class="table-responsive"><table class="table table-hover mb-0 align-middle">
                 <thead class="table-light"><tr><th>Site</th><th>Nokta</th><th>Yön</th><th>Kamera</th><th>Bariyer</th><th></th></tr></thead>
@@ -612,7 +612,7 @@
         <div class="col-lg-8">
           <div class="card">
             <div class="card-header d-flex justify-content-between"><span><i class="bi bi-list-ul me-1"></i>Engellenen Araçlar</span>
-              <button class="btn btn-sm btn-outline-secondary" onclick="karaListesiYukle()"><i class="bi bi-arrow-clockwise"></i></button></div>
+              <button class="btn btn-sm btn-outline-secondary" onclick="karaListesiYukle()" title="Yenile" aria-label="Yenile"><i class="bi bi-arrow-clockwise"></i></button></div>
             <div class="card-body p-0">
               <table class="table table-hover mb-0 align-middle">
                 <thead class="table-light"><tr><th>Plaka</th><th>Sebep</th><th>Ekleyen</th><th>Tarih</th><th></th></tr></thead>
@@ -701,7 +701,7 @@
           <div class="card">
             <div class="card-header d-flex justify-content-between">
               <span><i class="bi bi-people-fill me-1"></i>Sistem Kullanıcıları</span>
-              <button class="btn btn-sm btn-outline-secondary" onclick="kullanicilariYukle()"><i class="bi bi-arrow-clockwise"></i></button>
+              <button class="btn btn-sm btn-outline-secondary" onclick="kullanicilariYukle()" title="Yenile" aria-label="Yenile"><i class="bi bi-arrow-clockwise"></i></button>
             </div>
             <div class="card-body p-0">
               <table class="table table-hover mb-0 align-middle">
@@ -749,7 +749,7 @@
           <div class="card">
             <div class="card-header d-flex justify-content-between">
               <span><i class="bi bi-list-ul me-1"></i>Tanımlı Webhook'lar</span>
-              <button class="btn btn-sm btn-outline-secondary" onclick="bildirimleriYukle()"><i class="bi bi-arrow-clockwise"></i></button>
+              <button class="btn btn-sm btn-outline-secondary" onclick="bildirimleriYukle()" title="Yenile" aria-label="Yenile"><i class="bi bi-arrow-clockwise"></i></button>
             </div>
             <div class="card-body p-0">
               <table class="table table-hover mb-0 align-middle">

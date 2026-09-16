@@ -55,7 +55,30 @@ document.addEventListener("click", (e) => {
   const karaEkleEl = e.target.closest("[data-kara-ekle]");
   if (karaEkleEl) {
     karaListeyeEkleModal(karaEkleEl.dataset.karaEkle);
+    return;
   }
+  const thumbEl = e.target.closest(".thumb[data-goruntu-yolu]");
+  if (thumbEl) {
+    buyukGorselAc(thumbEl);
+  }
+});
+
+// ERİŞİLEBİLİRLİK: küçük resim (thumbnail) önizlemeleri bir <img> üzerinde
+// yalnızca `onclick` ile açılıyordu — bir <img> öntanımlı olarak klavyeyle
+// odaklanamaz/tetiklenemez, yani klavye veya ekran okuyucu kullanan biri bu
+// büyütülmüş görsele hiç erişemezdi. Şablonlarda artık `role="button"
+// tabindex="0"` ekleniyor (bkz. panelYenile/kayıtlar tabloları); bu da o
+// öğeleri Enter/Boşluk tuşuyla tetiklenebilir hale getiriyor.
+function buyukGorselAc(imgEl) {
+  if (imgEl && imgEl.src) window.open(imgEl.src);
+}
+
+document.addEventListener("keydown", (e) => {
+  if (e.key !== "Enter" && e.key !== " " && e.key !== "Spacebar") return;
+  const thumbEl = e.target.closest && e.target.closest(".thumb[data-goruntu-yolu]");
+  if (!thumbEl) return;
+  e.preventDefault();
+  buyukGorselAc(thumbEl);
 });
 
 // ---------------------- YARDIMCI FONKSİYONLAR ----------------------
@@ -228,7 +251,7 @@ async function panelYenile() {
     const canliOlaylar = document.getElementById("canliOlaylar");
     if (canliOlaylar) {
       const alarmlar = await apiCagir("/alarmlar?sadece_acik=true&limit=4");
-      const alarmSatirlari = alarmlar.map(a => `<div class="event-row alarm-row"><div class="event-icon blocked"><i class="bi bi-exclamation-triangle-fill"></i></div><div class="event-main"><strong>${escapeHtml(a.plaka_no)}</strong><span>${alarmTipiEtiketi(a.alarm_tipi)}</span></div>${rolYeterli("operatör") ? `<button class="btn btn-sm btn-light" title="Okundu işaretle" onclick="alarmOkundu(${a.id})"><i class="bi bi-check2"></i></button>` : ""}</div>`).join("");
+      const alarmSatirlari = alarmlar.map(a => `<div class="event-row alarm-row"><div class="event-icon blocked"><i class="bi bi-exclamation-triangle-fill"></i></div><div class="event-main"><strong>${escapeHtml(a.plaka_no)}</strong><span>${alarmTipiEtiketi(a.alarm_tipi)}</span></div>${rolYeterli("operatör") ? `<button class="btn btn-sm btn-light" title="Okundu işaretle" aria-label="Okundu işaretle" onclick="alarmOkundu(${a.id})"><i class="bi bi-check2"></i></button>` : ""}</div>`).join("");
       const olaySatirlari = kayitlar.slice(0, 8).map(k => `<button class="event-row event-button" onclick="olayDetayAc(${k.id})"><div class="event-icon ${k.yetki_durumu === "yetkili" ? "allowed" : "blocked"}"><i class="bi ${k.yon === "giris" ? "bi-box-arrow-in-right" : "bi-box-arrow-right"}"></i></div><div class="event-main"><strong>${escapeHtml(k.plaka_no)}</strong><span>${escapeHtml(k.kamera_id)} · ${k.yon === "giris" ? "Giriş" : "Çıkış"}</span></div><div class="event-time">${tarihFormatla(k.tarih_saat).split(",")[1] || "-"}</div></button>`).join("");
       canliOlaylar.innerHTML = alarmSatirlari + olaySatirlari || '<div class="empty-state">Henüz geçiş kaydı yok</div>';
     }
@@ -238,7 +261,7 @@ async function panelYenile() {
     const tbody = document.getElementById("sonKayitlarTablo");
     tbody.innerHTML = kayitlar.map(k => `
       <tr>
-        <td>${k.goruntu_yolu ? `<img class="thumb" data-goruntu-yolu="${escapeHtml(k.goruntu_yolu)}" onclick="window.open(this.src)">` : '<span class="text-muted small">Görsel yok</span>'}</td>
+        <td>${k.goruntu_yolu ? `<img class="thumb" data-goruntu-yolu="${escapeHtml(k.goruntu_yolu)}" role="button" tabindex="0" alt="Geçiş görseli, büyütmek için tıklayın veya Enter'a basın">` : '<span class="text-muted small">Görsel yok</span>'}</td>
         <td class="fw-bold"><button class="plate-link" onclick="olayDetayAc(${k.id})">${escapeHtml(k.plaka_no)}</button></td>
         <td>${tarihFormatla(k.tarih_saat)}</td>
         <td>${k.yon === "giris" ? "Giriş" : "Çıkış"}</td>
@@ -583,7 +606,7 @@ async function kayitlariYukle(sifirla = true) {
   const tbody = document.getElementById("kayitlarTablo");
   tbody.innerHTML = kayitlar.map(k => `
     <tr>
-      <td>${k.goruntu_yolu ? `<img class="thumb" data-goruntu-yolu="${escapeHtml(k.goruntu_yolu)}" onclick="window.open(this.src)">` : '<span class="text-muted small">-</span>'}</td>
+      <td>${k.goruntu_yolu ? `<img class="thumb" data-goruntu-yolu="${escapeHtml(k.goruntu_yolu)}" role="button" tabindex="0" alt="Geçiş görseli, büyütmek için tıklayın veya Enter'a basın">` : '<span class="text-muted small">-</span>'}</td>
       <td>${k.id}</td>
       <td class="fw-bold"><button class="plate-link" data-plaka-analiz="${escapeHtml(k.plaka_no)}">${escapeHtml(k.plaka_no)}</button></td>
       <td>${tarihFormatla(k.tarih_saat)}</td>
@@ -592,7 +615,7 @@ async function kayitlariYukle(sifirla = true) {
       <td>${durumRozeti(k.yetki_durumu)}</td>
       <td>${tipRozeti(k.kisi_tip_anlik)}</td>
       <td>${k.guven_skoru ? (k.guven_skoru * 100).toFixed(0) + "%" : "-"}</td>
-      <td><button class="btn btn-sm btn-outline-danger" onclick="kayitPdfIndir(${k.id})"><i class="bi bi-file-earmark-pdf"></i></button></td>
+      <td><button class="btn btn-sm btn-outline-danger" onclick="kayitPdfIndir(${k.id})" title="PDF indir" aria-label="PDF indir"><i class="bi bi-file-earmark-pdf"></i></button></td>
     </tr>
   `).join("") || `<tr><td colspan="10" class="text-center text-muted py-3">Kayıt bulunamadı</td></tr>`;
   korumaliGorselleriYukle(tbody);

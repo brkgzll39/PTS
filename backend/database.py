@@ -31,6 +31,23 @@ SQLALCHEMY_DATABASE_URL = _veritabani_urlini_oku()
 engine_kwargs = {}
 if SQLALCHEMY_DATABASE_URL.startswith("sqlite"):
     engine_kwargs["connect_args"] = {"check_same_thread": False}
+else:
+    # KARARLILIK (SQL Server üzerinden ağ bağlantısı): varsayılan SQLAlchemy
+    # havuzu, bir bağlantıyı "sağlıklı" varsayıp doğrudan kullanır — ama
+    # kurumsal güvenlik duvarları/NAT'lar boşta (idle) kalan TCP
+    # bağlantılarını genellikle sessizce (uygulamaya hiçbir hata dönmeden)
+    # düşürür. Bu, sahada tipik olarak "sistem bir süre çalıştıktan sonra
+    # rastgele hata vermeye başlıyor, yeniden başlatınca düzeliyor" şeklinde
+    # gözlemlenen bir semptomun klasik nedenidir — havuzdaki bağlantı aslında
+    # ölü ama uygulama bunu bilene kadar (ilk başarısız sorguya kadar) fark
+    # etmez. `pool_pre_ping=True`, havuzdan bir bağlantı ödünç alınırken
+    # ucuz bir "SELECT 1" ile canlılığını doğrular (ölüyse sessizce yenisiyle
+    # değiştirir); `pool_recycle`, bir bağlantıyı belirli bir süreden
+    # (varsayılan: 30 dakika) daha uzun süre havuzda tutmayıp proaktif olarak
+    # tazeler — bu ikisi birlikte, "bağlantı sessizce ölmüş" sınıfı hataları
+    # neredeyse tamamen ortadan kaldırır.
+    engine_kwargs["pool_pre_ping"] = True
+    engine_kwargs["pool_recycle"] = 1800
 
 engine = create_engine(SQLALCHEMY_DATABASE_URL, **engine_kwargs)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)

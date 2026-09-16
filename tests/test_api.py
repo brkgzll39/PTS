@@ -14,6 +14,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from backend import lisans
+from backend import main as pts_main
 from backend.main import app
 
 
@@ -580,3 +581,43 @@ def test_yedek_izleme_klasor_bossa_gecikmis_sayilir(client, izleyici_header, mon
     assert yedek["izleniyor"] is True
     assert yedek["yedek_gecikmis"] is True
     assert yedek["son_yedek_zamani"] is None
+
+
+def test_gecersiz_istek_govdesi_tutarli_422_doner(client, yetkili_header):
+    """RequestValidationError (422) için küresel hata yakalayıcı, diğer tüm
+    hatalarla aynı `{"detail": ...}` gövde biçimini kullanmalı ve ek olarak
+    ham pydantic hata listesini de (`hatalar`) içermeli."""
+    r = client.post(
+        "/kara-listesi",
+        json={"plaka_no": "';--", "sebep": "test"},  # yalnızca geçersiz karakter -> plaka_normalize ValueError fırlatır
+        headers=yetkili_header,
+    )
+    assert r.status_code == 422, r.text
+    govde = r.json()
+    assert "detail" in govde
+    assert "hatalar" in govde
+    assert isinstance(govde["hatalar"], list)
+
+
+def test_beklenmeyen_hata_loglanir_ve_tutarli_500_doner(client, caplog):
+    """Bilerek fırlatılmamış (HTTPException olmayan) bir hata; istemciye
+    traceback sızdırmadan tutarlı bir JSON gövdesiyle dönmeli VE sunucu
+    tarafında tam iz düşümüyle loglanmalı (bkz. main.py::_beklenmeyen_hata_yakalayici) —
+    aksi halde bu sınıftaki hatalar `/sistem/loglar` üzerinden hiç görülemez."""
+
+    def _patlayan_fonksiyon():
+        raise RuntimeError("kaçınılmaz test hatası")
+
+    with caplog.at_level("ERROR", logger="pts"):
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr(pts_main, "_son_yedek_bilgisini_al", _patlayan_fonksiyon)
+            r = client.get("/sistem/saglik")
+
+    assert r.status_code == 500, r.text
+    govde = r.json()
+    assert govde == {
+        "detail": "Sunucuda beklenmeyen bir hata oluştu. Lütfen tekrar deneyin veya sistem yöneticisine bildirin."
+    }
+    assert "kaçınılmaz test hatası" not in r.text  # istemciye traceback sızmamalı
+    assert "Beklenmeyen hata" in caplog.text  # ama sunucu logunda İZİ olmalı
+    assert "kaçınılmaz test hatası" in caplog.text  # traceback sunucu logunda GÖRÜNÜR olmalı

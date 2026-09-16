@@ -585,6 +585,46 @@ artık sessizce main dalına giremez.
   (ilk commit'ten beri duruyordu, hiçbir yerden kullanılmıyordu) kaldırıldı;
   `.gitignore`'a `*.rar`/`*.zip` eklendi.
 
+**2026-09-16 (devam) — "en kararlı ve düzgün" hale getirme turu:**
+
+- **SQL Server bağlantı havuzu artık "sessizce ölmüş bağlantı" sınıfına karşı
+  korumalı:** SQLAlchemy'nin varsayılan bağlantı havuzu, havuzdan aldığı bir
+  bağlantının hâlâ canlı olduğunu doğrulamadan doğrudan kullanır. Kurumsal
+  güvenlik duvarları/NAT'lar boşta kalan TCP bağlantılarını genelde uygulamaya
+  hiçbir hata döndürmeden sessizce düşürür — sahada bunun tipik belirtisi
+  "sistem bir süre sorunsuz çalışıyor, sonra rastgele hata vermeye başlıyor,
+  yeniden başlatınca düzeliyor" şeklindedir. SQL Server URL'siyle çalışan
+  kurulumlarda artık `pool_pre_ping=True` (bağlantı ödünç alınırken ucuz bir
+  "SELECT 1" ile canlılık doğrulaması, ölüyse sessizce yenisiyle değiştirir) ve
+  `pool_recycle=1800` (30 dakikadan uzun süredir havuzda bekleyen bağlantıları
+  proaktif tazeler) etkin. SQLite kurulumlarını etkilemez.
+- **Beklenmeyen hatalar artık görünür:** Daha önce, bizim bilerek fırlatmadığımız
+  (yani bir `HTTPException` olmayan) bir hata FastAPI tarafından istemciye
+  sızdırılmıyordu (bu zaten güvenliydi) ama sunucu tarafında da HİÇBİR YERE
+  loglanmıyordu — yani "panel hata verdi" şikayeti geldiğinde `/sistem/loglar`
+  ekranında bu hatanın hiçbir izi bulunamıyordu. Artık küresel bir hata
+  yakalayıcı her beklenmeyen hatayı tam iz düşümüyle (traceback) uygulama
+  logumuza yazıyor (`/sistem/loglar` üzerinden görülebilir) ve istemciye diğer
+  tüm hatalarla tutarlı, bilgi sızdırmayan tek bir JSON gövdesi
+  (`{"detail": "..."}`) dönüyor. İstek gövdesi doğrulama hataları (422) da aynı
+  tutarlı biçimde dönüyor.
+- **Pydantic V2 uyumluluğu:** `schemas.py`'deki tüm `class Config: from_attributes
+  = True` blokları (9 adet), gelecekteki bir Pydantic sürümünde kaldırılacak olan
+  eski (V1) sözdiziminden `model_config = ConfigDict(from_attributes=True)`'a
+  taşındı — davranışta hiçbir değişiklik yok, sadece CI'da biriken 9 adet
+  "deprecated" uyarısı ortadan kalktı.
+- **Panel erişilebilirlik (a11y) düzeltmeleri:** Tüm modal kapatma butonlarına
+  (`.btn-close`) `aria-label="Kapat"` eklendi (Bootstrap'in kendi belgelerinin
+  önerdiği ama bu panelde eksik olan bir ayrıntı); ne görünür metni ne de bir
+  `title`/`aria-label`'ı olan birkaç ikon-yalnızca buton (ör. "Son Geçişler"
+  kartındaki yenile butonu, Siteler/Erişim Noktaları/Kara Liste/Kullanıcılar/
+  Bildirimler listelerindeki yenile butonları, PDF indir butonu) artık erişilebilir
+  bir isme sahip. Geçiş kayıtlarındaki küçük resim (thumbnail) önizlemeleri
+  yalnızca fare tıklamasıyla büyütülebiliyordu (bir `<img>` öntanımlı olarak
+  klavyeyle odaklanamaz/tetiklenemez); artık `role="button" tabindex="0"` ve bir
+  klavye (Enter/Boşluk) olay dinleyicisiyle klavye/ekran okuyucu kullanıcıları
+  için de erişilebilir.
+
 ## Otomatik Görüntü/Kayıt Saklama
 
 Daha önce eski geçiş görüntülerini temizlemenin tek yolu `/sistem/goruntu-temizle`

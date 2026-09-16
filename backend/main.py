@@ -23,7 +23,8 @@ from datetime import datetime, timedelta
 from typing import Optional, List
 
 from fastapi import FastAPI, Depends, HTTPException, UploadFile, File, Form, Query, Body, Header, Request
-from fastapi.responses import FileResponse, Response, StreamingResponse
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import text
@@ -414,6 +415,42 @@ app.add_middleware(
     allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE"],
     allow_headers=["Authorization", "Content-Type"],
 )
+
+
+# ================================================================
+# KÜRESEL (GLOBAL) HATA YAKALAYICILAR
+# ================================================================
+# FastAPI/Starlette varsayılan olarak beklenmeyen (bizim `HTTPException`
+# olarak fırlatmadığımız) bir hatada istemciye traceback SIZDIRMAZ
+# (debug=False varsayılan) — ama hatayı sunucu tarafında HİÇBİR YERE de
+# LOGLAMAZ. Sahada bunun sonucu tipik olarak şudur: kullanıcı "sistem hata
+# verdi" der, ama `/sistem/loglar` ekranında bu hatanın hiçbir izi yoktur,
+# çünkü Starlette onu sessizce yutup düz metin "Internal Server Error"
+# döndürmüştür. Bu iki handler, (1) her beklenmeyen hatayı tam traceback'iyle
+# uygulama logumuza yazar (böylece `/sistem/loglar` üzerinden görülebilir),
+# (2) istemciye diğer tüm hata gövdeleriyle (`{"detail": "..."}`) tutarlı,
+# bilgi sızdırmayan bir JSON döner. `HTTPException` (kendi bilerek
+# fırlattığımız 4xx/403/404/429 vb.) bu handler'dan ETKİLENMEZ — FastAPI onu
+# zaten kendi özel handler'ıyla, daha spesifik bir eşleşme olarak önce yakalar.
+@app.exception_handler(RequestValidationError)
+async def _dogrulama_hatasi_yakalayici(request: Request, exc: RequestValidationError) -> JSONResponse:
+    """Pydantic/istek gövdesi doğrulama hatalarını (422) da aynı tutarlı
+    gövdeyle döner ve düşük seviyede loglar (bunlar genelde istemci hatasıdır,
+    sunucu tarafında alarm gerektirmez, bu yüzden `logger.exception` değil
+    `logger.info` kullanılır)."""
+    logger.info("İstek doğrulama hatası: %s %s -> %s", request.method, request.url.path, exc.errors())
+    return JSONResponse(status_code=422, content={"detail": "Gönderilen veri geçersiz.", "hatalar": exc.errors()})
+
+
+@app.exception_handler(Exception)
+async def _beklenmeyen_hata_yakalayici(request: Request, exc: Exception) -> JSONResponse:
+    """Yakalanmamış her hatayı tam traceback'iyle loglar, istemciye ise genel
+    ve bilgi sızdırmayan bir JSON gövdesi döner."""
+    logger.exception("Beklenmeyen hata: %s %s", request.method, request.url.path)
+    return JSONResponse(
+        status_code=500,
+        content={"detail": "Sunucuda beklenmeyen bir hata oluştu. Lütfen tekrar deneyin veya sistem yöneticisine bildirin."},
+    )
 
 
 # ================================================================
