@@ -6,7 +6,6 @@ Tarayıcıda açın: http://localhost:8000
 """
 import os
 import re
-import shutil
 import hashlib
 import hmac
 import json
@@ -80,8 +79,32 @@ if os.getenv("PTS_ARKASINDA_TERS_VEKIL", "").strip().lower() not in ("1", "true"
 # VERİTABANI MİGRASYONU — mevcut tablolara yeni sütun ekler
 # ================================================================
 
+_SUTUN_ZATEN_VAR_IPUCLARI = (
+    "duplicate column",              # SQLite
+    "already exists",                 # SQLite (bazı sürümler) / genel
+    "there is already a column",      # SQL Server
+    "column names in each table must be unique",  # SQL Server
+)
+
+
+def _sutun_zaten_var_hatasi_mi(exc: Exception) -> bool:
+    """ALTER TABLE hatasının 'bu sütun zaten var' (beklenen, zararsız — bu
+    migrasyon her başlangıçta yeniden denenir) mi yoksa GERÇEK bir sorun
+    (izin, kilit, tip uyuşmazlığı, sözdizimi) mi olduğunu ayırt eder."""
+    mesaj = str(exc).lower()
+    return any(ipucu in mesaj for ipucu in _SUTUN_ZATEN_VAR_IPUCLARI)
+
+
 def _veritabani_migrasyon() -> None:
-    """create_all yeni sütun eklemez; bu fonksiyon ALTER TABLE ile tamamlar."""
+    """create_all yeni sütun eklemez; bu fonksiyon ALTER TABLE ile tamamlar.
+
+    ÖNEMLİ (2026-09-16 düzeltmesi): önceden HER hata (sütun zaten var mı,
+    yoksa gerçek bir izin/kilit/sözdizimi hatası mı fark etmeksizin) sessizce
+    yutuluyordu — SQLite'ta sorunsuz çalışan bir ifade SQL Server'da farklı
+    bir sebeple başarısız olsa bile bu asla loglanmaz, şema sessizce eksik
+    kalabilirdi. Artık yalnızca 'sütun zaten var' türü (beklenen, her
+    başlangıçta yeniden denendiği için normal) hatalar sessiz geçilir; başka
+    her şey `loglar/pts.log`'a uyarı olarak yazılır."""
     sqlite_mod = SQLALCHEMY_DATABASE_URL.startswith("sqlite")
     col_kw = "COLUMN " if sqlite_mod else ""
     bool_tip = "INTEGER DEFAULT 0" if sqlite_mod else "BIT DEFAULT 0"
@@ -99,11 +122,15 @@ def _veritabani_migrasyon() -> None:
             try:
                 conn.execute(text(sql))
                 conn.commit()
-            except Exception:
+            except Exception as exc:
                 try:
                     conn.rollback()
                 except Exception:
                     pass
+                if _sutun_zaten_var_hatasi_mi(exc):
+                    logger.debug("Migrasyon adımı atlandı (sütun zaten var): %s", sql)
+                else:
+                    logger.warning("Migrasyon adımı başarısız oldu: %s — hata: %s", sql, exc)
 
 _veritabani_migrasyon()
 
@@ -425,6 +452,32 @@ _hiz_sinir_giris = _hiz_siniri_olustur(limit=20, pencere_sn=60)
 # arızalanıp saniyede yüzlerce istek göndermesi ya da kötü niyetli akış) engellenir.
 _hiz_sinir_otomatik_kayit = _hiz_siniri_olustur(limit=120, pencere_sn=60)
 
+
+def _kamera_anahtari_uyarisi() -> None:
+    """PTS_KAMERA_ANAHTARI ayarlanmamışsa `/kayitlar/otomatik` TAMAMEN
+    kimliksizdir (kameralar giriş yapamadığı için bu uç nokta bilinçli olarak
+    auth istemez) — CORS '*' için yapıldığı gibi, bu durumda da çalışma
+    zamanında bir kez uyarılır. Zorunlu KILINMIYOR (bazı kurulumlar
+    kameraları güvenilir, izole bir ağda çalıştırıp bu anahtarı bilinçli
+    olarak atlıyor olabilir), ama sessizce geçilmemesi gerekir."""
+    if not os.getenv("PTS_KAMERA_ANAHTARI"):
+        logger.warning(
+            "PTS_KAMERA_ANAHTARI ayarlanmamış — /kayitlar/otomatik uç noktası TAMAMEN "
+            "kimliksiz (rate-limit dışında hiçbir koruması yok). Kameralar/NVR'lar güvenilmeyen "
+            "bir ağdaysa bu değişkeni ayarlayıp kamera tarafında X-PTS-Kamera-Anahtari "
+            "başlığıyla göndermeniz önerilir."
+        )
+
+
+_kamera_anahtari_uyarisi()
+
+# /kayitlar/otomatik'e yüklenen görsel için üst sınır — sınırsız boyutlu bir
+# dosya kabul edip diske olduğu gibi yazmak (eski davranış), kimliksiz bir uç
+# noktada disk-doldurma tabanlı bir DoS'a açık kapı bırakıyordu. Rate limit
+# bunu YAVAŞLATIR ama tek başına yeterli değildir (limit içinde kalan az
+# sayıda ama çok büyük dosya da diski doldurabilir).
+MAKS_GORSEL_BOYUTU_BAYT = 8 * 1024 * 1024  # 8 MB (tipik bir plaka fotoğrafının çok üzerinde)
+
 class _OnbellegiHicDogrulamadanKullanma(StaticFiles):
     """Varsayılan StaticFiles davranışı, tarayıcının app.js/style.css'i kendi
     sezgisel önbellek süresi boyunca sunucuya HİÇ sormadan kullanmasına izin
@@ -591,6 +644,40 @@ def _giris_kilitli_mi(kullanici_adi: str) -> float:
         return 0
     kalan = kilit_bitis - time.time()
     return kalan if kalan > 0 else 0
+
+
+# GÜVENLİK/KARARLILIK: `_basarisiz_girisler` VAR OLAN bir kullanıcı başarıyla
+# giriş yaptığında temizlenir (bkz. giris_yap), ama VAR OLMAYAN bir kullanıcı
+# adıyla (ör. otomatik bir enumeration denemesiyle) yapılan başarısız
+# denemeler hiçbir zaman kendiliğinden silinmez — her benzersiz sahte
+# kullanıcı adı sözlükte kalıcı bir girdi bırakır. Aylarca yeniden
+# başlatılmadan çalışması beklenen bir üretim sürecinde bu, kasıtlı olarak
+# (her denemede farklı bir kullanıcı adı kullanarak) tetiklenebilecek yavaş
+# bir bellek sızıntısıdır. Bu döngü, kilidi çoktan sona ermiş (artık aktif
+# bir tehdit oluşturmayan) girdileri periyodik olarak temizler.
+GIRIS_DENEME_TEMIZLIK_ARALIK_SN = 30 * 60  # 30 dakikada bir
+
+
+async def _basarisiz_giris_temizlik_dongu() -> None:
+    while True:
+        await asyncio.sleep(GIRIS_DENEME_TEMIZLIK_ARALIK_SN)
+        try:
+            simdi = time.time()
+            eskiler = [
+                k for k, (_sayac, kilit_bitis) in list(_basarisiz_girisler.items())
+                if simdi - kilit_bitis > _GIRIS_KILIT_SURESI_SN
+            ]
+            for k in eskiler:
+                _basarisiz_girisler.pop(k, None)
+            if eskiler:
+                logger.debug("Başarısız giriş kayıtları temizlendi: %d girdi", len(eskiler))
+        except Exception as exc:
+            logger.error("[giriş-temizlik] Temizlik döngüsünde hata: %s", exc, exc_info=True)
+
+
+@app.on_event("startup")
+async def _basarisiz_giris_temizligini_baslat():
+    asyncio.ensure_future(_basarisiz_giris_temizlik_dongu())
 
 
 @app.post("/auth/ilk-yonetici", response_model=schemas.KullaniciCevap)
@@ -1500,12 +1587,38 @@ async def kayit_ekle_otomatik(
 
     goruntu_yolu = None
     if gorsel is not None:
+        # GÜVENLİK: içerik türü ve boyut doğrulaması — bu uç nokta kimliksiz
+        # olabildiğinden (PTS_KAMERA_ANAHTARI ayarlanmamışsa), önceden hiçbir
+        # kısıtlama olmadan HERHANGİ bir dosya (rastgele boyutta, rastgele
+        # türde) diske "gorsel" adı altında olduğu gibi yazılabiliyordu.
+        if gorsel.content_type and not gorsel.content_type.startswith("image/"):
+            raise HTTPException(400, f"Yalnızca görsel dosyaları kabul edilir (alınan: {gorsel.content_type})")
+
         # Dosya adı kullanıcı girdisinden (plaka_no) üretildiği için yalnızca güvenli karakterler bırakılır (path traversal önlemi).
         guvenli_plaka = re.sub(r"[^A-Za-z0-9]", "", plaka_no) or "PLAKA"
         dosya_adi = f"{guvenli_plaka}_{int(datetime.now().timestamp())}.jpg"
         goruntu_yolu = os.path.join(GORUNTU_KLASORU, dosya_adi)
+        toplam_bayt = 0
+        asildi = False
         with open(goruntu_yolu, "wb") as f:
-            shutil.copyfileobj(gorsel.file, f)
+            while True:
+                parca = await gorsel.read(1024 * 1024)
+                if not parca:
+                    break
+                toplam_bayt += len(parca)
+                if toplam_bayt > MAKS_GORSEL_BOYUTU_BAYT:
+                    asildi = True
+                    break
+                f.write(parca)
+        if asildi:
+            try:
+                os.remove(goruntu_yolu)
+            except OSError:
+                pass
+            raise HTTPException(
+                413,
+                f"Görsel {MAKS_GORSEL_BOYUTU_BAYT // (1024 * 1024)} MB sınırını aşıyor",
+            )
 
     return _kayit_olustur_ve_bildir(db, plaka_no, kamera_id, yon, guven_skoru, goruntu_yolu)
 
@@ -1943,6 +2056,39 @@ def bariyer_sil(bariyer_id: int, db: Session = Depends(get_db), kullanici: model
 # SİSTEM SAĞLIĞI VE LOG
 # ==================================================================
 
+_YEDEK_GECIKME_ESIGI_GUN = 2  # bu kadar günden eski bir yedek "gecikmiş" sayılır
+
+
+def _son_yedek_bilgisini_al() -> dict:
+    """SQL Server kullanan kurulumlarda "DB Yedek" butonu işlevsiz olduğu için
+    (bkz. README "DB Yedek is SQLite-only"), yedekleme SQL Server Agent bakım
+    planı gibi harici bir mekanizmaya bırakılır — ama sistem bu mekanizmanın
+    GERÇEKTEN çalışıp çalışmadığını hiçbir şekilde izlemiyordu; bir operatör
+    bakım planını hiç kurmasa ya da plan sessizce başarısız olmaya başlasa
+    bile PTS bunu asla fark edip bildirmiyordu (aylarca yedeksiz kalınabilirdi).
+
+    PTS_SQL_YEDEK_KLASORU ortam değişkeni, bakım planının .bak dosyalarını
+    yazdığı klasöre ayarlanırsa, bu fonksiyon o klasördeki EN YENİ dosyanın
+    yaşını okuyup /sistem/saglik üzerinden raporlar — panel/izleme aracı bu
+    sinyali kullanarak "yedek gecikmiş" durumunu görünür kılabilir. Ayarlı
+    değilse (varsayılan) hiçbir davranış değişmez, yalnızca `null` döner."""
+    klasor = os.getenv("PTS_SQL_YEDEK_KLASORU", "").strip()
+    if not klasor or not os.path.isdir(klasor):
+        return {"izleniyor": False, "son_yedek_zamani": None, "yedek_gecikmis": None}
+    try:
+        dosyalar = [os.path.join(klasor, f) for f in os.listdir(klasor)]
+        dosyalar = [f for f in dosyalar if os.path.isfile(f)]
+        if not dosyalar:
+            return {"izleniyor": True, "son_yedek_zamani": None, "yedek_gecikmis": True}
+        en_yeni = max(dosyalar, key=os.path.getmtime)
+        degistirilme = datetime.fromtimestamp(os.path.getmtime(en_yeni))
+        gecikmis = (datetime.now() - degistirilme) > timedelta(days=_YEDEK_GECIKME_ESIGI_GUN)
+        return {"izleniyor": True, "son_yedek_zamani": degistirilme.isoformat(), "yedek_gecikmis": gecikmis}
+    except OSError as exc:
+        logger.warning("Yedek klasörü okunamadı (%s): %s", klasor, exc)
+        return {"izleniyor": True, "son_yedek_zamani": None, "yedek_gecikmis": None}
+
+
 @app.get("/sistem/saglik")
 async def sistem_sagligi(db: Session = Depends(get_db)):
     db_ok = True
@@ -1958,6 +2104,7 @@ async def sistem_sagligi(db: Session = Depends(get_db)):
         "kutuphaneler_mevcut": _CAM_LIBS,
         "zaman": datetime.now().isoformat(),
         "surum": "2.0",
+        "yedek": _son_yedek_bilgisini_al(),
     }
 
 
@@ -2381,4 +2528,13 @@ def veritabani_yedek(kullanici: models.Kullanici = Depends(_giris_gerekli)):
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
+    # NOT: gerçek üretim başlatıcıları (calistir.bat/calistir.sh) zaten doğrudan
+    # `uvicorn ... --host 0.0.0.0 --port 8000` çağırıyor (reload'sız) — bu blok
+    # yalnızca birinin `python main.py` ile DOĞRUDAN çalıştırması durumunda
+    # devreye girer. Önceden burada `reload=True` sabitti; bu saf bir geliştirme
+    # özelliğidir (dosya değişikliklerini izleyip süreci otomatik yeniden
+    # başlatır) ve üretimde istenmeyen otomatik yeniden başlatma/çift süreç
+    # davranışına yol açabilir. Artık varsayılan KAPALI, yalnızca
+    # PTS_GELISTIRME_MODU=1 ile açıkça istenirse açılıyor.
+    _gelistirme_modu = os.getenv("PTS_GELISTIRME_MODU", "").strip().lower() in ("1", "true", "evet")
+    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=_gelistirme_modu)

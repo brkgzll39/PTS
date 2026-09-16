@@ -34,3 +34,15 @@ jobs:
 
       - name: Testleri çalıştır
         run: pytest -v
+
+      - name: Bağımlılıklarda bilinen güvenlik açığı taraması (pip-audit)
+        # 2026-09-16: requirements.txt'teki sürümler pinlenmiş (iyi bir
+        # pratik) ama hiçbir yerde otomatik olarak yeni CVE'lere karşı
+        # taranmıyordu — pinlenmiş bir sürüm zamanla güvenlik açığı
+        # biriktirebilir ve kimse haberdar olmazdı. `|| true` ile iş akışını
+        # KIRMIYORUZ (henüz düzeltilememiş bir açık CI'ı kırmızıya
+        # boğmasın diye) — amaç şimdilik yalnızca GÖRÜNÜR kılmak; çıktı
+        # temiz kaldıkça bu satır ileride zorunlu hale getirilebilir.
+        run: |
+          pip install --quiet pip-audit
+          pip-audit -r backend/requirements.txt -r backend/requirements-dev.txt || true

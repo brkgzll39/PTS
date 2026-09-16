@@ -540,3 +540,43 @@ def test_site_silinince_bagli_nokta_da_silinir(client, yetkili_header):
 
     kalanlar = client.get("/noktalar", headers=yetkili_header).json()
     assert not any(n["id"] == nokta["id"] for n in kalanlar), "Site silindiğinde bağlı nokta da silinmeliydi (cascade)"
+
+
+# ------------------------------------------------------------------
+# /sistem/saglik — SQL Server yedeğinin GERÇEKTEN alınıp alınmadığının izlenmesi
+# ------------------------------------------------------------------
+# Önceden sistem, SQL Server Agent bakım planının çalışıp çalışmadığını hiçbir
+# şekilde izlemiyordu — plan hiç kurulmasa bile sessizce fark edilmezdi.
+
+def test_yedek_izleme_ayarlanmamissa_hicbir_davranis_degismez(client, izleyici_header, monkeypatch):
+    monkeypatch.delenv("PTS_SQL_YEDEK_KLASORU", raising=False)
+    r = client.get("/sistem/saglik", headers=izleyici_header)
+    assert r.status_code == 200, r.text
+    assert r.json()["yedek"] == {"izleniyor": False, "son_yedek_zamani": None, "yedek_gecikmis": None}
+
+
+def test_yedek_izleme_ayarliysa_en_yeni_dosyanin_yasini_raporlar(client, izleyici_header, monkeypatch, tmp_path):
+    eski = tmp_path / "eski_yedek.bak"
+    eski.write_bytes(b"eski")
+    yeni = tmp_path / "yeni_yedek.bak"
+    yeni.write_bytes(b"yeni")
+    gecmis_zaman = (datetime.now() - timedelta(days=10)).timestamp()
+    os.utime(eski, (gecmis_zaman, gecmis_zaman))
+    # yeni dosya için mtime'ı elle ayarlamıyoruz — az önce yazıldığı için zaten güncel.
+
+    monkeypatch.setenv("PTS_SQL_YEDEK_KLASORU", str(tmp_path))
+    r = client.get("/sistem/saglik", headers=izleyici_header)
+    assert r.status_code == 200, r.text
+    yedek = r.json()["yedek"]
+    assert yedek["izleniyor"] is True
+    assert yedek["yedek_gecikmis"] is False  # en yeni dosya (yeni_yedek.bak) az önce yazıldı
+    assert yedek["son_yedek_zamani"] is not None
+
+
+def test_yedek_izleme_klasor_bossa_gecikmis_sayilir(client, izleyici_header, monkeypatch, tmp_path):
+    monkeypatch.setenv("PTS_SQL_YEDEK_KLASORU", str(tmp_path))  # var ama boş bir klasör
+    r = client.get("/sistem/saglik", headers=izleyici_header)
+    yedek = r.json()["yedek"]
+    assert yedek["izleniyor"] is True
+    assert yedek["yedek_gecikmis"] is True
+    assert yedek["son_yedek_zamani"] is None

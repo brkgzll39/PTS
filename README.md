@@ -700,6 +700,20 @@ bu doküman yalnızca genel bilgilendirme amaçlıdır.
 - **Bilgisayar açılışında otomatik başlatma**: Görev Zamanlayıcı'da "Oturum açıldığında"
   tetikleyicisiyle `calistir.bat` dosyasını çalıştıracak bir görev oluşturmanız önerilir;
   böylece bilgisayar yeniden başladığında PTS insan müdahalesi olmadan ayağa kalkar.
+  **Daha sağlam bir alternatif (önerilir, 2026-09-16):** Görev Zamanlayıcı + açık
+  konsol penceresi modelinin sınırları vardır — RDP oturumu kapanırsa veya konsol
+  penceresi yanlışlıkla kapatılırsa süreç düşebilir, ve durumu `services.msc`'den
+  görünmez. [NSSM](https://nssm.cc/) ile PTS'i gerçek bir Windows Servisi olarak
+  kaydedebilirsiniz (yönetici olarak):
+  ```bat
+  nssm install PTS "C:\PTS\.venv\Scripts\python.exe" "-m uvicorn backend.main:app --host 0.0.0.0 --port 8000"
+  nssm set PTS AppDirectory "C:\PTS"
+  nssm set PTS Start SERVICE_AUTO_START
+  nssm start PTS
+  ```
+  Bu şekilde PTS oturum açılmasa bile arka planda çalışır, çöktüğünde Windows
+  Hizmet Yöneticisi otomatik yeniden başlatır ve durumu `services.msc`'den
+  izlenebilir olur.
 - **Görsel/kayıt saklama süresi (2026-09-16 düzeltmesi):** Bu bölüm önceden "Sistem
   `goruntuler/` klasöründeki araç görsellerini otomatik silmez" diyordu — bu artık
   DOĞRU DEĞİL ve koddan sapmıştı: sistem, Sistem Ayarları'ndaki `goruntu_saklama_gun`
@@ -717,6 +731,13 @@ bu doküman yalnızca genel bilgilendirme amaçlıdır.
 - **Yedekleme**: SQL Server kullanıyorsanız düzenli veritabanı yedeği (SQL Server Agent
   bakım planı) kurun. SQLite kullanıyorsanız `veritabani/pts.db` dosyasını düzenli
   olarak yedekleyin.
+  **2026-09-16:** önceden sistem bu bakım planının GERÇEKTEN çalışıp çalışmadığını
+  hiçbir şekilde izlemiyordu — plan hiç kurulmasa ya da sessizce başarısız olmaya
+  başlasa bile PTS bunu asla fark etmiyordu. `PTS_SQL_YEDEK_KLASORU` ortam
+  değişkenini bakım planının `.bak` dosyalarını yazdığı klasöre ayarlarsanız,
+  Sistem sekmesi en son yedeğin ne zaman alındığını gösterir ve 2 günden eskiyse
+  kırmızı bir uyarı işareti çıkarır (`GET /sistem/saglik` içindeki `yedek` alanı).
+  Ayarlamazsanız davranış değişmez, bu satır panelde hiç görünmez.
 
 ## Sorun Giderme
 

@@ -1,0 +1,20 @@
+# 2026-09-16: requirements.txt/requirements-dev.txt'teki sürümler bilinçli
+# olarak pinlenmiş (üretimde beklenmedik bir sürüm sıçraması olmasın diye),
+# ama pinlenmiş bir sürüm zamanla bilinen güvenlik açığı (CVE) biriktirebilir
+# ve hiçbir otomatik mekanizma bunu haber vermiyordu — hem GitHub Actions
+# sürümleri (actions/checkout, actions/setup-python) hem de Python
+# bağımlılıkları için Dependabot'u devreye alıp bu güncellemeleri düzenli,
+# incelenebilir pull request'ler olarak öneriyoruz (otomatik merge YOK,
+# sadece görünürlük + öneri).
+version: 2
+updates:
+  - package-ecosystem: "pip"
+    directory: "/backend"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"

@@ -1319,12 +1319,21 @@ async function sistemSagliginiYukle() {
     const el = document.getElementById("sistemSaglikPaneli");
     if (!el) return;
     const ikon = (ok) => ok ? '<i class="bi bi-check-circle-fill text-success"></i>' : '<i class="bi bi-x-circle-fill text-danger"></i>';
+    // PTS_SQL_YEDEK_KLASORU ayarlanmamışsa "yedek.izleniyor" false döner ve bu
+    // satır hiç gösterilmez (davranış eklenmeden önceki gibi kalır — bkz.
+    // main.py::_son_yedek_bilgisini_al). Ayarlıysa, SQL Server Agent bakım
+    // planının GERÇEKTEN çalışıp çalışmadığını (önceden hiç izlenmiyordu)
+    // panelde görünür kılar.
+    const yedekSatiri = s.yedek?.izleniyor
+      ? `<div class="info-row">${ikon(!s.yedek.yedek_gecikmis)} <span>SQL Yedek</span><strong>${s.yedek.son_yedek_zamani ? tarihFormatla(s.yedek.son_yedek_zamani) : "Hiç yedek yok"}</strong></div>`
+      : "";
     el.innerHTML = `
       <div class="info-row">${ikon(s.durum === "cevrimici")} <span>Uygulama</span><strong>${s.durum}</strong></div>
       <div class="info-row">${ikon(s.veritabani === "ok")} <span>Veritabanı</span><strong>${s.veritabani}</strong></div>
       <div class="info-row"><i class="bi bi-camera-video text-primary"></i> <span>Aktif Pipeline</span><strong>${s.aktif_pipeline}</strong></div>
       <div class="info-row"><i class="bi bi-wifi text-primary"></i> <span>SSE İstemci</span><strong>${s.sse_istemci}</strong></div>
       <div class="info-row">${ikon(s.kutuphaneler_mevcut)} <span>ANPR Kütüp.</span><strong>${s.kutuphaneler_mevcut ? "Kurulu" : "Kurulu değil"}</strong></div>
+      ${yedekSatiri}
       <div class="info-row"><i class="bi bi-code text-muted"></i> <span>Sürüm</span><strong>PTS v${s.surum}</strong></div>
       <div class="text-muted small mt-2">${new Date(s.zaman).toLocaleString("tr-TR")}</div>`;
   } catch (e) { console.error(e); }
