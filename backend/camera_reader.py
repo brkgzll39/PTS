@@ -398,6 +398,14 @@ class KameraPipeline:
         for sonuc in motor_sonuclari:
             plaka = plaka_dogrula(sonuc.plaka_no)
             if not plaka:
+                # GÖZLEMLENEBİLİRLİK: OCR bir şey okudu ama Türk plaka formatına
+                # uymadığı için tamamen sessizce atlanıyordu — "kamera görüntü
+                # alıyor, araç net görünüyor ama hiçbir zaman kayda düşmüyor"
+                # şikayetlerinde bunun neden olduğunu ayırt edebilmek için loglanır.
+                logger.info(
+                    "[%s] OCR okuması Türk plaka formatına uymadı, atlandı: '%s' (güven=%.2f)",
+                    self.kamera_id, sonuc.plaka_no, sonuc.guven_skoru,
+                )
                 continue
             tespitler.append({
                 "plaka": plaka,
@@ -428,6 +436,15 @@ class KameraPipeline:
 
         for t in tespitler:
             if t["guven"] < self.min_guven_skoru:
+                # GÖZLEMLENEBİLİRLİK: format olarak geçerli bir plaka okundu ama
+                # güven eşiğinin altında kaldığı için oy birikimine HİÇ girmedi —
+                # bunu da (yukarıdaki format-uyuşmazlığı gibi) loglamazsak, "araç
+                # net görünüyor ama hiç kayda düşmüyor" şikayetlerinde neyin
+                # sessizce elendiğini asla bilemeyiz.
+                logger.info(
+                    "[%s] Düşük güvenli okuma oy birikimine girmedi: %s (güven=%.2f < eşik=%.2f)",
+                    self.kamera_id, t["plaka"], t["guven"], self.min_guven_skoru,
+                )
                 continue  # düşük güvenli tek kare — oy birikimine hiç girmesin
             self._oturum_takipcisi.guncelle(t["plaka"], t["guven"], simdi, jpeg_bytes)
 
@@ -448,19 +465,32 @@ class KameraPipeline:
                 f.write(gonderilecek_jpeg)
             try:
                 with open(gecici, "rb") as f:
-                    requests.post(
+                    yanit = requests.post(
                         self.api_url,
                         data={"plaka_no": plaka, "kamera_id": self.kamera_id,
                               "yon": self.yon, "guven_skoru": round(oturum["guven"], 3)},
                         files={"gorsel": f},
                         timeout=5,
                     )
-                gonderilenler.append(plaka)
-                if oturum["farkli_okuma_sayisi"] > 1:
-                    logger.info(
-                        "[%s] Plaka %d farklı okumanın oydaşmasıyla kesinleşti: %s (güven=%.2f, toplam oy=%.2f)",
-                        self.kamera_id, oturum["farkli_okuma_sayisi"], plaka, oturum["guven"], oturum["toplam_oy"],
+                if yanit.status_code >= 400:
+                    # GÖZLEMLENEBİLİRLİK: istek sunucuya ULAŞTI (bağlantı hatası
+                    # yok, bu yüzden except bloğuna hiç düşmedi) ama sunucu
+                    # reddetti (doğrulama hatası, hız sınırı vb.). Önceden bu
+                    # durum kontrol edilmiyordu ve SESSİZCE "gönderildi" say
+                    # ılıyordu — "araç net görünüyor, API'ye gönderilemedi hatası
+                    # da yok ama yine de kayda düşmüyor" gibi iz bırakmayan bir
+                    # kayıp sınıfına yol açabiliyordu.
+                    logger.error(
+                        "[%s] API isteği sunucu tarafından reddedildi (HTTP %d): %s — plaka: %s",
+                        self.kamera_id, yanit.status_code, yanit.text[:200], plaka,
                     )
+                else:
+                    gonderilenler.append(plaka)
+                    if oturum["farkli_okuma_sayisi"] > 1:
+                        logger.info(
+                            "[%s] Plaka %d farklı okumanın oydaşmasıyla kesinleşti: %s (güven=%.2f, toplam oy=%.2f)",
+                            self.kamera_id, oturum["farkli_okuma_sayisi"], plaka, oturum["guven"], oturum["toplam_oy"],
+                        )
             except Exception as e:
                 logger.error("[%s] API'ye gönderilemedi: %s", self.kamera_id, e)
             finally:

@@ -403,7 +403,43 @@ olup olmadığı denetlendi. Bulunan ve düzeltilen sorunlar:
   `sessionStorage`'daki token'dan eklediği `Authorization: Bearer ...` başlığını
   TAŞIMIYORDU, backend de haklı olarak reddediyordu. Düzeltme: dosya artık
   token başlığıyla `fetch()` edilip blob olarak indiriliyor (gerçek bir dosya
-  indirme butonu gibi çalışıyor, sekme açıp hata göstermiyor).
+  indirme butonu gibi çalışıyor, sekme açıp hata göstermiyor). Not: bu özellik
+  yalnızca SQLite için çalışır; SQL Server kullanan kurulumlarda backend zaten
+  açık bir "SQL Server için veritabanı yönetim araçlarını kullanın" hatası
+  döner — bu beklenen bir davranıştır, hata değildir.
+
+## "Araç net görünüyor ama hiç kayda düşmüyor" — Tanı Kabiliyeti (2026-09-16)
+
+Sahada, plakası tamamen okunaklı görünen araçların hiçbir iz bırakmadan
+(ne hata, ne kayıt) kaybolduğu vakalar bildirildi. Sorun şu ki, tespit
+zincirinde birkaç nokta TAMAMEN SESSİZCE atlıyordu — hiçbir log satırı
+bırakmadan:
+
+- OCR bir metin okudu ama Türk plaka formatına uymadı (`plaka_dogrula` None
+  döndü) → artık `logger.info` ile loglanıyor (okunan ham metin + güven skoruyla).
+- Format olarak geçerli bir plaka okundu ama güven skoru `min_tanima_guveni`
+  eşiğinin altında kaldı → artık loglanıyor.
+- Pipeline, tespit edilen plakayı `/kayitlar/otomatik`'e POST etti, istek
+  sunucuya ULAŞTI (bağlantı hatası yok) ama sunucu HTTP 4xx/5xx ile reddetti
+  → önceden bu durum hiç kontrol edilmiyor, sessizce "gönderildi" sayılıyordu;
+  artık HTTP durum kodu kontrol ediliyor ve reddedilirse loglanıyor.
+
+Bu üçü sayesinde bir sonraki "araç göründü ama kayda düşmedi" vakasında
+Sistem/Log ekranı artık kaybın TAM OLARAK nerede olduğunu (dedektör hiç
+tespit etmedi mi, OCR yanlış okudu mu, güven düşük mü, yoksa API mi reddetti)
+gösterecek.
+
+**Olası bağımsız neden — kamera açısı/çözünürlüğü:** Yukarıdaki "Tanıma
+Doğruluğu" bölümünde belirtildiği gibi, plaka dedektöre verilen karede en az
+~50-75 piksel genişliğinde olmalı. Giriş kamerasından gelen örnek görüntüler
+çok GENİŞ AÇILI (kapı, refüj, ağaçlar, park alanı — sahnenin büyük bölümü)
+çekilmiş; plaka bir insan gözüyle net görünse de, dedektör modeline
+gönderilmeden önce küçük bir çözünürlüğe (ör. 384×384) indirgendiğinde plaka
+bölgesi birkaç piksele kadar küçülüp okunamaz hale gelebilir. Bu, kod
+hatasından bağımsız, saf kamera konumlandırma/kadraj sorunu olabilir —
+kameranın aracın geçtiği şeride daha dar/yakın kadrajlanması (dijital zoom
+veya fiziksel lens/konum değişikliği ile) tespit oranını önemli ölçüde
+artırabilir.
 
 ## Kalıcı Test Altyapısı
 
