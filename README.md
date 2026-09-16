@@ -380,13 +380,23 @@ olup olmadığı denetlendi. Bulunan ve düzeltilen sorunlar:
   `object-fit: cover` ile gösteriliyordu; bu tam ekranda görüntünün kenarlarını
   kırpıyordu. Tam ekran modunda (`:fullscreen`) `object-fit: contain` uygulanacak
   şekilde CSS düzeltildi, artık tüm kare siyah kenarlıklarla görülüyor.
-- **H.264 kameralarda geçişlerde takılma.** OpenCV'nin FFmpeg RTSP istemcisi
-  varsayılan olarak UDP kullanıyordu; H.264'te tek bir kayıp UDP paketi tüm
-  GOP'u (bir sonraki keyframe'e kadar olan kareleri) bozar. `camera_reader.py`
-  artık her bağlantıda `OPENCV_FFMPEG_CAPTURE_OPTIONS` ile RTSP'yi TCP'ye
-  zorluyor ve soket zaman aşımları ekliyor. Not: canlı görüntü zaten 3 saniyede
-  bir JPEG anlık görüntüsü çektiği için bu, ağın/kameranın kendi kalitesini
-  değiştirmez — sadece paket kaybından kaynaklanan bozulmayı azaltır.
+- **H.264 kameralarda geçişlerde takılma → RTSP'yi TCP'ye zorlama denendi,
+  sahada bazı kameralarda BAŞKA bir soruna yol açtı (2026-09-16 güncellemesi).**
+  OpenCV'nin FFmpeg RTSP istemcisi varsayılan olarak UDP kullanıyor; H.264'te
+  tek bir kayıp UDP paketi tüm GOP'u bozabiliyor. İlk düzeltmede
+  `OPENCV_FFMPEG_CAPTURE_OPTIONS` ile RTSP her zaman TCP'ye zorlanmıştı; ancak
+  bazı kamera/ağ/NAT kombinasyonlarında RTSP-üzerinden-TCP hiç desteklenmiyor
+  veya kararsız çalışıyor — bu da "İlk bağlantı açılamadı" / sık yeniden
+  bağlanma döngüsüne, hatta bir geçişin hiç yakalanamamasına yol açabiliyordu.
+  Bu yüzden transport zorlama artık **varsayılan değil**; yalnızca
+  `PTS_RTSP_TRANSPORT=tcp` (veya `udp`) ortam değişkeniyle açıkça istenirse
+  etkinleşir, aksi halde FFmpeg'in kendi (genelde UDP) varsayılanı kullanılır.
+  Soket zaman aşımı (`stimeout`) ve azami gecikme (`max_delay`) ayarları —
+  transport'tan bağımsız, güvenli faydalar — her koşulda uygulanmaya devam
+  ediyor. Kameranız TCP'yi sorunsuz destekliyorsa ve asıl amaç olan
+  takılma/donmayı azaltmak istiyorsanız bu değişkeni açıkça ayarlayabilirsiniz;
+  ama varsayılan olarak zorlanmıyor çünkü bağlantıyı İYİLEŞTİRECEĞİNE
+  KÖTÜLEŞTİRDİĞİ görüldü.
 - **"DB Yedek" butonu "Bearer token gerekli" hatası veriyordu.** `veritabaniIndir()`
   fonksiyonu `window.open("/sistem/yedek", "_blank")` kullanıyordu; bu yeni bir
   sekme/üst düzey gezinme başlattığı için `apiCagir()`'ın normalde

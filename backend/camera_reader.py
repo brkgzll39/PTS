@@ -483,18 +483,31 @@ class KameraPipeline:
 
     def _cap_ac(self):
         os.environ.setdefault("OPENCV_FFMPEG_LOGLEVEL", "quiet")
+        # stimeout: soket okuma zaman aşımı (mikrosaniye) — kamera susarsa
+        # OpenCV'nin süresiz beklemek yerine makul bir sürede hata vermesini sağlar
+        # (pipeline zaten bunu _yeniden_baglan ile toparlıyor). max_delay: FFmpeg'in
+        # arabelleğe alabileceği azami gecikme. Bu ikisi her koşulda güvenlidir,
+        # transport'tan bağımsız olarak eklenir.
+        secenekler = ["stimeout;5000000", "max_delay;500000"]
         # RTSP varsayılan olarak UDP üzerinden akar; H.264 gibi büyük I-frame'li
         # kodeklerde tek bir kayıp UDP paketi tüm GOP'u (sonraki keyframe'e kadar
-        # olan tüm kareleri) bozar — ekranda görülen "takılma/donma" efektinin en
-        # yaygın nedeni budur. TCP'ye zorlamak (paket kaybını TCP'nin kendi
-        # retransmit mekanizmasına bırakarak) bunu büyük ölçüde ortadan kaldırır;
-        # bedeli birkaç yüz ms ek gecikmedir, ANPR için ihmal edilebilir.
-        # stimeout: soket okuma zaman aşımı (mikrosaniye) — kamera susarsa
-        # OpenCV'nin süresiz beklemek yerine makul bir sürede hata vermesini sağlar.
-        os.environ.setdefault(
-            "OPENCV_FFMPEG_CAPTURE_OPTIONS",
-            "rtsp_transport;tcp|stimeout;5000000|max_delay;500000",
-        )
+        # olan tüm kareleri) bozabilir ("takılma/donma"). TCP'ye zorlamak bunu
+        # azaltabilir AMA sahada gözlemlendi ki bazı kamera/ağ/NAT kombinasyonları
+        # RTSP-üzerinden-TCP'yi hiç desteklemiyor veya kararsız çalışıyor — bu
+        # durumda TCP'ye zorlamak "İlk bağlantı açılamadı" / sık yeniden bağlanma
+        # artışına yol açıp durumu İYİLEŞTİRECEĞİNE KÖTÜLEŞTİRİYOR (hatta bir
+        # geçişin hiç yakalanamamasına kadar gidebiliyor). Bu yüzden transport
+        # ZORLAMA artık VARSAYILAN DEĞİL — yalnızca PTS_RTSP_TRANSPORT=tcp (veya
+        # =udp) ortam değişkeniyle açıkça istenirse etkinleşir; aksi halde
+        # FFmpeg'in kendi varsayılanı kullanılır (bu, önceki (2026-09 öncesi)
+        # sorunsuz çalışan davranışla aynıdır).
+        transport = os.environ.get("PTS_RTSP_TRANSPORT", "").strip().lower()
+        if transport in ("tcp", "udp"):
+            secenekler.insert(0, f"rtsp_transport;{transport}")
+        # setdefault DEĞİL: her kamera aynı süreçte aynı seçenekleri görsün diye
+        # (aksi halde ilk açılan kameranın ortam değişkeni kalıcı olur, sonraki
+        # kameralar/yeniden bağlanmalar bunu değiştiremezdi).
+        os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "|".join(secenekler)
         cap = cv2.VideoCapture(self.video_kaynagi, cv2.CAP_FFMPEG)
         try:
             cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
