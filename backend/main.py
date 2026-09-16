@@ -804,6 +804,57 @@ async def kamera_goruntu_al(kamera_id: str, _: models.Kullanici = Depends(_giris
     return Response(content=kare, media_type="image/jpeg")
 
 
+@app.get("/kameralar/{kamera_id}/akis")
+async def kamera_akis(kamera_id: str, request: Request, authorization: Optional[str] = Header(None)):
+    """Kameradan GERÇEK ZAMANLI MJPEG akışı (multipart/x-mixed-replace).
+
+    Panel eskiden bu kareyi 3 saniyede bir `fetch` ile "anlık görüntü" (snapshot)
+    olarak çekiyordu; bu, doğası gereği kesikli/adım adım görünüyordu. Bu uç nokta
+    yerine tek bir bağlantı üzerinden pipeline'ın ürettiği HER yeni kareyi
+    (tipik olarak ~4 FPS'e kadar) anında iletir.
+
+    Tarayıcının `<img>` etiketi özel başlık (Authorization) taşıyamadığı için
+    (SSE'deki ile aynı kısıtlama, bkz. /olaylar/sse), istemci tarafında token'lı
+    `fetch()` + elle multipart ayrıştırma ile tüketilir
+    (frontend/app.js: `_kameraAkisiBaslat`)."""
+    if not authorization or not authorization.lower().startswith("bearer "):
+        raise HTTPException(401, "Bearer token gerekli")
+    _token_coz(authorization[7:].strip())
+
+    kamera = next((k for k in _kameralari_oku() if k["id"] == kamera_id), None)
+    if not kamera:
+        raise HTTPException(404, "Kamera bulunamadı")
+
+    SINIR = b"ptsframe"
+
+    async def _akis():
+        son_kare_kimligi = None
+        while True:
+            if await request.is_disconnected():
+                break
+            pipeline = _aktif_pipelineler.get(kamera_id)
+            if not pipeline or not pipeline.calisiyor:
+                await asyncio.sleep(0.5)
+                continue
+            kare = pipeline.son_goruntu_al()
+            if kare is None or id(kare) == son_kare_kimligi:
+                await asyncio.sleep(0.08)  # ~12/sn kontrol — yeni kare geldiği an hemen yakalanır
+                continue
+            son_kare_kimligi = id(kare)
+            yield (
+                b"--" + SINIR + b"\r\n"
+                b"Content-Type: image/jpeg\r\n"
+                b"Content-Length: " + str(len(kare)).encode("ascii") + b"\r\n\r\n"
+                + kare + b"\r\n"
+            )
+
+    return StreamingResponse(
+        _akis(),
+        media_type=f"multipart/x-mixed-replace; boundary={SINIR.decode()}",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
 @app.get("/kameralar/{kamera_id}/son-plaka")
 def kamera_son_plaka(kamera_id: str, _: models.Kullanici = Depends(_giris_gerekli)):
     """Pipeline'ın son tespit ettiği plaka(ları) döner (canlı overlay için)."""

@@ -164,6 +164,22 @@ python -c "from camera_reader import tek_gorsel_test; tek_gorsel_test('arac_foto
 Bu, FastAPI sunucusu çalışıyorken tespit edilen plakayı gerçekten `/kayitlar/otomatik`
 uç noktasına gönderir ve panelde görünmesini sağlar.
 
+### Canlı Görüntü: Gerçek Zamanlı Akış (2026-09-16)
+
+Panel eskiden canlı kamera karesini 3 saniyede bir ayrı bir HTTP isteğiyle
+"anlık görüntü" (snapshot) olarak çekiyordu — bu, doğası gereği kesikli/adım
+adım görünüyordu. Artık `GET /kameralar/{id}/akis` uç noktası üzerinden TEK bir
+bağlantı üzerinden gerçek zamanlı MJPEG akışı (`multipart/x-mixed-replace`)
+sağlanıyor: pipeline'ın ürettiği HER yeni kare (tipik olarak ~4 FPS'e kadar,
+ANPR motorunun işleme hızına bağlı) sunucu tarafında üretildiği an istemciye
+iletiliyor; istemci de kareyi anında ekrana yansıtıyor. Tarayıcının `<img>`
+etiketi özel başlık (Authorization) taşıyamadığı için akış, `/olaylar/sse` ile
+aynı yöntemle (token'lı `fetch()` + elle ayrıştırma) tüketiliyor
+(`frontend/app.js`: `_kameraAkisiBaslat`). Kare sınırları her zaman
+`Content-Length` başlığıyla belirlendiği için (ikili veri içinde sınır dizisi
+aranmıyor), bir JPEG'in içinde tesadüfen sınıra benzeyen baytlar olsa bile akış
+bozulmuyor.
+
 ### Birden Fazla Kamera ve GPU Kararlılığı
 
 `fast-alpr[onnx-directml]` (Windows'ta GPU hızlandırması) kuruluysa, plaka

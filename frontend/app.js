@@ -302,7 +302,89 @@ async function kameralariYukle() {
   } catch (err) { console.error(err); }
 }
 
-let _kameraGoruntuleriInterval = null;
+// Kamera başına açık MJPEG canlı akış bağlantısını (AbortController) tutar.
+// Eskiden burada 3 saniyede bir tek kare çekilirdi (kesikli/adım adım görünüm);
+// artık her kamera için TEK bir bağlantı açık kalır ve pipeline'ın ürettiği HER
+// yeni kare anında gelir (bkz. _kameraAkisiBaslat, backend: /kameralar/{id}/akis).
+let _kameraAkisAbortlar = {};
+let _kameraPlakaInterval = null;
+
+function _tumKameraAkislariniDurdur() {
+  const eskiler = _kameraAkisAbortlar;
+  _kameraAkisAbortlar = {};
+  Object.values(eskiler).forEach(ctrl => { try { ctrl.abort(); } catch {} });
+}
+
+function _bayt_dizisi_bul(buf, dizi, baslangic = 0) {
+  disForEach: for (let i = baslangic; i <= buf.length - dizi.length; i++) {
+    for (let j = 0; j < dizi.length; j++) if (buf[i + j] !== dizi[j]) continue disForEach;
+    return i;
+  }
+  return -1;
+}
+
+function _kameraAkisiBaslat(kameraId) {
+  const ctrl = new AbortController();
+  _kameraAkisAbortlar[kameraId] = ctrl;
+  const token = sessionStorage.getItem("pts_token");
+  const CRLFCRLF = [13, 10, 13, 10];
+  let sonUrl = null;
+
+  fetch(`/kameralar/${kameraId}/akis`, { headers: { Authorization: `Bearer ${token}` }, signal: ctrl.signal })
+    .then(async (r) => {
+      if (!r.ok || !r.body) throw new Error("Akış kurulamadı");
+      const reader = r.body.getReader();
+      const dec = new TextDecoder();
+      let buf = new Uint8Array(0);
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        const birlesik = new Uint8Array(buf.length + value.length);
+        birlesik.set(buf, 0); birlesik.set(value, buf.length);
+        buf = birlesik;
+
+        // Arabellekte tamamlanmış kare(ler) varsa hepsini ardarda işle
+        // (Content-Length her zaman gönderildiği için ikili veri içinde sınır
+        // dizisini aramaya HİÇ gerek yok — bu, bir JPEG'in tesadüfen sınıra
+        // benzeyen baytlar içermesinden kaynaklanabilecek bozulmayı önler).
+        while (true) {
+          const baslikSonu = _bayt_dizisi_bul(buf, CRLFCRLF);
+          if (baslikSonu === -1) break;
+          const baslikMetni = dec.decode(buf.slice(0, baslikSonu));
+          const eslesme = baslikMetni.match(/Content-Length:\s*(\d+)/i);
+          if (!eslesme) { buf = new Uint8Array(0); break; }
+          const uzunluk = parseInt(eslesme[1], 10);
+          const govdeBas = baslikSonu + 4;
+          const govdeBit = govdeBas + uzunluk;
+          if (buf.length < govdeBit + 2) break; // kare henüz tam gelmedi
+          const jpegBaytlari = buf.slice(govdeBas, govdeBit);
+          const el = document.getElementById(`frame-${kameraId}`);
+          if (el) {
+            let img = el.querySelector("img.camera-frame-img");
+            if (!img) {
+              el.innerHTML = `<img class="camera-frame-img">`;
+              el.style.padding = "0";
+              img = el.querySelector("img");
+            }
+            const yeniUrl = URL.createObjectURL(new Blob([jpegBaytlari], { type: "image/jpeg" }));
+            img.src = yeniUrl;
+            if (sonUrl) URL.revokeObjectURL(sonUrl);
+            sonUrl = yeniUrl;
+          }
+          buf = buf.slice(govdeBit + 2);
+        }
+      }
+    })
+    .catch(() => {})
+    .finally(() => {
+      // Kasıtlı olarak durdurulmadıysak (kontrolcü hâlâ bizim başlattığımızsa)
+      // bağlantı koptuğunda (ağ sorunu, pipeline yeniden başlıyor vb.) kısa bir
+      // bekleyle yeniden bağlan.
+      if (_kameraAkisAbortlar[kameraId] === ctrl) {
+        setTimeout(() => { if (_kameraAkisAbortlar[kameraId] === ctrl) _kameraAkisiBaslat(kameraId); }, 2000);
+      }
+    });
+}
 
 function kameraDuvariniGuncelle(kameralar) {
   const duvar = document.getElementById("kameraDuvari");
@@ -311,7 +393,7 @@ function kameraDuvariniGuncelle(kameralar) {
   if (sayacBtn) sayacBtn.innerHTML = `<i class="bi bi-grid-2x2"></i> ${kameralar.length} Kamera`;
   if (!kameralar.length) {
     duvar.innerHTML = `<div class="camera-tile camera-simulated"><div class="camera-label"><span><i class="bi bi-camera-video-fill me-1"></i>KAMERA TANIMLI DEĞİL</span><span class="camera-status">Simülasyon</span></div><div class="camera-empty"><i class="bi bi-camera-video"></i><strong>Henüz kamera eklenmedi</strong><small>Kamera Yönetimi ekranından RTSP kamera ekleyin</small></div></div>`;
-    if (_kameraGoruntuleriInterval) { clearInterval(_kameraGoruntuleriInterval); _kameraGoruntuleriInterval = null; }
+    _tumKameraAkislariniDurdur();
     return;
   }
   duvar.innerHTML = kameralar.map(k => {
@@ -325,31 +407,16 @@ function kameraDuvariniGuncelle(kameralar) {
     return `<div class="camera-tile ${statusClass}" id="tile-${k.id}"><div class="camera-label"><span><i class="bi bi-camera-video-fill me-1"></i>${escapeHtml(k.ad).toUpperCase()}</span><span class="camera-status">${statusText}</span></div>${donmusUyarisi}<div class="camera-empty" id="frame-${k.id}"><i class="bi bi-camera-video"></i><strong>${k.yon === "giris" ? "Giriş" : "Çıkış"} kamerası</strong><small>${k.pipeline_calisiyor ? "Görüntü yükleniyor..." : (k.kutuphaneler_mevcut ? "Pipeline başlatılamadı" : "opencv + fast-alpr gerekli")}</small></div></div>`;
   }).join("");
 
-  // Pipeline çalışan kameralar için anlık görüntü çek
-  if (_kameraGoruntuleriInterval) clearInterval(_kameraGoruntuleriInterval);
+  // Pipeline çalışan kameralar için canlı MJPEG akışını başlat (bkz. yukarıdaki
+  // _kameraAkisiBaslat) — artık periyodik "anlık görüntü" çekmiyoruz, tek bir
+  // bağlantı üzerinden her yeni kare geldiği an ekrana yansıyor.
+  _tumKameraAkislariniDurdur();
   const canliKameralar = kameralar.filter(k => k.pipeline_calisiyor);
   if (canliKameralar.length) {
-    const _kareleriYenile = () => {
-      canliKameralar.forEach(k => {
-        const el = document.getElementById(`frame-${k.id}`);
-        if (!el) return;
-        const ts = Date.now();
-        const token = sessionStorage.getItem("pts_token");
-        fetch(`/kameralar/${k.id}/goruntu?t=${ts}`, { headers: { Authorization: `Bearer ${token}` } })
-          .then(r => r.ok ? r.blob() : null)
-          .then(blob => {
-            if (!blob) return;
-            const url = URL.createObjectURL(blob);
-            el.innerHTML = `<img src="${url}" class="camera-frame-img" onload="URL.revokeObjectURL(this.src)">`;
-            el.style.padding = "0";
-          })
-          .catch(() => {});
-      });
-    };
-    _kareleriYenile();
-    _kameraGoruntuleriInterval = setInterval(_kareleriYenile, 3000);
+    canliKameralar.forEach(k => _kameraAkisiBaslat(k.id));
 
     // Son plaka overlay — 2 sn'de bir güncelle
+    if (_kameraPlakaInterval) clearInterval(_kameraPlakaInterval);
     const _plakalariGuncelle = () => {
       canliKameralar.forEach(async k => {
         try {
@@ -375,7 +442,8 @@ function kameraDuvariniGuncelle(kameralar) {
         } catch {}
       });
     };
-    setInterval(_plakalariGuncelle, 2000);
+    _plakalariGuncelle();
+    _kameraPlakaInterval = setInterval(_plakalariGuncelle, 2000);
   }
 }
 
