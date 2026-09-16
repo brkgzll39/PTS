@@ -398,7 +398,26 @@ _hiz_sinir_giris = _hiz_siniri_olustur(limit=20, pencere_sn=60)
 # arızalanıp saniyede yüzlerce istek göndermesi ya da kötü niyetli akış) engellenir.
 _hiz_sinir_otomatik_kayit = _hiz_siniri_olustur(limit=120, pencere_sn=60)
 
-app.mount("/static", StaticFiles(directory=FRONTEND_KLASORU), name="static")
+class _OnbellegiHicDogrulamadanKullanma(StaticFiles):
+    """Varsayılan StaticFiles davranışı, tarayıcının app.js/style.css'i kendi
+    sezgisel önbellek süresi boyunca sunucuya HİÇ sormadan kullanmasına izin
+    verebiliyor. Bu depoda birden çok kez şu duruma yol açtı: bir düzeltme
+    sunucuya kurulup uygulama yeniden başlatılsa bile, kullanıcı sayfayı normal
+    şekilde yenilediğinde tarayıcı hâlâ ESKİ app.js/style.css'i belleğinden/
+    diskinden kullanmaya devam ediyor ve düzeltme hiç etkinleşmemiş gibi
+    görünüyordu. `Cache-Control: no-cache` ile tarayıcı her sayfa yenilemesinde
+    dosyanın değişip değişmediğini sunucuya SORMAK ZORUNDA kalır (ETag/
+    If-None-Match sayesinde değişmediyse yine hızlı bir 304 döner, yani ek bir
+    performans bedeli yoktur) — böylece normal bir yenileme (sert yenileme
+    gerekmeden) her zaman en güncel sürümü garanti eder."""
+
+    async def get_response(self, path, scope):
+        response = await super().get_response(path, scope)
+        response.headers["Cache-Control"] = "no-cache"
+        return response
+
+
+app.mount("/static", _OnbellegiHicDogrulamadanKullanma(directory=FRONTEND_KLASORU), name="static")
 app.mount("/goruntuler", StaticFiles(directory=GORUNTU_KLASORU), name="goruntuler")
 
 

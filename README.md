@@ -560,3 +560,17 @@ bu doküman yalnızca genel bilgilendirme amaçlıdır.
   port deneyin, ardından `http://localhost:8001` adresine gidin.
 - **Veritabanını sıfırlamak isterseniz**: `veritabani/pts.db` dosyasını silin,
   sunucuyu yeniden başlattığınızda boş bir veritabanı otomatik oluşturulur.
+- **Bir düzeltme uyguladım ama hiçbir şey değişmemiş gibi görünüyor**: Bir
+  yamayı (`git am ...`) uyguladıktan sonra iki ayrı adım daha gerekir, aksi
+  halde eski davranış devam eder: (1) **Python sunucusunu (uvicorn) yeniden
+  başlatın** — dosyadaki değişiklik diskte olsa bile, çalışan süreç hâlâ eski
+  kodu bellekte tutar; `--reload` ile çalıştırmıyorsanız süreci tamamen durdurup
+  tekrar başlatmanız gerekir. (2) **Tarayıcıda sayfayı SERT yenileyin**
+  (Ctrl+Shift+R / Ctrl+F5), özellikle `app.js`/`style.css` değişen bir düzeltme
+  için — 2026-09-16'dan itibaren statik dosyalar `Cache-Control: no-cache` ile
+  sunuluyor (normal bir yenileme artık her zaman güncel sürümü getirmeli), ama
+  bu tarihten önceki bir sürümü çalıştırıyorsanız veya tarayıcınız yine de eski
+  bir kopyayı bellekte tutuyorsa sert yenileme kesin çözümdür. Aynı sekmeyi
+  günlerdir hiç yenilemeden açık tutmak da (özellikle canlı kamera/DB yedek gibi
+  JS tabanlı düzeltmeler için) aynı yanıltıcı "düzeltme çalışmıyor" görünümüne
+  yol açar.
