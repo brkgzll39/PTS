@@ -91,3 +91,27 @@ def test_cihaz_kodu_tekrarlanabilir():
     """Aynı bilgisayarda art arda çağrılınca aynı kodu üretmeli (kalıcı kimlik)."""
     assert lisans.cihaz_kodu() == lisans.cihaz_kodu()
     assert len(lisans.cihaz_kodu()) == 16
+
+
+def test_secret_ayarlanmamissa_varsayilana_duser_ve_bir_kez_uyarir(monkeypatch, caplog):
+    """Güvenlik regresyonu: PTS_LICENSE_SECRET ayarlanmamışsa (kaynak kodda
+    herkese açık, sabit) bir geliştirme secret'ına sessizce düşülmemeli —
+    en azından çalışma zamanında (CORS '*' / AUTH_SECRET için yapıldığı gibi)
+    bir uyarı loglanmalı. Log spam olmasın diye süreç başına yalnızca BİR
+    kez uyarılmalı."""
+    monkeypatch.delenv("PTS_LICENSE_SECRET", raising=False)
+    monkeypatch.setattr(lisans, "_varsayilan_secret_uyarisi_yapildi", False)
+    with caplog.at_level("WARNING", logger="pts.lisans"):
+        assert lisans.secret_al() == lisans.VARSAYILAN_GELISTIRME_SECRET
+        assert any("PTS_LICENSE_SECRET" in kayit.message for kayit in caplog.records)
+        onceki_kayit_sayisi = len(caplog.records)
+
+        lisans.secret_al()  # ikinci çağrı: aynı süreçte tekrar uyarmamalı
+        assert len(caplog.records) == onceki_kayit_sayisi
+
+
+def test_secret_ayarliysa_hic_uyarmaz(monkeypatch, caplog):
+    monkeypatch.setattr(lisans, "_varsayilan_secret_uyarisi_yapildi", False)
+    with caplog.at_level("WARNING", logger="pts.lisans"):
+        assert lisans.secret_al() == "test-icin-sabit-secret"  # autouse fixture'dan
+        assert caplog.records == []

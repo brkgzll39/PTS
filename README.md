@@ -547,6 +547,44 @@ artık sessizce main dalına giremez.
   sekmesinden "kamera_arizasi" tetikleyicili bir webhook (N8N/Slack/Teams/kendi
   API'niz) ekleyerek anlık haber alabilirsiniz.
 
+**2026-09-16 profesyonellik/güvenlik denetimi — bu turda düzeltilenler:**
+
+- **Stored XSS (kara liste/kişi plaka alanı):** `plaka_no` alanına eskiden yalnızca
+  `.upper().strip()` uygulanıyordu; harf/rakam/boşluk dışındaki karakterler (`'`, `<`,
+  `(`, `;` vb.) kabul ediliyordu. Frontend bu değeri bir zamanlar `onclick="fonksiyon('${...}')"`
+  biçiminde bir HTML attribute'u içine JS string'i olarak gömdüğü için, kara listeye
+  `"x');alert(1)//"` gibi bir "plaka" eklenip o satırı görüntüleyen bir yöneticinin
+  oturumunda kod çalıştırılabiliyordu. Artık `schemas.py::plaka_normalize` TÜM giriş
+  noktalarında (kişi/kara liste/otomatik kayıt) aynı karakter kısıtlamasını
+  zorunlu kılıyor, VE frontend artık plaka değerini hiçbir yerde bir HTML attribute'u
+  içine JS kodu olarak gömmüyor (`data-*` attribute + olay delegasyonu kullanılıyor).
+- **`/goruntuler` artık kimlik doğrulaması gerektiriyor:** Araç/sürücü görselleri
+  (plaka + fotoğraf — KVKK kapsamında kişisel veri) önceden tamamen kimliksiz bir
+  `StaticFiles` mount'uyla servis ediliyordu; dosya adı kalıbı tahmin edilebilir
+  olduğu için (`PLAKA_unixzaman.jpg`) ağdaki herkes giriş yapmadan indirebiliyordu.
+  Artık `GET /goruntuler/{dosya_adi}` giriş yapmış kullanıcı gerektiren normal bir
+  uç nokta (ayrıca yol geçişi/`..` denemelerine karşı da korumalı); `<img>` etiketi
+  Authorization header taşıyamadığı için frontend bu görselleri `fetch()` + Bearer
+  token ile alıp blob URL'ine çeviriyor.
+- **RTSP kamera parolaları artık loglanmıyor + `/sistem/loglar` rol kısıtlı:**
+  Kamera pipeline'ı başlarken `video_kaynagi` (kullanıcı adı/parola dahil RTSP
+  adresi) olduğu gibi loglanıyordu; bu, aynı dosyadaki bilinçli parola maskeleme
+  çabasını (panel/API'de) tamamen boşa çıkarıyordu. Artık log satırında da
+  maskeleniyor, VE `/sistem/loglar` en az **operatör** rolü gerektiriyor (önceden
+  salt-okunur "izleyici" bile okuyabiliyordu) — servis ederken de (diskte zaten
+  duran eski log satırları için) ikinci bir maskeleme katmanı uygulanıyor.
+- **SQL Server bağlantısı artık şifreli kuruluyor:** `veritabani_ayarla.py`
+  önceden `Encrypt=no` kullanıyordu; backend ile SQL Server farklı makinelerdeyse
+  kimlik bilgileri ve plaka/kişi verisi ağda düz metin taşınıyordu. Artık
+  `Encrypt=yes` (+ kendinden imzalı sertifikalarla da çalışsın diye
+  `TrustServerCertificate=yes`) kullanılıyor. **NOT:** bu yalnızca betiği YENİDEN
+  çalıştırdığınızda etkilidir — mevcut bir kurulumu geriye dönük değiştirmez;
+  zaten yapılandırılmış bir kurulumda `database_config.json`'ı elle güncelleyin
+  ya da betiği tekrar çalıştırın.
+- **Repo temizliği:** Referanssız, kaynağı belirsiz bir `backend.rar` arşivi
+  (ilk commit'ten beri duruyordu, hiçbir yerden kullanılmıyordu) kaldırıldı;
+  `.gitignore`'a `*.rar`/`*.zip` eklendi.
+
 ## Otomatik Görüntü/Kayıt Saklama
 
 Daha önce eski geçiş görüntülerini temizlemenin tek yolu `/sistem/goruntu-temizle`
@@ -609,6 +647,34 @@ Gerçek dağıtımda `PTS_LICENSE_SECRET` ortam değişkenini lisans üretici ve
 sunucusunda aynı güçlü gizli değerle ayarlayın; varsayılan değer yalnızca geliştirme
 içindir.
 
+### ⚠️ 2026-09-16: Lisans Uygulaması Gerçekten Sıkılaştırıldı — Kurulumunuzu Kontrol Edin
+
+Bu turda iki gerçek boşluk kapatıldı; ikisi de mevcut (zaten çalışan) kurulumların
+davranışını DEĞİŞTİREBİLİR, o yüzden dikkatlice okuyun:
+
+1. **`PTS_LICENSE_SECRET` ayarlanmamışsa artık çalışma zamanında UYARI loglanıyor**
+   (`loglar/pts.log`, süreç başına bir kez) — önceden bu durumda sessizce
+   kaynak kodda sabit/herkese açık bir geliştirme anahtarına düşülüyordu ve
+   HİÇBİR uyarı yoktu. Eğer bu değişkeni hiç ayarlamadıysanız, üretimde
+   MUTLAKA kendi güçlü değerinizi ayarlayın — aksi halde kaynağa erişimi olan
+   biri geçerli imzalı bir lisans üretebilir.
+2. **Lisans artık HER kontrolde yeniden doğrulanıyor, sadece aktivasyon anında
+   değil.** Önceden `_lisans_aktif_mi()` yalnızca `license.json`'daki statik
+   `"aktif": true` bayrağına ve ayrı bir `"bitis_tarihi"` kopyasına bakıyordu —
+   bunlar aktivasyon SONRASI bir daha asla imzayla karşılaştırılmıyordu. Artık
+   saklı `anahtar` alanının imzası (+ süre + cihaz kilidi) HER seferinde yeniden
+   doğrulanıyor.
+3. **Kamera bekçisi (watchdog) artık lisansı da periyodik kontrol ediyor.**
+   Önceden lisans SADECE yeni bir kamera eklerken kontrol ediliyordu — mevcut
+   kameralar bir lisans süresi dolduktan/geçersiz hale geldikten SONRA da
+   sınırsız çalışmaya devam edebiliyordu. Artık her ~20 saniyede bir lisans
+   geçerliliği kontrol ediliyor; geçersizse **TÜM kamera pipeline'ları otomatik
+   durdurulur** ve bir arıza alarmı (webhook'a bağlıysa bildirim de) oluşturulur.
+   **Bu, mevcut kurulumunuz için önemli:** lisansınızın bitiş tarihini şimdiden
+   kontrol edin (Lisans sekmesi) — daha önce süre dolsa bile kameralar sessizce
+   çalışmaya devam ediyordu, artık devam ETMEYECEK. Süresi yakında dolacaksa
+   önceden yeni bir anahtar üretip aktive edin.
+
 ## ⚠️ KVKK Uyarısı
 
 Plaka + görüntü kaydı Türkiye'de KVKK kapsamında **kişisel veri** sayılır. Bu sistemi
@@ -634,9 +700,16 @@ bu doküman yalnızca genel bilgilendirme amaçlıdır.
 - **Bilgisayar açılışında otomatik başlatma**: Görev Zamanlayıcı'da "Oturum açıldığında"
   tetikleyicisiyle `calistir.bat` dosyasını çalıştıracak bir görev oluşturmanız önerilir;
   böylece bilgisayar yeniden başladığında PTS insan müdahalesi olmadan ayağa kalkar.
-- **Görsel/kayıt saklama süresi**: Sistem `goruntuler/` klasöründeki araç görsellerini
-  otomatik silmez. KVKK uyumluluğu için belirlediğiniz saklama süresine göre eski
-  görselleri ve kayıtları düzenli temizleyen bir bakım rutini oluşturmanız önerilir.
+- **Görsel/kayıt saklama süresi (2026-09-16 düzeltmesi):** Bu bölüm önceden "Sistem
+  `goruntuler/` klasöründeki araç görsellerini otomatik silmez" diyordu — bu artık
+  DOĞRU DEĞİL ve koddan sapmıştı: sistem, Sistem Ayarları'ndaki `goruntu_saklama_gun`
+  ayarına göre (varsayılan: **30 gün**) her 6 saatte bir eski görselleri/kayıtları
+  OTOMATİK olarak siler (bkz. `main.py::_goruntu_temizlik_dongu`). Bu, varsayılan bir
+  kurulumda operatör hiçbir ayar değiştirmeden görsellerin ~30 gün sonra sessizce
+  silinebileceği anlamına gelir — bazı sahalarda kanıt/soruşturma amacıyla daha uzun
+  saklama gerekebileceğinden, kurulumdan hemen sonra Sistem Ayarları'ndan bu süreyi
+  ihtiyacınıza göre (veya tamamen kapatmak için 0'a) ayarlayın. Otomatik temizliğe ek
+  olarak (veya onun yerine) manuel bir uç nokta da vardır (`/sistem/goruntu-temizle`).
 - **HTTPS**: PTS varsayılan olarak düz HTTP ile yerel ağda çalışır. İnternete açık veya
   güvenilmeyen bir ağda çalıştıracaksanız IIS/nginx gibi bir ters vekil (reverse proxy)
   arkasında TLS sonlandırması yapılandırın; kimlik bilgileri ve oturum anahtarları

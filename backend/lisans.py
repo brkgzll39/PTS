@@ -13,6 +13,7 @@ import base64
 import hashlib
 import hmac
 import json
+import logging
 import os
 import platform
 import secrets
@@ -23,6 +24,9 @@ from typing import Optional
 VARSAYILAN_GELISTIRME_SECRET = "gelistirme-lisans-anahtari-degistir"
 LISANS_VERSIYONU = "PTS1"
 
+logger = logging.getLogger("pts.lisans")
+_varsayilan_secret_uyarisi_yapildi = False
+
 
 class LisansGecersiz(Exception):
     """Lisans anahtarı imzası geçersiz, formatı bozuk, süresi dolmuş ya da
@@ -31,8 +35,28 @@ class LisansGecersiz(Exception):
 
 def secret_al() -> str:
     """PTS_LICENSE_SECRET ortam değişkeni yoksa geliştirme anahtarına düşer
-    (üretimde mutlaka değiştirilmeli — bkz. README Lisans bölümü)."""
-    return os.getenv("PTS_LICENSE_SECRET", VARSAYILAN_GELISTIRME_SECRET)
+    (üretimde mutlaka değiştirilmeli — bkz. README Lisans bölümü).
+
+    GÜVENLİK: Bu geliştirme/varsayılan secret KAYNAK KODDA açıkça görünür ve
+    HER kurulumda aynıdır. `PTS_CORS_ORIGINS='*'` veya otomatik üretilen
+    `AUTH_SECRET` için yapıldığı gibi, bu varsayılana sessizce düşüldüğünde
+    hiçbir çalışma-zamanı uyarısı YOKTU — bu env değişkenini ayarlamayı
+    unutan (ya da bilmeyen) herhangi bir kurulumda, kaynağa erişimi olan
+    HERKES `lisans_uretici.py`yi bu bilinen secret ile çalıştırıp geçerli
+    imzalı, istediği kamera limiti/süreye sahip bir lisans üretebilirdi. Artık
+    süreç başına bir kez (log spam olmasın diye) uyarı basılıyor."""
+    global _varsayilan_secret_uyarisi_yapildi
+    deger = os.getenv("PTS_LICENSE_SECRET")
+    if deger:
+        return deger
+    if not _varsayilan_secret_uyarisi_yapildi:
+        _varsayilan_secret_uyarisi_yapildi = True
+        logger.warning(
+            "PTS_LICENSE_SECRET ayarlanmamış — HERKESE AÇIK, kaynak kodda sabit bir geliştirme "
+            "anahtarı kullanılıyor. Üretimde MUTLAKA benzersiz bir PTS_LICENSE_SECRET ortam "
+            "değişkeni tanımlayın; aksi halde kaynağa erişimi olan biri geçerli imzalı lisans üretebilir."
+        )
+    return VARSAYILAN_GELISTIRME_SECRET
 
 
 def _b64(veri: bytes) -> str:

@@ -1,9 +1,34 @@
+import re
+
 from pydantic import BaseModel, Field, field_validator
 from datetime import datetime
 from typing import Optional, List
 
 GECERLI_TIPLER = ("abone", "personel", "ziyaretci")
 GECERLI_ROLLER = ("yonetici", "operatör", "izleyici")
+
+
+def plaka_normalize(v: str) -> str:
+    """Girdi plaka numarasını normalize eder: baş/son boşluk temizlenir, büyük
+    harfe çevrilir ve Türk plaka formatında ASLA yer almayan karakterler
+    (harf/rakam/boşluk dışında her şey) atılır.
+
+    ÖNEMLİ — bu, main.py'deki otomatik-kayıt yolunda (POST /kayitlar/otomatik
+    ve toplu içe aktarma) zaten uygulanan `re.sub(r"[^A-Za-z0-9 ]", "", ...)`
+    ile BİREBİR AYNI kuraldır. Önceden bu şemadaki `plaka_no` alanları yalnızca
+    `.upper().strip()` yapıyordu — karakter kısıtlaması YOKTU. Bu hem iki farklı
+    giriş yolu arasında tutarsız bir normalizasyona (aynı plaka farklı şekilde
+    saklanabilir) hem de daha ciddisi bir stored-XSS açığına yol açıyordu:
+    kara listeye/kişiye `plaka_no="x');alert(1)//"` gibi bir değer eklenip,
+    frontend'de bu değer `onclick="...('${escapeHtml(plaka)}')"` biçiminde bir
+    HTML attribute'u içine gömüldüğünde (attribute HTML-decode edildikten
+    SONRA JS olarak yorumlanır) çalıştırılabiliyordu. Artık tüm giriş
+    noktalarında AYNI (tek doğru kaynak) kural zorunlu kılınıyor.
+    """
+    temiz = re.sub(r"[^A-Za-z0-9 ]", "", v).strip().upper()
+    if not temiz:
+        raise ValueError("plaka_no geçerli karakter içermiyor (yalnızca harf, rakam ve boşluk kabul edilir)")
+    return temiz
 
 
 class SiteOlustur(BaseModel):
@@ -105,7 +130,7 @@ class KisiPlakaOlustur(BaseModel):
     @field_validator("plaka_no")
     @classmethod
     def plaka_buyuk_harf(cls, v):
-        return v.upper().strip()
+        return plaka_normalize(v)
 
 
 class KisiPlakaCevap(BaseModel):
@@ -135,7 +160,7 @@ class KisiOlustur(BaseModel):
     @field_validator("plaka_no")
     @classmethod
     def plaka_buyuk_harf(cls, v):
-        return v.upper().strip()
+        return plaka_normalize(v)
 
     @field_validator("tip")
     @classmethod
@@ -161,7 +186,7 @@ class KisiGuncelle(BaseModel):
     @field_validator("plaka_no")
     @classmethod
     def plaka_buyuk_harf(cls, v):
-        return v.upper().strip() if v is not None else v
+        return plaka_normalize(v) if v is not None else v
 
     @field_validator("tip")
     @classmethod
@@ -199,7 +224,7 @@ class KaraListesiOlustur(BaseModel):
     @field_validator("plaka_no")
     @classmethod
     def plaka_buyuk_harf(cls, v):
-        return v.upper().strip()
+        return plaka_normalize(v)
 
 
 class KaraListesiCevap(BaseModel):

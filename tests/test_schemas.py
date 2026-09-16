@@ -14,6 +14,9 @@ geri dönmemesi için şemalardaki alanları doğrudan kontrol eder.
 
 Bağımlılık: yalnızca pydantic (fastapi/sqlalchemy gerekmez).
 """
+import pytest
+from pydantic import ValidationError
+
 from backend import schemas
 
 
@@ -49,6 +52,57 @@ def test_kisi_olustur_ornek_veriyle_calisir():
     assert kisi.plaka_no == "34 ABC 123"  # büyük harf + baştaki/sondaki boşluk temizlenir
     assert kisi.giris_saati_baslangic == "08:00"
     assert kisi.izin_verilen_gunler == "0,1,2,3,4"
+
+
+# ------------------------------------------------------------------
+# plaka_normalize — stored-XSS/tutarsız-sanitizasyon regresyon testleri.
+#
+# 2026-09'da bulunan gerçek bir güvenlik açığı: KisiOlustur/KisiGuncelle/
+# KaraListesiOlustur/KisiPlakaOlustur şemalarındaki plaka_no alanları
+# yalnızca `.upper().strip()` yapıyordu — main.py'deki otomatik-kayıt yolunun
+# (POST /kayitlar/otomatik) uyguladığı `re.sub(r"[^A-Za-z0-9 ]", ...)`
+# karakter kısıtlaması burada YOKTU. Bu, kara listeye/kişiye
+# `plaka_no="x');alert(1)//"` gibi bir değer eklenip frontend'de bu değerin
+# bir HTML attribute'u içine JS string literali olarak gömüldüğü yerlerde
+# (onclick="...('...')") çalıştırılabilmesine yol açıyordu. plaka_normalize
+# artık TEK doğru kaynak olarak tüm şemalarda zorunlu kılınıyor.
+# ------------------------------------------------------------------
+
+@pytest.mark.parametrize("SemaSinifi, ekstra_alanlar", [
+    (schemas.KisiPlakaOlustur, {}),
+    (schemas.KaraListesiOlustur, {}),
+    (schemas.KisiOlustur, {"ad_soyad": "Test Kişi", "tip": "personel"}),
+])
+def test_plaka_no_zararli_karakterleri_kabul_etmez(SemaSinifi, ekstra_alanlar):
+    """Kara liste/kişi şemalarına HTML/JS özel karakterleri (', <, >, ;, ( vb.)
+    içeren bir 'plaka' verilirse, bu karakterler main.py'deki otomatik-kayıt
+    yoluyla AYNI kuralla (yalnızca harf/rakam/boşluk) atılmalı — sessizce
+    kabul edilip veritabanına öylece yazılmamalı."""
+    ornek = SemaSinifi(plaka_no="x');alert(1);//", **ekstra_alanlar)
+    assert ornek.plaka_no == "XALERT1"
+    assert "'" not in ornek.plaka_no
+    assert "(" not in ornek.plaka_no
+    assert ";" not in ornek.plaka_no
+
+
+def test_plaka_no_sadece_zararli_karakterlerden_olusuyorsa_reddedilir():
+    """Temizlik sonrası hiçbir geçerli karakter kalmıyorsa (ör. yalnızca
+    noktalama/özel karakterlerden oluşan bir 'plaka'), sessizce boş bir
+    plaka_no kaydetmek yerine doğrulama hatası verilmeli."""
+    with pytest.raises(ValidationError):
+        schemas.KaraListesiOlustur(plaka_no="';--")
+
+
+def test_plaka_no_main_py_ile_ayni_kurala_gore_normalize_edilir():
+    """schemas.py::plaka_normalize, main.py'nin otomatik-kayıt yolunda
+    kullandığı `re.sub(r"[^A-Za-z0-9 ]", "", ...)` ile BİREBİR aynı kuralı
+    uygulamalı — iki farklı giriş yolu (API'den elle ekleme vs. kameradan
+    otomatik kayıt) aynı plakayı farklı normalize edip veritabanında iki
+    farklı temsil olarak bitmemeli."""
+    import re
+    ham = "34 pep-347!"
+    beklenen = re.sub(r"[^A-Za-z0-9 ]", "", ham).strip().upper()
+    assert schemas.plaka_normalize(ham) == beklenen == "34 PEP347"
 
 
 def test_schemas_dosyasinda_tekrarlanan_sinif_tanimi_yok():

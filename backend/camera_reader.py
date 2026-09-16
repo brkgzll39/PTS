@@ -49,6 +49,7 @@ import threading
 import logging
 from collections import Counter
 from typing import Optional
+from urllib.parse import urlsplit, urlunsplit
 
 try:
     from backend.anpr_engine import ANPREngine  # proje kökünden çalıştırılınca
@@ -105,6 +106,31 @@ def _paylasilan_motoru_al() -> "ANPREngine":
 logger = logging.getLogger("pts.camera")
 
 PLAKA_REGEX = re.compile(r'^(\d{2})([A-PR-VYZ]{1,3})(\d{2,4})$')
+
+
+def _rtsp_url_maskele(url: str) -> str:
+    """Loglanacak bir video kaynağı adresindeki (varsa) RTSP kullanıcı adı/
+    parolasını maskeler — bkz. backend/main.py::_kamera_guvenli_gorunum ile
+    AYNI amaç (API üzerinden parolanın istemciye gitmesini engellemek), ama
+    burada log dosyasına (loglar/pts.log, /sistem/loglar uç noktasıyla
+    servis edilir) yazılmadan ÖNCE, kaynağında uygulanır.
+
+    GÜVENLİK GEÇMİŞİ: `baslat()` içindeki log satırı `self.video_kaynagi`'yi
+    (genelde `rtsp://kullanici:sifre@ip:554/...` biçiminde) OLDUĞU GİBİ
+    logluyordu — her pipeline başlangıcında/watchdog yeniden başlatmasında,
+    yani sık sık. main.py'deki parola maskeleme özeni bu tek satırdan tamamen
+    boşa çıkıyordu."""
+    try:
+        parcalar = urlsplit(url)
+    except ValueError:
+        return url
+    if not (parcalar.username or parcalar.password):
+        return url
+    host = parcalar.hostname or ""
+    if parcalar.port:
+        host = f"{host}:{parcalar.port}"
+    return urlunsplit((parcalar.scheme, f"{parcalar.username or 'kamera'}:****@{host}",
+                        parcalar.path, parcalar.query, parcalar.fragment))
 
 # Plaka overlay stilleri
 _OVERLAY_RENK = (0, 220, 80)       # yeşil kutu / metin
@@ -376,7 +402,7 @@ class KameraPipeline:
         self._baslangic_zamani = time.monotonic()
         self._dongu_thread = threading.Thread(target=self._dongu, daemon=True, name=f"pts-pipeline-{self.kamera_id}")
         self._dongu_thread.start()
-        logger.info("Kamera pipeline başlatıldı: %s (%s)", self.kamera_id, self.video_kaynagi)
+        logger.info("Kamera pipeline başlatıldı: %s (%s)", self.kamera_id, _rtsp_url_maskele(self.video_kaynagi))
 
     def durdur(self) -> None:
         self.calisiyor = False

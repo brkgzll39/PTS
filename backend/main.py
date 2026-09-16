@@ -244,9 +244,36 @@ def _kamera_ariza_alarmi_olustur(kamera_ad: str, kamera_id: str, mesaj: str) -> 
 
 async def _kamera_bekci_dongu() -> None:
     """Sonsuz döngü: aktif olması gereken her kamera için pipeline'ın gerçekten
-    çalıştığını (thread canlı) ve görüntünün taze olduğunu kontrol eder."""
+    çalıştığını (thread canlı) ve görüntünün taze olduğunu kontrol eder.
+
+    LİSANS UYGULAMASI: Önceden lisans yalnızca YENİ bir kamera eklenirken
+    (`POST /kameralar`) kontrol ediliyordu — uygulama açılışında
+    (`_kameralari_otomatik_baslat`) `cameras.json`'daki mevcut kameralar
+    lisans durumuna HİÇ bakılmadan başlatılıyordu ve bir lisans süresi
+    dolduğunda/silindiğinde de HİÇBİR yerde tekrar kontrol edilmiyordu — yani
+    "tam lisanslı" bir üründe, süresi dolmuş bir lisansla sistem sınırsız
+    çalışmaya devam edebiliyordu. Artık bu döngü her turda lisansı da
+    kontrol eder: geçersizse (süre doldu, imza artık geçerli secret ile
+    uyuşmuyor, cihaz değişti vb.) TÜM kamera pipeline'ları durdurulur ve bir
+    kez (saatte bir tekrarlanan) arıza alarmı oluşturulur; lisans yeniden
+    aktive edilene kadar normal sağlık kontrolü/restart mantığı devre dışı
+    kalır (aksi halde bu döngü, az önce lisans yüzünden durdurduğu
+    pipeline'ı "çökmüş" sanıp hemen yeniden başlatmaya çalışırdı)."""
     while True:
         try:
+            if not _lisans_aktif_mi():
+                if any(p.calisiyor for p in _aktif_pipelineler.values()):
+                    logger.error("[bekci] Lisans aktif değil/süresi dolmuş — tüm kamera pipeline'ları durduruluyor")
+                    for kamera in _kameralari_oku():
+                        _pipeline_durdur(kamera["id"])
+                    _kamera_ariza_alarmi_olustur(
+                        "LİSANS", "lisans_durumu",
+                        "LİSANS SÜRESİ DOLDU/GEÇERSİZ: tüm kamera pipeline'ları durduruldu. "
+                        "Devam etmek için Sistem > Lisans ekranından geçerli bir anahtar girin.",
+                    )
+                await asyncio.sleep(KAMERA_BEKCI_ARALIK_SN)
+                continue
+
             for kamera in _kameralari_oku():
                 if not kamera.get("aktif", True):
                     continue
@@ -418,7 +445,10 @@ class _OnbellegiHicDogrulamadanKullanma(StaticFiles):
 
 
 app.mount("/static", _OnbellegiHicDogrulamadanKullanma(directory=FRONTEND_KLASORU), name="static")
-app.mount("/goruntuler", StaticFiles(directory=GORUNTU_KLASORU), name="goruntuler")
+# DİKKAT: /goruntuler artık BURADA bir StaticFiles mount'u DEĞİL — araç/sürücü
+# görselleri kişisel veridir (KVKK), kimliksiz servis edilmemeli. Auth-gated
+# servis, /auth/me'nin hemen altında `gorsel_getir` uç noktası olarak
+# tanımlanıyor (bkz. o fonksiyonun docstring'i).
 
 
 @app.on_event("startup")
@@ -612,6 +642,32 @@ def mevcut_kullanici(kullanici: models.Kullanici = Depends(_giris_gerekli)):
     return kullanici
 
 
+@app.get("/goruntuler/{dosya_adi}")
+def gorsel_getir(dosya_adi: str, _: models.Kullanici = Depends(_giris_gerekli)):
+    """Araç/sürücü görsellerini (plaka + fotoğraf — KVKK kapsamında kişisel
+    veri) YALNIZCA giriş yapmış kullanıcılara servis eder.
+
+    GÜVENLİK GEÇMİŞİ: bu yol önceden `app.mount("/goruntuler", StaticFiles(...))`
+    ile TAMAMEN kimliksiz servis ediliyordu; dosya adı kalıbı tahmin
+    edilebilir olduğu için (`PLAKA_unixzaman.jpg`, bkz. otomatik-kayıt uç
+    noktası) ağdaki (veya ileride bir ters vekil arkasında internete açılan)
+    HERKES, hiç giriş yapmadan araç+sürücü fotoğraflarını indirebilir ya da
+    dosya adlarını deneyerek numaralandırabilirdi — bu, aynı dosyada RTSP
+    parolasını maskeleme veya MJPEG akışını bearer-token'a bağlama gibi
+    gösterilen özenle doğrudan çelişiyordu. `<img>` etiketi Authorization
+    header taşıyamadığı için frontend bu uca artık `fetch()` + Bearer token
+    ile erişip yanıtı bir blob URL'ine çeviriyor (bkz. app.js).
+    """
+    # Yol geçişini (path traversal) engelle: yalnızca DÜZ dosya adı kabul
+    # edilir; herhangi bir dizin ayırıcı veya ".." reddedilir.
+    if "/" in dosya_adi or "\\" in dosya_adi or ".." in dosya_adi:
+        raise HTTPException(400, "Geçersiz dosya adı")
+    tam_yol = os.path.join(GORUNTU_KLASORU, dosya_adi)
+    if not os.path.isfile(tam_yol):
+        raise HTTPException(404, "Görsel bulunamadı")
+    return FileResponse(tam_yol, media_type="image/jpeg")
+
+
 @app.get("/")
 def anasayfa():
     return FileResponse(
@@ -658,16 +714,29 @@ def _lisans_durumunu_oku() -> dict:
 
 
 def _lisans_aktif_mi() -> bool:
-    durum = _lisans_durumunu_oku()
-    if not durum.get("aktif"):
+    """Lisansın GERÇEKTEN aktif olup olmadığını, diskteki bayrağa güvenmeden,
+    HER ÇAĞRIDA imzayı yeniden doğrulayarak belirler.
+
+    ÖNCEKİ DAVRANIŞ: bu fonksiyon yalnızca `license.json`'daki statik "aktif"
+    booleanına ve ayrı bir "bitis_tarihi" KOPYASINA bakıyordu. Bu iki alan
+    yalnızca aktivasyon ANINDA (`lisans_aktive_et`), imzalı anahtarın
+    `lisans_modulu.coz()` ile doğrulanmasının bir SONUCU olarak dosyaya
+    yazılıyordu — ama sonraki hiçbir kontrolde imza TEKRAR doğrulanmıyordu.
+    Yani `license.json` dosyasına (ör. bir metin editörüyle) doğrudan
+    `"aktif": true` ve uzak bir `"bitis_tarihi"` yazan biri, GEÇERLİ imzalı
+    bir anahtara hiç ihtiyaç duymadan lisansı süresiz aktif gösterebiliyordu
+    — "tam lisanslı" bir ürün için kabul edilemez bir açıktı. Artık HER
+    kontrolde saklı `anahtar` alanının kendisi yeniden doğrulanıyor (imza +
+    süre + cihaz kilidi); `"aktif"`/`"bitis_tarihi"` alanları artık yalnızca
+    bilgi/gösterim amaçlıdır, yetkilendirme kararı bunlara dayanmaz."""
+    anahtar = _lisans_durumunu_oku().get("anahtar")
+    if not anahtar:
         return False
-    bitis = durum.get("bitis_tarihi")
-    if not bitis:
-        return True
     try:
-        return datetime.fromisoformat(bitis).date() >= datetime.now().date()
-    except ValueError:
+        lisans_modulu.coz(anahtar, beklenen_cihaz_kodu=_cihaz_kodu())
+    except lisans_modulu.LisansGecersiz:
         return False
+    return True
 
 
 def _lisans_anahtarini_coz(anahtar: str) -> dict:
@@ -1892,15 +1961,39 @@ async def sistem_sagligi(db: Session = Depends(get_db)):
     }
 
 
+_RTSP_KIMLIK_MASKELE_DESENI = re.compile(r"(rtsp://)([^/@\s:]+):([^/@\s]+)@")
+
+
+def _log_satirini_maskele(satir: str) -> str:
+    """Log satırındaki `rtsp://kullanici:parola@...` biçimindeki gömülü RTSP
+    kimlik bilgilerini maskeler.
+
+    GEÇMİŞ AÇIK: camera_reader.py, pipeline başlarken kamera bağlantı adresini
+    (kullanıcı adı+parola dahil) doğrudan loglayıp `loglar/pts.log`'a
+    yazıyordu; bu uç nokta ise o dosyayı OLDUĞU GİBİ döndürüyordu. Aynı
+    dosyadaki `_kamera_guvenli_gorunum()` ile bilinçli yapılan parola
+    maskeleme, bu iki delikten (ham log yazımı + maskesiz log servisi)
+    tamamen boşa çıkıyordu. Kalıcı çözüm camera_reader.py'de artık kaynağında
+    maskeleniyor olsa da, DİSKTE ZATEN duran eski log satırları hâlâ düz metin
+    parola içerebilir — bu yüzden servis ederken de (savunma derinliği) ikinci
+    kez maskeleniyor.
+    """
+    return _RTSP_KIMLIK_MASKELE_DESENI.sub(r"\1\2:****@", satir)
+
+
 @app.get("/sistem/loglar")
-def son_loglari_getir(satir: int = 200, _: models.Kullanici = Depends(_giris_gerekli)):
+def son_loglari_getir(satir: int = 200, kullanici: models.Kullanici = Depends(_giris_gerekli)):
+    # GÜVENLİK: log satırları kamera bağlantı adresleri (RTSP kimlik bilgileri
+    # dahil, bkz. _log_satirini_maskele) ve dahili hata detayları içerebilir —
+    # salt-okunur "izleyici" rolüne açık bırakılmamalı.
+    _rol_dogrula(kullanici, ROL_OPERATOR, ROL_YONETICI)
     log_dosyasi = os.path.join(LOG_KLASORU, "pts.log")
     if not os.path.exists(log_dosyasi):
         return {"satirlar": []}
     try:
         with open(log_dosyasi, "r", encoding="utf-8", errors="replace") as f:
             tum = f.readlines()
-        return {"satirlar": [s.rstrip() for s in tum[-min(satir, 500):]]}
+        return {"satirlar": [_log_satirini_maskele(s.rstrip()) for s in tum[-min(satir, 500):]]}
     except OSError:
         return {"satirlar": []}
 

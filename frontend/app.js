@@ -34,11 +34,74 @@ function sekmeAc(target) {
 
 document.querySelectorAll("[data-target]").forEach(link => link.addEventListener("click", () => sekmeAc(link.dataset.target)));
 
+// GÜVENLİK: plaka numarası gibi kullanıcı/kamera kaynaklı metinleri asla
+// `onclick="fonksiyon('${deger}')"` biçiminde bir HTML attribute'u içine JS
+// string literali olarak GÖMME — tarayıcı attribute değerini JS'e vermeden
+// ÖNCE HTML-decode ettiği için escapeHtml()'in eklediği `&#39;` gibi kaçışlar
+// bu noktada işe yaramaz (decode edilip tekrar tek tırnak haline döner) ve
+// değer içinde tek tırnak varsa JS string'inden çıkıp keyfi kod çalıştırabilir
+// (stored XSS). Backend artık plaka_no'yu harf/rakam/boşluk dışındaki tüm
+// karakterlerden arındırıyor (bkz. schemas.py::plaka_normalize) ama bu,
+// SADECE bu alan için geçerli tek bir savunma katmanı; aynı hataya başka bir
+// alanda tekrar düşülmesin diye burada da kök neden kapatılıyor: değer asla
+// bir attribute'un İÇİNE JS kodu olarak gömülmüyor, yalnızca bir `data-*`
+// attribute'unda düz veri olarak taşınıyor ve olay delegasyonuyla okunuyor.
+document.addEventListener("click", (e) => {
+  const analizEl = e.target.closest("[data-plaka-analiz]");
+  if (analizEl) {
+    plakaAnalizAc(analizEl.dataset.plakaAnaliz);
+    return;
+  }
+  const karaEkleEl = e.target.closest("[data-kara-ekle]");
+  if (karaEkleEl) {
+    karaListeyeEkleModal(karaEkleEl.dataset.karaEkle);
+  }
+});
+
 // ---------------------- YARDIMCI FONKSİYONLAR ----------------------
 
 function gorselAdiAl(yol) {
   // Windows ("\") ve Linux/Mac ("/") yol ayırıcılarının ikisini de destekler
   return yol.split(/[\\/]/).pop();
+}
+
+// GÜVENLİK: /goruntuler artık kimlik doğrulaması gerektiriyor (araç/sürücü
+// görselleri KVKK kapsamında kişisel veridir — bkz. backend/main.py::gorsel_getir).
+// `<img src="...">` Authorization header TAŞIYAMADIĞI için (canlı kamera
+// akışında ve DB yedek indirmede olduğu gibi), görseller token'lı bir
+// fetch() ile alınıp blob URL'ine çevrilerek gösteriliyor. Bir img elemanına
+// önceden atanmış blob URL'i varsa, bellek sızıntısı olmasın diye önce
+// serbest bırakılır (revokeObjectURL).
+const _korumaliGorselBlobURLleri = new WeakMap();
+
+async function korumaliGorselAta(imgEl, goruntuYolu) {
+  if (!imgEl || !goruntuYolu) return;
+  const token = sessionStorage.getItem("pts_token");
+  if (!token) return;
+  try {
+    const yanit = await fetch(`/goruntuler/${encodeURIComponent(gorselAdiAl(goruntuYolu))}`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!yanit.ok) return;
+    const blob = await yanit.blob();
+    const eskiUrl = _korumaliGorselBlobURLleri.get(imgEl);
+    if (eskiUrl) URL.revokeObjectURL(eskiUrl);
+    const url = URL.createObjectURL(blob);
+    _korumaliGorselBlobURLleri.set(imgEl, url);
+    imgEl.src = url;
+  } catch (e) {
+    console.error("Görsel yüklenemedi:", e);
+  }
+}
+
+// Bir tabloyu innerHTML ile doldurduktan HEMEN SONRA çağrılır: içindeki tüm
+// `data-goruntu-yolu` taşıyan (henüz src'siz) <img> etiketlerine korumalı
+// görseli asenkron olarak atar.
+function korumaliGorselleriYukle(kapsayici) {
+  kapsayici.querySelectorAll("img[data-goruntu-yolu]").forEach(img => {
+    korumaliGorselAta(img, img.dataset.goruntuYolu);
+    img.removeAttribute("data-goruntu-yolu");
+  });
 }
 
 function escapeHtml(deger) {
@@ -175,7 +238,7 @@ async function panelYenile() {
     const tbody = document.getElementById("sonKayitlarTablo");
     tbody.innerHTML = kayitlar.map(k => `
       <tr>
-        <td>${k.goruntu_yolu ? `<img class="thumb" src="/goruntuler/${gorselAdiAl(k.goruntu_yolu)}" onclick="window.open(this.src)">` : '<span class="text-muted small">Görsel yok</span>'}</td>
+        <td>${k.goruntu_yolu ? `<img class="thumb" data-goruntu-yolu="${escapeHtml(k.goruntu_yolu)}" onclick="window.open(this.src)">` : '<span class="text-muted small">Görsel yok</span>'}</td>
         <td class="fw-bold"><button class="plate-link" onclick="olayDetayAc(${k.id})">${escapeHtml(k.plaka_no)}</button></td>
         <td>${tarihFormatla(k.tarih_saat)}</td>
         <td>${k.yon === "giris" ? "Giriş" : "Çıkış"}</td>
@@ -183,6 +246,7 @@ async function panelYenile() {
         <td>${tipRozeti(k.kisi_tip_anlik)}</td>
       </tr>
     `).join("") || `<tr><td colspan="6" class="text-center text-muted py-3">Henüz kayıt yok</td></tr>`;
+    korumaliGorselleriYukle(tbody);
   } catch (e) {
     console.error(e);
   }
@@ -208,7 +272,7 @@ async function olayDetayAc(id) {
   }
   const gorsel = document.getElementById("olayModalGorsel");
   const gorselYok = document.getElementById("olayModalGorselYok");
-  if (kayit.goruntu_yolu) { gorsel.src = `/goruntuler/${gorselAdiAl(kayit.goruntu_yolu)}`; gorsel.classList.remove("d-none"); gorselYok.classList.add("d-none"); } else { gorsel.removeAttribute("src"); gorsel.classList.add("d-none"); gorselYok.classList.remove("d-none"); }
+  if (kayit.goruntu_yolu) { korumaliGorselAta(gorsel, kayit.goruntu_yolu); gorsel.classList.remove("d-none"); gorselYok.classList.add("d-none"); } else { gorsel.removeAttribute("src"); gorsel.classList.add("d-none"); gorselYok.classList.remove("d-none"); }
   document.getElementById("olayModalTur").textContent = kayit.yetki_durumu === "yetkili" ? "TANIMLI ARAÇ" : kayit.yetki_durumu === "suresi_dolmus" ? "ZİYARETÇİ GİRİŞİ" : "YETKİSİZ ARAÇ";
   document.getElementById("olayModalPlaka").textContent = kayit.plaka_no;
   document.getElementById("olayModalTarih").textContent = new Date(kayit.tarih_saat).toLocaleDateString("tr-TR");
@@ -519,9 +583,9 @@ async function kayitlariYukle(sifirla = true) {
   const tbody = document.getElementById("kayitlarTablo");
   tbody.innerHTML = kayitlar.map(k => `
     <tr>
-      <td>${k.goruntu_yolu ? `<img class="thumb" src="/goruntuler/${gorselAdiAl(k.goruntu_yolu)}" onclick="window.open(this.src)">` : '<span class="text-muted small">-</span>'}</td>
+      <td>${k.goruntu_yolu ? `<img class="thumb" data-goruntu-yolu="${escapeHtml(k.goruntu_yolu)}" onclick="window.open(this.src)">` : '<span class="text-muted small">-</span>'}</td>
       <td>${k.id}</td>
-      <td class="fw-bold"><button class="plate-link" onclick="plakaAnalizAc('${escapeHtml(k.plaka_no)}')">${escapeHtml(k.plaka_no)}</button></td>
+      <td class="fw-bold"><button class="plate-link" data-plaka-analiz="${escapeHtml(k.plaka_no)}">${escapeHtml(k.plaka_no)}</button></td>
       <td>${tarihFormatla(k.tarih_saat)}</td>
       <td>${escapeHtml(k.kamera_id)}</td>
       <td>${k.yon === "giris" ? "Giriş" : "Çıkış"}</td>
@@ -531,6 +595,7 @@ async function kayitlariYukle(sifirla = true) {
       <td><button class="btn btn-sm btn-outline-danger" onclick="kayitPdfIndir(${k.id})"><i class="bi bi-file-earmark-pdf"></i></button></td>
     </tr>
   `).join("") || `<tr><td colspan="10" class="text-center text-muted py-3">Kayıt bulunamadı</td></tr>`;
+  korumaliGorselleriYukle(tbody);
 
   // Sayfalama kontrolleri
   const sayfaEl = document.getElementById("sayfalama");
@@ -958,7 +1023,7 @@ async function plakaAnalizAc(plaka) {
       ${v.kara_sebep ? `<div class="alert alert-danger py-2 mb-3">Engel sebebi: ${escapeHtml(v.kara_sebep)}</div>` : ""}
       <table class="table table-sm"><thead class="table-light"><tr><th>Tarih/Saat</th><th>Yön</th><th>Kamera</th><th>Durum</th></tr></thead><tbody>${satirlar || "<tr><td colspan='4' class='text-center text-muted'>Kayıt yok</td></tr>"}</tbody></table>
       <div class="d-flex gap-2 mt-2">
-        ${!v.kara_listesinde ? `<button class="btn btn-sm btn-danger" onclick="karaListeyeEkleModal('${escapeHtml(v.plaka_no)}')">Kara Listeye Ekle</button>` : ""}
+        ${!v.kara_listesinde ? `<button class="btn btn-sm btn-danger" data-kara-ekle="${escapeHtml(v.plaka_no)}">Kara Listeye Ekle</button>` : ""}
       </div>`;
   } catch (e) {
     document.getElementById("analizIcerik").innerHTML = `<div class="alert alert-danger">${escapeHtml(e.message)}</div>`;
@@ -975,7 +1040,7 @@ async function karaListesiYukle() {
     const el = document.getElementById("karaListeTablo");
     if (!el) return;
     el.innerHTML = liste.map(k => `<tr>
-      <td class="fw-bold"><button class="plate-link" onclick="plakaAnalizAc('${escapeHtml(k.plaka_no)}')">${escapeHtml(k.plaka_no)}</button></td>
+      <td class="fw-bold"><button class="plate-link" data-plaka-analiz="${escapeHtml(k.plaka_no)}">${escapeHtml(k.plaka_no)}</button></td>
       <td>${escapeHtml(k.sebep) || "<span class='text-muted'>-</span>"}</td>
       <td>${escapeHtml(k.ekleyen) || "-"}</td>
       <td class="small text-muted">${tarihFormatla(k.olusturma_tarihi)}</td>

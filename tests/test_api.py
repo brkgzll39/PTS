@@ -404,6 +404,56 @@ def test_izleyici_okuma_uc_noktalarina_erisebilir(client, izleyici_header):
         assert r.status_code == 200, f"GET {yol}: izleyici erişemedi ({r.status_code})"
 
 
+def test_sistem_loglarina_izleyici_erisemez_operator_erisebilir(client, izleyici_header, operator_header):
+    """Güvenlik regresyonu: /sistem/loglar kamera bağlantı adresleri (RTSP
+    kimlik bilgileri dahil, maskelenmiş olsa da) ve dahili hata detayları
+    içerir — salt-okunur 'izleyici' rolüne açık kalmamalı. En az operatör
+    olmalı."""
+    r = client.get("/sistem/loglar", headers=izleyici_header)
+    assert r.status_code == 403, f"izleyici loglara erişebildi ({r.status_code})"
+    r2 = client.get("/sistem/loglar", headers=operator_header)
+    assert r2.status_code == 200, f"operatör loglara erişemedi ({r2.text})"
+
+
+# ------------------------------------------------------------------
+# /goruntuler — araç/sürücü görselleri (KVKK kapsamında kişisel veri)
+# ------------------------------------------------------------------
+# Güvenlik regresyonu: bu yol önceden kimliksiz bir StaticFiles mount'uydu.
+# Artık giriş yapmamış hiç kimse (rol farketmeksizin) bu görsellere
+# erişememeli, ve dosya adı yalnızca DÜZ bir ad olmalı (yol geçişi/"../"
+# denemeleri reddedilmeli).
+
+def test_goruntu_girissiz_erisilemez(client):
+    r = client.get("/goruntuler/herhangi_bir_dosya.jpg")
+    assert r.status_code in (401, 403), f"Girişsiz istek engellenmedi ({r.status_code})"
+
+
+def test_goruntu_yol_gecisi_denemesi_reddedilir(client, izleyici_header):
+    """NOT: Starlette'in varsayılan `{dosya_adi}` yol dönüştürücüsü zaten TEK
+    bir segment içinde eşleşir (ham bir '/' içeren istekler bu uç noktaya HİÇ
+    ulaşmaz, 404 döner) — bu yüzden burada özellikle TEK segment içinde
+    kalan ama yine de ".." içeren bir değeri test ediyoruz: gorsel_getir'in
+    kendi ".." kontrolünün (yalnızca yönlendirme katmanına güvenmeden)
+    gerçekten çalıştığını doğrudan doğrular."""
+    r = client.get("/goruntuler/..gizli_dosya.jpg", headers=izleyici_header)
+    assert r.status_code == 400, f"'..' içeren dosya adı reddedilmedi ({r.status_code})"
+
+
+def test_goruntu_girisli_kullanici_gercek_dosyayi_alabilir(client, izleyici_header, tmp_path_factory):
+    from backend.main import GORUNTU_KLASORU
+
+    dosya_adi = "pytest_gecici_test_gorseli.jpg"
+    tam_yol = os.path.join(GORUNTU_KLASORU, dosya_adi)
+    with open(tam_yol, "wb") as f:
+        f.write(b"\xff\xd8\xff\xe0sahte-jpeg-icerigi")
+    try:
+        r = client.get(f"/goruntuler/{dosya_adi}", headers=izleyici_header)
+        assert r.status_code == 200, r.text
+        assert r.content.startswith(b"\xff\xd8\xff")
+    finally:
+        os.remove(tam_yol)
+
+
 def test_operator_gunluk_islemleri_yapabilir_ama_yonetim_islemlerini_yapamaz(client, operator_header):
     """Operatör günlük operasyonu (kişi/kamera/kara liste/bariyer açma) yapabilmeli,
     ama yönetici'ye özel işlemleri (kullanıcı yönetimi, sistem ayarları, webhook

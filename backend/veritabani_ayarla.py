@@ -22,7 +22,17 @@ def main() -> None:
         f"DATABASE={args.veritabani}",
         f"UID={args.kullanici}",
         f"PWD={parola}",
-        "Encrypt=no",
+        # GÜVENLİK: önceden burada "Encrypt=no" vardı — backend ile SQL Server
+        # farklı makinelerdeyse (çok kameralı/çok kullanıcılı kurulumlarda
+        # README'nin önerdiği tipik durum) kullanıcı adı/parola VE plaka/kişi
+        # verisi ağda düz metin taşınıyordu. "Encrypt=yes" + kendinden imzalı
+        # sertifikalarla (tipik SQL Server Express kurulumu) da bağlantı
+        # kurulabilsin diye "TrustServerCertificate=yes" korunuyor. NOT: bu
+        # script yalnızca YENİDEN çalıştırıldığında etkilidir — zaten
+        # yapılandırılmış bir kurulumu geriye dönük DEĞİŞTİRMEZ (bkz. README
+        # "Üretim Ortamı Notları" — mevcut kurulumlar database_config.json'ı
+        # elle güncelleyebilir ya da bu betiği tekrar çalıştırabilir).
+        "Encrypt=yes",
         "TrustServerCertificate=yes",
     ])
     url = f"mssql+pyodbc:///?odbc_connect={quote_plus(connection_string)}"
