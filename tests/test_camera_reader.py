@@ -259,3 +259,53 @@ def test_dusuk_guvenli_okuma_pipeline_isleyisinde_oya_hic_girmez(sahte_engine):
     gonderilenler = pipeline._kareyi_isle(kare, oturumu_hemen_kapat=True)
     assert gonderilenler == [], "0.5 güvenli okuma, 0.9 eşiğinin altında olmasına rağmen gönderildi"
     assert pipeline._oturum_takipcisi.acik_oturum_sayisi() == 0
+
+
+class _BosSonucDondurenEngine:
+    """Dedektörün HİÇBİR aday bulamadığı durumu simüle eder (boş liste)."""
+
+    def __init__(self, *a, **kw):
+        pass
+
+    def tahmin_et(self, frame):
+        return []
+
+
+def test_bos_tespitte_ham_kare_teshis_dizinine_kaydedilir(monkeypatch, tmp_path, sahte_engine):
+    """PTS_HAM_KARE_KAYIT_DIZINI ayarlıysa, dedektörün hiçbir aday bulamadığı
+    (boş tespit) kareler bu dizine kaydedilmeli — sahadaki 'araç net görünüyor
+    ama dedektör hiçbir şey bulamıyor' vakalarını gözle doğrulayabilmek için."""
+    import numpy as np
+
+    dizin = tmp_path / "ham_kareler"
+    monkeypatch.setenv("PTS_HAM_KARE_KAYIT_DIZINI", str(dizin))
+
+    pipeline = camera_reader.KameraPipeline(
+        video_kaynagi="kullanilmiyor.mp4", kamera_id="TEST-HAM-KARE",
+    )
+    pipeline.motor = _BosSonucDondurenEngine()
+
+    kare = np.full((100, 100, 3), 128, dtype=np.uint8)
+    pipeline._kareyi_isle(kare, oturumu_hemen_kapat=True)
+
+    kaydedilenler = list(dizin.glob("TEST-HAM-KARE_*.jpg"))
+    assert len(kaydedilenler) == 1, "Boş tespitte tam olarak bir ham teşhis karesi kaydedilmeliydi"
+
+
+def test_bos_tespit_disinda_ham_kare_kaydedilmez(monkeypatch, tmp_path, sahte_engine):
+    """Dedektör bir şey BULDUĞUNDA (boş tespit değilken) ham kare kaydı
+    tetiklenmemeli — bu özellik yalnızca 'sessiz kayıp' teşhisi içindir."""
+    import numpy as np
+
+    dizin = tmp_path / "ham_kareler"
+    monkeypatch.setenv("PTS_HAM_KARE_KAYIT_DIZINI", str(dizin))
+
+    pipeline = camera_reader.KameraPipeline(
+        video_kaynagi="kullanilmiyor.mp4", kamera_id="TEST-HAM-KARE-2",
+    )
+    pipeline.motor = _SahteEngine(guven=0.95)
+
+    kare = np.full((100, 100, 3), 128, dtype=np.uint8)
+    pipeline._kareyi_isle(kare, oturumu_hemen_kapat=True)
+
+    assert not dizin.exists() or list(dizin.glob("*.jpg")) == []

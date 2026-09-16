@@ -143,6 +143,25 @@ VARSAYILAN_MIN_GUVEN_SKORU = 0.4  # bu eşiğin altındaki OCR sonuçları oylam
 # bkz. anpr_engine.py::PTS_ANPR_DETECTOR_ESIGI notu.
 BOS_TESPIT_LOG_ARALIK_SN = 120
 
+# ------------------------------------------------------------------
+# HAM KARE TEŞHİS KAYDI (opsiyonel, varsayılan KAPALI)
+# ------------------------------------------------------------------
+# PTS_ANPR_DETECTOR_ESIGI'yi düşürmek sorunu ÇÖZMEZSE (yani dedektör eşiği
+# değil de başka bir şey — plaka bölgesi kareye hiç girmiyor, kamera görüntü
+# işleme ayarları görüntüyü aşırı bozuyor, çözünürlük çok düşük vb. — asıl
+# neden ise), bunu KÖR bir şekilde eşik deneyerek değil, dedektöre GERÇEKTEN
+# giden ham kareyi gözle görerek anlamak gerekir. PTS_HAM_KARE_KAYIT_DIZINI
+# ortam değişkeni bir dizin yoluna ayarlanırsa, dedektörün hiçbir aday
+# bulamadığı kareler (yani "boş tespit" logunu tetikleyen TAM OLARAK aynı
+# kareler) o dizine periyodik olarak (kamera başına en fazla
+# HAM_KARE_KAYIT_ARALIK_SN'de bir) JPEG olarak kaydedilir. Disk şişmesin diye
+# hem kayıt sıklığı sınırlıdır hem de kamera başına en fazla
+# HAM_KARE_MAKS_DOSYA_KAMERA_BASINA dosya tutulur (eskiler otomatik silinir).
+# Varsayılan olarak KAPALIDIR; yalnızca teşhis sırasında açılması, sorun
+# netleşince kapatılması önerilir.
+HAM_KARE_KAYIT_ARALIK_SN = 5.0
+HAM_KARE_MAKS_DOSYA_KAMERA_BASINA = 300
+
 
 class PlakaOyBirikimi:
     """Tek bir 'geçiş oturumu' (aynı aracın kamera görüş alanında kaldığı süre)
@@ -284,6 +303,8 @@ class KameraPipeline:
         # bir, art arda süregelen boş sonuç durumunda özet bir satır loglanır.
         self._son_bos_tespit_log_zamani: float = 0.0
         self._bos_tespit_sayaci_son_logdan_beri: int = 0
+        # HAM KARE TEŞHİS KAYDI (bkz. modül başındaki not) için son kayıt zamanı.
+        self._son_ham_kare_kayit_zamani: float = 0.0
         # Çok kareli oy birleştirme: bir aracın kamerada kaldığı birden çok
         # karenin okumaları burada toplanıp oydaşmayla kesinleştirilir.
         self._oturum_takipcisi = PlakaOturumTakipcisi()
@@ -436,6 +457,10 @@ class KameraPipeline:
                 self._son_bos_tespit_log_zamani = _simdi_mono
                 self._bos_tespit_sayaci_son_logdan_beri = 0
 
+            ham_kare_dizini = os.environ.get("PTS_HAM_KARE_KAYIT_DIZINI", "").strip()
+            if ham_kare_dizini:
+                self._ham_kareyi_kaydet_gerekirse(frame, _simdi_mono, ham_kare_dizini)
+
         for sonuc in motor_sonuclari:
             plaka = plaka_dogrula(sonuc.plaka_no)
             if not plaka:
@@ -542,6 +567,38 @@ class KameraPipeline:
 
         self._plaka_hafizasini_buda()
         return gonderilenler
+
+    def _ham_kareyi_kaydet_gerekirse(self, frame, simdi_mono: float, dizin: str) -> None:
+        """PTS_HAM_KARE_KAYIT_DIZINI ayarlıysa, dedektörün hiçbir aday bulamadığı
+        (yani "boş tespit" logunu tetikleyen) ham kareyi bu dizine kaydeder —
+        bkz. modül başındaki "HAM KARE TEŞHİS KAYDI" notu."""
+        if simdi_mono - self._son_ham_kare_kayit_zamani < HAM_KARE_KAYIT_ARALIK_SN:
+            return
+        self._son_ham_kare_kayit_zamani = simdi_mono
+        try:
+            os.makedirs(dizin, exist_ok=True)
+            guvenli_ad = re.sub(r"[^A-Za-z0-9_-]", "_", self.kamera_id)
+            dosya_adi = f"{guvenli_ad}_{int(time.time())}.jpg"
+            cv2.imwrite(os.path.join(dizin, dosya_adi), frame, [cv2.IMWRITE_JPEG_QUALITY, 92])
+            self._ham_kare_dosyalarini_buda(dizin, guvenli_ad)
+        except Exception as exc:
+            logger.warning("[%s] Ham teşhis karesi kaydedilemedi: %s", self.kamera_id, exc)
+
+    @staticmethod
+    def _ham_kare_dosyalarini_buda(dizin: str, guvenli_ad: str) -> None:
+        """Bu kamera için diskte birikmiş ham teşhis karesi sayısını sınırlar
+        (yalnızca en yeni HAM_KARE_MAKS_DOSYA_KAMERA_BASINA dosya tutulur)."""
+        try:
+            onek = guvenli_ad + "_"
+            dosyalar = sorted(f for f in os.listdir(dizin) if f.startswith(onek))
+            fazla = len(dosyalar) - HAM_KARE_MAKS_DOSYA_KAMERA_BASINA
+            for eski in dosyalar[:max(fazla, 0)]:
+                try:
+                    os.remove(os.path.join(dizin, eski))
+                except OSError:
+                    pass
+        except OSError:
+            pass
 
     def _plaka_hafizasini_buda(self) -> None:
         """son_plaka_zamani sözlüğü süresiz büyümesin diye eski girdileri temizler."""

@@ -474,6 +474,30 @@ Bunu doğrulamak/ayarlamak için iki araç eklendi:
    doğrulanmış kanıtıdır — bu durumda `PTS_ANPR_DETECTOR_ESIGI`'yi düşürmek
    doğru adımdır.
 
+**2026-09-16 sahadan doğrulama:** Bu iki araç sahada devreye alındıktan hemen
+sonra, çıkış kamerasının önünde ~30 saniye bekleyen ve plakası ekran
+görüntüsünde net okunan bir araç ("34 MSJ 048") yine kayda düşmedi. Sistem/Log
+ekranı, o aracın kamerada bulunduğu TÜM 2 dakikalık pencerede ("Son 120 sn
+içinde dedektör 384 karede hiçbir plaka adayı bulamadı") dedektörün gerçekten
+SIFIR aday bulduğunu doğruladı — yani sorun OCR'da/güven eşiğinde/API'de değil,
+tam olarak yukarıda öngörülen dedektör aşamasında. Bu, "boş tespit" logunun
+kendisinin artık teşhis için yeterli olduğunu ve bir sonraki adımın
+`PTS_ANPR_DETECTOR_ESIGI` ile eşiği kademeli düşürüp denemek olduğunu
+gösteriyor.
+
+**Ham kare teşhis kaydı (eşik düşürmek yetmezse):** `PTS_ANPR_DETECTOR_ESIGI`
+düşürmek sorunu çözmezse, sorun eşikte değil başka bir yerde olabilir (plaka
+bölgesi kareye hiç girmiyor, çözünürlük çok düşük, kameranın kendi görüntü
+işleme ayarları görüntüyü aşırı bozuyor vb.). Bunu KÖR bir şekilde eşik
+deneyerek değil, dedektöre GERÇEKTEN giden ham kareyi gözle görerek anlamak
+için `PTS_HAM_KARE_KAYIT_DIZINI` ortam değişkenini bir dizin yoluna ayarlayın
+(örn. `PTS_HAM_KARE_KAYIT_DIZINI=C:\pts_ham_kareler`). Ayarlıysa, dedektörün
+hiçbir aday bulamadığı kareler (yani "boş tespit" logunu tetikleyen TAM OLARAK
+aynı kareler) o dizine kamera başına en fazla 5 saniyede bir JPEG olarak
+kaydedilir (disk şişmesin diye kamera başına en fazla 300 dosya tutulur,
+eskiler otomatik silinir). Varsayılan olarak KAPALIDIR; yalnızca teşhis
+sırasında açılması, sorun netleşince kapatılması önerilir.
+
 ## Kalıcı Test Altyapısı
 
 `tests/` klasöründe pytest tabanlı bir test paketi var:
