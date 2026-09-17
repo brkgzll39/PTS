@@ -112,3 +112,136 @@ def test_dedektor_modeli_bilgileri_tum_modeller_icin_boyut_ve_recall_icerir():
         assert "boyut" in bilgi and bilgi["boyut"] > 0
         assert "recall" in bilgi and 0 <= bilgi["recall"] <= 1
     assert anpr_engine.DEDEKTOR_MODELI_VARSAYILAN in anpr_engine.DEDEKTOR_MODELI_BILGILERI
+
+
+# ============================================================================
+# tahmin_et() -- KÖK NEDEN REGRESYON TESTLERİ (2026-09-17)
+# ============================================================================
+# Sahada aylarca süren "hiçbir model/eşik/kontrast/kare boyutu ile TEK bir
+# plaka bile tespit edilemiyor" şikayetinin gerçek nedeni burada bulundu:
+# fast_alpr.ALPR.predict() İÇ İÇE bir nesne dönüyor (ALPRResult(detection=
+# DetectionResult(confidence=.., bounding_box=BoundingBox(x1=.., ..)),
+# ocr=OcrResult(text=.., confidence=[karakter başına LİSTE]))) ama tahmin_et()
+# DÜZ (sonuc.plate/sonuc.text, sonuc.score/sonuc.confidence) alanlar
+# bekliyordu -- bunlar hiç var olmadığından HER aday sessizce atılıyordu.
+# Kullanıcının kendi makinesinde fast_alpr'ı BU sarmalayıcıyı hiç kullanmadan
+# doğrudan çağırdığı canlı bir teşhis testinde plaka ("34MRU796") yüksek
+# güvenle (0.847 dedektör, ~0.999 OCR karakterleri) bulundu; aşağıdaki sahte
+# nesneler o gerçek çıktının YAPISINI birebir taklit eder -- eski
+# `_SahteALPR.predict()` (her zaman []) bu ayrıştırma mantığını hiç
+# çalıştırmadığı için hata aylarca fark edilmemişti.
+
+class _SahteKutuIcIce:
+    def __init__(self, x1, y1, x2, y2):
+        self.x1, self.y1, self.x2, self.y2 = x1, y1, x2, y2
+
+
+class _SahteTespitIcIce:
+    def __init__(self, confidence, bounding_box):
+        self.label = "License Plate"
+        self.confidence = confidence
+        self.bounding_box = bounding_box
+
+
+class _SahteOcrIcIce:
+    def __init__(self, text, confidence, region="Turkey"):
+        self.text = text
+        self.confidence = confidence
+        self.region = region
+
+
+class _SahteSonucIcIce:
+    """Kurulu fast_alpr sürümünün GERÇEKTE döndürdüğü iç içe yapı."""
+
+    def __init__(self, detection, ocr):
+        self.detection = detection
+        self.ocr = ocr
+
+
+class _SahteSonucDuz:
+    """Olası eski/farklı bir sürümün düz (nested olmayan) yapısı --
+    geriye dönük uyumluluk için hâlâ desteklenmeli."""
+
+    def __init__(self, plate, score, box):
+        self.plate = plate
+        self.score = score
+        self.box = box
+
+
+def _motor_olustur(monkeypatch, sahte_fast_alpr, tahminler):
+    """predict() çağrıldığında `tahminler`i döndüren bir motor kurar."""
+    monkeypatch.delenv("PTS_ANPR_DETECTOR_ESIGI", raising=False)
+    monkeypatch.delenv("PTS_ANPR_DETECTOR_MODEL", raising=False)
+    motor = anpr_engine.ANPREngine()
+    motor._alpr.predict = lambda frame: tahminler
+    return motor
+
+
+def test_tahmin_et_ic_ice_gercek_kutuphane_yapisini_dogru_ayristirir(monkeypatch, sahte_fast_alpr):
+    """Kullanıcının gerçek teşhis çıktısıyla birebir aynı yapı (bkz. modül
+    başındaki not) artık doğru şekilde bir PlakaSonucu'na dönüşmeli --
+    ÖNCEKİ kod bunu sessizce atıyordu, bu yüzden bu test önceki halde
+    BAŞARISIZ olurdu (boş liste dönerdi)."""
+    ocr_guvenleri = [0.9998, 0.9999, 0.9996, 0.9997, 0.9998, 0.9997, 0.9993, 0.9985]
+    ic_ice = _SahteSonucIcIce(
+        detection=_SahteTespitIcIce(
+            confidence=0.8470978706741433,
+            bounding_box=_SahteKutuIcIce(x1=2218, y1=992, x2=2423, y2=1076),
+        ),
+        ocr=_SahteOcrIcIce(text="34MRU796", confidence=ocr_guvenleri),
+    )
+    motor = _motor_olustur(monkeypatch, sahte_fast_alpr, [ic_ice])
+
+    sonuclar = motor.tahmin_et("sahte-kare")
+
+    assert len(sonuclar) == 1
+    assert sonuclar[0].plaka_no == "34MRU796"
+    assert sonuclar[0].guven_skoru == pytest.approx(sum(ocr_guvenleri) / len(ocr_guvenleri))
+    assert sonuclar[0].kutu == (2218, 992, 2423, 1076)
+
+
+def test_tahmin_et_duz_eski_yapiyi_da_geriye_donuk_destekler(monkeypatch, sahte_fast_alpr):
+    """Olası eski/farklı bir fast_alpr sürümünün düz yapısı da kırılmamalı."""
+    duz = _SahteSonucDuz(plate="34MRU796", score=0.91, box={"xmin": 10, "ymin": 20, "xmax": 110, "ymax": 60})
+    motor = _motor_olustur(monkeypatch, sahte_fast_alpr, [duz])
+
+    sonuclar = motor.tahmin_et("sahte-kare")
+
+    assert len(sonuclar) == 1
+    assert sonuclar[0].plaka_no == "34MRU796"
+    assert sonuclar[0].guven_skoru == pytest.approx(0.91)
+    assert sonuclar[0].kutu == (10, 20, 110, 60)
+
+
+def test_tahmin_et_bos_liste_donerse_bos_liste_doner(monkeypatch, sahte_fast_alpr):
+    motor = _motor_olustur(monkeypatch, sahte_fast_alpr, [])
+    assert motor.tahmin_et("sahte-kare") == []
+
+
+def test_tahmin_et_metin_cikarilamayan_aday_atlanir(monkeypatch, sahte_fast_alpr):
+    """Ne düz ne iç içe yapıda plaka metni bulunamıyorsa (örn. kütüphane
+    hiç tanımadığımız bir üçüncü şekil dönerse) aday sessizce atlanmalı --
+    hata fırlatmamalı."""
+    tanimsiz = types.SimpleNamespace(garip_alan=123)
+    motor = _motor_olustur(monkeypatch, sahte_fast_alpr, [tanimsiz])
+    assert motor.tahmin_et("sahte-kare") == []
+
+
+@pytest.mark.parametrize(
+    "deger, beklenen",
+    [
+        (None, None),
+        (0.95, pytest.approx(0.95)),
+        ([0.9, 1.0], pytest.approx(0.95)),
+        ([], None),
+        (["gecersiz"], None),
+    ],
+)
+def test_ocr_guveni_hesapla_tek_sayi_ve_liste_bicimlerini_destekler(deger, beklenen):
+    assert anpr_engine._ocr_guveni_hesapla(deger) == beklenen
+
+
+def test_kutuya_cevir_x1y1x2y2_ve_xminyminxmaxymax_destekler():
+    assert anpr_engine._kutuya_cevir(_SahteKutuIcIce(x1=1, y1=2, x2=3, y2=4)) == (1, 2, 3, 4)
+    assert anpr_engine._kutuya_cevir({"xmin": 5, "ymin": 6, "xmax": 7, "ymax": 8}) == (5, 6, 7, 8)
+    assert anpr_engine._kutuya_cevir(None) is None

@@ -166,15 +166,53 @@ class ANPREngine:
         self._alpr = ALPR(detector_model=detector_model, ocr_model=ocr_model, **ek_parametreler)
 
     def tahmin_et(self, frame: Any) -> list[PlakaSonucu]:
-        """Frame üzerinde plaka bulur; motorun sonuç nesnelerini PTS tipine çevirir."""
+        """Frame üzerinde plaka bulur; motorun sonuç nesnelerini PTS tipine çevirir.
+
+        KÖK NEDEN BULGUSU (2026-09-17 -- bkz. README.md'deki tanı günlüğü):
+        fast_alpr'ın ALPR.predict() metodu her aday için İÇ İÇE bir nesne
+        döner -- ALPRResult(detection=DetectionResult(confidence=...,
+        bounding_box=BoundingBox(x1=.., y1=.., x2=.., y2=..)), ocr=OcrResult(
+        text=.., confidence=[karakter başına güvenler LİSTESİ], region=..)) --
+        yani plaka metni `sonuc.text`'te DEĞİL `sonuc.ocr.text`'te; güven
+        `sonuc.score`/`sonuc.confidence`'ta DEĞİL `sonuc.detection.confidence`
+        (kutu güveni) ile `sonuc.ocr.confidence`'ta (OCR -- TEK bir sayı değil,
+        karakter başına güvenlerin LİSTESİ) bulunuyor.
+
+        Bu fonksiyon ÖNCEDEN `sonuc.plate`/`sonuc.text` ve
+        `sonuc.score`/`sonuc.confidence` gibi DÜZ (nested olmayan) alanlar
+        bekliyordu; bunlar gerçek nesnede hiç var olmadığından `_alan()` her
+        zaman None döndürüyor, `if not plaka: continue` HER adayı sessizce
+        atıyordu. Sonuç: dedektör ve OCR arka planda plakayı doğru (yüksek
+        güvenle) buluyordu, ama bu fonksiyon bulunan HİÇBİR sonucu hiçbir
+        zaman raporlamıyordu -- `self._alpr.predict(frame)`'i kütüphanenin
+        kendi API'siyle DOĞRUDAN (bu sarmalayıcıyı hiç kullanmadan) çağırınca
+        plaka her seferinde yüksek güvenle bulunurken, PTS üzerinden (bu
+        fonksiyon üzerinden) HER ZAMAN "tespit_edilemedi" çıkmasının saha
+        belirtisiyle birebir örtüşüyor: hangi dedektör modeli/eşiği/CLAHE/kare
+        boyutu (tam sahne veya plakayı dolduran kırpılmış görsel) denenirse
+        denensin sonuç hep aynıydı -- çünkü sorun tespit/OCR aşamasında değil,
+        SADECE bu sonuç ayrıştırma adımındaydı; hiçbir ayar bunu etkilemezdi.
+
+        Aşağıda önce İÇ İÇE (kurulu sürümün gerçek) yapı denenir; bulunamazsa
+        DÜZ yapıya (olası eski/farklı bir sürüm) düşülür -- ikisi de
+        kırılmasın diye.
+        """
         sonuclar = self._alpr.predict(frame)
         donus: list[PlakaSonucu] = []
         for sonuc in sonuclar or []:
-            plaka = _alan(sonuc, "plate", "text")
+            ocr_sonucu = _alan(sonuc, "ocr")
+            tespit_sonucu = _alan(sonuc, "detection")
+            plaka = _alan(ocr_sonucu, "text", "plate") or _alan(sonuc, "plate", "text")
             if not plaka:
                 continue
-            guven = float(_alan(sonuc, "score", "confidence") or 0)
-            kutu_verisi = _alan(sonuc, "box", "bbox")
+            guven = _ocr_guveni_hesapla(_alan(ocr_sonucu, "confidence", "score"))
+            if guven is None:
+                guven = _ocr_guveni_hesapla(_alan(tespit_sonucu, "confidence", "score"))
+            if guven is None:
+                guven = _ocr_guveni_hesapla(_alan(sonuc, "score", "confidence"))
+            if guven is None:
+                guven = 0.0
+            kutu_verisi = _alan(tespit_sonucu, "bounding_box", "box", "bbox") or _alan(sonuc, "box", "bbox")
             kutu = _kutuya_cevir(kutu_verisi)
             donus.append(PlakaSonucu(_plaka_temizle(str(plaka)), guven, kutu))
         return [sonuc for sonuc in donus if sonuc.plaka_no]
@@ -189,15 +227,42 @@ def _alan(nesne: Any, *alanlar: str) -> Any:
     return None
 
 
+def _ocr_guveni_hesapla(deger: Any) -> Optional[float]:
+    """OCR/dedektör güveni, kütüphanenin sürümüne göre TEK bir sayı (ör. 0.95)
+    ya da karakter başına güvenlerin LİSTESİ (ör. [0.999, 0.998, ...] --
+    fast_alpr'ın OcrResult.confidence alanının GERÇEK biçimi budur) olarak
+    gelebilir. Liste ise ortalaması alınır: plaka genelinin okunabilirliğini
+    temsil eder, tek zayıf bir karakter yüzünden isabetli bir okuma anlık
+    olarak elenmez, ama düşük karakterler yine de ortalamayı aşağı çeker."""
+    if deger is None:
+        return None
+    if isinstance(deger, (int, float)):
+        return float(deger)
+    try:
+        degerler = [float(x) for x in deger]
+    except (TypeError, ValueError):
+        return None
+    return sum(degerler) / len(degerler) if degerler else None
+
+
 def _kutuya_cevir(kutu: Any) -> Optional[tuple[int, int, int, int]]:
+    """Kutu köşe koordinatları kütüphane sürümüne göre xmin/ymin/xmax/ymax
+    VEYA x1/y1/x2/y2 adlandırmasıyla gelebilir (bkz. tahmin_et() üzerindeki
+    kök neden notu -- kurulu sürümde BoundingBox(x1=.., y1=.., x2=.., y2=..)
+    biçiminde geliyor); ikisi de sırayla denenir."""
     if not kutu:
         return None
-    try:
-        if isinstance(kutu, dict):
-            return tuple(int(kutu[key]) for key in ("xmin", "ymin", "xmax", "ymax"))
-        return tuple(int(_alan(kutu, key) or 0) for key in ("xmin", "ymin", "xmax", "ymax"))
-    except (KeyError, TypeError, ValueError):
-        return None
+    for anahtarlar in (("xmin", "ymin", "xmax", "ymax"), ("x1", "y1", "x2", "y2")):
+        try:
+            if isinstance(kutu, dict):
+                if all(k in kutu for k in anahtarlar):
+                    return tuple(int(kutu[k]) for k in anahtarlar)
+                continue
+            if all(hasattr(kutu, k) for k in anahtarlar):
+                return tuple(int(getattr(kutu, k) or 0) for k in anahtarlar)
+        except (KeyError, TypeError, ValueError):
+            continue
+    return None
 
 
 def _plaka_temizle(metin: str) -> str:

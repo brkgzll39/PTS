@@ -882,6 +882,44 @@ görülen özet sayılarla log'daki ayrıntıyı karşılaştırarak sorunu tam 
 nerede olduğunu (dosya mı, model mi, gerçekten trafiksiz an mı) teşhis
 edebilirsiniz.
 
+**2026-09-17 (devam) — KÖK NEDEN BULUNDU: sonuç ayrıştırma hatası, dedektör
+sorunu DEĞİL.** Yukarıdaki `tespit_edilemedi`/`gorsel_okunamadi`/`hata` ayrımı
+bile bir süre gerçek nedeni açığa çıkaramadı, çünkü sorun hiçbirinde değildi:
+sahada HER model (384/608), HER eşik (0.4/0.25/0.2), CLAHE açık/kapalı, HEM tam
+sahne HEM plakayı neredeyse tamamen dolduran kırpılmış bir görsel, HEM
+DirectML HEM tamamen CPU'ya zorlanmış çalıştırma (`PTS_ANPR_PROVIDERS=cpu`) ile
+test edildi — hepsinde sonuç birebir aynıydı: sıfır tespit. Bu kadar tutarlı
+bir "her koşulda tam sıfır" sonucu, ayar/eşik/model seçimi değil, motorun
+KENDİSİNİN hiç çalışmadığına işaret ediyordu. Kullanıcının `fast_alpr.ALPR`'ı
+`anpr_engine.py`'yi hiç kullanmadan DOĞRUDAN çağırdığı bir teşhis testinde
+plaka ("34MRU796") %84.7 dedektör güveniyle, karakterlerin tamamı ~%99.9 OCR
+güveniyle DOĞRU bulundu — üstelik bu, PTS'nin panelinde "tespit_edilemedi"
+dediği AYNI dosyaydı.
+
+Neden: kurulu `fast_alpr` sürümü, her aday için İÇ İÇE bir sonuç nesnesi
+döndürüyor — `ALPRResult(detection=DetectionResult(confidence=.., bounding_box=
+BoundingBox(x1=.., y1=.., x2=.., y2=..)), ocr=OcrResult(text=.., confidence=
+[karakter başına güvenlerin LİSTESİ]))` — yani plaka metni `sonuc.text`'te
+DEĞİL `sonuc.ocr.text`'te. `anpr_engine.py::ANPREngine.tahmin_et()` ise DÜZ
+(nested olmayan) `sonuc.plate`/`sonuc.text` ve `sonuc.score`/`sonuc.confidence`
+alanları bekliyordu; bunlar gerçek nesnede hiç var olmadığından her aday
+sessizce atılıyordu (`if not plaka: continue`). Yani dedektör ve OCR arka
+planda plakayı HER ZAMAN doğru buluyordu — PTS bunu asla raporlamıyordu. Bu,
+bu depodaki `anpr_engine.py` için o zamana kadarki TEK test dosyasının
+(`tests/test_anpr_engine.py`) `predict()`'i her zaman `[]` döndüren bir sahte
+sınıf kullanması ve bu ayrıştırma mantığını hiç çalıştırmamasıyla da
+örtüşüyor — hata aylarca hiçbir testte yakalanamamıştı.
+
+Düzeltme: `tahmin_et()` artık önce İÇ İÇE (kurulu sürümün gerçek) yapıyı
+dener, bulamazsa DÜZ yapıya düşer (olası eski/farklı bir sürüm kırılmasın
+diye); OCR güveni tek bir sayı ya da karakter başına güvenlerin listesi
+olarak gelebildiği için yeni bir `_ocr_guveni_hesapla()` yardımcı fonksiyonu
+(liste ise ortalamasını alır) eklendi; kutu koordinatları hem
+`xmin/ymin/xmax/ymax` hem `x1/y1/x2/y2` adlandırmasını destekler hale
+getirildi. `tests/test_anpr_engine.py`'ye, kullanıcının gerçek teşhis
+çıktısının YAPISINI birebir taklit eden yeni sahte sınıflarla regresyon
+testleri eklendi (bu testler DÜZELTME ÖNCESİ kodda başarısız olurdu).
+
 ## Otomatik Görüntü/Kayıt Saklama
 
 Daha önce eski geçiş görüntülerini temizlemenin tek yolu `/sistem/goruntu-temizle`
