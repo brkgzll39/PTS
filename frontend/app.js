@@ -1173,7 +1173,7 @@ async function kisileriYukle() {
   tbody.innerHTML = kisiler.map(k => `
     <tr>
       <td>${escapeHtml(k.ad_soyad)}</td>
-      <td class="fw-bold">${escapeHtml(k.plaka_no)}</td>
+      <td class="fw-bold"><button class="plate-link" data-plaka-analiz="${escapeHtml(k.plaka_no)}" title="Geçiş geçmişini ve görsellerini gör">${escapeHtml(k.plaka_no)}</button></td>
       <td>${tipRozeti(k.tip)}</td>
       <td>${escapeHtml(k.telefon) || "-"}</td>
       <td>${escapeHtml(k.daire_departman) || "-"}</td>

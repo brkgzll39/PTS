@@ -591,6 +591,18 @@ eklendi çünkü ikisi farklı aşamalarda çalışır:
   geçişlerin sistematik olarak kaybolduğu görülürse eşiğin (Sistem
   Ayarları'ndan) düşürülmesi gerekebilir.
 
+**2026-09-17 (devam) — Kişiler sekmesinde plaka artık tıklanabilir.**
+Kayıtlar ve Kara Liste sekmelerinde bir plakaya tıklamak zaten "Plaka
+Analizi" penceresini (geçiş geçmişi + her geçişin görseli) açıyordu, ama
+Kişiler sekmesindeki "Plaka" sütunu sıradan, tıklanamayan bir metin olarak
+kalmıştı — kullanıcı bunu "hiç işlevi yokmuş gibi" olarak bildirdi. Artık
+Kişiler sekmesindeki plaka da aynı `data-plaka-analiz` mekanizmasını
+kullanan bir bağlantı: tıklandığında o kişinin/plakanın TÜM geçiş
+geçmişini, her geçişin küçük resmini (tıklanınca büyük halinin yeni
+sekmede açıldığı) ve kara liste durumunu gösteren aynı "Plaka Analizi"
+penceresi açılır. Yeni bir backend uç noktası veya mekanizma GEREKMEDİ —
+var olan `plakaAnalizAc()` işlevine tek bir eksik bağlantı eklendi.
+
 ## Kamera Bağlantı Güvenilirliği
 
 Bu bölüm, kamera bağlantılarının/araç geçişi görüntülerinin donmaması için yapılan
