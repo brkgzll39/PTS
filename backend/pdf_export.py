@@ -6,10 +6,55 @@ from datetime import datetime
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import A4, landscape
 from reportlab.lib.units import cm
+from reportlab.pdfbase import pdfmetrics
+from reportlab.pdfbase.ttfonts import TTFont
 from reportlab.platypus import (
     SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, Image
 )
 from reportlab.lib.styles import getSampleStyleSheet
+
+# TÜRKÇE KARAKTER DÜZELTMESİ (2026-09-18, kullanıcı ekran görüntüsüyle
+# bildirdi): reportlab'ın gömülü 14 temel fontu (Helvetica/Helvetica-Bold
+# vb.) yalnızca WinAnsiEncoding'i destekler -- bu, Türkçeye özgü "ı, İ, ş,
+# Ş, ğ, Ğ" karakterlerini İÇERMEZ. Sonuç: "GEÇİŞ RAPORU" -> "GEÇ██ RAPORU",
+# "Tanımsız Araç" -> "Tan█ms█z Araç" gibi, bu harflerin yerine boş kare
+# (.notdef glifi) basılıyordu. Çözüm: tüm Türkçe karakterleri içeren,
+# serbestçe gömülebilir bir Unicode TrueType fontu (DejaVu Sans, bkz.
+# backend/fonts/LISANS-DejaVu.txt) kaydedip TÜM stil/tablo font
+# referanslarını buna yönlendirmek.
+_FONT_DIZINI = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fonts")
+FONT_NORMAL = "PTSSans"
+FONT_BOLD = "PTSSans-Bold"
+_turkce_fontlari_kayitli = False
+
+
+def _turkce_fontlari_kaydet() -> None:
+    """DejaVu Sans'ı reportlab'a kaydeder -- modül başına yalnızca bir kez
+    (gereksiz disk I/O'sundan kaçınmak için); `registerFont`'un kendisi de
+    tekrar çağrılmaya karşı zararsızdır ama bu bayrak dosyayı her PDF
+    üretiminde yeniden OKUMAMIZI önler."""
+    global _turkce_fontlari_kayitli
+    if _turkce_fontlari_kayitli:
+        return
+    pdfmetrics.registerFont(TTFont(FONT_NORMAL, os.path.join(_FONT_DIZINI, "DejaVuSans.ttf")))
+    pdfmetrics.registerFont(TTFont(FONT_BOLD, os.path.join(_FONT_DIZINI, "DejaVuSans-Bold.ttf")))
+    _turkce_fontlari_kayitli = True
+
+
+def _turkce_destekli_stiller():
+    """`getSampleStyleSheet()`in döndürdüğü varsayılan stil sözlüğünü alır ve
+    metin içeren TÜM stillerin `fontName`ini Türkçe karakterleri destekleyen
+    fonta çevirir (bkz. modül başındaki 2026-09-18 notu). Başlık/alt başlık
+    stilleri kalın, diğerleri normal fontu kullanır."""
+    _turkce_fontlari_kaydet()
+    stiller = getSampleStyleSheet()
+    for ad in stiller.byName:
+        st = stiller[ad]
+        if not hasattr(st, "fontName"):
+            continue
+        st.fontName = FONT_BOLD if ad.startswith(("Heading", "Title")) else FONT_NORMAL
+    return stiller
+
 
 # Toplu "GEÇİŞ RAPORU" PDF'indeki küçük resimler için hedef boyut/kalite.
 # ÖNEMLİ (2026-09-18): kamera görselleri diskte tam çözünürlükte (birkaç
@@ -55,7 +100,7 @@ def kayitlar_pdf_olustur(satirlar: list, dosya_yolu: str, tarih_araligi_metni: s
         dosya_yolu, pagesize=landscape(A4), topMargin=1.2 * cm, bottomMargin=1.2 * cm,
         leftMargin=1 * cm, rightMargin=1 * cm,
     )
-    stiller = getSampleStyleSheet()
+    stiller = _turkce_destekli_stiller()
     hucre_stili = stiller["Normal"].clone("hucre")
     hucre_stili.fontSize = 7
     hucre_stili.leading = 8.5
@@ -99,7 +144,11 @@ def kayitlar_pdf_olustur(satirlar: list, dosya_yolu: str, tarih_araligi_metni: s
         ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#1f2937")),
         ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
         ("FONTSIZE", (0, 0), (-1, 0), 8),
-        ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+        # Başlık satırı Table'a düz string olarak veriliyor (Paragraph değil),
+        # bu yüzden kendi fontunu hucre_stili'nden DEVRALMAZ -- Türkçe
+        # karakterler ("Adı", "Soyadı", "Geçiş Tipi") için burada da AYRICA
+        # FONT_BOLD belirtilmesi gerekiyor (bkz. modül başındaki 2026-09-18 notu).
+        ("FONTNAME", (0, 0), (-1, 0), FONT_BOLD),
         ("GRID", (0, 0), (-1, -1), 0.5, colors.grey),
         ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#f3f4f6")]),
         ("ALIGN", (0, 0), (-1, -1), "CENTER"),
@@ -126,7 +175,7 @@ def _pdf_gorsel_hucresi(goruntu_yolu, hucre_stili):
 
 def kayit_detay_pdf_olustur(kayit, dosya_yolu: str) -> str:
     doc = SimpleDocTemplate(dosya_yolu, pagesize=A4, topMargin=2 * cm)
-    stiller = getSampleStyleSheet()
+    stiller = _turkce_destekli_stiller()
     elemanlar = []
 
     elemanlar.append(Paragraph("Plaka Tanıma Kayıt Detayı", stiller["Title"]))
@@ -145,6 +194,10 @@ def kayit_detay_pdf_olustur(kayit, dosya_yolu: str) -> str:
     tablo = Table(bilgi, colWidths=[5 * cm, 10 * cm])
     tablo.setStyle(TableStyle([
         ("FONTSIZE", (0, 0), (-1, -1), 10),
+        # Bu tablonun hücreleri de (yukarıdaki toplu rapordaki başlık satırı
+        # gibi) düz string -- "Kişi/Tip:" gibi Türkçe karakter içeren
+        # etiketlerin doğru görünmesi için font burada AYRICA belirtilmeli.
+        ("FONTNAME", (0, 0), (-1, -1), FONT_NORMAL),
         ("GRID", (0, 0), (-1, -1), 0.5, colors.grey),
         ("BACKGROUND", (0, 0), (0, -1), colors.HexColor("#f3f4f6")),
         ("TOPPADDING", (0, 0), (-1, -1), 6),

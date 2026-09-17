@@ -4,6 +4,7 @@ excel_export.py gibi bu modül de fastapi/sqlalchemy'ye bağımlı DEĞİL --
 yalnızca reportlab ve Pillow kullanıyor, bu yüzden bu dosya da (depodaki
 diğer birçok testin aksine) GERÇEKTEN çalıştırılıp doğrulanabildi.
 """
+import os
 from datetime import datetime
 
 import pytest
@@ -140,3 +141,81 @@ def test_kayitlar_pdf_olustur_coklu_kayitla_dosya_boyutu_makul_kalir(tmp_path):
     pdf_export.kayitlar_pdf_olustur(satirlar, str(dosya))
     boyut_mb = dosya.stat().st_size / (1024 * 1024)
     assert boyut_mb < 5, f"50 kayıtlık rapor {boyut_mb:.2f}MB -- küçültme çalışmıyor olabilir"
+
+
+# ------------------------------------------------------------------
+# Türkçe karakter desteği (2026-09-18) -- kullanıcı ekran görüntüsüyle
+# bildirdi: reportlab'ın varsayılan Helvetica/Helvetica-Bold fontu (base14)
+# yalnızca WinAnsiEncoding'i destekler; Türkçeye özgü "ı, İ, ş, Ş, ğ, Ğ"
+# karakterleri bu kodlamada YOK. Sonuç, üretilen PDF'lerde "GEÇİŞ RAPORU"
+# -> "GEÇ██ RAPORU", "Tanımsız Araç" -> "Tan█ms█z Araç" gibi bu harflerin
+# yerine boş kare (.notdef glifi) basılmasıydı. Aşağıdaki testler, yalnızca
+# "PDF üretildi mi"yi değil, PDF'i pdfplumber ile GERİ OKUYUP içindeki
+# Türkçe metnin GERÇEKTEN doğru çıktığını doğruluyor.
+# ------------------------------------------------------------------
+
+def test_turkce_fontlari_kaydet_dosyalar_depoya_gomulu():
+    """Font dosyaları depoda bulunmalı -- kullanıcının kendi Windows
+    kurulumunda internet bağlantısı ya da ekstra font kurulumu
+    GEREKTİRMEMELİ (bkz. backend/fonts/LISANS-DejaVu.txt)."""
+    pdf_export._turkce_fontlari_kaydet()
+    assert os.path.isfile(os.path.join(pdf_export._FONT_DIZINI, "DejaVuSans.ttf"))
+    assert os.path.isfile(os.path.join(pdf_export._FONT_DIZINI, "DejaVuSans-Bold.ttf"))
+
+
+def test_turkce_destekli_stiller_tum_stillerin_fontunu_degistirir():
+    stiller = pdf_export._turkce_destekli_stiller()
+    assert stiller["Normal"].fontName == pdf_export.FONT_NORMAL
+    assert stiller["Title"].fontName == pdf_export.FONT_BOLD
+    assert stiller["Heading2"].fontName == pdf_export.FONT_BOLD
+
+
+def test_kayitlar_pdf_turkce_karakterler_dogru_render_edilir(tmp_path):
+    """Kök neden regresyon testi: kullanıcının bildirdiği ekran görüntüsündeki
+    TAM senaryoyu (başlık + sütun başlıkları + hücre değerleri, hepsi Türkçeye
+    özgü karakterler içeriyor) yeniden üretip PDF'i geri okuyarak doğrular."""
+    import pdfplumber
+
+    satirlar = [_ornek_satir(
+        ad="İhsan", soyad="Güçlü", site="RAPTEST SİTESİ", daire="PERSONEL",
+        nokta="Nizamiye Kapısı", gecis_tipi="Giriş", arac_tipi="GÜVENLİK ŞEFLİĞİ",
+    )]
+    dosya = tmp_path / "turkce.pdf"
+    pdf_export.kayitlar_pdf_olustur(satirlar, str(dosya), baslik="GEÇİŞ RAPORU")
+
+    with pdfplumber.open(str(dosya)) as pdf:
+        tam_metin = "\n".join(sayfa.extract_text() or "" for sayfa in pdf.pages)
+
+    # NOT: "Nizamiye Kapısı" tek bir string olarak DEĞİL "Nizamiye" ve
+    # "Kapısı" ayrı ayrı aranıyor -- dar "Nokta" sütunu bu metni iki satıra
+    # sarıyor (Paragraph word-wrap), bu yüzden pdfplumber'ın satır bazlı
+    # metin çıkarımı ikisini yan yana DEĞİL, diğer hücrelerin ilk satırlarının
+    # arasına serpiştirilmiş olarak döner -- bu, Türkçe font düzeltmesinden
+    # bağımsız, saf bir sütun genişliği/kelime kaydırma davranışı.
+    for beklenen in (
+        "GEÇİŞ RAPORU", "Adı", "Soyadı", "Geçiş Tipi", "Araç Tipi",
+        "İhsan", "Güçlü", "Nizamiye", "Kapısı", "Giriş", "GÜVENLİK", "ŞEFLİĞİ",
+    ):
+        assert beklenen in tam_metin, (
+            f"'{beklenen}' üretilen PDF'in metninde bulunamadı -- Türkçe karakter "
+            "render sorunu (kök neden regresyonu) olabilir"
+        )
+
+
+def test_kayit_detay_pdf_turkce_karakterler_dogru_render_edilir(tmp_path):
+    import pdfplumber
+    from types import SimpleNamespace
+
+    kayit = SimpleNamespace(
+        plaka_no="34 ABC 123", tarih_saat=datetime(2026, 9, 17, 8, 4, 7),
+        kamera_id="KAM-1", yon="giris", yetki_durumu="yetkili",
+        guven_skoru=0.98, kisi_tip_anlik="personel", goruntu_yolu=None,
+    )
+    dosya = tmp_path / "detay.pdf"
+    pdf_export.kayit_detay_pdf_olustur(kayit, str(dosya))
+
+    with pdfplumber.open(str(dosya)) as pdf:
+        tam_metin = "\n".join(sayfa.extract_text() or "" for sayfa in pdf.pages)
+
+    for beklenen in ("Plaka Tanıma Kayıt Detayı", "Kişi/Tip:", "Yön:", "Bu kayıt için görsel bulunmuyor."):
+        assert beklenen in tam_metin, f"'{beklenen}' üretilen PDF'in metninde bulunamadı"

@@ -1084,6 +1084,33 @@ yalnızca bu sistemin kendi `ID` sütunu eklendi).
 "Üretim Güvenliği Sertleştirmeleri" bölümündeki 2026-09-18 notu — dışa
 aktarma uç noktaları kimlik doğrulaması gerektirmiyordu.
 
+**⚠️ 2026-09-18 (devam) — KÖK NEDEN BULUNDU: PDF raporlarında Türkçe
+karakterler ("ı, İ, ş, Ş, ğ, Ğ") boş kare olarak görünüyordu.** Kullanıcının
+paylaştığı bir ekran görüntüsü, üretilen "GEÇİŞ RAPORU" PDF'inde başlığın
+"GEÇ██ RAPORU" olarak, "Adı"/"Soyadı" sütun başlıklarının "Ad█"/"Soyad█"
+olarak, "Tanımsız Araç"/"Giriş"/"Çıkış" gibi hücre değerlerinin de benzer
+şekilde bozuk göründüğünü ortaya çıkardı. Kök neden: reportlab'ın gömülü 14
+temel fontu (Helvetica/Helvetica-Bold, `pdf_export.py`'nin önceki tüm
+sürümlerinde varsayılan olarak kullanılıyordu) yalnızca **WinAnsiEncoding**'i
+destekler — bu kodlamada Türkçeye özgü dişsiz "ı" (U+0131), büyük noktalı
+"İ" (U+0130), "ş/Ş" (U+015F/U+015E) ve "ğ/Ğ" (U+011F/U+011E) karakterleri
+YOK. Bu yüzden bu harfler PDF'e hiç gömülemiyor, yerlerine boş bir
+`.notdef` glifi (kare) basılıyordu — Excel çıktısı etkilenmiyordu, çünkü
+openpyxl/Excel Unicode'u sorunsuz destekliyor; sorun yalnızca PDF'e özgüydü.
+
+Düzeltme: Türkçenin tamamını (ve çok daha fazlasını) kapsayan, serbestçe
+gömülebilir bir Unicode TrueType fontu (**DejaVu Sans**, Bitstream Vera
+lisansı — bkz. `backend/fonts/LISANS-DejaVu.txt`) depoya gömüldü
+(`backend/fonts/DejaVuSans.ttf` + `DejaVuSans-Bold.ttf`, ~1.4MB) ve
+`pdf_export.py`'deki TÜM stil/tablo font referansları (başlık, tablo
+başlıkları, hücreler, tekil kayıt detay PDF'i) buna yönlendirildi (bkz.
+`_turkce_destekli_stiller`/`_turkce_fontlari_kaydet`). Font dosyaları
+depoyla birlikte geldiği için kullanıcının internet bağlantısına ya da
+sisteme ek bir font kurmasına gerek YOK. `tests/test_pdf_export.py`'ye,
+üretilen PDF'i `pdfplumber` ile geri okuyup Türkçe metnin GERÇEKTEN doğru
+çıktığını doğrulayan (yalnızca "PDF üretildi mi" değil) kök neden regresyon
+testleri eklendi.
+
 ## Kalıcı Test Altyapısı
 
 `tests/` klasöründe pytest tabanlı bir test paketi var:
