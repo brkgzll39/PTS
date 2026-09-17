@@ -320,15 +320,15 @@
     <button class="side-link" data-target="#kayitlar-sekme"><i class="bi bi-list-ul"></i>Geçiş Kayıtları</button>
     <button class="side-link" data-target="#kisiler-sekme"><i class="bi bi-people"></i>Aboneler ve Kişiler</button>
     <button class="side-link" data-target="#karaliste-sekme"><i class="bi bi-slash-circle"></i>Kara Liste</button>
-    <div class="sidebar-section-label">YÖNETİM</div>
-    <button class="side-link" data-target="#kamera-sekme"><i class="bi bi-camera-video"></i>Kameralar</button>
-    <button class="side-link" data-target="#bariyer-sekme"><i class="bi bi-door-open"></i>Bariyer Kontrolü</button>
-    <button class="side-link" data-target="#bildirim-sekme"><i class="bi bi-bell"></i>Webhook Bildirimleri</button>
-    <button class="side-link" data-target="#lisans-sekme"><i class="bi bi-key"></i>Lisans Yönetimi</button>
-    <button class="side-link" data-target="#led-sekme"><i class="bi bi-broadcast-pin"></i>LED Paneller</button>
+    <div class="sidebar-section-label" data-rol-min="yonetici" data-rol-davranis="gizle">YÖNETİM</div>
+    <button class="side-link" data-target="#kamera-sekme" data-rol-min="yonetici" data-rol-davranis="gizle"><i class="bi bi-camera-video"></i>Kameralar</button>
+    <button class="side-link" data-target="#bariyer-sekme" data-rol-min="yonetici" data-rol-davranis="gizle"><i class="bi bi-door-open"></i>Bariyer Kontrolü</button>
+    <button class="side-link" data-target="#bildirim-sekme" data-rol-min="yonetici" data-rol-davranis="gizle"><i class="bi bi-bell"></i>Webhook Bildirimleri</button>
+    <button class="side-link" data-target="#lisans-sekme" data-rol-min="yonetici" data-rol-davranis="gizle"><i class="bi bi-key"></i>Lisans Yönetimi</button>
+    <button class="side-link" data-target="#led-sekme" data-rol-min="yonetici" data-rol-davranis="gizle"><i class="bi bi-broadcast-pin"></i>LED Paneller</button>
     <button class="side-link" data-target="#site-sekme" data-rol-min="yonetici" data-rol-davranis="gizle"><i class="bi bi-diagram-3"></i>Site / Erişim Noktası</button>
     <button class="side-link" data-target="#kullanicilar-sekme" data-rol-min="yonetici" data-rol-davranis="gizle"><i class="bi bi-person-gear"></i>Kullanıcılar</button>
-    <button class="side-link" data-target="#sistem-sekme"><i class="bi bi-terminal"></i>Sistem / Log</button>
+    <button class="side-link" data-target="#sistem-sekme" data-rol-min="yonetici" data-rol-davranis="gizle"><i class="bi bi-terminal"></i>Sistem / Log</button>
     <div class="sidebar-footer"><span class="status-led"></span> Sistem çevrimiçi<br><small>TPAO PTS · v2.0</small></div>
   </aside>
   <main class="container-fluid app-main">
@@ -338,15 +338,15 @@
     <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#kayitlar-sekme" type="button"><i class="bi bi-list-columns-reverse me-1"></i>Kayıtlar</button></li>
     <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#kisiler-sekme" type="button"><i class="bi bi-people-fill me-1"></i>Kişiler</button></li>
     <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#karaliste-sekme" type="button"><i class="bi bi-slash-circle me-1"></i>Kara Liste</button></li>
-    <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#kamera-sekme" type="button"><i class="bi bi-camera-video me-1"></i>Kameralar</button></li>
-    <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#bariyer-sekme" type="button"><i class="bi bi-door-open me-1"></i>Bariyer</button></li>
+    <li class="nav-item" data-rol-min="yonetici" data-rol-davranis="gizle"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#kamera-sekme" type="button"><i class="bi bi-camera-video me-1"></i>Kameralar</button></li>
+    <li class="nav-item" data-rol-min="yonetici" data-rol-davranis="gizle"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#bariyer-sekme" type="button"><i class="bi bi-door-open me-1"></i>Bariyer</button></li>
     <li class="nav-item" data-rol-min="yonetici" data-rol-davranis="gizle"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#site-sekme" type="button"><i class="bi bi-diagram-3 me-1"></i>Site/Nokta</button></li>
-    <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#bildirim-sekme" type="button"><i class="bi bi-bell me-1"></i>Bildirim</button></li>
-    <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#led-sekme" type="button"><i class="bi bi-display me-1"></i>LED</button></li>
+    <li class="nav-item" data-rol-min="yonetici" data-rol-davranis="gizle"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#bildirim-sekme" type="button"><i class="bi bi-bell me-1"></i>Bildirim</button></li>
+    <li class="nav-item" data-rol-min="yonetici" data-rol-davranis="gizle"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#led-sekme" type="button"><i class="bi bi-display me-1"></i>LED</button></li>
     <li class="nav-item" data-rol-min="yonetici" data-rol-davranis="gizle"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#kullanicilar-sekme" type="button"><i class="bi bi-person-gear me-1"></i>Kullanıcılar</button></li>
-    <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#test-sekme" type="button"><i class="bi bi-plus-circle me-1"></i>Test</button></li>
-    <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#lisans-sekme" type="button"><i class="bi bi-key-fill me-1"></i>Lisans</button></li>
-    <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#sistem-sekme" type="button"><i class="bi bi-terminal me-1"></i>Sistem</button></li>
+    <li class="nav-item" data-rol-min="yonetici" data-rol-davranis="gizle"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#test-sekme" type="button"><i class="bi bi-plus-circle me-1"></i>Test</button></li>
+    <li class="nav-item" data-rol-min="yonetici" data-rol-davranis="gizle"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#lisans-sekme" type="button"><i class="bi bi-key-fill me-1"></i>Lisans</button></li>
+    <li class="nav-item" data-rol-min="yonetici" data-rol-davranis="gizle"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#sistem-sekme" type="button"><i class="bi bi-terminal me-1"></i>Sistem</button></li>
   </ul>
 
   <div class="tab-content pt-3">
@@ -373,7 +373,7 @@
     <!-- ================= PANEL (DASHBOARD) ================= -->
     <div class="tab-pane fade" id="panel-sekme">
       <div class="dashboard-heading"><div><span class="eyebrow">GENEL BAKIŞ</span><h1>Kontrol Merkezi</h1><p>Plaka hareketleri ve sistem durumunu tek ekrandan yönetin.</p></div><div class="d-flex gap-2"><button class="btn btn-success" onclick="ziyaretciBilgileriAc()" data-rol-min="operatör" data-rol-davranis="gizle"><i class="bi bi-person-plus-fill"></i> Ziyaretçi Girişi</button><button class="btn btn-outline-secondary" onclick="panelYenile()"><i class="bi bi-arrow-clockwise"></i> Yenile</button></div></div>
-      <div class="quick-grid mb-4"><button class="quick-tile blue" data-target="#canli-sekme"><i class="bi bi-display"></i><strong>Canlı İzleme</strong><span>Kamera duvarı</span></button><button class="quick-tile green" data-target="#kayitlar-sekme"><i class="bi bi-arrow-left-right"></i><strong>Geçiş Kayıtları</strong><span>Hareket geçmişi</span></button><button class="quick-tile amber" data-target="#kisiler-sekme"><i class="bi bi-person-badge"></i><strong>Kişiler</strong><span>Yetkili plakalar</span></button><button class="quick-tile slate" data-target="#kamera-sekme"><i class="bi bi-camera-video"></i><strong>Kamera Yönetimi</strong><span>RTSP bağlantıları</span></button><button class="quick-tile red" data-target="#lisans-sekme"><i class="bi bi-shield-lock"></i><strong>Lisans</strong><span>Durum ve limitler</span></button></div>
+      <div class="quick-grid mb-4"><button class="quick-tile blue" data-target="#canli-sekme"><i class="bi bi-display"></i><strong>Canlı İzleme</strong><span>Kamera duvarı</span></button><button class="quick-tile green" data-target="#kayitlar-sekme"><i class="bi bi-arrow-left-right"></i><strong>Geçiş Kayıtları</strong><span>Hareket geçmişi</span></button><button class="quick-tile amber" data-target="#kisiler-sekme"><i class="bi bi-person-badge"></i><strong>Kişiler</strong><span>Yetkili plakalar</span></button><button class="quick-tile slate" data-target="#kamera-sekme" data-rol-min="yonetici" data-rol-davranis="gizle"><i class="bi bi-camera-video"></i><strong>Kamera Yönetimi</strong><span>RTSP bağlantıları</span></button><button class="quick-tile red" data-target="#lisans-sekme" data-rol-min="yonetici" data-rol-davranis="gizle"><i class="bi bi-shield-lock"></i><strong>Lisans</strong><span>Durum ve limitler</span></button></div>
       <div class="row g-3 mb-3">
         <div class="col-6 col-md-3">
           <div class="card stat-card"><div class="card-body">

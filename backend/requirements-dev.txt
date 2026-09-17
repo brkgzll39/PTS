@@ -14,3 +14,9 @@ pdfplumber==0.11.9
 # testler sahte/basit bir ANPR motoru kullanır — sadece opencv + requests yeterli)
 opencv-python-headless==4.10.0.84
 requests==2.32.3
+
+# test_frontend_rbac.py için: frontend/index.html'i (fastapi/sqlalchemy'ye
+# hiç ihtiyaç duymadan) ham HTML olarak ayrıştırıp operatör rolünden
+# gizlenmesi gereken "Yönetim" sekmelerinin gerçekten gizli olduğunu
+# doğrulamak için (bkz. 2026-09-18, operatör panel görünürlüğü kısıtlaması).
+beautifulsoup4==4.14.3

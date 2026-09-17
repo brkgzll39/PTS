@@ -1161,13 +1161,70 @@ gösterir.
   "güncellenen" sayılmaz, bu yüzden "Geçmiş Kayıtları Güncelle" düğmesi
   güvenle istenildiği kadar tekrar tıklanabilir.
 
+## Operatör Panelinden "Yönetim" Görünürlüğünün Kaldırılması (2026-09-18)
+
+Kullanıcı talebi: yönetici'nin panel görünümü ve yönetimi aynen kalsın, ama
+"operatör" rolündeki bir kullanıcı panele giriş yaptığında ekranında SADECE
+kendisini ilgilendiren şu 5 alanı tam erişimle görsün: **Canlı İzleme, Ana
+Sayfa, Geçiş Kayıtları, Aboneler ve Kişiler, Kara Liste**. Bunların dışında
+"Yönetim"e dair hiçbir şey (Kameralar, Bariyer Kontrolü, Webhook Bildirimleri,
+Lisans Yönetimi, LED Paneller, Site/Erişim Noktası, Kullanıcılar, Sistem/Log,
+ve isimsiz "Test" sekmesi) ekranının hiçbir yerinde görünmemeli.
+
+**Neden bu kadar çok yer değiştirdi:** panelde AYNI sekmeye giden ÜÇ ayrı ve
+birbirinden bağımsız DOM konumu vardı -- (1) sol kenar çubuğu (görünür ana
+gezinme), (2) sekmeler arasında geçiş yaparken asıl tıklamayı fiilen yapan,
+görünen ama göze çarpmayan ikinci bir Bootstrap `nav-tabs` çubuğu (kenar
+çubuğundaki bir düğmeye tıklamak arka planda bu çubuktaki karşılığını bulup
+tıklıyor), ve (3) Ana Sayfa'daki hızlı erişim kutucukları (`.quick-tile`) --
+bunlardan ikisi ("Kamera Yönetimi" ve "Lisans" kutucukları) da Yönetim
+sekmelerine gidiyordu. Sadece kenar çubuğunu gizlemek yeterli olmuyordu;
+sekme gerçekten "görünmez" olsun diye her üç konumun da ayrı ayrı
+işaretlenmesi gerekti.
+
+**Uygulama:** panelde zaten var olan `data-rol-min`/`data-rol-davranis="gizle"`
+mekanizması (bkz. yukarıdaki "Rol Bazlı Yetkilendirme (RBAC)" bölümü,
+`frontend/app.js::rolBazliArayuzuUygula`) kullanıldı -- yeni bir mekanizma
+icat edilmedi. Yukarıdaki 9 sekmenin her üç girişteki (kenar çubuğu, ikinci
+sekme çubuğu, Ana Sayfa hızlı erişim kutuları) düğmelerine/`<li>`'lerine
+`data-rol-min="yonetici" data-rol-davranis="gizle"` eklendi; ayrıca kenar
+çubuğundaki "YÖNETİM" bölüm başlığının kendisi de gizlendi (aksi halde
+operatör altı boş bir başlık görürdü).
+
+**Bu bir GÖRÜNÜRLÜK değişikliğidir, yetki değişikliği DEĞİLDİR:** operatör
+rolünün backend'deki (`/kameralar`, `/bariyer/ayarlar`, `/led/ayarlar`,
+`/sistem/loglar` gibi uçlardaki) API yetkileri BİLEREK ve daha önceden test
+edilmiş biçimde değiştirilmedi -- bkz. yukarıdaki RBAC tablosu ve
+`tests/test_api.py::test_operator_gunluk_islemleri_yapabilir_ama_yonetim_
+islemlerini_yapamaz` / `test_sistem_loglarina_izleyici_erisemez_operator_
+erisebilir`: operatörün kamera/bariyer/LED/log uçlarına API üzerinden erişimi
+projenin MEVCUT ve kasıtlı tasarımının bir parçası ("günlük operasyon"un bir
+parçası sayılıyor -- örn. ileride bir mobil istemci ya da doğrudan API
+entegrasyonu operatör hesabıyla kamera yeniden başlatabilsin diye). Bu patch
+YALNIZCA operatörün panelde bu ekranları GÖRMESİNİ engelliyor; kullanıcı
+yönetimi, sistem ayarları, lisans aktivasyonu ve webhook yapılandırması zaten
+öncesinden de backend'de sadece yönetici'ye açıktı, bunlar da değişmedi. Eğer
+operatörün API'yi doğrudan çağırarak da (panel dışından) kamera/bariyer/LED
+yönetim uçlarına erişememesi isteniyorsa, bu ayrı ve bilinçli bir yetki
+kısıtlaması kararı olur -- istenirse ayrıca uygulanabilir.
+
+**Doğrulama:** `tests/test_frontend_rbac.py` (yeni, BeautifulSoup ile
+`frontend/index.html`'i ham HTML olarak ayrıştırıp üç girişin de doğru
+işaretlendiğini gerçekten çalıştırarak doğrular -- fastapi/sqlalchemy'ye
+bağımlı değil) -- 5 "çalışma alanı" sekmesinin YANLIŞLIKLA gizlenmediğini ve
+9 "yönetim" sekmesinin her üç girişte de gizlendiğini doğrulayan testlerin
+yanı sıra, gelecekte kenar çubuğuna/ikinci sekme çubuğuna bu testin bilmediği
+YENİ bir sekme eklenirse testin başarısız olup hatırlatacağı iki
+"tamlık koruması" (completeness guard) testi de içeriyor.
+
 ## Kalıcı Test Altyapısı
 
 `tests/` klasöründe pytest tabanlı bir test paketi var:
 
-- `test_plaka_dogrula.py`, `test_lisans.py`, `test_schemas.py`, `test_camera_reader.py`:
-  bağımlılığı hafif (fastapi/sqlalchemy gerektirmez), yalnızca pydantic/opencv/requests
-  yeterlidir.
+- `test_plaka_dogrula.py`, `test_lisans.py`, `test_schemas.py`, `test_camera_reader.py`,
+  `test_pdf_export.py`, `test_excel_export.py`, `test_frontend_rbac.py`:
+  bağımlılığı hafif (fastapi/sqlalchemy gerektirmez), yalnızca pydantic/opencv/requests/
+  reportlab/pdfplumber/openpyxl/BeautifulSoup gibi hedefe özel kütüphaneler yeterlidir.
 - `test_api.py`: FastAPI `TestClient` + geçici bir SQLite veritabanı kullanarak
   kimlik doğrulama, plaka yetki kontrolü (yetkili/yetkisiz/kara liste/süresi
   dolmuş/saat kısıtlaması), lisans aktivasyonu ve kamera limiti gibi uçtan uca
