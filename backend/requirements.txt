@@ -1,7 +1,7 @@
 # PTS - Plaka Tanıma Sistemi - Temel Bağımlılıklar
 # Kurulum: pip install -r requirements.txt
 
-fastapi==0.115.0
+fastapi==0.141.1
 uvicorn[standard]==0.30.6
 sqlalchemy==2.0.35
 pyodbc==5.2.0
