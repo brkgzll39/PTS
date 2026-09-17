@@ -9,6 +9,11 @@ pydantic==2.9.2
 python-multipart==0.0.9
 openpyxl==3.1.5
 reportlab==4.2.5
+# "GEÇİŞ RAPORU" PDF'indeki araç görsellerini gömmeden önce küçültüp yeniden
+# sıkıştırmak için (bkz. backend/pdf_export.py::_kucuk_gorsel_akisi) --
+# reportlab'ın Image flowable'ı JPEG kodlamak için zaten dolaylı olarak
+# Pillow'a ihtiyaç duyar, burada doğrudan/açık bir bağımlılık olarak listelendi.
+Pillow==11.0.0
 
 # -----------------------------------------------------------------
 # OPSİYONEL: Gerçek ANPR/RTSP kamera pipeline (backend/camera_reader.py)

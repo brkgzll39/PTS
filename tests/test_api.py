@@ -1622,3 +1622,209 @@ def test_dusuk_guven_temizle_operator_yetkisiz_403_doner(client, operator_header
 def test_dusuk_guven_temizle_izleyici_yetkisiz_403_doner(client, izleyici_header):
     r = client.post("/sistem/dusuk-guven-temizle", headers=izleyici_header)
     assert r.status_code == 403, r.text
+
+
+# ------------------------------------------------------------------
+# Dışa aktarma (Excel/PDF) uç noktaları -- kimlik doğrulama (2026-09-18)
+# ------------------------------------------------------------------
+# GÜVENLİK KÖK NEDEN DÜZELTMESİ: bu uç noktaların DÖRDÜ de (artı yeni eklenen
+# toplu içe aktarma şablonu) önceden HİÇBİR kimlik doğrulama gerektirmiyordu
+# -- frontend bunları `window.open()` ile açtığı için Authorization başlığı
+# taşıyamıyordu, bu yüzden hiç eklenmemişti. Sonuç: KVKK kapsamındaki plaka/
+# ad-soyad/daire/görsel gibi kişisel verileri girişsiz HERHANGİ bir istemciye
+# açık ediyordu. Artık `_giris_gerekli` hem Authorization başlığını hem de
+# (SADECE başlık yoksa, geriye dönük uyumluluk için değil -- window.open()
+# yolunun TEK çalışma biçimi olarak) bir `?token=` sorgu parametresini kabul
+# ediyor (bkz. frontend/app.js::indirmeUrlOlustur). Aşağıdaki testler hem
+# tokensiz isteğin reddedildiğini hem de her iki yolun (başlık VE sorgu
+# parametresi) çalıştığını doğrular.
+
+_DISA_AKTAR_SABIT_YOLLAR = [
+    "/disa-aktar/excel/kayitlar",
+    "/disa-aktar/pdf/kayitlar",
+    "/disa-aktar/excel/kisiler",
+    "/kisiler/toplu-import/sablon",
+]
+
+
+def test_disa_aktar_uc_noktalari_tokensiz_401_doner(client):
+    for yol in _DISA_AKTAR_SABIT_YOLLAR:
+        r = client.get(yol)
+        assert r.status_code == 401, f"GET {yol}: token/başlık olmadan 401 beklenirdi, {r.status_code} alındı ({r.text})"
+
+
+def test_disa_aktar_uc_noktalari_authorization_basligiyla_calisir(client, yetkili_header):
+    for yol in _DISA_AKTAR_SABIT_YOLLAR:
+        r = client.get(yol, headers=yetkili_header)
+        assert r.status_code == 200, f"GET {yol}: Authorization başlığıyla 200 beklenirdi ({r.text})"
+
+
+def test_disa_aktar_uc_noktalari_sorgu_token_ile_calisir(client, admin_token):
+    """window.open() ile açılan indirme bağlantıları Authorization başlığı
+    TAŞIYAMAZ -- bu yüzden frontend token'ı ?token= sorgu parametresi olarak
+    ekliyor. Bu istekler HİÇ Authorization başlığı olmadan da çalışmalı."""
+    for yol in _DISA_AKTAR_SABIT_YOLLAR:
+        r = client.get(yol, params={"token": admin_token})
+        assert r.status_code == 200, f"GET {yol}: sorgu token ile 200 beklenirdi ({r.text})"
+
+
+def test_disa_aktar_pdf_kayit_detay_tokensiz_401_ve_token_ile_calisir(client, yetkili_header, admin_token):
+    """Tek kayıt detay PDF'i, yola gömülü bir id parametresi aldığı için
+    yukarıdaki sabit yol listesine uymuyor -- ayrı test edilir."""
+    olusturulan = client.post("/kayitlar", json={
+        "plaka_no": "34 EXP 001", "kamera_id": "TEST-DISA-AKTAR", "yon": "giris",
+    }, headers=yetkili_header)
+    assert olusturulan.status_code == 200, olusturulan.text
+    kayit_id = olusturulan.json()["id"]
+
+    r = client.get(f"/disa-aktar/pdf/kayit/{kayit_id}")
+    assert r.status_code == 401, r.text
+    r2 = client.get(f"/disa-aktar/pdf/kayit/{kayit_id}", headers=yetkili_header)
+    assert r2.status_code == 200, r2.text
+    r3 = client.get(f"/disa-aktar/pdf/kayit/{kayit_id}", params={"token": admin_token})
+    assert r3.status_code == 200, r3.text
+
+
+def test_kisi_ice_aktarma_sablonu_gecerli_ve_dogru_basliklara_sahip_xlsx_doner(client, yetkili_header):
+    """Şablon uç noktasının döndürdüğü dosya gerçekten açılabilir bir .xlsx
+    olmalı ve toplu_kisi_import'un beklediği sütunlarla eşleşmeli (bkz.
+    tests/test_excel_export.py -- burada aynı doğrulama, birim testinden
+    farklı olarak GERÇEK HTTP uç noktası üzerinden yapılır)."""
+    import io
+    import openpyxl
+
+    r = client.get("/kisiler/toplu-import/sablon", headers=yetkili_header)
+    assert r.status_code == 200, r.text
+    assert r.headers["content-type"] == "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+
+    wb = openpyxl.load_workbook(io.BytesIO(r.content))
+    assert "Kişiler" in wb.sheetnames
+    assert "Açıklama" in wb.sheetnames
+    basliklar_ham = [h.value for h in wb["Kişiler"][1]]
+    basliklar = [str(b).strip().lower().replace(" ", "_") if b else "" for b in basliklar_ham]
+    for zorunlu in ("ad_soyad", "plaka_no", "tip"):
+        assert zorunlu in basliklar, f"'{zorunlu}' şablonda eksik -- içe aktarma her zaman başarısız olurdu"
+
+
+# ------------------------------------------------------------------
+# Kayıtlar dışa aktarma raporu -- Site/Daire/Araç Tipi zenginleştirmesi
+# (2026-09-18, bkz. backend/main.py::_kayitlari_rapor_satirlari)
+# ------------------------------------------------------------------
+# Kullanıcının paylaştığı referans "GEÇİŞ RAPORU" biçimine yaklaştırma kararı
+# (bkz. README'deki 2026-09-18 notu). Bu testler gerçek bir Site + Nokta +
+# personel/abone Kişi + kara liste kaydı oluşturup, dışa aktarılan Excel'in
+# Site/Daire/Araç Tipi sütunlarının belgelenen sınıflandırma kurallarıyla
+# eşleştiğini UÇTAN UCA (gerçek HTTP + gerçek DB) doğrular.
+#
+# NOT: aşağıdaki plakalar kasıtlı olarak birbirinden çok FARKLI seçildi (tek
+# karakter farkıyla eşleşmiyorlar) -- aksi halde _bilinen_plakaya_yakinlik_
+# duzelt (OCR yakınlık düzeltmesi, guven_skoru verilmediği için burada da
+# devreye girer) "tanımsız araç" olması gereken bir plakayı yanlışlıkla
+# bilinen bir plakaya düzeltip testi anlamsızlaştırabilirdi.
+
+_RAPOR_TEST_PLAKA_PERSONEL = "77RAP9001"
+_RAPOR_TEST_PLAKA_ABONE = "88RAP9002"
+_RAPOR_TEST_PLAKA_TANIMSIZ = "12TANIMSIZ99"
+_RAPOR_TEST_PLAKA_KARALISTE = "34KARALISTE01"
+
+
+@pytest.fixture
+def rapor_test_kurulumu(client, yetkili_header):
+    """Site + Nokta'yı doğrudan DB'ye yazar (Nokta oluşturma uç noktası,
+    kamera_id verildiğinde cameras.json'da GERÇEK bir kamera olmasını/aktif
+    lisans olmasını şart koşuyor -- bu testin odağı o kısıtlama değil,
+    _kayitlari_rapor_satirlari'nin zenginleştirme mantığı olduğu için burada
+    bu karmaşıklık bilinçli olarak atlanıyor; dosyadaki diğer karmaşık DB
+    kurulumlarıyla aynı desen, bkz. test_dusuk_guven_temizle_*)."""
+    from backend.database import SessionLocal
+    from backend import models
+
+    db = SessionLocal()
+    try:
+        site = models.Site(ad="RAPTEST SİTESİ")
+        db.add(site)
+        db.commit()
+        db.refresh(site)
+        nokta = models.Nokta(site_id=site.id, ad="RAPTEST GİRİŞ", yon="giris", kamera_id="KAM-RAPTEST")
+        db.add(nokta)
+        db.commit()
+    finally:
+        db.close()
+
+    r = client.post("/kisiler", json={
+        "ad_soyad": "Ahmet Yılmaz", "plaka_no": _RAPOR_TEST_PLAKA_PERSONEL, "tip": "personel",
+        "daire_departman": "GÜVENLİK ŞEFLİĞİ",
+    }, headers=yetkili_header)
+    assert r.status_code == 200, r.text
+
+    r = client.post("/kisiler", json={
+        "ad_soyad": "Mehmet Demir", "plaka_no": _RAPOR_TEST_PLAKA_ABONE, "tip": "abone",
+        "daire_departman": "A BLOK NO 5",
+    }, headers=yetkili_header)
+    assert r.status_code == 200, r.text
+
+    r = client.post("/kara-listesi", json={
+        "plaka_no": _RAPOR_TEST_PLAKA_KARALISTE, "sebep": "test",
+    }, headers=yetkili_header)
+    assert r.status_code == 200, r.text
+
+    for plaka in (
+        _RAPOR_TEST_PLAKA_PERSONEL, _RAPOR_TEST_PLAKA_ABONE,
+        _RAPOR_TEST_PLAKA_TANIMSIZ, _RAPOR_TEST_PLAKA_KARALISTE,
+    ):
+        r = client.post("/kayitlar", json={
+            "plaka_no": plaka, "kamera_id": "KAM-RAPTEST", "yon": "giris",
+        }, headers=yetkili_header)
+        assert r.status_code == 200, r.text
+
+
+def _rapor_satirini_getir(client, yetkili_header, plaka: str) -> dict:
+    """Kayıtlar Excel raporunu tek bir plakayla filtreleyip tek satırı, sütun
+    adı -> değer sözlüğü olarak döner."""
+    import io
+    import openpyxl
+
+    r = client.get("/disa-aktar/excel/kayitlar", params={"plaka": plaka}, headers=yetkili_header)
+    assert r.status_code == 200, r.text
+    wb = openpyxl.load_workbook(io.BytesIO(r.content))
+    ws = wb.active
+    basliklar = [h.value for h in ws[1]]
+    satirlar = [dict(zip(basliklar, satir)) for satir in ws.iter_rows(min_row=2, values_only=True)]
+    assert len(satirlar) == 1, f"'{plaka}' için tam olarak 1 satır bekleniyordu, {len(satirlar)} bulundu"
+    return satirlar[0]
+
+
+def test_kayitlar_raporu_personel_satiri_daire_ve_arac_tipini_dogru_doldurur(client, yetkili_header, rapor_test_kurulumu):
+    satir = _rapor_satirini_getir(client, yetkili_header, _RAPOR_TEST_PLAKA_PERSONEL)
+    assert satir["Site"] == "RAPTEST SİTESİ"
+    assert satir["Nokta"] == "RAPTEST GİRİŞ"
+    assert satir["Adı"] == "Ahmet"
+    assert satir["Soyadı"] == "Yılmaz"
+    assert satir["Daire"] == "PERSONEL", "personel tipi için Daire sütunu her zaman sabit 'PERSONEL' olmalı"
+    assert satir["Araç Tipi"] == "GÜVENLİK ŞEFLİĞİ", "personel için Araç Tipi kişinin departman adını göstermeli"
+    assert satir["Geçiş Tipi"] == "Giriş"
+    assert satir["Blok"] is None, "Blok kavramı bu sistemde yok -- UYDURULMAMALI, her zaman boş kalmalı"
+    assert satir["Otopark"] is None, "Otopark kavramı bu sistemde yok -- UYDURULMAMALI, her zaman boş kalmalı"
+
+
+def test_kayitlar_raporu_abone_satiri_daireyi_ve_tanimli_arac_tipini_dogru_doldurur(client, yetkili_header, rapor_test_kurulumu):
+    satir = _rapor_satirini_getir(client, yetkili_header, _RAPOR_TEST_PLAKA_ABONE)
+    assert satir["Site"] == "RAPTEST SİTESİ"
+    assert satir["Daire"] == "A BLOK NO 5", "abone tipi için Daire, kişinin kendi daire_departman değeri olmalı"
+    assert satir["Araç Tipi"] == "Tanımlı"
+
+
+def test_kayitlar_raporu_taninmayan_plaka_tanimsiz_arac_olarak_isaretlenir(client, yetkili_header, rapor_test_kurulumu):
+    satir = _rapor_satirini_getir(client, yetkili_header, _RAPOR_TEST_PLAKA_TANIMSIZ)
+    assert satir["Araç Tipi"] == "Tanımsız Araç"
+    assert satir["Daire"] is None
+    assert satir["Adı"] is None
+    assert satir["Soyadı"] is None
+
+
+def test_kayitlar_raporu_kara_liste_plakasi_ayrica_isaretlenir(client, yetkili_header, rapor_test_kurulumu):
+    """Referans raporda yok ama sistemin zaten tuttuğu bir bilgi -- 'Tanımsız
+    Araç' içinde gizlenmek yerine ayrıca 'Kara Liste' olarak gösterilir."""
+    satir = _rapor_satirini_getir(client, yetkili_header, _RAPOR_TEST_PLAKA_KARALISTE)
+    assert satir["Araç Tipi"] == "Kara Liste"
+    assert satir["Daire"] is None

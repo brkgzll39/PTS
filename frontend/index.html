@@ -582,7 +582,8 @@
                 <button class="btn btn-sm btn-outline-secondary tip-filtre" data-tip="ziyaretci" onclick="kisiTipFiltrele('ziyaretci', this)">Ziyaretçi</button>
               </div>
               <button class="btn btn-sm btn-success" onclick="kisilerExcelIndir()"><i class="bi bi-file-earmark-excel"></i> Excel İndir</button>
-              <label class="btn btn-sm btn-outline-primary mb-0" title="Excel'den toplu kişi içe aktar" data-rol-min="operatör" data-rol-davranis="gizle">
+              <button class="btn btn-sm btn-outline-secondary" onclick="kisiIceAktarmaSablonuIndir()" title="Toplu içe aktarma için doldurulacak boş Excel şablonunu indir" data-rol-min="operatör" data-rol-davranis="gizle"><i class="bi bi-file-earmark-arrow-down"></i> Şablon İndir</button>
+              <label class="btn btn-sm btn-outline-primary mb-0" title="Excel'den toplu kişi içe aktar (sütunlar için önce 'Şablon İndir'i kullanın)" data-rol-min="operatör" data-rol-davranis="gizle">
                 <i class="bi bi-upload"></i> Excel İçe Aktar
                 <input type="file" id="topluImportDosya" accept=".xlsx,.xls" class="d-none" onchange="topluImport(this)">
               </label>

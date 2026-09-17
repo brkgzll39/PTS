@@ -1029,6 +1029,61 @@ kaydedilir (disk şişmesin diye kamera başına en fazla 300 dosya tutulur,
 eskiler otomatik silinir). Varsayılan olarak KAPALIDIR; yalnızca teşhis
 sırasında açılması, sorun netleşince kapatılması önerilir.
 
+## Kayıtlar Raporu Biçimi ve Personel Toplu İçe Aktarma (2026-09-18)
+
+Kullanıcının paylaştığı, kullanmakta olduğu başka bir üründen alınmış referans
+"GEÇİŞ RAPORU" PDF/Excel çıktısına yaklaştırmak amacıyla Kayıtlar dışa aktarma
+raporları (Excel + PDF) yeniden tasarlandı, ve sisteme yeni bir personel/abone/
+ziyaretçi toplu içe aktarma Excel şablonu eklendi.
+
+**Rapor sütunları:** Yeni sütun sırası: `Plaka, Adı, Soyadı, Site, Blok, Daire,
+Otopark, Nokta, Geçiş Tipi, Araç Tipi, Tarih` + (Excel'de `Notlar`, PDF'de
+`Görsel`) — referans üründeki sütunlarla birebir aynı isimlendirme (başa
+yalnızca bu sistemin kendi `ID` sütunu eklendi).
+
+- **"Araç Tipi" sütunu**, kaydın eşleştiği Kişi'nin tipine göre değişir:
+  personel için kişinin departman adı (`daire_departman`), abone için
+  `"Tanımlı"`, hiçbir kişiyle eşleşmeyen bir plaka için `"Tanımsız Araç"`.
+  Referans raporda olmayan ama sistemin zaten tuttuğu bir bilgi olan kara
+  liste eşleşmesi de `"Tanımsız Araç"` içinde gizlenmek yerine ayrıca
+  `"Kara Liste"` olarak gösteriliyor.
+- **"Daire" sütunu**, personel tipi için her zaman sabit `"PERSONEL"` metnini,
+  abone tipi için kişinin kendi `daire_departman` değerini gösterir.
+- **"Blok" ve "Otopark" sütunları her zaman BOŞ bırakılır.** Bu kavramlar bu
+  sistemin veri modelinde YOK — "Site > Blok > Daire hiyerarşisi ve otopark
+  ataması" 2026-09-17'de "Ziyaretçi Girişi" özelliği eklenirken bilinçli
+  olarak kapsam dışı bırakılmıştı. Referans rapor biçimiyle sütun uyumluluğu
+  için bu iki sütun yer tutucu olarak eklendi ama var olmayan bir veri
+  UYDURULMADI/UYDURULMAYACAK.
+- Zenginleştirme mantığı `backend/main.py::_kayitlari_rapor_satirlari`
+  içinde tek bir yerde toplanıyor (hem Excel hem PDF aynı fonksiyonu
+  kullanıyor) ve N+1 sorgudan kaçınmak için kişiler/noktalar/siteler toplu
+  olarak önceden yükleniyor.
+- PDF'teki araç görselleri artık gömülmeden önce küçültülüp yeniden
+  sıkıştırılıyor (bkz. `backend/pdf_export.py::_kucuk_gorsel_akisi`, Pillow
+  ile 240×160'a küçültme + JPEG kalite 60) — aksi halde binlerce tam
+  çözünürlüklü görsel içeren bir rapor yüzlerce MB'a şişebilirdi. Bu yeni
+  bağımlılık `backend/requirements.txt`'ye eklendi (`Pillow==11.0.0`).
+
+**Personel/Abone/Ziyaretçi toplu içe aktarma şablonu:** Kişiler sekmesinde
+"Excel İçe Aktar"ın yanına yeni bir **"Şablon İndir"** düğmesi eklendi
+(`GET /kisiler/toplu-import/sablon`). İndirilen `.xlsx` iki sayfa içerir:
+
+- **"Kişiler" sayfası**: mevcut `toplu_kisi_import` uç noktasının beklediği
+  `Ad Soyad, Plaka No, Tip, Telefon, Daire Departman` başlıkları (normalize
+  edildiğinde birebir eşleşecek şekilde seçildi — örn. "Daire/Departman"
+  DEĞİL "Daire Departman" kullanıldı, çünkü "/" normalizasyon tarafından
+  temizlenmiyor ve eşleşmeyi bozardı) + 2 örnek satır, ve `Tip` sütununda
+  yalnızca `abone/personel/ziyaretci` seçilebilen bir açılır liste (data
+  validation) — serbest metin yazıp typo yapılıp sessizce "abone"ya
+  düşülmesini önlemek için.
+- **"Açıklama" sayfası**: her sütunun ne anlama geldiğini ve geçerli `Tip`
+  değerlerini açıklayan bir referans tablosu.
+
+**⚠️ Bu turda ayrıca bulunan ve düzeltilen bir güvenlik açığı:** bkz. aşağıdaki
+"Üretim Güvenliği Sertleştirmeleri" bölümündeki 2026-09-18 notu — dışa
+aktarma uç noktaları kimlik doğrulaması gerektirmiyordu.
+
 ## Kalıcı Test Altyapısı
 
 `tests/` klasöründe pytest tabanlı bir test paketi var:
@@ -1323,6 +1378,35 @@ düşüyor (bazı araçlarda 16x9px kadar küçük) — bir "tiny" YOLO modeli i
 gerçekten zorlayıcı bir boyut. Aynı plakalar `-608-` modelde yaklaşık
 **54-76x22-25px**'e (yaklaşık %60 daha büyük) çıkıyor. Bu, README'nin
 yukarısındaki tavsiyeyi (yolo-v9-s-608'e geçiş) somut verilerle doğruluyor.
+
+**⚠️ 2026-09-18 — dışa aktarma uç noktalarında kimlik doğrulama eksikliği
+bulundu ve düzeltildi:** Kayıtlar raporu biçimini kullanıcının paylaştığı
+referans ürüne yaklaştırma çalışması sırasında (bkz. yukarıdaki "Kayıtlar
+Raporu Biçimi ve Personel Toplu İçe Aktarma" bölümü), `GET /disa-aktar/excel/
+kayitlar`, `/disa-aktar/pdf/kayitlar`, `/disa-aktar/pdf/kayit/{id}` ve
+`/disa-aktar/excel/kisiler` uç noktalarının HİÇBİRİNİN kimlik doğrulama
+gerektirmediği ortaya çıktı — frontend bu indirmeleri `<a>`/fetch yerine
+`window.open()` ile açtığı için (bir dosya indirmesini yeni sekmede tetiklemenin
+standart yolu budur) Authorization header'ı hiç eklenmemişti, bu yüzden uç
+noktalara başlangıçta hiç kimlik doğrulama dependency'si konmamış. Sonuç:
+plaka, ad-soyad, daire/departman ve araç görseli gibi KVKK kapsamındaki kişisel
+verileri içeren bu raporlar, sunucuya erişebilen HERHANGİ bir istemci
+tarafından (giriş yapmadan) indirilebiliyordu. Yeni eklenen personel toplu
+içe aktarma şablonu uç noktası (`/kisiler/toplu-import/sablon`) da aynı
+`window.open()` deseniyle açıldığından aynı açığı miras alacaktı; dördü de
+tek seferde düzeltildi.
+
+Düzeltme: `_giris_gerekli`, Authorization header'ına ek olarak (SADECE header
+yokken devreye giren) bir `?token=` sorgu parametresini de kabul edecek şekilde
+genişletildi, VE bu dört uç noktaya (+ yeni şablon uç noktasına) eksik olan
+`Depends(_personel_girisi_gerekli)` bağımlılığı eklendi. Frontend tarafında
+yeni bir `indirmeUrlOlustur()` yardımcı fonksiyonu, her `window.open()`
+çağrısından önce oturumun JWT'sini `?token=` olarak indirme URL'ine ekliyor
+(bkz. `frontend/app.js`). **Bilinmesi gereken davranış değişikliği:** bu
+raporları eskiden elle kopyaladığınız veya bir betikle otomatik indirdiğiniz
+bir bağlantı varsa, artık geçerli bir oturum token'ı olmadan çalışmayacaktır —
+panel üzerinden yeniden indirin ya da otomasyonunuzu geçerli bir `token`
+sorgu parametresi eklemek üzere güncelleyin.
 
 ## Toplu Doğruluk Testi (Canlı Sisteme Dokunmadan Eşik/Model Karşılaştırma)
 

@@ -307,6 +307,21 @@ async function apiCagir(yol, secenekler = {}) {
   return cevap.status === 204 ? null : cevap.json();
 }
 
+// DOSYA İNDİRME URL'İ (2026-09-18): `/disa-aktar/...` ve şablon indirme
+// uçları `window.open()` ile açılır -- bu, `fetch()`in aksine bir
+// Authorization header TAŞIYAMAZ (bkz. korumaliGorselAta'nın aynı kısıtlama
+// için neden fetch+blob kullandığını anlatan not). GÜVENLİK KÖK NEDEN
+// DÜZELTMESİ: bu uç noktalar önceden hiç kimlik doğrulaması istemiyordu --
+// artık istiyor (bkz. main.py::_giris_gerekli), bu yüzden token'ın buradan
+// `?token=` sorgu parametresi olarak eklenmesi ZORUNLU, aksi halde her
+// indirme 401 ile başarısız olur.
+function indirmeUrlOlustur(yol, params = new URLSearchParams()) {
+  const token = sessionStorage.getItem("pts_token");
+  if (token) params.set("token", token);
+  const sorgu = params.toString();
+  return sorgu ? `${yol}?${sorgu}` : yol;
+}
+
 // SON KULLANILAN NOT ÖNERİSİ (2026-09-17, devam): kullanıcı talebi -- aynı
 // plakaya (örn. bir kargo aracına) art arda günlerde not eklerken görevli
 // notu her seferinde yeniden yazmak zorunda kalmasın diye, bir önceki not
@@ -1202,11 +1217,11 @@ function sayfaDegistir(delta) {
 
 function disaAktar(tur) {
   const params = filtreParametreleri();
-  window.open(`/disa-aktar/${tur}/kayitlar?${params.toString()}`, "_blank");
+  window.open(indirmeUrlOlustur(`/disa-aktar/${tur}/kayitlar`, params), "_blank");
 }
 
 function kayitPdfIndir(id) {
-  window.open(`/disa-aktar/pdf/kayit/${id}`, "_blank");
+  window.open(indirmeUrlOlustur(`/disa-aktar/pdf/kayit/${id}`), "_blank");
 }
 
 // Bir geçiş kaydını (plaka, yön, durum, kişi eşleştirmesi, not) panelden tam
@@ -1385,7 +1400,11 @@ async function kisiSil(id) {
 function kisilerExcelIndir() {
   const params = new URLSearchParams();
   if (aktifTipFiltre) params.set("tip", aktifTipFiltre);
-  window.open(`/disa-aktar/excel/kisiler?${params.toString()}`, "_blank");
+  window.open(indirmeUrlOlustur("/disa-aktar/excel/kisiler", params), "_blank");
+}
+
+function kisiIceAktarmaSablonuIndir() {
+  window.open(indirmeUrlOlustur("/kisiler/toplu-import/sablon"), "_blank");
 }
 
 function duzenleZiyaretciAlanGoster() {

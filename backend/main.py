@@ -788,11 +788,36 @@ def _token_coz(token: str) -> int:
         raise HTTPException(401, "Oturum geçersiz veya süresi dolmuş")
 
 
-def _giris_gerekli(authorization: Optional[str] = Header(None), db: Session = Depends(get_db)) -> models.Kullanici:
-    """Korumalı uç noktalar için geçerli oturum zorunluluğu."""
-    if not authorization or not authorization.lower().startswith("bearer "):
+def _giris_gerekli(
+    authorization: Optional[str] = Header(None),
+    token: Optional[str] = None,
+    db: Session = Depends(get_db),
+) -> models.Kullanici:
+    """Korumalı uç noktalar için geçerli oturum zorunluluğu.
+
+    GÜVENLİK KÖK NEDEN DÜZELTMESİ (2026-09-18): `/disa-aktar/...` gibi dosya
+    indirme uçları tarayıcıda `window.open()` ile açılıyor -- bu, `fetch()`in
+    aksine bir `Authorization` header TAŞIYAMAZ (bkz. app.js'teki
+    `korumaliGorselAta`'nın AYNI kısıtlama yüzünden neden fetch+blob URL
+    kullandığını anlatan not). Bu yüzden o uç noktaların HİÇBİRİ bugüne kadar
+    HİÇ kimlik doğrulaması istemiyordu -- yani plaka/isim/daire gibi KVKK
+    kapsamındaki kişisel verileri içeren TÜM kayıt/kişi dışa aktarma uçları,
+    oturum açmamış HERKESE (internete açık bir kurulumda kimliksiz herhangi
+    bir istemciye) açıktı. Düzeltme: `Authorization` header yoksa, aynı
+    JWT'nin `?token=` sorgu parametresi olarak da gönderilmesine izin
+    verilir -- yalnızca indirme uçları (frontend'de sessionStorage'daki
+    token URL'e eklenir, bkz. app.js) bunu kullanır; normal API çağrıları
+    (fetch tabanlı `apiCagir`) yine header kullanmaya devam eder, davranışları
+    değişmez.
+    """
+    ham_token = None
+    if authorization and authorization.lower().startswith("bearer "):
+        ham_token = authorization[7:].strip()
+    elif token:
+        ham_token = token.strip()
+    if not ham_token:
         raise HTTPException(401, "Bearer token gerekli")
-    kullanici = db.query(models.Kullanici).filter(models.Kullanici.id == _token_coz(authorization[7:].strip())).first()
+    kullanici = db.query(models.Kullanici).filter(models.Kullanici.id == _token_coz(ham_token)).first()
     if not kullanici or not kullanici.aktif:
         raise HTTPException(401, "Kullanıcı hesabı aktif değil")
     return kullanici
@@ -2464,16 +2489,115 @@ async def sse_baglantisi(request: Request, authorization: Optional[str] = Header
 # DIŞA AKTARMA (Excel / PDF)
 # ==================================================================
 
+def _rapor_tarih_araligi_metni(baslangic: Optional[str], bitis: Optional[str], kayitlar: list) -> str:
+    """"GEÇİŞ RAPORU" başlığının altındaki açıklama cümlesini üretir (bkz.
+    kullanıcının paylaştığı referans rapordaki "Bu raporda X - Y tarihleri
+    arasındaki geçiş kayıtları listelenmektedir." metni). Kullanıcı bir
+    tarih filtresi seçtiyse onu kullanır; seçmediyse dönen kayıtların
+    GERÇEK en eski/en yeni tarihlerini gösterir (referanstaki gibi sabit
+    bir varsayım -- örn. "son 24 saat" -- UYDURMAZ)."""
+    if baslangic or bitis:
+        b1 = datetime.fromisoformat(baslangic).strftime("%d.%m.%Y") if baslangic else "en eski kayıt"
+        b2 = (datetime.fromisoformat(bitis) + timedelta(days=1)).strftime("%d.%m.%Y") if bitis else "şimdi"
+        return f"Bu raporda {b1} - {b2} tarihleri arasındaki geçiş kayıtları listelenmektedir."
+    if kayitlar:
+        ilk = min(k.tarih_saat for k in kayitlar).strftime("%d.%m.%Y %H:%M")
+        son = max(k.tarih_saat for k in kayitlar).strftime("%d.%m.%Y %H:%M")
+        return f"Bu raporda {ilk} - {son} tarihleri arasındaki geçiş kayıtları listelenmektedir."
+    return "Bu kriterlere uyan hiçbir geçiş kaydı bulunamadı."
+
+
+def _kayitlari_rapor_satirlari(kayitlar: list, db: Session) -> list:
+    """Kayıtlar dışa aktarma (Excel/PDF) raporunun her satırını, kişi (ad/
+    soyad/tip/daire-departman) ve erişim noktası/site bilgisiyle
+    ZENGİNLEŞTİRİR -- kullanıcının paylaştığı referans "GEÇİŞ RAPORU"
+    biçimine (Site/Blok/Daire/Otopark/Nokta/Geçiş Tipi/Araç Tipi sütunları)
+    yaklaştırma kararı, bkz. README'deki 2026-09-18 notu. N+1 sorgudan
+    kaçınmak için kişiler ve noktalar TOPLU olarak önceden yüklenir.
+
+    Not: "Blok" ve "Otopark" kavramları bu sistemin veri modelinde YOKTUR
+    (Site > Blok > Daire hiyerarşisi ve otopark ataması, 2026-09-17'de
+    "Ziyaretçi Girişi" özelliği eklenirken bilinçli olarak kapsam dışı
+    bırakılmıştı, bkz. README). Bu sütunlar, referans raporla sütun
+    uyumluluğu için yer tutucu olarak eklendi ama HER ZAMAN boş kalır --
+    var olmayan bir veri UYDURULMAZ.
+    """
+    kisi_idler = {k.kisi_id for k in kayitlar if k.kisi_id}
+    kisiler = {
+        kisi.id: kisi
+        for kisi in (db.query(models.Kisi).filter(models.Kisi.id.in_(kisi_idler)).all() if kisi_idler else [])
+    }
+    nokta_by_kamera = {
+        n.kamera_id: n for n in db.query(models.Nokta).filter(models.Nokta.kamera_id.isnot(None)).all()
+    }
+    site_adi_by_id = {s.id: s.ad for s in db.query(models.Site).all()}
+
+    satirlar = []
+    for k in kayitlar:
+        kisi = kisiler.get(k.kisi_id) if k.kisi_id else None
+        nokta = nokta_by_kamera.get(k.kamera_id)
+        site_adi = site_adi_by_id.get(nokta.site_id) if nokta else ""
+
+        ad, soyad = "", ""
+        if kisi and kisi.ad_soyad and kisi.ad_soyad.strip():
+            parcalar = kisi.ad_soyad.strip().rsplit(" ", 1)
+            ad, soyad = (parcalar[0], parcalar[1]) if len(parcalar) == 2 else (parcalar[0], "")
+
+        # "Araç Tipi" sınıflandırması -- referans rapordaki aynı sütunun
+        # (personel->departman adı, sakin->"Tanımlı", ziyaretçi->"Ziyaretçi",
+        # eşleşmeyen->"Tanımsız Araç") bizim veri modelimizdeki karşılığı.
+        # "Kara Liste" ise referansta yok, sistemimizin kendi eklediği bir
+        # netlik -- bu bilgiyi zaten tuttuğumuz için "Tanımsız Araç" içinde
+        # gizlemek yerine ayrıca gösteriyoruz.
+        if k.yetki_durumu == "kara_liste":
+            arac_tipi = "Kara Liste"
+        elif kisi and kisi.tip == "personel":
+            arac_tipi = kisi.daire_departman or "Tanımlı"
+        elif kisi and kisi.tip == "abone":
+            arac_tipi = "Tanımlı"
+        elif (kisi and kisi.tip == "ziyaretci") or k.yetki_durumu in ("ziyaretci_onayli", "suresi_dolmus"):
+            arac_tipi = "Ziyaretçi"
+        else:
+            arac_tipi = "Tanımsız Araç"
+
+        if kisi and kisi.tip == "personel":
+            daire = "PERSONEL"
+        elif kisi:
+            daire = kisi.daire_departman or ""
+        else:
+            daire = ""
+
+        satirlar.append({
+            "id": k.id,
+            "plaka_no": k.plaka_no,
+            "ad": ad,
+            "soyad": soyad,
+            "site": site_adi or "",
+            "blok": "",
+            "daire": daire,
+            "otopark": "",
+            "nokta": (nokta.ad if nokta else None) or k.kamera_id or "",
+            "gecis_tipi": "Giriş" if k.yon == "giris" else "Çıkış",
+            "arac_tipi": arac_tipi,
+            "tarih_saat": k.tarih_saat,
+            "notlar": k.not_metni or "",
+            "goruntu_yolu": k.goruntu_yolu,
+        })
+    return satirlar
+
+
 @app.get("/disa-aktar/excel/kayitlar")
 def kayitlari_excel_indir(
     plaka: Optional[str] = None, baslangic: Optional[str] = None,
     bitis: Optional[str] = None, db: Session = Depends(get_db),
+    _: models.Kullanici = Depends(_personel_girisi_gerekli),
 ):
     kayitlar = kayitlari_listele(
         plaka=plaka, baslangic=baslangic, bitis=bitis, yetki_durumu=None, limit=5000, db=db
     )
+    satirlar = _kayitlari_rapor_satirlari(kayitlar, db)
     dosya_yolu = os.path.join(DISA_AKTAR_KLASORU, f"pts_kayitlar_{int(datetime.now().timestamp())}.xlsx")
-    excel_export.kayitlar_excel_olustur(kayitlar, dosya_yolu)
+    excel_export.kayitlar_excel_olustur(satirlar, dosya_yolu)
     return FileResponse(
         dosya_yolu, filename="pts_kayitlari.xlsx",
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -2484,17 +2608,23 @@ def kayitlari_excel_indir(
 def kayitlari_pdf_indir(
     plaka: Optional[str] = None, baslangic: Optional[str] = None,
     bitis: Optional[str] = None, db: Session = Depends(get_db),
+    _: models.Kullanici = Depends(_personel_girisi_gerekli),
 ):
     kayitlar = kayitlari_listele(
         plaka=plaka, baslangic=baslangic, bitis=bitis, yetki_durumu=None, limit=2000, db=db
     )
+    satirlar = _kayitlari_rapor_satirlari(kayitlar, db)
+    tarih_araligi_metni = _rapor_tarih_araligi_metni(baslangic, bitis, kayitlar)
     dosya_yolu = os.path.join(DISA_AKTAR_KLASORU, f"pts_kayitlar_{int(datetime.now().timestamp())}.pdf")
-    pdf_export.kayitlar_pdf_olustur(kayitlar, dosya_yolu)
+    pdf_export.kayitlar_pdf_olustur(satirlar, dosya_yolu, tarih_araligi_metni=tarih_araligi_metni)
     return FileResponse(dosya_yolu, filename="pts_kayitlari.pdf", media_type="application/pdf")
 
 
 @app.get("/disa-aktar/pdf/kayit/{kayit_id}")
-def kayit_detay_pdf_indir(kayit_id: int, db: Session = Depends(get_db)):
+def kayit_detay_pdf_indir(
+    kayit_id: int, db: Session = Depends(get_db),
+    _: models.Kullanici = Depends(_personel_girisi_gerekli),
+):
     """Tek bir kaydı, araç görseliyle birlikte PDF olarak indirir."""
     kayit = db.query(models.Kayit).filter(models.Kayit.id == kayit_id).first()
     if not kayit:
@@ -2505,7 +2635,10 @@ def kayit_detay_pdf_indir(kayit_id: int, db: Session = Depends(get_db)):
 
 
 @app.get("/disa-aktar/excel/kisiler")
-def kisileri_excel_indir(tip: Optional[str] = None, db: Session = Depends(get_db)):
+def kisileri_excel_indir(
+    tip: Optional[str] = None, db: Session = Depends(get_db),
+    _: models.Kullanici = Depends(_personel_girisi_gerekli),
+):
     kisiler = kisileri_listele(tip=tip, aktif=None, arama=None, db=db)
     dosya_yolu = os.path.join(DISA_AKTAR_KLASORU, f"pts_kisiler_{int(datetime.now().timestamp())}.xlsx")
     excel_export.kisiler_excel_olustur(kisiler, dosya_yolu)
@@ -3119,6 +3252,26 @@ async def tum_kameralar_saglik(_: models.Kullanici = Depends(_personel_girisi_ge
 # ==================================================================
 # TOPLU İÇE AKTARMA (Excel'den kişi ekleme)
 # ==================================================================
+
+@app.get("/kisiler/toplu-import/sablon")
+def kisi_ice_aktarma_sablonu_indir(
+    _: models.Kullanici = Depends(_personel_girisi_gerekli),
+):
+    """Kullanıcı talebi (2026-09-18): personel/abone/ziyaretçi kaydını toplu
+    içe aktarmak için boş bir Excel ŞABLONU indirilebilsin -- önceden yalnızca
+    `toplu_kisi_import`'un docstring'inde hangi sütunların beklendiği
+    YAZIYORDU ama operatörün kendi başına doğru başlıklarla bir dosya
+    OLUŞTURMASI gerekiyordu (yazım hatası/sütun sırası hatası riski). Bu uç
+    nokta, `toplu_kisi_import`'un beklediği sütunlarla BİREBİR eşleşen,
+    örnek satırlar ve açıklama sayfası içeren, "tip" sütununda açılır liste
+    doğrulaması olan hazır bir şablon üretir."""
+    dosya_yolu = os.path.join(DISA_AKTAR_KLASORU, f"pts_kisi_ice_aktarma_sablonu_{int(datetime.now().timestamp())}.xlsx")
+    excel_export.kisi_ice_aktarma_sablonu_olustur(dosya_yolu)
+    return FileResponse(
+        dosya_yolu, filename="pts_kisi_ice_aktarma_sablonu.xlsx",
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    )
+
 
 @app.post("/kisiler/toplu-import")
 async def toplu_kisi_import(
