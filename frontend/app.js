@@ -1419,14 +1419,26 @@ async function dogrulukTestiCalistir(olay) {
       method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(govde),
     });
     const oranYuzde = r.dogruluk_orani != null ? `%${(r.dogruluk_orani * 100).toFixed(1)}` : "—";
+    // "tespit_edilemedi" (dedektör hiçbir aday bulamadı) ile "gorsel_okunamadi"
+    // (dosya hiç açılamadı) ve "hata" (motor çağrısı sırasında istisna) BİLEREK
+    // ayrı rozetlerle gösterilir -- hepsi aynı gri rozette birleştirilirse
+    // "model değiştirince de hâlâ 0 tespit" gibi bir sonucun aslında "dosyalar
+    // hiç okunamıyor" anlamına gelebileceği fark edilmez (bkz. camera_reader.py).
+    const rozetler = {
+      dogru: "success", yanlis: "danger", esik_altinda: "warning",
+      tespit_edilemedi: "secondary", gorsel_okunamadi: "dark", hata: "danger",
+      etiketlenemedi: "light",
+    };
     const detaySatirlari = r.detaylar.map(d => {
-      const rozetRenk = { dogru: "success", yanlis: "danger", esik_altinda: "warning", tespit_edilemedi: "secondary", etiketlenemedi: "light" }[d.sonuc] || "secondary";
+      const rozetRenk = rozetler[d.sonuc] || "secondary";
+      const notSatiri = d.hata_mesaji ? ` title="${escapeHtml(d.hata_mesaji)}"` : "";
       return `<tr>
         <td class="small">${escapeHtml(d.dosya)}</td>
         <td class="small">${escapeHtml(d.gercek_plaka || "—")}</td>
         <td class="small">${escapeHtml(d.okunan_plaka || "—")}</td>
         <td class="small">${d.guven != null ? d.guven.toFixed(2) : "—"}</td>
-        <td><span class="badge bg-${rozetRenk} text-${rozetRenk === "light" ? "dark" : "white"}">${escapeHtml(d.sonuc)}</span></td>
+        <td class="small">${escapeHtml(d.kare_boyutu || "—")}</td>
+        <td${notSatiri}><span class="badge bg-${rozetRenk} text-${["light"].includes(rozetRenk) ? "dark" : "white"}">${escapeHtml(d.sonuc)}</span></td>
       </tr>`;
     }).join("");
     sonucEl.innerHTML = `
@@ -1436,11 +1448,12 @@ async function dogrulukTestiCalistir(olay) {
       </div>
       <div class="small text-muted mb-2">
         Doğru: ${r.dogru} · Yanlış: ${r.yanlis} · Eşik altında: ${r.esik_altinda} ·
-        Tespit edilemedi: ${r.tespit_edilemedi} · Etiketlenemedi: ${r.etiketlenemedi}
+        Tespit edilemedi: ${r.tespit_edilemedi} · Görsel okunamadı: ${r.gorsel_okunamadi ?? 0} ·
+        Hata: ${r.hata ?? 0} · Etiketlenemedi: ${r.etiketlenemedi}
       </div>
       <div class="table-responsive" style="max-height:320px;overflow-y:auto">
         <table class="table table-sm table-borderless mb-0">
-          <thead><tr><th class="small">Dosya</th><th class="small">Gerçek</th><th class="small">Okunan</th><th class="small">Güven</th><th class="small">Sonuç</th></tr></thead>
+          <thead><tr><th class="small">Dosya</th><th class="small">Gerçek</th><th class="small">Okunan</th><th class="small">Güven</th><th class="small">Kare</th><th class="small">Sonuç</th></tr></thead>
           <tbody>${detaySatirlari}</tbody>
         </table>
       </div>`;

@@ -464,6 +464,8 @@ class _SahteSiraliMotor:
     def tahmin_et(self, frame):
         sonuc = self._sirali_sonuclar[self._cagri_sayisi]
         self._cagri_sayisi += 1
+        if isinstance(sonuc, Exception):
+            raise sonuc
         return sonuc
 
 
@@ -553,3 +555,45 @@ def test_toplu_dogruluk_testi_kontrast_iyilestir_parametresi_hatasiz_calisir(tmp
 def test_toplu_dogruluk_testi_olmayan_klasor_hata_verir(sahte_engine):
     with pytest.raises(ValueError):
         camera_reader.toplu_dogruluk_testi("/var/olmayan/bir/klasor/kesinlikle")
+
+
+def test_toplu_dogruluk_testi_bozuk_gorsel_ayri_kategoride_sayilir(tmp_path, sahte_sirali_motor):
+    """2026-09-17 sahada yaşanan karışıklık: 'tespit_edilemedi' (dedektör
+    gerçekten hiçbir aday bulamadı) ile 'dosya hiç açılamadı' aynı kategoride
+    toplanınca, farklı model/eşik denemelerinde HEP 0 sonuç almak 'dedektör
+    kaçırıyor' ile 'dosyalar okunamıyor' arasında ayırt edilemiyordu. Bu test,
+    cv2.imread'in None döndüğü bir dosyanın artık kendi ayrı kategorisinde
+    ('gorsel_okunamadi') sayıldığını doğrular."""
+    kok = tmp_path / "etiketli_fotograflar"
+    kok.mkdir()
+    (kok / "01_34ABC123.jpg").write_bytes(b"bu gecerli bir JPEG degil")
+
+    sahte_sirali_motor([])  # motor hiç çağrılmamalı -- görsel okunamadan önce elenir
+    sonuc = camera_reader.toplu_dogruluk_testi(str(kok))
+
+    assert sonuc["gorsel_okunamadi"] == 1
+    assert sonuc["tespit_edilemedi"] == 0
+    assert sonuc["detaylar"][0]["sonuc"] == "gorsel_okunamadi"
+
+
+def test_toplu_dogruluk_testi_motor_hata_firlatirsa_ayri_kategoride_sayilir_ve_devam_eder(tmp_path, sahte_sirali_motor):
+    """Motor çağrısı sırasında beklenmeyen bir istisna fırlarsa (ör. ONNX
+    çalışma zamanı hatası) tüm toplu test çökmemeli -- o dosya 'hata'
+    kategorisinde işaretlenip bir sonraki dosyaya geçilmeli."""
+    kok = tmp_path / "etiketli_fotograflar"
+    kok.mkdir()
+    _ornek_gorsel_yaz(kok / "01_34ABC123.jpg")
+    _ornek_gorsel_yaz(kok / "02_06AA22.jpg")
+
+    sahte_sirali_motor([
+        RuntimeError("onnxruntime: beklenmeyen çıkarım hatası"),
+        [_SahteSonuc("06AA22", 0.9)],
+    ])
+    sonuc = camera_reader.toplu_dogruluk_testi(str(kok))
+
+    assert sonuc["hata"] == 1
+    assert sonuc["dogru"] == 1  # ikinci dosya sorunsuz işlenmeye devam etti
+    detay_sozlugu = {d["dosya"]: d for d in sonuc["detaylar"]}
+    assert detay_sozlugu["01_34ABC123.jpg"]["sonuc"] == "hata"
+    assert "onnxruntime" in detay_sozlugu["01_34ABC123.jpg"]["hata_mesaji"]
+    assert detay_sozlugu["02_06AA22.jpg"]["sonuc"] == "dogru"

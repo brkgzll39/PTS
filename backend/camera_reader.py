@@ -1057,10 +1057,21 @@ def toplu_dogruluk_testi(klasor: str, min_guven_skoru: float = VARSAYILAN_MIN_GU
     "etiketlenemedi" sayılır ve doğruluk oranına hiç katılmaz.
 
     Döndürülen sözlük:
-      toplam, dogru, yanlis, esik_altinda, tespit_edilemedi, etiketlenemedi,
-      dogruluk_orani (yalnızca ETİKETLİ dosyalar üzerinden: dogru / (toplam -
-      etiketlenemedi); etiketli hiç dosya yoksa None), detaylar (her dosya
-      için {"dosya", "gercek_plaka", "sonuc", "okunan_plaka", "guven"}).
+      toplam, dogru, yanlis, esik_altinda, tespit_edilemedi, gorsel_okunamadi,
+      hata, etiketlenemedi, dogruluk_orani (yalnızca ETİKETLİ dosyalar
+      üzerinden: dogru / (toplam - etiketlenemedi); etiketli hiç dosya yoksa
+      None), detaylar (her dosya için {"dosya", "gercek_plaka", "sonuc",
+      "okunan_plaka", "guven", "kare_boyutu"}).
+
+    GÖZLEMLENEBİLİRLİK (2026-09-17 eklendi): "tespit_edilemedi" ile "görsel
+    hiç okunamadı" (bozuk dosya/desteklenmeyen format) ve "motor çağrısı
+    hata fırlattı" durumları BİLEREK AYRI kategoriler olarak raporlanır --
+    hepsi tek bir "tespit_edilemedi" altında toplanırsa, gerçekten dedektörün
+    hiçbir aday bulamadığı durum ile dosyanın hiç işlenemediği durum
+    birbirinden ayırt edilemez ve yanlış sonuca varılabilir (örn. "model
+    değiştirince de hâlâ 0 tespit" aslında "dosyalar hiç okunamıyor"
+    anlamına gelebilir). Her dosya için ayrıca uygulama logunda (INFO
+    seviyesinde) hangi kategoriye düştüğü ve varsa kare boyutu loglanır.
     """
     if not KUTUPHANELER_MEVCUT:
         raise RuntimeError(
@@ -1071,7 +1082,17 @@ def toplu_dogruluk_testi(klasor: str, min_guven_skoru: float = VARSAYILAN_MIN_GU
         raise ValueError(f"Klasör bulunamadı: {klasor}")
 
     motor = _paylasilan_motoru_al()
-    sayaclar = {"dogru": 0, "yanlis": 0, "esik_altinda": 0, "tespit_edilemedi": 0, "etiketlenemedi": 0}
+    etkin_model = getattr(motor, "dedektor_modeli_etkin", "bilinmiyor")
+    etkin_esik = getattr(motor, "detektor_esigi_etkin", "bilinmiyor")
+    logger.info(
+        "toplu_dogruluk_testi başlıyor: klasor=%r, min_guven_skoru=%.3f, "
+        "kontrast_iyilestir=%s, dedektör modeli=%s, dedektör eşiği=%s",
+        klasor, min_guven_skoru, kontrast_iyilestir, etkin_model, etkin_esik,
+    )
+    sayaclar = {
+        "dogru": 0, "yanlis": 0, "esik_altinda": 0, "tespit_edilemedi": 0,
+        "gorsel_okunamadi": 0, "hata": 0, "etiketlenemedi": 0,
+    }
     detaylar: list[dict] = []
 
     dosyalar = sorted(
@@ -1088,29 +1109,49 @@ def toplu_dogruluk_testi(klasor: str, min_guven_skoru: float = VARSAYILAN_MIN_GU
             sayaclar["etiketlenemedi"] += 1
             detaylar.append({
                 "dosya": dosya, "gercek_plaka": None, "sonuc": "etiketlenemedi",
-                "okunan_plaka": None, "guven": None,
+                "okunan_plaka": None, "guven": None, "kare_boyutu": None,
             })
+            logger.info("toplu_dogruluk_testi[%s]: etiketlenemedi (dosya adından geçerli plaka çıkarılamadı)", dosya)
             continue
 
         frame = cv2.imread(os.path.join(klasor, dosya))
         if frame is None:
-            sayaclar["tespit_edilemedi"] += 1
+            sayaclar["gorsel_okunamadi"] += 1
             detaylar.append({
-                "dosya": dosya, "gercek_plaka": gercek_plaka, "sonuc": "tespit_edilemedi",
-                "okunan_plaka": None, "guven": None, "not": "görsel okunamadı (bozuk dosya?)",
+                "dosya": dosya, "gercek_plaka": gercek_plaka, "sonuc": "gorsel_okunamadi",
+                "okunan_plaka": None, "guven": None, "kare_boyutu": None,
             })
+            logger.warning(
+                "toplu_dogruluk_testi[%s]: GÖRSEL OKUNAMADI (cv2.imread None döndü -- "
+                "dosya bozuk, desteklenmeyen format veya yol/izin sorunu olabilir)",
+                dosya,
+            )
             continue
 
-        dedektore_giden = _kontrast_iyilestirmesi_uygula(frame) if kontrast_iyilestir else frame
-        with _motor_cagri_kilit:
-            tespitler = motor.tahmin_et(dedektore_giden)
+        kare_boyutu = f"{frame.shape[1]}x{frame.shape[0]}"
+        try:
+            dedektore_giden = _kontrast_iyilestirmesi_uygula(frame) if kontrast_iyilestir else frame
+            with _motor_cagri_kilit:
+                tespitler = motor.tahmin_et(dedektore_giden)
+        except Exception as exc:
+            sayaclar["hata"] += 1
+            detaylar.append({
+                "dosya": dosya, "gercek_plaka": gercek_plaka, "sonuc": "hata",
+                "okunan_plaka": None, "guven": None, "kare_boyutu": kare_boyutu, "hata_mesaji": str(exc),
+            })
+            logger.exception("toplu_dogruluk_testi[%s]: motor çağrısı sırasında beklenmeyen hata", dosya)
+            continue
 
         if not tespitler:
             sayaclar["tespit_edilemedi"] += 1
             detaylar.append({
                 "dosya": dosya, "gercek_plaka": gercek_plaka, "sonuc": "tespit_edilemedi",
-                "okunan_plaka": None, "guven": None,
+                "okunan_plaka": None, "guven": None, "kare_boyutu": kare_boyutu,
             })
+            logger.info(
+                "toplu_dogruluk_testi[%s]: tespit_edilemedi (kare boyutu=%s, dedektör hiçbir aday bulamadı)",
+                dosya, kare_boyutu,
+            )
             continue
 
         # Birden fazla aday varsa en yüksek güvenli olanı al -- canlı sistemdeki
@@ -1129,10 +1170,19 @@ def toplu_dogruluk_testi(klasor: str, min_guven_skoru: float = VARSAYILAN_MIN_GU
         detaylar.append({
             "dosya": dosya, "gercek_plaka": gercek_plaka, "sonuc": sonuc,
             "okunan_plaka": okunan_plaka or en_iyi.plaka_no, "guven": round(en_iyi.guven_skoru, 3),
+            "kare_boyutu": kare_boyutu,
         })
+        logger.info(
+            "toplu_dogruluk_testi[%s]: %s (gerçek=%s, okunan=%s, güven=%.3f, kare boyutu=%s)",
+            dosya, sonuc, gercek_plaka, okunan_plaka or en_iyi.plaka_no, en_iyi.guven_skoru, kare_boyutu,
+        )
 
     etiketli_toplam = len(dosyalar) - sayaclar["etiketlenemedi"]
     dogruluk_orani = round(sayaclar["dogru"] / etiketli_toplam, 3) if etiketli_toplam else None
+    logger.info(
+        "toplu_dogruluk_testi bitti: toplam=%d, dogruluk_orani=%s, sayaclar=%s",
+        len(dosyalar), dogruluk_orani, sayaclar,
+    )
 
     return {
         "toplam": len(dosyalar),

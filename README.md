@@ -848,14 +848,39 @@ POST /sistem/dogruluk-testi
 {"klasor": "C:\\pts-test-fotograflari", "min_guven_skoru": 0.25, "kontrast_iyilestir": false}
 ```
 
-Yanıt: `toplam, dogru, yanlis, esik_altinda, tespit_edilemedi, etiketlenemedi,
-dogruluk_orani, detaylar` (her dosya için gerçek/okunan plaka, güven skoru ve
-sonuç kategorisi). `min_guven_skoru` verilmezse panelin mevcut "Min. plaka
-tanıma güveni" ayarı kullanılır. Bu araç `motor.tahmin_et()`'i DOĞRUDAN
-çağırır (`_kareyi_isle`'nin API POST/oturum mantığını hiç çalıştırmaz) —
-yani `PTS_ANPR_DETECTOR_ESIGI`/`PTS_ANPR_DETECTOR_MODEL` ortam değişkenlerini
-her denemede değiştirip uygulamayı yeniden başlatarak, AYNI fotoğraf klasörü
+Yanıt: `toplam, dogru, yanlis, esik_altinda, tespit_edilemedi, gorsel_okunamadi,
+hata, etiketlenemedi, dogruluk_orani, detaylar` (her dosya için gerçek/okunan
+plaka, güven skoru, dedektöre giden karenin piksel boyutu ve sonuç
+kategorisi). `min_guven_skoru` verilmezse panelin mevcut "Min. plaka tanıma
+güveni" ayarı kullanılır. Bu araç `motor.tahmin_et()`'i DOĞRUDAN çağırır
+(`_kareyi_isle`'nin API POST/oturum mantığını hiç çalıştırmaz) — yani
+`PTS_ANPR_DETECTOR_ESIGI`/`PTS_ANPR_DETECTOR_MODEL` ortam değişkenlerini her
+denemede değiştirip uygulamayı yeniden başlatarak, AYNI fotoğraf klasörü
 üzerinde doğruluk oranının nasıl değiştiğini karşılaştırabilirsiniz.
+
+**2026-09-17 (devam) — "tespit_edilemedi" ile "görsel hiç okunamadı" ayrımı:**
+İlk sürümde, bir dosyanın hiç açılamaması (bozuk/desteklenmeyen format) ile
+dedektörün GERÇEKTEN hiçbir aday bulamaması AYNI "tespit_edilemedi"
+kategorisinde toplanıyordu. Sahada 7 gerçek fotoğrafla yapılan bir testte
+HEM 384 HEM 608 modelde, HEM 0.4 HEM 0.25 eşikte TÜM dosyalar "tespit_edilemedi"
+çıktı — modele/eşiğe göre hiç değişmeyen bu %0 sonucu, gerçek bir dedektör
+kaçırma sorunundan çok "dosyalar hiç işlenemiyor" ihtimaline işaret ediyordu,
+ama eski kategorileme bu ikisini ayırt edemiyordu. Artık üç ayrı kategori var:
+
+- **`tespit_edilemedi`**: dosya başarıyla okundu, dedektöre verildi, dedektör
+  gerçekten hiçbir aday üretmedi.
+- **`gorsel_okunamadi`**: `cv2.imread()` dosyayı hiç açamadı (`None` döndü) —
+  dedektöre hiç ulaşılmadı. Bunu görüyorsanız sorun model/eşik değil, dosyanın
+  kendisi (bozuk kopya, desteklenmeyen format, yol/izin sorunu).
+- **`hata`**: motor çağrısı sırasında beklenmeyen bir istisna oluştu (ör. bir
+  ONNX çalışma zamanı hatası) — `detaylar` içindeki `hata_mesaji` alanında
+  ayrıntı bulunur; bu dosya atlanır, kalan dosyaların işlenmesi durmaz.
+
+Her dosyanın sonucu ve (varsa) dedektöre giden karenin piksel boyutu artık
+uygulama loguna da (`Sistem/Log` ekranı) INFO seviyesinde yazılır — panelde
+görülen özet sayılarla log'daki ayrıntıyı karşılaştırarak sorunu tam olarak
+nerede olduğunu (dosya mı, model mi, gerçekten trafiksiz an mı) teşhis
+edebilirsiniz.
 
 ## Otomatik Görüntü/Kayıt Saklama
 
