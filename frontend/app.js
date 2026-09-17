@@ -2164,12 +2164,17 @@ async function sistemAyarlariYukle() {
       { key: "supheli_esik", label: "Şüpheli araç eşiği (red/saat)", tip: "number" },
       { key: "goruntu_saklama_gun", label: "Görüntü saklama süresi (gün)", tip: "number" },
       { key: "panel_yenileme_sn", label: "Panel yenileme aralığı (sn)", tip: "number" },
-      { key: "min_tanima_guveni", label: "Min. plaka tanıma güveni (0-1)", tip: "number", step: "0.05" },
+      { key: "min_tanima_guveni", label: "Min. OCR okuma güveni — oy birikimine giriş eşiği (0-1)", tip: "number", step: "0.05" },
+      { key: "otomatik_kayit_min_guven_skoru", label: "Min. kayıt güven skoru — kayda düşme eşiği (0-1)", tip: "number", step: "0.01" },
     ];
     el.innerHTML = `<form id="sistemAyarlariForm" data-rol-min="yonetici">${satirlar.map(s =>
       `<div class="mb-2"><label class="form-label small">${escapeHtml(s.label)}</label>
        <input type="number" ${s.step ? `step="${s.step}" min="0" max="1"` : ""} class="form-control form-control-sm" id="ayar_${s.key}" value="${escapeHtml(String(ayarlar[s.key] ?? ""))}"></div>`
     ).join("")}
+      <p class="small text-muted mb-2">"OCR okuma güveni" tek tek kamera karelerinin oylamaya katılıp
+        katılmayacağına bakar; "kayıt güven skoru" ise oturum kapanıp nihai güven belirlendikten sonra
+        tespitin panele/kayıtlara hiç düşüp düşmeyeceğine karar verir — düşük güvenli, hatalı okunan
+        plakaların kayıtları şişirmesini engellemek için varsayılan %97'dir.</p>
       <div class="form-check mb-2">
         <input type="checkbox" class="form-check-input" id="ayar_bilinen_plaka_duzeltme_aktif" ${ayarlar.bilinen_plaka_duzeltme_aktif ? "checked" : ""}>
         <label class="form-check-label small" for="ayar_bilinen_plaka_duzeltme_aktif">Bilinen plakaya göre OCR düzeltmesi (tek karakter hataları)</label>
@@ -2206,6 +2211,21 @@ async function goruntuleriTemizle() {
   const r = await apiCagir(`/sistem/goruntu-temizle?gun=${gun}`, { method: "POST" });
   toastGoster(`${r.silinen_goruntu} görüntü silindi`, "basari");
   diskBilgisiYukle();
+}
+
+// "Güven eşiği" filtresi (2026-09-17) devreye alınmadan ÖNCE zaten kaydedilmiş,
+// düşük güvenli OTOMATİK tespit kayıtlarını geriye dönük temizler (bkz.
+// main.py::dusuk_guven_kayitlarini_temizle). Yeni tespitler zaten kayıt
+// oluşturulmadan elenir -- bu düğme yalnızca eski birikmiş kayıtlar içindir.
+async function dusukGuvenliKayitlariTemizle() {
+  if (!confirm("Sistem Ayarları'ndaki eşiğin ALTINDA kalan, elle girilmemiş tüm otomatik tespit kayıtları (ve görselleri) kalıcı olarak silinecek. Emin misiniz?")) return;
+  try {
+    const r = await apiCagir("/sistem/dusuk-guven-temizle", { method: "POST" });
+    toastGoster(`${r.silinen_kayit} kayıt, ${r.silinen_goruntu} görüntü silindi (eşik: %${Math.round(r.esik * 100)})`, "basari");
+    diskBilgisiYukle();
+  } catch (err) {
+    toastGoster(err.message, "hata");
+  }
 }
 
 async function veritabaniIndir() {

@@ -178,8 +178,23 @@ _VARSAYILAN_AYARLAR = {
     "tekrar_gecikme_sn": 30,     # aynı plakayı tekrar bildirme gecikmesi
     "auto_bariyer_giris": False, # yetkili girişte otomatik bariyer
     "panel_yenileme_sn": 15,     # frontend polling aralığı
-    "min_tanima_guveni": 0.4,    # bu eşiğin altındaki OCR okumaları hiç değerlendirilmez (0-1)
+    "min_tanima_guveni": 0.4,    # bu eşiğin altındaki OCR okumaları hiç DEĞERLENDİRMEYE (oy
+                                 # birikimine) bile girmez -- bkz. camera_reader.py::min_guven_skoru,
+                                 # yalnızca kameranın kendi in-process pipeline'ı için geçerlidir.
     "bilinen_plaka_duzeltme_aktif": True,  # bkz. _bilinen_plakaya_yakinlik_duzelt
+    # "min_tanima_guveni"nden FARKLI bir eşiktir (2026-09-17): o, tek tek OCR
+    # okumalarının oy birikimine girip girmeyeceğine bakar (yalnızca in-process
+    # kamera pipeline'ında). Bu ayar ise OTURUM KAPANIP nihai/tek bir güven
+    # skoru belirlendikten SONRA, bir tespitin panele/kayıtlara HİÇ
+    # düşürülüp düşürülmeyeceğine bakar -- hem in-process pipeline'dan hem de
+    # /kayitlar/otomatik'e doğrudan istek atan harici bir ANPR sisteminden
+    # gelen TÜM otomatik tespitlere uygulanır (bkz. kayit_ekle_otomatik).
+    # Kullanıcı talebi: yalnızca %97-%100 güvenli tespitler kayda düşsün,
+    # geri kalanı (hatalı/yanlış okunup kayıtları şişiren düşük güvenli
+    # tespitler) hiç kaydedilmesin. Elle girilen kayıtları (manuel_giris=True,
+    # bkz. kayit_ekle_manuel) ETKİLEMEZ -- personel bilinçli olarak girdiği
+    # bir kaydın OCR güveniyle değerlendirilmemesi gerektiği için.
+    "otomatik_kayit_min_guven_skoru": 0.97,
 }
 
 
@@ -1862,6 +1877,38 @@ async def kayit_ekle_otomatik(
                 f"Görsel {MAKS_GORSEL_BOYUTU_BAYT // (1024 * 1024)} MB sınırını aşıyor",
             )
 
+    # GÜVEN EŞİĞİ FİLTRESİ (2026-09-17): kullanıcı talebiyle eklendi -- yalnızca
+    # yeterince güvenli (varsayılan >= %97) OTOMATİK tespitler panele/kayıtlara
+    # düşer; geri kalanı (hatalı/yanlış okunup kayıtları şişiren düşük güvenli
+    # tespitler) burada, kayıt HİÇ OLUŞTURULMADAN elenir -- "kaydet sonra sil"
+    # yerine "hiç kaydetme" tercih edildi (gereksiz DB satırı/disk yazımı yok).
+    # Yalnızca guven_skoru DOLU olan (yani gerçek bir OCR tespiti olan)
+    # isteklere uygulanır; bu uç nokta yalnızca kamera pipeline'ı/harici ANPR
+    # sistemleri tarafından çağrıldığından (bkz. fonksiyon docstring'i) elle
+    # girilen kayıtlar (kayit_ekle_manuel) bu filtreden HİÇ etkilenmez.
+    esik = _sistem_ayarlari_oku().get("otomatik_kayit_min_guven_skoru", 0.97)
+    try:
+        esik = max(0.0, min(1.0, float(esik)))
+    except (TypeError, ValueError):
+        esik = 0.97
+    if guven_skoru is not None and not (esik <= guven_skoru <= 1.0001):
+        if goruntu_yolu and os.path.isfile(goruntu_yolu):
+            try:
+                os.remove(goruntu_yolu)
+            except OSError:
+                pass
+        logger.info(
+            "[%s] Düşük güvenli tespit kayda düşürülmedi (atlandı): plaka=%s güven=%.3f (eşik=%.3f)",
+            kamera_id, plaka_no, guven_skoru, esik,
+        )
+        return JSONResponse(status_code=200, content={
+            "atlandi": True,
+            "sebep": "dusuk_guven_skoru",
+            "plaka_no": plaka_no,
+            "guven_skoru": guven_skoru,
+            "esik": esik,
+        })
+
     return _kayit_olustur_ve_bildir(db, plaka_no, kamera_id, yon, guven_skoru, goruntu_yolu, dogrulama_kare_sayisi)
 
 
@@ -3034,6 +3081,65 @@ def goruntu_temizle(gun: int = Query(30, ge=1, le=365), kullanici: models.Kullan
     silinen, sinir = _goruntu_temizle_calistir(gun, db)
     logger.info("Görüntü temizliği (manuel): %d dosya silindi (>%d gün)", silinen, gun)
     return {"silinen_goruntu": silinen, "sinir_tarihi": sinir.isoformat()}
+
+
+@app.post("/sistem/dusuk-guven-temizle")
+def dusuk_guven_kayitlarini_temizle(
+    esik: Optional[float] = Query(None, ge=0.0, le=1.0),
+    db: Session = Depends(get_db),
+    kullanici: models.Kullanici = Depends(_personel_girisi_gerekli),
+):
+    """"Güven eşiği" özelliği devreye alınmadan ÖNCE zaten kaydedilmiş, düşük
+    güvenli OTOMATİK tespit kayıtlarını (ve varsa görsel dosyalarını) toplu
+    olarak temizler (bkz. kayit_ekle_otomatik'teki gerçek-zamanlı filtre --
+    o filtre yalnızca BUNDAN SONRAKİ tespitleri etkiler, bu uç nokta ise
+    geriye dönük birikmiş "kayıtları şişiren" eski kayıtlar içindir).
+
+    `esik` verilmezse Sistem Ayarları'ndaki `otomatik_kayit_min_guven_skoru`
+    kullanılır. Yalnızca `guven_skoru` DOLU olan (yani gerçek bir OCR
+    tespiti olan) ve elle girilmemiş (`manuel_giris=False`) kayıtlar hedef
+    alınır -- personelin bilinçli olarak girdiği kayıtlara veya ziyaretçi
+    girişi/sakin geçmişi gibi elle onaylanmış kayıtlara ASLA dokunulmaz.
+    Silinen kayıtlara bağlı alarm günlüğü korunur, yalnızca artık var
+    olmayan kayda olan bağlantısı koparılır (bkz. kayit_sil'deki aynı
+    FK-güvenliği deseni)."""
+    _rol_dogrula(kullanici, ROL_YONETICI)
+    if esik is None:
+        esik = _sistem_ayarlari_oku().get("otomatik_kayit_min_guven_skoru", 0.97)
+    try:
+        esik = max(0.0, min(1.0, float(esik)))
+    except (TypeError, ValueError):
+        esik = 0.97
+
+    hedefler = db.query(models.Kayit).filter(
+        models.Kayit.manuel_giris == False,  # noqa: E712
+        models.Kayit.guven_skoru.isnot(None),
+        models.Kayit.guven_skoru < esik,
+    ).all()
+
+    kayit_idleri = [k.id for k in hedefler]
+    if kayit_idleri:
+        db.query(models.Alarm).filter(models.Alarm.kayit_id.in_(kayit_idleri)).update(
+            {"kayit_id": None}, synchronize_session=False,
+        )
+
+    silinen_kayit = 0
+    silinen_goruntu = 0
+    for k in hedefler:
+        if k.goruntu_yolu and os.path.isfile(k.goruntu_yolu):
+            try:
+                os.remove(k.goruntu_yolu)
+                silinen_goruntu += 1
+            except OSError:
+                pass
+        db.delete(k)
+        silinen_kayit += 1
+    db.commit()
+    logger.info(
+        "Düşük güvenli kayıt temizliği (manuel): %d kayıt, %d görüntü silindi (eşik<%.3f)",
+        silinen_kayit, silinen_goruntu, esik,
+    )
+    return {"silinen_kayit": silinen_kayit, "silinen_goruntu": silinen_goruntu, "esik": esik}
 
 
 @app.get("/sistem/yedek")

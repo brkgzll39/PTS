@@ -534,6 +534,63 @@ olarak KAPSAM DIŞI bırakıldı** ve bu sistemde yoktur:
     kavramları bu sistemin veri modelinde karşılığı olmadığı ve kullanıcının
     seçtiği kapsamda yer almadığı için uygulanmadı.
 
+**2026-09-17 (devam) — Otomatik tespitler için "kayıt güven eşiği" filtresi.**
+Kullanıcı, düşük güvenli (hatalı/yanlış okunan) OCR tespitlerinin panele ve
+Kayıtlar sekmesine düşüp kayıtları şişirdiğini bildirdi ve yalnızca **%97-%100**
+aralığında güvenli olan tespitlerin kayda geçmesini, geri kalanının HİÇ
+kaydedilmemesini istedi. Bu, var olan `min_tanima_guveni` ayarından (bkz.
+Sistem Ayarları) **BİLİNÇLİ OLARAK FARKLI** yeni bir ayar/mekanizma olarak
+eklendi çünkü ikisi farklı aşamalarda çalışır:
+
+- `min_tanima_guveni` (varsayılan 0.4): yalnızca kameranın kendi in-process
+  pipeline'ında, TEK TEK OCR karelerinin çok-kareli oy birikimine
+  (`camera_reader.py::PlakaOyBirikimi`) girip girmeyeceğine bakar. Bir
+  oturumda birden fazla düşük-orta güvenli okuma varsa, oy birleştirme
+  sonucu ortaya çıkan NİHAİ güven skoru yine de bu değerin altında/üstünde
+  olabilir; ayrıca `/kayitlar/otomatik`'e DOĞRUDAN istek atan (kamera
+  pipeline'ından geçmeyen) harici bir ANPR sistemi bu ayardan hiç etkilenmez.
+- **Yeni: `otomatik_kayit_min_guven_skoru` (varsayılan 0.97).** Oturum
+  kapanıp nihai/tek bir güven skoru belirlendikten SONRA, `POST
+  /kayitlar/otomatik` uç noktasında (bkz. `main.py::kayit_ekle_otomatik`)
+  uygulanan gerçek-zamanlı bir kapıdır — kaynağı ne olursa olsun (in-process
+  pipeline veya harici bir sistem) TÜM otomatik tespitlere eşit şekilde
+  uygulanır. `guven_skoru` bu eşiğin altındaysa (üst sınır zaten motor
+  tarafından 1.0 ile sınırlı olduğundan ayrıca bir üst eşik gerekmez, yine de
+  savunma amaçlı 1.0'ın belirgin şekilde üzerindeki bozuk/anormal değerler de
+  aynı şekilde reddedilir): **kayıt hiç oluşturulmaz, gönderilen görsel
+  dosyası diskten hemen silinir**, uç nokta yine de HTTP 200 ve
+  `{"atlandi": true, "sebep": "dusuk_guven_skoru", ...}` gövdesiyle yanıt
+  verir (kamera tarafında bunu bir hata gibi loglayıp gürültü yaratmasın
+  diye — bkz. `camera_reader.py`'deki `yanit.status_code >= 400` kontrolü).
+  Elle girilen kayıtlar (`kayit_ekle_manuel`, Ziyaretçi Girişi akışları,
+  Panel'deki "Test Kaydı Ekle" formu — hepsi `manuel_giris=True`) bu
+  filtreden **HİÇ etkilenmez**, çünkü bunlar bir OCR tespiti değil, personelin
+  bilinçli kararıdır.
+- Sistem Ayarları panelinde iki eşik yan yana, açıklayıcı bir notla birlikte
+  gösterilir ve yalnızca yönetici değiştirebilir.
+- **Geriye dönük temizlik:** Bu filtre yalnızca BUNDAN SONRAKİ tespitleri
+  etkiler; özellik devreye alınmadan önce zaten kaydedilmiş düşük güvenli
+  kayıtları temizlemek için Sistem sekmesi → Disk Yönetimi'ne "Düşük Güvenli
+  Kayıtları Temizle" düğmesi eklendi (`POST /sistem/dusuk-guven-temizle`,
+  yalnızca yönetici). Bu uç nokta, Sistem Ayarları'ndaki eşiğin altında kalan
+  ve `guven_skoru` dolu olan (yani gerçek bir OCR tespiti olan) kayıtları —
+  ve varsa görsel dosyalarını — kalıcı olarak siler; elle girilmiş
+  kayıtlara ve o kayıtlara bağlı alarm günlüğüne (bkz. `kayit_sil`'deki aynı
+  FK-güvenliği deseni) dokunmaz. Otomatik, periyodik bir arka plan işi
+  OLARAK tasarlanmadı — gerçek-zamanlı filtre zaten gelecekteki birikmeyi
+  önlediği için, bu yalnızca geçmiş birikimi bir kerelik temizlemek
+  içindir.
+- **Bilinen dengeleme notu:** `_bilinen_plakaya_yakinlik_duzelt` (OCR'ın tek
+  karakter hatalarını bilinen plakalara göre düzelten mekanizma) %90 güvenin
+  ALTINDAKİ okumalarda devreye girer ve düzeltme plaka METNİNİ değiştirir,
+  güven SKORUNU değiştirmez. Yani %90 altı bir okuma, doğru bir bilinen
+  plakaya düzeltilmiş olsa bile, güven skoru hâlâ %97 eşiğinin altında
+  kalacağından kayda düşmez. Bu, kullanıcının talebiyle bilinçli bir
+  ödünleşimdir (düşük güvenli her okumayı, doğru çıksa bile eleyerek
+  kayıtların şişmesini engellemek); saha testlerinde meşru düşük-güvenli
+  geçişlerin sistematik olarak kaybolduğu görülürse eşiğin (Sistem
+  Ayarları'ndan) düşürülmesi gerekebilir.
+
 ## Kamera Bağlantı Güvenilirliği
 
 Bu bölüm, kamera bağlantılarının/araç geçişi görüntülerinin donmaması için yapılan

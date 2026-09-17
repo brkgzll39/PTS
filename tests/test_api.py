@@ -1196,3 +1196,158 @@ def test_ziyaretci_onayli_yetki_durumu_kayit_duzenlede_kabul_edilir(client, oper
     r2 = client.patch(f"/kayitlar/{kayit_id}", json={"yetki_durumu": "ziyaretci_onayli"}, headers=operator_header)
     assert r2.status_code == 200, r2.text
     assert r2.json()["yetki_durumu"] == "ziyaretci_onayli"
+
+
+# ------------------------------------------------------------------
+# Otomatik kayıt güven eşiği filtresi (2026-09-17)
+# ------------------------------------------------------------------
+# Kök neden: kullanıcı, hatalı/yanlış okunan düşük güvenli OCR tespitlerinin
+# panele/kayıtlara düşüp kayıtları şişirdiğini bildirdi ve yalnızca %97-%100
+# güvenli tespitlerin kayda geçmesini, geri kalanının HİÇ kaydedilmemesini
+# istedi (bkz. main.py::kayit_ekle_otomatik'teki gerçek-zamanlı filtre ve
+# _VARSAYILAN_AYARLAR'daki "otomatik_kayit_min_guven_skoru" notu). Sabit bir
+# değere güvenmek yerine testler her zaman GEÇERLİ ayarı (/sistem/ayarlar)
+# okuyup ona göre eşik üstü/altı değerler üretir -- böylece modül içindeki
+# başka bir testin ayarı değiştirmesi (şu an hiçbiri değiştirmiyor, ama
+# ileride değiştirebilir) bu testleri kırılgan hale getirmez.
+
+def _mevcut_otomatik_kayit_esigi(client, yetkili_header) -> float:
+    r = client.get("/sistem/ayarlar", headers=yetkili_header)
+    assert r.status_code == 200, r.text
+    return float(r.json().get("otomatik_kayit_min_guven_skoru", 0.97))
+
+
+def test_otomatik_kayit_esigi_varsayilan_097(client, yetkili_header):
+    assert _mevcut_otomatik_kayit_esigi(client, yetkili_header) == pytest.approx(0.97)
+
+
+def test_kayit_ekle_otomatik_dusuk_guven_kayda_dusurulmez(client, yetkili_header):
+    esik = _mevcut_otomatik_kayit_esigi(client, yetkili_header)
+    dusuk_guven = max(0.0, esik - 0.20)
+    r = client.post("/kayitlar/otomatik", data={
+        "plaka_no": "34 DGV 01", "kamera_id": "TEST-DUSUK-GUVEN", "yon": "giris",
+        "guven_skoru": dusuk_guven,
+    })
+    assert r.status_code == 200, r.text
+    veri = r.json()
+    assert veri["atlandi"] is True
+    assert veri["sebep"] == "dusuk_guven_skoru"
+
+    r2 = client.get("/kayitlar", params={"plaka": "34 DGV 01"}, headers=yetkili_header)
+    assert r2.status_code == 200, r2.text
+    assert r2.json() == [], "Düşük güvenli tespit hiç kayda düşmemeliydi"
+
+
+def test_kayit_ekle_otomatik_esik_ve_uzeri_kayda_dusurulur(client, yetkili_header):
+    esik = _mevcut_otomatik_kayit_esigi(client, yetkili_header)
+    r = client.post("/kayitlar/otomatik", data={
+        "plaka_no": "34 YGV 02", "kamera_id": "TEST-YUKSEK-GUVEN", "yon": "giris",
+        "guven_skoru": esik,  # eşiğe TAM eşit -- sınır dahil (>=) olmalı
+    })
+    assert r.status_code == 200, r.text
+    veri = r.json()
+    assert "atlandi" not in veri
+    assert veri["plaka_no"] == "34 YGV 02"
+
+    r2 = client.get("/kayitlar", params={"plaka": "34 YGV 02"}, headers=yetkili_header)
+    assert len(r2.json()) == 1
+
+
+def test_kayit_ekle_otomatik_guven_skoru_gonderilmezse_filtrelenmez(client, yetkili_header):
+    """Harici/eski entegrasyonlar güven skoru göndermeyebilir -- bu durumda
+    filtre hiç uygulanmaz (geriye dönük uyumluluk), kayıt normal şekilde
+    oluşur."""
+    r = client.post("/kayitlar/otomatik", data={
+        "plaka_no": "34 GYK 03", "kamera_id": "TEST-GUVENSIZ", "yon": "giris",
+    })
+    assert r.status_code == 200, r.text
+    assert "atlandi" not in r.json()
+    r2 = client.get("/kayitlar", params={"plaka": "34 GYK 03"}, headers=yetkili_header)
+    assert len(r2.json()) == 1
+
+
+def test_kayit_ekle_manuel_dusuk_guven_filtreden_etkilenmez(client, operator_header, yetkili_header):
+    """Elle girilen (manuel_giris=True) kayıtlar, personelin bilinçli girişi
+    olduğu için güven eşiği filtresinden HİÇ etkilenmemeli."""
+    r = client.post("/kayitlar", json={
+        "plaka_no": "34 MNL 04", "kamera_id": "TEST-MANUEL", "yon": "giris", "guven_skoru": 0.1,
+    }, headers=operator_header)
+    assert r.status_code == 200, r.text
+    assert r.json()["plaka_no"] == "34 MNL 04"
+    r2 = client.get("/kayitlar", params={"plaka": "34 MNL 04"}, headers=yetkili_header)
+    assert len(r2.json()) == 1
+
+
+def test_dusuk_guven_kayitlarini_temizle_yalnizca_otomatik_ve_dusuk_olanlari_siler(client, yetkili_header):
+    """Geriye dönük temizlik uç noktası (bkz. main.py::dusuk_guven_kayitlarini_temizle):
+    yalnızca guven_skoru dolu VE eşiğin altında VE manuel_giris=False olan
+    kayıtları hedef almalı; yüksek güvenli ve elle girilmiş kayıtlara
+    dokunmamalı."""
+    from backend.database import SessionLocal
+    from backend import models
+
+    dusuk_dosya = _test_goruntu_dosyasi_olustur(client, "test-dusuk-guven.jpg")
+    yuksek_dosya = _test_goruntu_dosyasi_olustur(client, "test-yuksek-guven.jpg")
+
+    db = SessionLocal()
+    try:
+        dusuk = models.Kayit(
+            plaka_no="34 TMZ 05", kamera_id="TEST-TEMIZLE", guven_skoru=0.3,
+            goruntu_yolu=dusuk_dosya, manuel_giris=False,
+        )
+        yuksek = models.Kayit(
+            plaka_no="34 TMZ 06", kamera_id="TEST-TEMIZLE", guven_skoru=0.99,
+            goruntu_yolu=yuksek_dosya, manuel_giris=False,
+        )
+        manuel_dusuk = models.Kayit(
+            plaka_no="34 TMZ 07", kamera_id="TEST-TEMIZLE", guven_skoru=0.1,
+            manuel_giris=True,  # elle girilmiş -- ASLA silinmemeli
+        )
+        db.add_all([dusuk, yuksek, manuel_dusuk])
+        db.commit()
+        dusuk_id, yuksek_id, manuel_id = dusuk.id, yuksek.id, manuel_dusuk.id
+    finally:
+        db.close()
+
+    try:
+        r = client.post("/sistem/dusuk-guven-temizle", params={"esik": 0.97}, headers=yetkili_header)
+        assert r.status_code == 200, r.text
+        veri = r.json()
+        assert veri["silinen_kayit"] >= 1
+        assert veri["silinen_goruntu"] >= 1
+
+        db2 = SessionLocal()
+        try:
+            assert db2.query(models.Kayit).filter(models.Kayit.id == dusuk_id).first() is None
+            assert db2.query(models.Kayit).filter(models.Kayit.id == yuksek_id).first() is not None
+            assert db2.query(models.Kayit).filter(models.Kayit.id == manuel_id).first() is not None
+        finally:
+            db2.close()
+        assert not os.path.isfile(dusuk_dosya)
+        assert os.path.isfile(yuksek_dosya)
+    finally:
+        for yol in (dusuk_dosya, yuksek_dosya):
+            try:
+                os.remove(yol)
+            except OSError:
+                pass
+        db3 = SessionLocal()
+        try:
+            db3.query(models.Kayit).filter(
+                models.Kayit.plaka_no.in_(["34 TMZ 05", "34 TMZ 06", "34 TMZ 07"])
+            ).delete(synchronize_session=False)
+            db3.commit()
+        finally:
+            db3.close()
+
+
+def test_dusuk_guven_temizle_operator_yetkisiz_403_doner(client, operator_header):
+    """Bu toplu/kalıcı silme işlemi kayit_sil ile aynı sıkı kısıtlamayı
+    taşır: yalnızca yönetici çalıştırabilir (operatör dahi değil)."""
+    r = client.post("/sistem/dusuk-guven-temizle", headers=operator_header)
+    assert r.status_code == 403, r.text
+
+
+def test_dusuk_guven_temizle_izleyici_yetkisiz_403_doner(client, izleyici_header):
+    r = client.post("/sistem/dusuk-guven-temizle", headers=izleyici_header)
+    assert r.status_code == 403, r.text
