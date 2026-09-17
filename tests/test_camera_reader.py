@@ -37,6 +37,11 @@ class _SahteEngine:
     def __init__(self, *a, plaka="34ABC123", guven=0.95, **kw):
         self._plaka = plaka
         self._guven = guven
+        # Gerçek ANPREngine'deki dedektor_esigi_etkin/detektor_esigi_kaynagi
+        # alanlarını taklit eder (bkz. anpr_engine.py) — dedektor_esigi_bilgisi()
+        # ve /sistem/saglik'in bunları okuyabildiğini test edebilmek için.
+        self.detektor_esigi_etkin = 0.4
+        self.detektor_esigi_kaynagi = "kütüphane varsayılanı (ortam değişkeni ayarlanmamış)"
 
     def tahmin_et(self, frame):
         return [_SahteSonuc(self._plaka, self._guven)]
@@ -408,3 +413,27 @@ def test_klasor_izleyici_bozuk_gorsel_dosyasi_tespit_edilemedi_olarak_isaretleni
 
     assert not dosya.exists()
     assert list((kok / "islenenler").glob("TESPIT_EDILEMEDI_*.jpg"))
+
+
+def test_dedektor_esigi_bilgisi_motor_olusturulmadan_once_none_doner(monkeypatch):
+    """Uygulama yeni açılmış, henüz hiçbir kamera pipeline'ı ya da klasör
+    izleyici başlamamışsa (paylaşılan motor tembel/lazy oluşturulduğu için
+    henüz yok) dedektor_esigi_bilgisi() motoru TETİKLEMEDEN None dönmeli."""
+    monkeypatch.setattr(camera_reader, "_paylasilan_motor", None)
+    assert camera_reader.dedektor_esigi_bilgisi() is None
+
+
+def test_dedektor_esigi_bilgisi_motor_olusturulunca_etkin_degeri_raporlar(tmp_path, sahte_engine, sahte_api):
+    """Bir KlasorIzleyici (veya kamera pipeline'ı) paylaşılan motoru bir kez
+    oluşturduktan sonra, dedektor_esigi_bilgisi() bu motorun fiilen hangi
+    eşikle çalıştığını ve kaynağını (ortam değişkeni mi, kütüphane varsayılanı
+    mı) doğru raporlamalı -- panelin 'Dedektör Eşiği' satırının ve
+    /sistem/saglik'in dayandığı bilgi budur."""
+    kok = tmp_path / "izleme"
+    izleyici = camera_reader.KlasorIzleyici(str(kok), api_url=sahte_api.url)
+    izleyici._pipeline_al("giris")  # paylaşılan motoru oluşturmaya zorlar
+
+    bilgi = camera_reader.dedektor_esigi_bilgisi()
+    assert bilgi is not None
+    assert bilgi["esik"] == 0.4
+    assert "varsayılan" in bilgi["kaynak"]

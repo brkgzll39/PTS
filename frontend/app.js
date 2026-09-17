@@ -1356,6 +1356,16 @@ async function sistemSagliginiYukle() {
     const gorselIzlemeSatiri = s.gorsel_izleme?.aktif
       ? `<div class="info-row"><i class="bi bi-folder-check text-primary"></i> <span>Klasör İzleme</span><strong title="${escapeHtml(s.gorsel_izleme.klasor)}">Aktif</strong></div>`
       : "";
+    // Motor henüz hiçbir kamera/klasör izleyici tarafından oluşturulmadıysa
+    // (uygulama yeni açıldı, henüz bir pipeline başlamadı) anpr_dedektor_esigi
+    // null döner ve bu satır hiç gösterilmez. NOT: bu, panelin "Sistem
+    // Ayarları" bölümündeki "Min. plaka tanıma güveni" alanından TAMAMEN
+    // FARKLI bir eşiktir (bkz. anpr_engine.py) — PTS_ANPR_DETECTOR_ESIGI ortam
+    // değişkeni ile ayarlanır; kaynağı burada gösterilerek "ayarım kabul
+    // edildi mi?" sorusuna log dosyasına inmeden cevap verilebilir.
+    const dedektorEsigiSatiri = s.anpr_dedektor_esigi
+      ? `<div class="info-row"><i class="bi bi-bullseye text-primary"></i> <span>Dedektör Eşiği</span><strong title="${escapeHtml(s.anpr_dedektor_esigi.kaynak)}">${s.anpr_dedektor_esigi.esik.toFixed(2)}</strong></div>`
+      : "";
     el.innerHTML = `
       <div class="info-row">${ikon(s.durum === "cevrimici")} <span>Uygulama</span><strong>${s.durum}</strong></div>
       <div class="info-row">${ikon(s.veritabani === "ok")} <span>Veritabanı</span><strong>${s.veritabani}</strong></div>
@@ -1364,6 +1374,7 @@ async function sistemSagliginiYukle() {
       <div class="info-row">${ikon(s.kutuphaneler_mevcut)} <span>ANPR Kütüp.</span><strong>${s.kutuphaneler_mevcut ? "Kurulu" : "Kurulu değil"}</strong></div>
       ${yedekSatiri}
       ${gorselIzlemeSatiri}
+      ${dedektorEsigiSatiri}
       <div class="info-row"><i class="bi bi-code text-muted"></i> <span>Sürüm</span><strong>PTS v${s.surum}</strong></div>
       <div class="text-muted small mt-2">${new Date(s.zaman).toLocaleString("tr-TR")}</div>`;
   } catch (e) { console.error(e); }

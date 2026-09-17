@@ -103,6 +103,24 @@ def _paylasilan_motoru_al() -> "ANPREngine":
     return _paylasilan_motor
 
 
+def dedektor_esigi_bilgisi() -> Optional[dict]:
+    """Paylaşılan ANPR motoru zaten oluşturulduysa (en az bir kamera pipeline'ı
+    veya klasör izleyici başladıysa) fiilen uygulanan dedektör güven eşiği ve
+    kaynağı (ortam değişkeni mi, kütüphane varsayılanı mı) bilgisini döner.
+
+    Motor henüz oluşturulmadıysa None döner — bu çağrı BİLEREK motoru tetiklemez
+    (ağır ONNX model yüklemesini /sistem/saglik gibi sık çağrılabilecek bir
+    teşhis ucundan tetiklemek istemeyiz). Panelde/logda "PTS_ANPR_DETECTOR_ESIGI
+    ayarım kabul edildi mi?" sorusuna kod okumadan cevap verebilmek için eklendi.
+    """
+    if _paylasilan_motor is None:
+        return None
+    return {
+        "esik": getattr(_paylasilan_motor, "detektor_esigi_etkin", 0.4),
+        "kaynak": getattr(_paylasilan_motor, "detektor_esigi_kaynagi", "bilinmiyor"),
+    }
+
+
 logger = logging.getLogger("pts.camera")
 
 PLAKA_REGEX = re.compile(r'^(\d{2})([A-PR-VYZ]{1,3})(\d{2,4})$')
@@ -294,6 +312,42 @@ def _kare_uzerine_ciz(frame, tespitler: list) -> None:
         cv2.putText(frame, metin, (kutu_x, kutu_y), cv2.FONT_HERSHEY_SIMPLEX, _YAZI_OLCEK, _OVERLAY_RENK, _YAZI_KALINLIK)
 
 
+def _kontrast_iyilestirme_aktif_mi() -> bool:
+    """PTS_GORUNTU_ON_ISLEME_KONTRAST ayarlıysa (üretim davranışını sessizce
+    değiştirmemek için VARSAYILAN KAPALI), dedektöre verilen kare önce
+    kontrast iyileştirmesinden geçirilir (bkz. _kontrast_iyilestirmesi_uygula).
+    Diğer opsiyonel bayraklarla aynı şekilde her çağrıda TAZE okunur (import
+    zamanında değil) ki testlerde/toplu doğruluk testinde davranış tutarlı olsun."""
+    return os.environ.get("PTS_GORUNTU_ON_ISLEME_KONTRAST", "").strip().lower() in ("1", "true", "evet", "yes")
+
+
+def _kontrast_iyilestirmesi_uygula(frame):
+    """CLAHE (Contrast Limited Adaptive Histogram Equalization) ile,
+    aydınlatması dengesiz (gölge/farlardan gelen parlama/gece IR modu gibi)
+    kareleri dedektöre vermeden önce iyileştirir. Yalnızca LAB renk uzayının
+    L (parlaklık) kanalına uygulanır — renk bilgisini bozmadan, zaten parlak
+    bölgeleri (naif histogram eşitlemenin aksine) tamamen "yakmadan" yerel
+    kontrastı güçlendirir. Bu, ANPR literatüründe düşük ışık/parlama
+    koşullarında tespit oranını artırmak için standart, düşük riskli bir
+    ilk-basamak tekniğidir.
+
+    ÖNEMLİ: Bu YALNIZCA dedektöre giden kareyi etkiler. Kaydedilen/panelde
+    gösterilen fotoğraf (bkz. çağıran koddaki `annotated = frame.copy()`)
+    HER ZAMAN orijinal, işlenmemiş kareden üretilir — yani bu ayar kayıtların
+    görünümünü hiç değiştirmez, yalnızca tespit/OCR'ın gördüğü kareyi
+    iyileştirir."""
+    try:
+        lab = cv2.cvtColor(frame, cv2.COLOR_BGR2LAB)
+        l_kanali, a_kanali, b_kanali = cv2.split(lab)
+        clahe = cv2.createCLAHE(clipLimit=2.5, tileGridSize=(8, 8))
+        l_kanali = clahe.apply(l_kanali)
+        lab = cv2.merge((l_kanali, a_kanali, b_kanali))
+        return cv2.cvtColor(lab, cv2.COLOR_LAB2BGR)
+    except Exception:
+        logger.exception("Kontrast iyileştirme uygulanamadı, orijinal kare kullanılıyor")
+        return frame
+
+
 class KameraPipeline:
     def __init__(self, video_kaynagi: str, api_url: str = "http://localhost:8000/kayitlar/otomatik",
                  kamera_id: str = "KAMERA-1", tekrar_gecikme_sn: int = 30, yon: str = "giris",
@@ -452,11 +506,20 @@ class KameraPipeline:
         `tek_gorsel_test`) birden fazla kare gelmeyeceği için, bu karedeki
         okumaların oturumu beklemeden hemen kesinleştirilmesini sağlar."""
         tespitler = []
+        # PTS_GORUNTU_ON_ISLEME_KONTRAST ayarlıysa, dedektöre ORİJİNAL kare
+        # yerine kontrastı iyileştirilmiş bir kopyası verilir (gece/parlama
+        # koşullarında tespit oranını artırmak için) — kaydedilen/panelde
+        # gösterilen görsel her zaman `frame`'in kendisinden üretildiği için
+        # (aşağıdaki `annotated = frame.copy()`) bu, kayıtların görünümünü
+        # etkilemez.
+        dedektore_giden_kare = (
+            _kontrast_iyilestirmesi_uygula(frame) if _kontrast_iyilestirme_aktif_mi() else frame
+        )
         # GPU'ya (varsa DirectML/CUDA) aynı anda yalnızca TEK bir kameranın çıkarım
         # isteği gitmesini garanti eder — bkz. modül başındaki "PAYLAŞILAN ANPR
         # MOTORU" notu (çoklu kamerada GPU sürücüsü çökmesi/sıfırlanması riski).
         with _motor_cagri_kilit:
-            motor_sonuclari = self.motor.tahmin_et(frame)
+            motor_sonuclari = self.motor.tahmin_et(dedektore_giden_kare)
 
         if not motor_sonuclari:
             # GÖZLEMLENEBİLİRLİK: dedektör bu karede TEK bir plaka adayı bile
@@ -472,13 +535,24 @@ class KameraPipeline:
             self._bos_tespit_sayaci_son_logdan_beri += 1
             _simdi_mono = time.monotonic()
             if _simdi_mono - self._son_bos_tespit_log_zamani >= BOS_TESPIT_LOG_ARALIK_SN:
+                # DİKKAT: buradaki eşik değeri motor.detektor_esigi_etkin'den, yani
+                # FİİLEN UYGULANMAKTA OLAN değerden okunur — sabit bir metin DEĞİLDİR.
+                # Böylece "ayarımı düşürdüm ama log hâlâ eskisini söylüyor" karışıklığı
+                # yaşanmaz: bu satır PTS_ANPR_DETECTOR_ESIGI ayarlanıp ayarlanmadığını
+                # ve şu an hangi değerin geçerli olduğunu her zaman doğru yansıtır.
+                _etkin_esik = getattr(self.motor, "detektor_esigi_etkin", 0.4)
+                _esik_kaynagi = getattr(self.motor, "detektor_esigi_kaynagi", "bilinmiyor")
                 logger.info(
                     "[%s] Son %.0f sn içinde dedektör %d karede hiçbir plaka adayı "
                     "bulamadı (OCR'a hiç ulaşmadan elendi). Bu her zaman normaldir "
                     "(trafiksiz an); ama net görünen bir araç yine de hiç kayda "
-                    "düşmüyorsa PTS_ANPR_DETECTOR_ESIGI ortam değişkenini "
-                    "düşürmeyi deneyin (bkz. anpr_engine.py, varsayılan 0.4).",
+                    "düşmüyorsa dedektör eşiğini (şu an %.2f, kaynak: %s) düşürmeyi "
+                    "deneyin: PTS_ANPR_DETECTOR_ESIGI işletim sistemi ortam değişkenini "
+                    "ayarlayıp uygulamayı YENİ bir terminalden yeniden başlatın — bu "
+                    "panelin 'Min. plaka tanıma güveni' ayarından FARKLI bir eşiktir "
+                    "ve panelden değiştirilemez (bkz. anpr_engine.py).",
                     self.kamera_id, BOS_TESPIT_LOG_ARALIK_SN, self._bos_tespit_sayaci_son_logdan_beri,
+                    _etkin_esik, _esik_kaynagi,
                 )
                 self._son_bos_tespit_log_zamani = _simdi_mono
                 self._bos_tespit_sayaci_son_logdan_beri = 0

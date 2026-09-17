@@ -644,3 +644,33 @@ def test_gorsel_izleme_aktifken_klasoruyle_birlikte_raporlanir(client, izleyici_
     r = client.get("/sistem/saglik", headers=izleyici_header)
     assert r.status_code == 200, r.text
     assert r.json()["gorsel_izleme"] == {"aktif": True, "klasor": "/tmp/ornek-izleme-klasoru"}
+
+
+def test_anpr_dedektor_esigi_kutuphane_yoksa_none_doner(client, izleyici_header, monkeypatch):
+    """Kamera kütüphaneleri (cv2/fast-alpr bağımlılıkları) kurulu değilse
+    dedektör eşiği bilgisi hiç sorulmaz, sade None raporlanır."""
+    monkeypatch.setattr(pts_main, "_CAM_LIBS", False)
+    r = client.get("/sistem/saglik", headers=izleyici_header)
+    assert r.status_code == 200, r.text
+    assert r.json()["anpr_dedektor_esigi"] is None
+
+
+def test_anpr_dedektor_esigi_motor_olusunca_fiili_deger_raporlanir(client, izleyici_header, monkeypatch):
+    """PTS_ANPR_DETECTOR_ESIGI ortam değişkeninin panelden ayarlanan
+    'Min. plaka tanıma güveni' ile karıştırılması geçmişte kullanıcı
+    karışıklığına yol açmıştı: bu test, motor bir kez oluşturulduktan sonra
+    /sistem/saglik'in FİİLEN uygulanan eşiği ve kaynağını (ortam değişkeni mi,
+    kütüphane varsayılanı mı) doğru yansıttığını doğrular (bkz.
+    camera_reader.py::dedektor_esigi_bilgisi, anpr_engine.py)."""
+    from backend import camera_reader as cr
+
+    monkeypatch.setattr(pts_main, "_CAM_LIBS", True)
+    monkeypatch.setattr(
+        cr, "dedektor_esigi_bilgisi",
+        lambda: {"esik": 0.25, "kaynak": "PTS_ANPR_DETECTOR_ESIGI ortam değişkeni ('0.25')"},
+    )
+    r = client.get("/sistem/saglik", headers=izleyici_header)
+    assert r.status_code == 200, r.text
+    assert r.json()["anpr_dedektor_esigi"] == {
+        "esik": 0.25, "kaynak": "PTS_ANPR_DETECTOR_ESIGI ortam değişkeni ('0.25')",
+    }

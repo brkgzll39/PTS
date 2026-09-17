@@ -708,6 +708,57 @@ betik de:
   sınıfından, teşhisi zor bir kayıp. Artık pipeline da aynı ortam
   değişkenini okuyup başlığı ekliyor.
 
+**2026-09-17 (devam) — "PTS_ANPR_DETECTOR_ESIGI ayarım kabul edildi mi?"
+sorusuna kesin cevap:** Sahada tekrar aynı sınıftan iki araç ("59 ADG 364",
+"39 ACJ 043") net görünüp kayda düşmeden geçince ve `PTS_ANPR_DETECTOR_ESIGI`
+0.25'e düşürülüp uygulama yeniden başlatıldığında, panelin **"Min. plaka
+tanıma güveni"** alanı da 0,25 olarak ayarlanmıştı — fakat bu iki ayar
+BİRBİRİNDEN TAMAMEN FARKLIDIR ve bu karışıklık gerçek sorunu gizliyordu:
+
+- **"Min. plaka tanıma güveni"** (panel, Sistem Ayarları): veritabanında
+  saklanan `min_guven_skoru` değeridir. Panelden anında değişir, sunucu
+  yeniden başlatılmasına gerek duymaz. Ama yalnızca dedektör bir plaka
+  ADAYI bulup OCR onu OKUDUKTAN SONRA devreye girer — "okundu ama güven
+  düşük, kaydetme" filtresidir.
+- **`PTS_ANPR_DETECTOR_ESIGI`**: bir işletim sistemi ortam değişkenidir,
+  panelden HİÇ ayarlanamaz. Yalnızca uygulama açılışında, `anpr_engine.py`
+  içinde bir kez okunur ve FastALPR'ın YOLO dedektörünün kendi iç eşiğini
+  belirler — OCR'a giden aday kutuların üretildiği, min_guven_skoru'ndan
+  ÖNCEKİ aşamadır. Bu ikisi arasındaki fark tam olarak "araç net görünüyor
+  ama dedektör hiçbir aday bile bulamıyor" (bu README'de yukarıda anlatılan
+  sorun) ile "aday bulundu ama OCR güveni düşük" arasındaki farktır.
+
+Daha da kötüsü: `PTS_ANPR_DETECTOR_ESIGI` fiilen doğru okunup uygulansa
+bile, eskiden hiçbir log satırı veya panel göstergesi bunu DOĞRULAMIYORDU —
+tekrarlayan "boş tespit" özet logu her zaman sabit "varsayılan 0.4" metnini
+yazdırıyordu (gerçek değeri değil), bu yüzden kullanıcı ayarının kabul
+edilip edilmediğini anlamanın hiçbir yolu yoktu. Artık:
+
+1. Uygulama açılışında `anpr_engine.py`, dedektör eşiğinin FİİLEN hangi
+   değerle ve hangi kaynaktan (ortam değişkeninden mi, kütüphane
+   varsayılanından mı) çalıştığını açıkça loglar.
+2. "Boş tespit" özet logu artık sabit bir metin değil, o an GEÇERLİ olan
+   eşiği ve kaynağını yazdırır.
+3. `/sistem/saglik` yanıtına ve panelin Sistem sekmesine (Sistem Sağlığı
+   kartı, "Dedektör Eşiği" satırı) bu bilgi eklendi — log dosyasına
+   inmeden, tek bakışta, ayarınızın kabul edilip edilmediğini görebilirsiniz.
+
+**`PTS_ANPR_DETECTOR_ESIGI`'yi Windows'ta doğru ayarlama (sık yapılan hata):**
+`setx PTS_ANPR_DETECTOR_ESIGI 0.25` komutu, çalıştırıldığı anda AÇIK olan
+hiçbir pencereyi (o pencerenin kendisi dahil) etkilemez — yalnızca o
+komuttan SONRA açılan YENİ pencerelerde başlatılan süreçler bu değeri
+görür. Doğru sıra:
+1. Herhangi bir cmd penceresinde `setx PTS_ANPR_DETECTOR_ESIGI 0.25` çalıştırın.
+2. O pencereyi kapatın (veya en azından `calistir.bat`'ı ORADA çalıştırmayın).
+3. Tamamen YENİ bir cmd penceresi açın, `echo %PTS_ANPR_DETECTOR_ESIGI%`
+   ile değerin göründüğünü doğrulayın, ardından `calistir.bat`'ı o yeni
+   pencereden başlatın.
+4. Panelin Sistem sekmesinde "Dedektör Eşiği" satırının `0.25` gösterdiğini
+   doğrulayın — hâlâ `0.40` gösteriyorsa, adım 1-3 doğru sırayla
+   yapılmamış demektir (aynı sorunu Windows hizmeti/NSSM olarak
+   çalıştırıyorsanız `setx`, hizmeti YENİDEN OLUŞTURMADAN görünmez;
+   hizmetin ortam değişkenlerini kendi yapılandırmasından ayarlamanız gerekir).
+
 ## Otomatik Görüntü/Kayıt Saklama
 
 Daha önce eski geçiş görüntülerini temizlemenin tek yolu `/sistem/goruntu-temizle`

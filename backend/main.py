@@ -2174,7 +2174,24 @@ async def sistem_sagligi(db: Session = Depends(get_db)):
             "aktif": _klasor_izleyici is not None and _klasor_izleyici.calisiyor,
             "klasor": _klasor_izleyici.kok_klasor if _klasor_izleyici else None,
         },
+        "anpr_dedektor_esigi": _anpr_dedektor_esigi_bilgisi_al(),
     }
+
+
+def _anpr_dedektor_esigi_bilgisi_al() -> Optional[dict]:
+    """PTS_ANPR_DETECTOR_ESIGI'nin fiilen uygulanıp uygulanmadığını panelden
+    tek bakışta doğrulayabilmek için eklendi (bkz. camera_reader.py'deki
+    dedektor_esigi_bilgisi() docstring'i — geçmişte bu ayarın panelin "Min.
+    plaka tanıma güveni" alanıyla karıştırılması kullanıcı karışıklığına yol
+    açmıştı). Kamera kütüphaneleri kurulu değilse veya motor henüz hiçbir
+    kamera/klasör izleyici tarafından oluşturulmadıysa None döner."""
+    if not _CAM_LIBS:
+        return None
+    try:
+        from backend.camera_reader import dedektor_esigi_bilgisi as _bilgi_al
+        return _bilgi_al()
+    except Exception:
+        return None
 
 
 _RTSP_KIMLIK_MASKELE_DESENI = re.compile(r"(rtsp://)([^/@\s:]+):([^/@\s]+)@")
