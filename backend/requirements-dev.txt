@@ -3,7 +3,7 @@
 # Testleri çalıştırma: proje kökünden `pytest`
 
 pytest==8.3.3
-httpx==0.27.2          # FastAPI TestClient bunu kullanır (starlette >= 0.36)
+httpx==0.28.1          # FastAPI TestClient bunu kullanır (starlette >= 0.36)
 
 # pdf_export.py testlerinde ÜRETİLEN PDF'in içindeki metni gerçekten geri
 # okuyup Türkçe karakterlerin (ı/İ/ş/Ş/ğ/Ğ) doğru göründüğünü doğrulamak
