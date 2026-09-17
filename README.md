@@ -317,6 +317,46 @@ değerlendirmesini yapabilir. `tests/test_camera_reader.py` içinde hem
 varyantların oydaşması) hem bu değerin API isteğine gerçekten eklendiğini
 doğrulayan regresyon testleri var.
 
+**"Plaka Analizi" ekranında tam düzenleme, notlar ve manuel kayıt (2026-09-17,
+devam):** Yukarıdaki "Doğrulama" sütunu sadece BİLGİ veriyordu — bir operatör
+"04 SD 377" gibi yanlış okunmuş bir kaydı görünce bunun üzerinde hiçbir şey
+yapamıyordu. Artık hem "Kayıtlar" tablosunda hem de bir plakaya tıklanınca
+açılan "Plaka Analizi" penceresinde şu işlemler var:
+
+- **Tam düzenleme**: bir geçiş kaydının plakası, yönü, yetki durumu, kişi
+  eşleştirmesi ve notu panelden değiştirilebilir (`PATCH /kayitlar/{id}`,
+  `operatör`+ yetkisi gerekir). Yanlış OCR okumasıyla oluşmuş bir kayıt artık
+  silinmeden DÜZELTİLEBİLİR. Kim, ne zaman değiştirdi her zaman kayıtta tutulur
+  (`duzenleyen`/`duzenleme_tarihi`) — bu alanlar panelden asla doğrudan set
+  edilemez, yalnızca uç nokta tarafından otomatik doldurulur. Bir kaydın kalıcı
+  olarak silinmesi (`DELETE /kayitlar/{id}`) `yönetici` yetkisiyle sınırlı.
+- **Geçiş kaydı notu (`not_metni`)**: bu tekil geçişe özel, tek seferlik bir
+  not (örn. "teslimat aracı, güvenlik onayıyla alındı"). Kişinin KENDİ
+  profilindeki kalıcı notla (`Kisi.aciklama`, personel/abone/ziyaretçi
+  formlarında zaten mevcuttu) karıştırılmamalı — biri kişiye, diğeri bu tekil
+  geçişe ait.
+  Kayıtlar tablosunda artık görsel ve Doğrulama sütunlarının yanına düzenle/sil
+  ikonları da eklendi (rol bazlı görünürlük: düzenleme `operatör`+, silme
+  yalnızca `yönetici`).
+- **"Manuel Kayıt Ekle"**: Plaka Analizi ekranından, bir görevlinin elle içeri
+  aldığı (örn. yetkisiz görünen ama güvenlik onayıyla geçirilen) bir aracı
+  doğrudan bu plaka için, yön ve not seçerek kaydedebilmesini sağlayan bir
+  form. Oluşan kayıt `manuel_giris=True` bayrağıyla ve panelde "Manuel"
+  etiketiyle işaretlenir, kamera pipeline'ından gelen kayıtlarla asla
+  karıştırılmaz.
+- **Görseller Plaka Analizi'nde de görünür**: önceden bu ekran yalnızca metin
+  tablosu gösteriyordu; artık her satırda (varsa) araç görseli de aynı
+  korumalı (token'lı fetch + blob URL) yöntemle yükleniyor, "Kayıtlar"
+  tablosundakiyle birebir aynı bileşen kullanılarak.
+
+Güvenlik tasarımı burada da aynı: hiçbir düzenleme/silme işlemi sessiz veri
+kaybına yol açmaz — silme yalnızca en yüksek yetkiyle ve geri alınamaz olduğu
+açıkça belirtilerek yapılabilir, düzenlemeler ise her zaman denetim izi
+bırakır. `tests/test_api.py` içinde bu uç noktalar için RBAC (operatör/izleyici/
+yönetici sınırları), alan doğrulama (geçersiz `yetki_durumu`, olmayan kayıt/
+kişi) ve `/kayitlar/analiz/{plaka_no}` yanıtının yeni alanları eksiksiz
+döndürdüğünü doğrulayan testler eklendi.
+
 ## Kamera Bağlantı Güvenilirliği
 
 Bu bölüm, kamera bağlantılarının/araç geçişi görüntülerinin donmaması için yapılan

@@ -735,3 +735,116 @@ def test_dogruluk_testi_klasor_bulunamazsa_400_doner(client, operator_header, mo
 
     r = client.post("/sistem/dogruluk-testi", json={"klasor": "/olmayan"}, headers=operator_header)
     assert r.status_code == 400
+
+
+# ------------------------------------------------------------------
+# Geçiş kaydı tam düzenleme + manuel kayıt notu (bkz. main.py::kayit_duzenle,
+# kayit_ekle_manuel; "Plaka Analizi" ekranındaki manuel kayıt/düzenleme
+# özellikleri bu uç noktaları kullanır)
+# ------------------------------------------------------------------
+
+def test_kayit_manuel_not_metni_ve_manuel_giris_bayragi_kaydedilir(client, operator_header):
+    """'Plaka Analizi' ekranındaki 'Manuel Kayıt Ekle' formu bu uca not_metni
+    ile POST atıyor -- kayıt hem manuel_giris=True hem de girilen notla
+    dönmeli (görsel/güven skoru olmadan)."""
+    r = client.post("/kayitlar", json={
+        "plaka_no": "34 MNL 01", "kamera_id": "PANEL-MANUEL", "yon": "giris",
+        "not_metni": "teslimat aracı, güvenlik onayıyla alındı",
+    }, headers=operator_header)
+    assert r.status_code == 200, r.text
+    veri = r.json()
+    assert veri["manuel_giris"] is True
+    assert veri["not_metni"] == "teslimat aracı, güvenlik onayıyla alındı"
+    assert veri["duzenleyen"] is None  # manuel eklemek "düzenleme" sayılmaz
+
+
+def test_kayit_duzenle_plaka_durum_ve_not_guncellenir_ve_denetim_izi_tutulur(client, operator_header):
+    r = client.post("/kayitlar", json={"plaka_no": "34 DZL 02", "kamera_id": "TEST", "yon": "giris"},
+                     headers=operator_header)
+    assert r.status_code == 200, r.text
+    kayit_id = r.json()["id"]
+    assert r.json()["duzenleyen"] is None
+
+    r2 = client.patch(f"/kayitlar/{kayit_id}", json={
+        "plaka_no": "34 dzl 02",  # küçük harf + boşluksuz -- normalize edilmeli
+        "yetki_durumu": "yetkili",
+        "not_metni": "operatör tarafından manuel olarak yetkilendirildi",
+    }, headers=operator_header)
+    assert r2.status_code == 200, r2.text
+    veri = r2.json()
+    assert veri["plaka_no"] == "34 DZL 02"
+    assert veri["yetki_durumu"] == "yetkili"
+    assert veri["not_metni"] == "operatör tarafından manuel olarak yetkilendirildi"
+    assert veri["duzenleyen"] == "rbac-operator"
+    assert veri["duzenleme_tarihi"] is not None
+
+
+def test_kayit_duzenle_gecersiz_yetki_durumu_400_doner(client, operator_header):
+    r = client.post("/kayitlar", json={"plaka_no": "34 DZL 03", "kamera_id": "TEST", "yon": "giris"},
+                     headers=operator_header)
+    kayit_id = r.json()["id"]
+    r2 = client.patch(f"/kayitlar/{kayit_id}", json={"yetki_durumu": "gecersiz-deger"}, headers=operator_header)
+    assert r2.status_code == 400
+
+
+def test_kayit_duzenle_kisi_eslestirme_atanir_ve_temizlenir(client, operator_header):
+    rk = client.post("/kisiler", json={
+        "ad_soyad": "Düzenleme Testi Kişi", "plaka_no": "34 DZL 04", "tip": "personel",
+    }, headers=operator_header)
+    assert rk.status_code == 200, rk.text
+    kisi_id = rk.json()["id"]
+
+    r = client.post("/kayitlar", json={"plaka_no": "06 BSK 05", "kamera_id": "TEST", "yon": "giris"},
+                     headers=operator_header)
+    kayit_id = r.json()["id"]
+
+    r2 = client.patch(f"/kayitlar/{kayit_id}", json={"kisi_id": kisi_id}, headers=operator_header)
+    assert r2.status_code == 200, r2.text
+    assert r2.json()["kisi_id"] == kisi_id
+    assert r2.json()["kisi_tip_anlik"] == "personel"
+
+    r3 = client.patch(f"/kayitlar/{kayit_id}", json={"kisi_id_temizle": True}, headers=operator_header)
+    assert r3.status_code == 200, r3.text
+    assert r3.json()["kisi_id"] is None
+
+
+def test_kayit_duzenle_izleyici_yetkisiz_403_doner(client, operator_header, izleyici_header):
+    r = client.post("/kayitlar", json={"plaka_no": "34 DZL 06", "kamera_id": "TEST", "yon": "giris"},
+                     headers=operator_header)
+    kayit_id = r.json()["id"]
+    r2 = client.patch(f"/kayitlar/{kayit_id}", json={"not_metni": "izleyici bunu yapamamalı"},
+                       headers=izleyici_header)
+    assert r2.status_code == 403
+
+
+def test_kayit_sil_yalnizca_yonetici_operator_403_doner(client, operator_header):
+    r = client.post("/kayitlar", json={"plaka_no": "34 DZL 07", "kamera_id": "TEST", "yon": "giris"},
+                     headers=operator_header)
+    kayit_id = r.json()["id"]
+    r2 = client.delete(f"/kayitlar/{kayit_id}", headers=operator_header)
+    assert r2.status_code == 403
+
+
+def test_kayit_duzenle_bulunamayan_kayit_404_doner(client, operator_header):
+    r = client.patch("/kayitlar/999999", json={"not_metni": "yok"}, headers=operator_header)
+    assert r.status_code == 404
+
+
+def test_plaka_analiz_yeni_alanlari_dondurur(client, operator_header):
+    """Plaka Analizi ekranının görsel/doğrulama/not/manuel-giriş/düzenleme
+    denetim bilgilerini gösterebilmesi için bu alanların analiz uç
+    noktasından da gelmesi gerekiyor (bkz. main.py::plaka_analiz)."""
+    r = client.post("/kayitlar", json={
+        "plaka_no": "34 ANLZ 08", "kamera_id": "PANEL-MANUEL", "yon": "giris",
+        "not_metni": "analiz ekranı testi",
+    }, headers=operator_header)
+    assert r.status_code == 200, r.text
+
+    r2 = client.get("/kayitlar/analiz/34 ANLZ 08", headers=operator_header)
+    assert r2.status_code == 200, r2.text
+    kayit = r2.json()["son_kayitlar"][0]
+    for alan in ("id", "plaka_no", "goruntu_yolu", "guven_skoru", "dogrulama_kare_sayisi",
+                 "not_metni", "manuel_giris", "kisi_id", "duzenleyen", "duzenleme_tarihi"):
+        assert alan in kayit, f"'{alan}' alanı /kayitlar/analiz yanıtında eksik"
+    assert kayit["not_metni"] == "analiz ekranı testi"
+    assert kayit["manuel_giris"] is True

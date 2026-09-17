@@ -238,6 +238,9 @@ class KayitManuel(BaseModel):
     kamera_id: str = "KAMERA-1"
     yon: str = "giris"
     guven_skoru: Optional[float] = None
+    # Görevlinin bir aracı elle içeri/dışarı aldığında düşebileceği tek
+    # seferlik not (ör. "teslimat aracı, güvenlik onayıyla alındı").
+    not_metni: Optional[str] = None
 
 
 class KayitCevap(BaseModel):
@@ -253,8 +256,26 @@ class KayitCevap(BaseModel):
     kisi_id: Optional[int] = None
     kisi_tip_anlik: Optional[str] = None
     dogrulama_kare_sayisi: Optional[int] = None
+    not_metni: Optional[str] = None
+    manuel_giris: bool = False
+    duzenleyen: Optional[str] = None
+    duzenleme_tarihi: Optional[datetime] = None
 
     model_config = ConfigDict(from_attributes=True)
+
+
+class KayitDuzenle(BaseModel):
+    """Panelden mevcut bir geçiş kaydının tam düzenlenmesi (bkz.
+    main.py::kayit_duzenle). Tüm alanlar opsiyoneldir -- sadece gönderilenler
+    değiştirilir. `kisi_id_temizle=True` kişi eşleştirmesini kaldırır (aksi
+    halde `kisi_id=None` göndermek "değiştirme" anlamına gelir, kaldırma
+    değil -- bu yüzden ayrı bir bayrak gerekiyor)."""
+    plaka_no: Optional[str] = None
+    yon: Optional[str] = None
+    yetki_durumu: Optional[str] = None
+    kisi_id: Optional[int] = None
+    kisi_id_temizle: bool = False
+    not_metni: Optional[str] = None
 
 
 class AlarmCevap(BaseModel):

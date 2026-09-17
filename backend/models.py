@@ -115,6 +115,18 @@ class Kayit(Base):
     # kesinleşmiş demektir (yanlış okuma riski daha yüksek); panelde bu
     # kayıtlar ayrıca işaretlenir (bkz. README.md'deki 2026-09-17 notu).
     dogrulama_kare_sayisi = Column(Integer, nullable=True)
+    # Tek seferlik, bu kayda özel not (örn. "görevli tarafından elle içeri
+    # alındı, sebep: teslimat"). Kişinin KENDİ profilindeki kalıcı notlar
+    # (bkz. Kisi.aciklama) ile KARIŞTIRILMAMALI -- bu SADECE bu tekil geçişe
+    # aittir.
+    not_metni = Column(Text, nullable=True)
+    # Bu kayıt panelden elle mi oluşturuldu (görevlinin "Manuel Kayıt Ekle"
+    # ile birini elle içeri alması) yoksa kamera pipeline'ından mı geldi.
+    manuel_giris = Column(Boolean, default=False)
+    # Denetlenebilirlik: bu kayıt sonradan bir operatör tarafından
+    # düzenlendiyse (plaka/yön/durum/kişi/not) kim ve ne zaman değiştirdi.
+    duzenleyen = Column(String(80), nullable=True)
+    duzenleme_tarihi = Column(DateTime, nullable=True)
     olusturma_tarihi = Column(DateTime, default=datetime.now)
 
     kisi = relationship("Kisi", back_populates="kayitlar")

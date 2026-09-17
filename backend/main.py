@@ -118,6 +118,10 @@ def _veritabani_migrasyon() -> None:
         f"ALTER TABLE noktalar ADD {col_kw}kamera_id VARCHAR(64)",
         f"ALTER TABLE noktalar ADD {col_kw}bariyer_id INTEGER",
         f"ALTER TABLE plaka_kayitlari ADD {col_kw}dogrulama_kare_sayisi INTEGER",
+        f"ALTER TABLE plaka_kayitlari ADD {col_kw}not_metni {'TEXT' if sqlite_mod else 'NVARCHAR(MAX)'}",
+        f"ALTER TABLE plaka_kayitlari ADD {col_kw}manuel_giris {bool_tip}",
+        f"ALTER TABLE plaka_kayitlari ADD {col_kw}duzenleyen VARCHAR(80)",
+        f"ALTER TABLE plaka_kayitlari ADD {col_kw}duzenleme_tarihi DATETIME",
     ]
     with engine.connect() as conn:
         for sql in adimlar:
@@ -1474,7 +1478,8 @@ def _bilinen_plakaya_yakinlik_duzelt(db: Session, ham_plaka: str, guven_skoru: O
 
 def _kayit_olustur_ve_bildir(db: Session, plaka_no: str, kamera_id: str, yon: str,
                               guven_skoru: Optional[float], goruntu_yolu: Optional[str],
-                              dogrulama_kare_sayisi: Optional[int] = None):
+                              dogrulama_kare_sayisi: Optional[int] = None,
+                              not_metni: Optional[str] = None, manuel_giris: bool = False):
     plaka_no = re.sub(r"[^A-Za-z0-9 ]", "", plaka_no).strip().upper() or "BILINMEYEN"
     kamera_id = re.sub(r"[^A-Za-z0-9 _.\-]", "", str(kamera_id)).strip()[:50] or "KAMERA-1"
 
@@ -1499,6 +1504,8 @@ def _kayit_olustur_ve_bildir(db: Session, plaka_no: str, kamera_id: str, yon: st
         kisi_id=kisi_id,
         kisi_tip_anlik=kisi_tip,
         dogrulama_kare_sayisi=dogrulama_kare_sayisi,
+        not_metni=(not_metni or "").strip() or None,
+        manuel_giris=manuel_giris,
     )
     db.add(kayit)
     db.commit()
@@ -1630,7 +1637,8 @@ def kayit_ekle_manuel(kayit: schemas.KayitManuel, db: Session = Depends(get_db),
     """Elle / test amaçlı kayıt ekleme (görsel olmadan). Panel üzerindeki 'Test Kaydı Ekle' formu bunu kullanır."""
     _rol_dogrula(kullanici, ROL_YONETICI, ROL_OPERATOR)
     return _kayit_olustur_ve_bildir(
-        db, kayit.plaka_no, kayit.kamera_id, kayit.yon, kayit.guven_skoru, None
+        db, kayit.plaka_no, kayit.kamera_id, kayit.yon, kayit.guven_skoru, None,
+        not_metni=kayit.not_metni, manuel_giris=True,
     )
 
 
@@ -1806,6 +1814,82 @@ def kayit_sil(kayit_id: int, db: Session = Depends(get_db), kullanici: models.Ku
     return {"mesaj": "Kayıt silindi"}
 
 
+_KAYIT_GECERLI_YETKI_DURUMLARI = ("yetkili", "yetkisiz", "suresi_dolmus", "kara_liste", "bilinmiyor")
+
+
+@app.patch("/kayitlar/{kayit_id}", response_model=schemas.KayitCevap)
+def kayit_duzenle(
+    kayit_id: int,
+    veri: schemas.KayitDuzenle,
+    db: Session = Depends(get_db),
+    kullanici: models.Kullanici = Depends(_giris_gerekli),
+):
+    """Mevcut bir geçiş kaydının panelden tam düzenlenmesi -- OCR'ın yanlış
+    okuduğu bir plakanın düzeltilmesi, yanlış hesaplanmış yetki durumunun
+    elle değiştirilmesi, veya kayda kişi eşleştirmesi/not eklenmesi için.
+
+    GÜVENLİK/DENETİM: bu bir erişim kontrol sistemi olduğundan, kim neyi ne
+    zaman değiştirdi HER ZAMAN kayıtta tutulur (duzenleyen/duzenleme_tarihi) --
+    bu alanlar panelden ASLA doğrudan set edilemez, yalnızca bu uç nokta
+    tarafından otomatik doldurulur."""
+    _rol_dogrula(kullanici, ROL_YONETICI, ROL_OPERATOR)
+    kayit = db.query(models.Kayit).filter(models.Kayit.id == kayit_id).first()
+    if not kayit:
+        raise HTTPException(404, "Kayıt bulunamadı")
+
+    degisti = False
+
+    if veri.plaka_no is not None:
+        yeni_plaka = re.sub(r"[^A-Za-z0-9 ]", "", veri.plaka_no).strip().upper()
+        if not yeni_plaka:
+            raise HTTPException(400, "Plaka boş olamaz")
+        if yeni_plaka != kayit.plaka_no:
+            kayit.plaka_no = yeni_plaka
+            degisti = True
+
+    if veri.yon is not None:
+        if veri.yon not in ("giris", "cikis"):
+            raise HTTPException(400, "yon 'giris' veya 'cikis' olmalı")
+        if veri.yon != kayit.yon:
+            kayit.yon = veri.yon
+            degisti = True
+
+    if veri.yetki_durumu is not None:
+        if veri.yetki_durumu not in _KAYIT_GECERLI_YETKI_DURUMLARI:
+            raise HTTPException(400, f"yetki_durumu şunlardan biri olmalı: {', '.join(_KAYIT_GECERLI_YETKI_DURUMLARI)}")
+        if veri.yetki_durumu != kayit.yetki_durumu:
+            kayit.yetki_durumu = veri.yetki_durumu
+            degisti = True
+
+    if veri.kisi_id_temizle:
+        if kayit.kisi_id is not None or kayit.kisi_tip_anlik is not None:
+            kayit.kisi_id = None
+            kayit.kisi_tip_anlik = None
+            degisti = True
+    elif veri.kisi_id is not None:
+        kisi = db.query(models.Kisi).filter(models.Kisi.id == veri.kisi_id).first()
+        if not kisi:
+            raise HTTPException(404, "Eşleştirilecek kişi bulunamadı")
+        if kayit.kisi_id != kisi.id:
+            kayit.kisi_id = kisi.id
+            kayit.kisi_tip_anlik = kisi.tip
+            degisti = True
+
+    if veri.not_metni is not None:
+        yeni_not = veri.not_metni.strip() or None
+        if yeni_not != kayit.not_metni:
+            kayit.not_metni = yeni_not
+            degisti = True
+
+    if degisti:
+        kayit.duzenleyen = kullanici.kullanici_adi
+        kayit.duzenleme_tarihi = datetime.now()
+        logger.info("Kayıt #%d panelden düzenlendi (%s)", kayit_id, kullanici.kullanici_adi)
+        db.commit()
+        db.refresh(kayit)
+    return kayit
+
+
 @app.get("/kayitlar/istatistik")
 def istatistikler(db: Session = Depends(get_db), _: models.Kullanici = Depends(_giris_gerekli)):
     bugun = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
@@ -1877,8 +1961,18 @@ def plaka_analiz(plaka_no: str, db: Session = Depends(get_db), _: models.Kullani
         "kara_listesinde": kara is not None,
         "kara_sebep": kara.sebep if kara else None,
         "son_kayitlar": [
-            {"id": k.id, "tarih_saat": k.tarih_saat.isoformat(), "yon": k.yon,
-             "yetki_durumu": k.yetki_durumu, "kamera_id": k.kamera_id}
+            # NOT: bu alanların tamamı, panelin "Kayıtlar" tablosundaki
+            # kayitDuzenleAc()/kayitSil() fonksiyonlarının aynı obje şeklini
+            # (sonKayitlarCache girdisiyle birebir) beklemesi nedeniyle
+            # burada da eksiksiz veriliyor -- Plaka Analizi ekranından da
+            # aynı düzenle/sil akışı tekrar kullanılabilsin diye.
+            {"id": k.id, "plaka_no": k.plaka_no, "tarih_saat": k.tarih_saat.isoformat(), "yon": k.yon,
+             "yetki_durumu": k.yetki_durumu, "kamera_id": k.kamera_id,
+             "goruntu_yolu": k.goruntu_yolu, "guven_skoru": k.guven_skoru,
+             "dogrulama_kare_sayisi": k.dogrulama_kare_sayisi, "not_metni": k.not_metni,
+             "manuel_giris": k.manuel_giris, "kisi_id": k.kisi_id,
+             "duzenleyen": k.duzenleyen,
+             "duzenleme_tarihi": k.duzenleme_tarihi.isoformat() if k.duzenleme_tarihi else None}
             for k in kayitlar[:15]
         ],
     }

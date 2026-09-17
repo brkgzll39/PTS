@@ -631,7 +631,11 @@ async function kayitlariYukle(sifirla = true) {
       <td>${tipRozeti(k.kisi_tip_anlik)}</td>
       <td>${k.guven_skoru ? (k.guven_skoru * 100).toFixed(0) + "%" : "-"}</td>
       <td>${dogrulamaRozeti(k.dogrulama_kare_sayisi)}</td>
-      <td><button class="btn btn-sm btn-outline-danger" onclick="kayitPdfIndir(${k.id})" title="PDF indir" aria-label="PDF indir"><i class="bi bi-file-earmark-pdf"></i></button></td>
+      <td class="text-nowrap">
+        <button class="btn btn-sm btn-outline-danger" onclick="kayitPdfIndir(${k.id})" title="PDF indir" aria-label="PDF indir"><i class="bi bi-file-earmark-pdf"></i></button>
+        ${rolYeterli("operatör") ? `<button class="btn btn-sm btn-outline-primary ms-1" onclick="kayitDuzenleAc(${k.id})" title="Kaydı düzenle" aria-label="Kaydı düzenle"><i class="bi bi-pencil"></i></button>` : ""}
+        ${rolYeterli("yonetici") ? `<button class="btn btn-sm btn-outline-secondary ms-1" onclick="kayitSil(${k.id})" title="Kaydı sil" aria-label="Kaydı sil"><i class="bi bi-trash"></i></button>` : ""}
+      </td>
     </tr>
   `).join("") || `<tr><td colspan="11" class="text-center text-muted py-3">Kayıt bulunamadı</td></tr>`;
   korumaliGorselleriYukle(tbody);
@@ -662,6 +666,90 @@ function disaAktar(tur) {
 
 function kayitPdfIndir(id) {
   window.open(`/disa-aktar/pdf/kayit/${id}`, "_blank");
+}
+
+// Bir geçiş kaydını (plaka, yön, durum, kişi eşleştirmesi, not) panelden tam
+// düzenleyebilmek için (bkz. main.py::kayit_duzenle). Örn. OCR'ın "39 SU 877"yi
+// tek bir karede "04 SD 377" olarak yanlış okuyup kaydettiği bir vakada,
+// operatör plakayı düzeltebilir ya da kaydı doğrulayabilir/not düşebilir.
+async function kayitDuzenleAc(id) {
+  const kayit = sonKayitlarCache.find(k => k.id === id);
+  if (!kayit) return;
+  document.getElementById("duzenleKayitId").value = id;
+  document.getElementById("duzenleKayitPlaka").value = kayit.plaka_no;
+  document.getElementById("duzenleKayitYon").value = kayit.yon;
+  document.getElementById("duzenleKayitDurum").value = kayit.yetki_durumu;
+  document.getElementById("duzenleKayitNot").value = kayit.not_metni || "";
+  document.getElementById("duzenleKayitSonuc").textContent = "";
+  const denetim = document.getElementById("duzenleKayitDenetim");
+  denetim.textContent = kayit.duzenleyen
+    ? `Son düzenleyen: ${kayit.duzenleyen} · ${tarihFormatla(kayit.duzenleme_tarihi)}`
+    : (kayit.manuel_giris ? "Bu kayıt manuel olarak eklendi." : "");
+
+  const kisiSecim = document.getElementById("duzenleKayitKisi");
+  kisiSecim.innerHTML = '<option value="">Eşleştirme yok</option>';
+  try {
+    const kisiler = await apiCagir("/kisiler");
+    kisiSecim.innerHTML += kisiler.map(k =>
+      `<option value="${k.id}">${escapeHtml(k.ad_soyad)} (${escapeHtml(k.plaka_no)})</option>`
+    ).join("");
+    if (kayit.kisi_id) kisiSecim.value = String(kayit.kisi_id);
+  } catch (e) { /* kişi listesi yüklenemezse eşleştirme alanı boş kalır, kritik değil */ }
+
+  bootstrap.Modal.getOrCreateInstance(document.getElementById("kayitDuzenleModal")).show();
+}
+
+document.getElementById("kayitDuzenleForm")?.addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const id = document.getElementById("duzenleKayitId").value;
+  const kayit = sonKayitlarCache.find(k => k.id === Number(id));
+  const kisiSecim = document.getElementById("duzenleKayitKisi").value;
+  const sonuc = document.getElementById("duzenleKayitSonuc");
+  const govde = {
+    plaka_no: document.getElementById("duzenleKayitPlaka").value,
+    yon: document.getElementById("duzenleKayitYon").value,
+    yetki_durumu: document.getElementById("duzenleKayitDurum").value,
+    not_metni: document.getElementById("duzenleKayitNot").value || null,
+  };
+  if (kisiSecim) {
+    govde.kisi_id = Number(kisiSecim);
+  } else if (kayit?.kisi_id) {
+    govde.kisi_id_temizle = true;
+  }
+  try {
+    await apiCagir(`/kayitlar/${id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(govde) });
+    bootstrap.Modal.getInstance(document.getElementById("kayitDuzenleModal"))?.hide();
+    kayitlariYukle(false);
+    panelYenile();
+    analizAcikSeAyniPlakayiYenile();
+  } catch (err) {
+    sonuc.className = "small text-danger"; sonuc.textContent = err.message;
+  }
+});
+
+async function kayitSil(id) {
+  if (!confirm("Bu geçiş kaydını kalıcı olarak silmek istediğinize emin misiniz? Bu işlem geri alınamaz.")) return;
+  try {
+    await apiCagir(`/kayitlar/${id}`, { method: "DELETE" });
+    kayitlariYukle(false);
+    panelYenile();
+    analizAcikSeAyniPlakayiYenile();
+  } catch (e) {
+    alert(e.message);
+  }
+}
+
+// Kayıt düzenleme/silme, hem "Kayıtlar" tablosundan hem de "Plaka Analizi"
+// modalinin kendi içinden (aynı düzenle/sil butonları tekrar kullanılarak)
+// tetiklenebiliyor. İkinci durumda, işlem bitince analiz modalindeki liste
+// ve istatistiklerin bayatlamaması için modal hâlâ açıksa aynı plaka için
+// yeniden yüklenir.
+function analizAcikSeAyniPlakayiYenile() {
+  const modalEl = document.getElementById("plakaAnalizModal");
+  const gosterilenPlaka = document.getElementById("analizPlaka")?.textContent;
+  if (modalEl && modalEl.classList.contains("show") && gosterilenPlaka) {
+    plakaAnalizAc(gosterilenPlaka);
+  }
 }
 
 // ---------------------- KİŞİLER ----------------------
@@ -1043,15 +1131,31 @@ async function plakaAnalizAc(plaka) {
   bootstrap.Modal.getOrCreateInstance(document.getElementById("plakaAnalizModal")).show();
   try {
     const v = await apiCagir(`/kayitlar/analiz/${encodeURIComponent(plaka)}`);
+    // "Kayıtlar" tablosundaki düzenle/sil butonları (kayitDuzenleAc/kayitSil)
+    // aynen bu ekranda da tekrar kullanılıyor; onlar sonKayitlarCache üzerinden
+    // çalıştığı için burada gösterilen kayıtlar da önbelleğe eklenir/güncellenir.
+    sonKayitlarCache = [...sonKayitlarCache.filter(k => !v.son_kayitlar.find(n => n.id === k.id)), ...v.son_kayitlar];
     const karaRozet = v.kara_listesinde
       ? `<span class="badge bg-danger ms-2">KARA LİSTEDE</span>`
       : `<span class="badge bg-success ms-2">Temiz</span>`;
     const kisiBlok = v.kisi
       ? `<div class="alert alert-success py-2 mb-3"><b>${escapeHtml(v.kisi.ad_soyad)}</b> · ${escapeHtml(v.kisi.tip)} ${v.kisi.telefon ? " · " + escapeHtml(v.kisi.telefon) : ""}</div>`
       : `<div class="alert alert-warning py-2 mb-3">Sistemde kayıtlı kişi yok</div>`;
-    const satirlar = v.son_kayitlar.map(k =>
-      `<tr><td>${tarihFormatla(k.tarih_saat)}</td><td>${k.yon === "giris" ? "Giriş" : "Çıkış"}</td><td>${escapeHtml(k.kamera_id)}</td><td>${durumRozeti(k.yetki_durumu)}</td></tr>`
-    ).join("");
+    const satirlar = v.son_kayitlar.map(k => `
+      <tr>
+        <td>${k.goruntu_yolu ? `<img class="thumb" data-goruntu-yolu="${escapeHtml(k.goruntu_yolu)}" role="button" tabindex="0" alt="Geçiş görseli, büyütmek için tıklayın veya Enter'a basın">` : '<span class="text-muted small">-</span>'}</td>
+        <td>${tarihFormatla(k.tarih_saat)}</td>
+        <td>${k.yon === "giris" ? "Giriş" : "Çıkış"}</td>
+        <td>${escapeHtml(k.kamera_id)}</td>
+        <td>${durumRozeti(k.yetki_durumu)}</td>
+        <td>${k.guven_skoru ? (k.guven_skoru * 100).toFixed(0) + "%" : "-"}</td>
+        <td>${dogrulamaRozeti(k.dogrulama_kare_sayisi)}</td>
+        <td class="small">${k.manuel_giris ? '<span class="badge bg-secondary d-block mb-1">Manuel</span>' : ""}${k.not_metni ? escapeHtml(k.not_metni) : (k.manuel_giris ? "" : '<span class="text-muted">-</span>')}</td>
+        <td class="text-nowrap">
+          ${rolYeterli("operatör") ? `<button class="btn btn-sm btn-outline-primary" onclick="kayitDuzenleAc(${k.id})" title="Kaydı düzenle" aria-label="Kaydı düzenle"><i class="bi bi-pencil"></i></button>` : ""}
+          ${rolYeterli("yonetici") ? `<button class="btn btn-sm btn-outline-secondary ms-1" onclick="kayitSil(${k.id})" title="Kaydı sil" aria-label="Kaydı sil"><i class="bi bi-trash"></i></button>` : ""}
+        </td>
+      </tr>`).join("");
     document.getElementById("analizIcerik").innerHTML = `
       <div class="d-flex gap-3 mb-3 flex-wrap">
         <div class="stat-card card flex-fill text-center py-2"><div class="text-muted small">Toplam Geçiş</div><div class="fs-3 fw-bold">${v.toplam_gecis}</div></div>
@@ -1060,10 +1164,65 @@ async function plakaAnalizAc(plaka) {
       </div>
       ${kisiBlok}
       ${v.kara_sebep ? `<div class="alert alert-danger py-2 mb-3">Engel sebebi: ${escapeHtml(v.kara_sebep)}</div>` : ""}
-      <table class="table table-sm"><thead class="table-light"><tr><th>Tarih/Saat</th><th>Yön</th><th>Kamera</th><th>Durum</th></tr></thead><tbody>${satirlar || "<tr><td colspan='4' class='text-center text-muted'>Kayıt yok</td></tr>"}</tbody></table>
-      <div class="d-flex gap-2 mt-2">
+      <div class="table-responsive">
+        <table class="table table-sm align-middle">
+          <thead class="table-light"><tr><th>Görsel</th><th>Tarih/Saat</th><th>Yön</th><th>Kamera</th><th>Durum</th><th>Güven</th><th title="Bu okuma kaç farklı karede doğrulandı">Doğrulama</th><th>Not</th><th></th></tr></thead>
+          <tbody>${satirlar || "<tr><td colspan='9' class='text-center text-muted'>Kayıt yok</td></tr>"}</tbody>
+        </table>
+      </div>
+      <div class="d-flex gap-2 mt-2 flex-wrap">
         ${!v.kara_listesinde ? `<button class="btn btn-sm btn-danger" data-kara-ekle="${escapeHtml(v.plaka_no)}">Kara Listeye Ekle</button>` : ""}
-      </div>`;
+        ${rolYeterli("operatör") ? `<button class="btn btn-sm btn-outline-primary" type="button" data-bs-toggle="collapse" data-bs-target="#analizManuelForm">+ Manuel Kayıt Ekle</button>` : ""}
+      </div>
+      ${rolYeterli("operatör") ? `
+      <div class="collapse mt-2" id="analizManuelForm">
+        <form id="analizManuelKayitForm" class="card card-body py-2">
+          <div class="row g-2 align-items-end">
+            <div class="col-auto">
+              <label class="form-label small mb-0">Yön</label>
+              <select id="analizManuelYon" class="form-select form-select-sm">
+                <option value="giris">Giriş</option>
+                <option value="cikis">Çıkış</option>
+              </select>
+            </div>
+            <div class="col">
+              <label class="form-label small mb-0">Not</label>
+              <input type="text" id="analizManuelNot" class="form-control form-control-sm" placeholder="örn. teslimat aracı, güvenlik onayıyla alındı" maxlength="500">
+            </div>
+            <div class="col-auto">
+              <button type="submit" class="btn btn-sm btn-primary">Kaydı Ekle</button>
+            </div>
+          </div>
+          <div id="analizManuelSonuc" class="small mt-1"></div>
+        </form>
+      </div>` : ""}`;
+    korumaliGorselleriYukle(document.getElementById("analizIcerik"));
+    document.getElementById("analizManuelKayitForm")?.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const sonuc = document.getElementById("analizManuelSonuc");
+      try {
+        // Bu ekrandan eklenen kayıtlar, görevlinin bir aracı elle içeri/dışarı
+        // aldığı durumlar için: gerçek kamera pipeline'ından gelmediği kamera_id
+        // ile ayırt edilsin ve manuel_giris=True bayrağıyla panelde "Manuel"
+        // etiketiyle işaretlensin diye backend/main.py::kayit_ekle_manuel
+        // çağrılıyor (görsel yok, güven skoru yok -- test kaydı formuyla aynı uç).
+        await apiCagir("/kayitlar", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            plaka_no: v.plaka_no,
+            kamera_id: "PANEL-MANUEL",
+            yon: document.getElementById("analizManuelYon").value,
+            not_metni: document.getElementById("analizManuelNot").value || null,
+          }),
+        });
+        panelYenile();
+        kayitlariYukle(false);
+        plakaAnalizAc(v.plaka_no);
+      } catch (err) {
+        sonuc.className = "small text-danger mt-1"; sonuc.textContent = err.message;
+      }
+    });
   } catch (e) {
     document.getElementById("analizIcerik").innerHTML = `<div class="alert alert-danger">${escapeHtml(e.message)}</div>`;
   }
