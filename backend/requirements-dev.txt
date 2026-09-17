@@ -13,7 +13,7 @@ pdfplumber==0.11.9
 # camera_reader.py testleri için (ağır fast-alpr/onnx modeline gerek yok,
 # testler sahte/basit bir ANPR motoru kullanır — sadece opencv + requests yeterli)
 opencv-python-headless==4.10.0.84
-requests==2.32.3
+requests==2.34.2
 
 # test_frontend_rbac.py için: frontend/index.html'i (fastapi/sqlalchemy'ye
 # hiç ihtiyaç duymadan) ham HTML olarak ayrıştırıp operatör rolünden
