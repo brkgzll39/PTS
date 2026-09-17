@@ -4,7 +4,12 @@ let sonKayitlarCache = [];
 // ---------------------- ROL BAZLI ARAYÜZ (RBAC) ----------------------
 // Backend'deki _rol_dogrula() politikasıyla birebir eşleşir (backend/main.py).
 // izleyici: salt okunur | operatör: günlük işlemler | yonetici: tam yetki
-const ROL_SEVIYE = { izleyici: 0, "operatör": 1, yonetici: 2 };
+// "sakin" bilinçli olarak -1: panel personeli hiyerarşisinin (izleyici/
+// operatör/yönetici) DIŞINDadır, bu yüzden hiçbir data-rol-min eşiğini
+// (en düşüğü "izleyici"=0 dahil) hiç sağlamamalı -- normalde sakin girişinde
+// zaten authBasarili() erken dönüp rolBazliArayuzuUygula()'yı hiç
+// çağırmıyor (bkz. sakinModunuBaslat), ama bu satır ek bir güvenlik katmanı.
+const ROL_SEVIYE = { sakin: -1, izleyici: 0, "operatör": 1, yonetici: 2 };
 let mevcutRol = null;
 
 function rolYeterli(minRol) {
@@ -138,7 +143,7 @@ function tarihFormatla(iso) {
 }
 
 function durumRozeti(durum) {
-  const etiketler = { yetkili: "Yetkili", yetkisiz: "Yetkisiz", suresi_dolmus: "Süresi Dolmuş", bilinmiyor: "Bilinmiyor", kara_liste: "Kara Liste" };
+  const etiketler = { yetkili: "Yetkili", yetkisiz: "Yetkisiz", suresi_dolmus: "Süresi Dolmuş", bilinmiyor: "Bilinmiyor", kara_liste: "Kara Liste", ziyaretci_onayli: "Ziyaretçi Girişi Onaylandı" };
   return `<span class="badge badge-${durum}">${etiketler[durum] || escapeHtml(durum)}</span>`;
 }
 
@@ -212,6 +217,14 @@ function authBasarili(kullanici) {
   document.getElementById("authKapisi").classList.add("d-none");
   document.getElementById("oturumKullanici").textContent = kullanici.kullanici_adi;
   mevcutRol = kullanici.rol;
+  // "sakin" (site sakini öz-hizmet) hesabı panel PERSONELİ değil -- normal
+  // sidebar/sekme arayüzünü hiç göstermeden, yalnızca kendi profili/
+  // plakaları/geçmişini gördüğü sadeleştirilmiş ayrı bir görünüme yönlendir
+  // (bkz. main.py::_personel_girisi_gerekli'nin arkasındaki aynı ayrım).
+  if (mevcutRol === "sakin") {
+    sakinModunuBaslat();
+    return;
+  }
   rolBazliArayuzuUygula();
   uygulamaVerileriniYukle();
 }
@@ -222,6 +235,93 @@ async function uygulamaVerileriniYukle() {
   bildirimleriYukle();
   await siteleriYukle(); noktalariYukle();
   sseBaslat();
+}
+
+function oturumKapat() {
+  sessionStorage.removeItem("pts_token");
+  location.reload();
+}
+
+// ================================================================
+// SAKİN ÖZ-HİZMET PANELİ (2026-09-17)
+// ================================================================
+// Bir "sakin" hesabı yalnızca /sakin/... uçlarını çağırabilir (bkz.
+// backend/main.py::_sakin_girisi_gerekli) -- bu yüzden burada da normal
+// panelin diğer TÜM veri yükleme fonksiyonları (kayitlariYukle, kisileriYukle,
+// vb.) hiç çağrılmaz; onlar zaten 403 alırdı.
+function sakinModunuBaslat() {
+  document.querySelector(".app-layout")?.classList.add("d-none");
+  document.querySelector(".navbar-pts small")?.classList.add("d-none");
+  document.getElementById("sakinPaneli").classList.remove("d-none");
+  sakinPaneliYukle();
+}
+
+async function sakinPaneliYukle() {
+  try {
+    const profil = await apiCagir("/sakin/profilim");
+    document.getElementById("sakinAdSoyad").textContent = profil.ad_soyad;
+    document.getElementById("sakinAnaPlaka").textContent = profil.plaka_no;
+    document.getElementById("sakinDaire").textContent = profil.daire_departman || "-";
+    document.getElementById("sakinDurum").textContent = profil.aktif ? "Aktif" : "Pasif";
+
+    const tablo = document.getElementById("sakinAraclarTablo");
+    const anaPlaka = `<tr><td class="fw-bold">${escapeHtml(profil.plaka_no)}</td><td class="text-muted small">Ana plaka</td><td></td></tr>`;
+    const ekPlakalar = profil.ek_plakalar.map(p => `
+      <tr>
+        <td class="fw-bold">${escapeHtml(p.plaka_no)}</td>
+        <td>${escapeHtml(p.aciklama || "-")}</td>
+        <td><button class="btn btn-sm btn-outline-danger" onclick="sakinAracSil(${p.id})" title="Sil" aria-label="Sil"><i class="bi bi-trash"></i></button></td>
+      </tr>`).join("");
+    tablo.innerHTML = anaPlaka + ekPlakalar;
+  } catch (err) {
+    document.getElementById("sakinAdSoyad").textContent = "Hata: " + err.message;
+  }
+
+  try {
+    const gecmis = await apiCagir("/sakin/gecmisim?limit=50");
+    const tablo = document.getElementById("sakinGecmisTablo");
+    tablo.innerHTML = gecmis.map(k => `
+      <tr>
+        <td>${tarihFormatla(k.tarih_saat)}</td>
+        <td>${escapeHtml(k.kamera_id)}</td>
+        <td>${k.yon === "giris" ? "Giriş" : "Çıkış"}</td>
+        <td>${durumRozeti(k.yetki_durumu)}</td>
+      </tr>
+    `).join("") || `<tr><td colspan="4" class="text-center text-muted py-3">Henüz geçiş kaydınız yok</td></tr>`;
+  } catch (err) {
+    document.getElementById("sakinGecmisTablo").innerHTML = `<tr><td colspan="4" class="text-center text-danger py-3">${escapeHtml(err.message)}</td></tr>`;
+  }
+}
+
+document.getElementById("sakinAracEkleForm")?.addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const sonuc = document.getElementById("sakinAracSonuc");
+  try {
+    await apiCagir("/sakin/arac-ekle", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        plaka_no: document.getElementById("sakinYeniPlaka").value,
+        aciklama: document.getElementById("sakinYeniAciklama").value || null,
+      }),
+    });
+    document.getElementById("sakinAracEkleForm").reset();
+    sonuc.className = "small mt-1 text-success";
+    sonuc.textContent = "Araç eklendi.";
+    sakinPaneliYukle();
+  } catch (err) {
+    sonuc.className = "small mt-1 text-danger";
+    sonuc.textContent = err.message;
+  }
+});
+
+async function sakinAracSil(id) {
+  if (!confirm("Bu aracı listenizden kaldırmak istiyor musunuz?")) return;
+  try {
+    await apiCagir(`/sakin/arac/${id}`, { method: "DELETE" });
+    sakinPaneliYukle();
+  } catch (err) {
+    alert(err.message);
+  }
 }
 
 async function authFormGonder(e) {
@@ -311,7 +411,9 @@ async function olayDetayAc(id) {
   const gorsel = document.getElementById("olayModalGorsel");
   const gorselYok = document.getElementById("olayModalGorselYok");
   if (kayit.goruntu_yolu) { korumaliGorselAta(gorsel, kayit.goruntu_yolu); gorsel.classList.remove("d-none"); gorselYok.classList.add("d-none"); } else { gorsel.removeAttribute("src"); gorsel.classList.add("d-none"); gorselYok.classList.remove("d-none"); }
-  document.getElementById("olayModalTur").textContent = kayit.yetki_durumu === "yetkili" ? "TANIMLI ARAÇ" : kayit.yetki_durumu === "suresi_dolmus" ? "ZİYARETÇİ GİRİŞİ" : "YETKİSİZ ARAÇ";
+  document.getElementById("olayModalTur").textContent = kayit.yetki_durumu === "yetkili" ? "TANIMLI ARAÇ"
+    : kayit.yetki_durumu === "ziyaretci_onayli" ? "ZİYARETÇİ GİRİŞİ ONAYLANDI"
+    : kayit.yetki_durumu === "suresi_dolmus" ? "ZİYARETÇİ GİRİŞİ" : "YETKİSİZ ARAÇ";
   document.getElementById("olayModalPlaka").textContent = kayit.plaka_no;
   document.getElementById("olayModalTarih").textContent = new Date(kayit.tarih_saat).toLocaleDateString("tr-TR");
   document.getElementById("olayModalSaat").textContent = new Date(kayit.tarih_saat).toLocaleTimeString("tr-TR");
@@ -326,7 +428,68 @@ async function olayDetayAc(id) {
     ? `${kayit.ham_plaka_metni} → ${kayit.plaka_no} (bilinen plakaya göre düzeltildi)`
     : "-";
   _olayModalBariyerButonunuAyarla(nokta);
+  await _ziyaretciGirisiKutusunuAyarla(kayit, nokta);
   bootstrap.Modal.getOrCreateInstance(document.getElementById("olayDetayModal")).show();
+}
+
+// "Ziyaretçi Girişi" hızlı onay kutusu: bir tespiti tek tuşla bir kişiye/
+// daireye bağlayıp (opsiyonel) AYNI ANDA bariyeri açan akış. Mevcut iki uç
+// noktayı (kayıt düzenle + bariyer aç) birleştirir, yeni bir backend uç
+// noktası GEREKMEZ (bkz. README'deki 2026-09-17 "Ziyaretçi Girişi" notu).
+async function _ziyaretciGirisiKutusunuAyarla(kayit, nokta) {
+  const kutu = document.getElementById("ziyaretciGirisiKutusu");
+  const zatenOnayli = kayit.yetki_durumu === "yetkili" || kayit.yetki_durumu === "ziyaretci_onayli";
+  document.getElementById("ziyaretciGirisiSonuc").textContent = "";
+  document.getElementById("olayModalZiyaretciNot").value = "";
+  if (zatenOnayli || !rolYeterli("operatör")) {
+    kutu.classList.add("d-none");
+    return;
+  }
+  kutu.classList.remove("d-none");
+  const secim = document.getElementById("olayModalKisiSecim");
+  try {
+    const kisiler = await apiCagir("/kisiler");
+    secim.innerHTML = '<option value="">Kişiye bağlamadan onayla</option>' + kisiler.map(k =>
+      `<option value="${k.id}">${escapeHtml(k.ad_soyad)} (${escapeHtml(k.plaka_no)}${k.daire_departman ? " · " + escapeHtml(k.daire_departman) : ""})</option>`
+    ).join("");
+  } catch { secim.innerHTML = '<option value="">Kişiye bağlamadan onayla</option>'; }
+
+  const btn = document.getElementById("ziyaretciGirisiBtn");
+  btn.onclick = async () => {
+    const sonuc = document.getElementById("ziyaretciGirisiSonuc");
+    if (kayit.yetki_durumu === "kara_liste" && !confirm("Bu araç KARA LİSTEDE. Yine de ziyaretçi olarak onaylayıp bariyeri açmak istediğinize emin misiniz? Bu işlem kayda geçer.")) {
+      return;
+    }
+    btn.disabled = true;
+    sonuc.className = "small mt-1";
+    sonuc.textContent = "İşleniyor...";
+    try {
+      const govde = { yetki_durumu: "ziyaretci_onayli" };
+      const notMetni = document.getElementById("olayModalZiyaretciNot").value.trim();
+      if (notMetni) govde.not_metni = notMetni;
+      if (secim.value) govde.kisi_id = Number(secim.value);
+      await apiCagir(`/kayitlar/${kayit.id}`, {
+        method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(govde),
+      });
+      if (nokta?.bariyer_id) {
+        const r = await apiCagir(`/bariyer/${nokta.bariyer_id}/ac`, { method: "POST" });
+        sonuc.className = "small mt-1 text-success";
+        sonuc.textContent = `Ziyaretçi girişi onaylandı, bariyer açıldı: ${r.mesaj}`;
+      } else {
+        sonuc.className = "small mt-1 text-success";
+        sonuc.textContent = "Ziyaretçi girişi onaylandı (bu noktaya bağlı bariyer tanımlı değil).";
+      }
+      toastGoster("Ziyaretçi girişi onaylandı: " + kayit.plaka_no, "basari");
+      kutu.classList.add("d-none");
+      panelYenile();
+      kayitlariYukle(false);
+    } catch (err) {
+      sonuc.className = "small mt-1 text-danger";
+      sonuc.textContent = err.message;
+    } finally {
+      btn.disabled = false;
+    }
+  };
 }
 
 function _olayModalBariyerButonunuAyarla(nokta) {
@@ -543,6 +706,88 @@ async function kameraRoiKaldir() {
     kameralariYukle();
   } catch (err) {
     sonuc.className = "small mt-2 text-danger"; sonuc.textContent = err.message;
+  }
+}
+
+// ---------------------- BAĞIMSIZ ZİYARETÇİ GİRİŞİ ----------------------
+// Herhangi bir kamera tespitine bağlı olmadan (kağıt üstünde/telefonla önceden
+// haber verilmiş bir ziyaretçi için) elle plaka girip hangi bariyerin
+// açılacağını seçebileceğiniz form. Üç adımı tek düğmede birleştirir: (1)
+// POST /kayitlar ile manuel bir geçiş kaydı oluşturur, (2) PATCH /kayitlar/{id}
+// ile durumu "ziyaretci_onayli" yapıp (varsa) kişiye bağlar, (3) POST
+// /bariyer/{id}/ac ile seçilen noktanın bariyerini fiilen açar. Hiçbiri için
+// yeni bir backend uç noktası GEREKMEDİ (bkz. README'deki 2026-09-17
+// "Ziyaretçi Girişi" notu).
+async function ziyaretciBilgileriAc() {
+  document.getElementById("zbPlaka").value = "";
+  document.getElementById("zbNot").value = "";
+  document.getElementById("zbSonuc").textContent = "";
+  const kisiSecim = document.getElementById("zbKisiSecim");
+  const noktaSecim = document.getElementById("zbNokta");
+  kisiSecim.innerHTML = '<option value="">Kişiye bağlamadan devam et</option>';
+  noktaSecim.innerHTML = '<option value="">Nokta seçiniz...</option>';
+  try {
+    const [kisiler, noktalar] = await Promise.all([
+      apiCagir("/kisiler").catch(() => []),
+      apiCagir("/noktalar").catch(() => []),
+    ]);
+    kisiSecim.innerHTML += kisiler.map(k =>
+      `<option value="${k.id}">${escapeHtml(k.ad_soyad)} (${escapeHtml(k.plaka_no)}${k.daire_departman ? " · " + escapeHtml(k.daire_departman) : ""})</option>`
+    ).join("");
+    const bariyerliNoktalar = noktalar.filter(n => n.aktif && n.bariyer_id);
+    noktaSecim.innerHTML += bariyerliNoktalar.map(n =>
+      `<option value="${n.id}" data-bariyer-id="${n.bariyer_id}" data-yon="${n.yon}" data-kamera-id="${n.kamera_id || ""}">${escapeHtml(n.ad)} (${n.yon === "giris" ? "Giriş" : "Çıkış"})</option>`
+    ).join("");
+    if (bariyerliNoktalar.length === 0) {
+      document.getElementById("zbSonuc").className = "small text-warning";
+      document.getElementById("zbSonuc").textContent = "Bariyere bağlı hiçbir erişim noktası tanımlı değil (Site / Erişim Noktası'ndan bağlayın).";
+    }
+  } catch (err) {
+    document.getElementById("zbSonuc").className = "small text-danger";
+    document.getElementById("zbSonuc").textContent = err.message;
+  }
+  bootstrap.Modal.getOrCreateInstance(document.getElementById("ziyaretciBilgileriModal")).show();
+}
+
+async function ziyaretciBilgileriKaydet() {
+  const sonuc = document.getElementById("zbSonuc");
+  const plaka = document.getElementById("zbPlaka").value.trim();
+  const noktaSecim = document.getElementById("zbNokta");
+  const secilenSecenek = noktaSecim.selectedOptions[0];
+  if (!plaka) { sonuc.className = "small text-danger"; sonuc.textContent = "Plaka gerekli."; return; }
+  if (!noktaSecim.value) { sonuc.className = "small text-danger"; sonuc.textContent = "Açılacak bariyer/erişim noktası seçilmeli."; return; }
+
+  const bariyerId = secilenSecenek.dataset.bariyerId;
+  const yon = secilenSecenek.dataset.yon || "giris";
+  const kameraId = secilenSecenek.dataset.kameraId || "PANEL-ZIYARETCI";
+  const kisiId = document.getElementById("zbKisiSecim").value;
+  const notMetni = document.getElementById("zbNot").value.trim();
+
+  const btn = document.getElementById("zbKaydetBtn");
+  btn.disabled = true;
+  sonuc.className = "small"; sonuc.textContent = "İşleniyor...";
+  try {
+    const kayit = await apiCagir("/kayitlar", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ plaka_no: plaka, kamera_id: kameraId, yon, not_metni: notMetni || null }),
+    });
+    const govde = { yetki_durumu: "ziyaretci_onayli" };
+    if (kisiId) govde.kisi_id = Number(kisiId);
+    await apiCagir(`/kayitlar/${kayit.id}`, {
+      method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(govde),
+    });
+    const r = await apiCagir(`/bariyer/${bariyerId}/ac`, { method: "POST" });
+    toastGoster(`Ziyaretçi girişi kaydedildi, bariyer açıldı: ${plaka}`, "basari");
+    sonuc.className = "small text-success";
+    sonuc.textContent = r.mesaj;
+    panelYenile();
+    kayitlariYukle(false);
+    setTimeout(() => bootstrap.Modal.getInstance(document.getElementById("ziyaretciBilgileriModal"))?.hide(), 900);
+  } catch (err) {
+    sonuc.className = "small text-danger";
+    sonuc.textContent = err.message;
+  } finally {
+    btn.disabled = false;
   }
 }
 
@@ -1640,13 +1885,19 @@ async function noktaSil(id) {
 
 async function kullanicilariYukle() {
   try {
-    const kullanicilar = await apiCagir("/kullanicilar");
+    const [kullanicilar, kisiler] = await Promise.all([
+      apiCagir("/kullanicilar"),
+      apiCagir("/kisiler").catch(() => []),
+    ]);
     const el = document.getElementById("kullanicilarTablo");
     if (!el) return;
-    const roller = { yonetici: "bg-danger", "operatör": "bg-warning text-dark", izleyici: "bg-secondary" };
-    el.innerHTML = kullanicilar.map(k => `<tr>
+    const roller = { yonetici: "bg-danger", "operatör": "bg-warning text-dark", izleyici: "bg-secondary", sakin: "bg-info text-dark" };
+    el.innerHTML = kullanicilar.map(k => {
+      const bagliKisi = k.kisi_id ? kisiler.find(ki => ki.id === k.kisi_id) : null;
+      return `<tr>
       <td><strong>${escapeHtml(k.kullanici_adi)}</strong></td>
       <td><span class="badge ${roller[k.rol] || "bg-secondary"}">${escapeHtml(k.rol)}</span></td>
+      <td class="small">${bagliKisi ? escapeHtml(bagliKisi.ad_soyad) : (k.kisi_id ? `#${k.kisi_id} (silinmiş)` : "-")}</td>
       <td class="small text-muted">${k.son_giris ? tarihFormatla(k.son_giris) : "—"}</td>
       <td>${k.aktif ? '<span class="badge bg-success">Aktif</span>' : '<span class="badge bg-secondary">Pasif</span>'}</td>
       <td>
@@ -1655,24 +1906,52 @@ async function kullanicilariYukle() {
         <button class="btn btn-sm btn-outline-danger ms-1" onclick="kullaniciSil(${k.id})" title="Sil"><i class="bi bi-trash"></i></button>
         ` : '<span class="text-muted small">-</span>'}
       </td>
-    </tr>`).join("") || `<tr><td colspan="5" class="text-center text-muted py-3">Kullanıcı bulunamadı</td></tr>`;
+    </tr>`;
+    }).join("") || `<tr><td colspan="6" class="text-center text-muted py-3">Kullanıcı bulunamadı</td></tr>`;
   } catch (e) {
     const el = document.getElementById("kullanicilarTablo");
-    if (el) el.innerHTML = `<tr><td colspan="5" class="text-center text-muted py-3">Bu sekmeyi sadece yönetici görebilir</td></tr>`;
+    if (el) el.innerHTML = `<tr><td colspan="6" class="text-center text-muted py-3">Bu sekmeyi sadece yönetici görebilir</td></tr>`;
   }
+}
+
+// rol="sakin" seçilince "Bağlı Kişi" alanını gösterir ve o anki kişi listesini
+// doldurur -- bir sakin hesabı mutlaka bir Kişi kaydına bağlı olmalı (bkz.
+// main.py::_sakin_kisi_id_dogrula, 400 döner aksi halde).
+async function yeniKullaniciRolDegisti() {
+  const alan = document.getElementById("yeniKullaniciKisiAlani");
+  const sakinSecildi = document.getElementById("yeniRol").value === "sakin";
+  alan.classList.toggle("d-none", !sakinSecildi);
+  if (!sakinSecildi) return;
+  const secim = document.getElementById("yeniKullaniciKisi");
+  try {
+    const kisiler = await apiCagir("/kisiler");
+    secim.innerHTML = '<option value="">Kişi seçiniz...</option>' + kisiler.map(k =>
+      `<option value="${k.id}">${escapeHtml(k.ad_soyad)} (${escapeHtml(k.plaka_no)}${k.daire_departman ? " · " + escapeHtml(k.daire_departman) : ""})</option>`
+    ).join("");
+  } catch { /* kişi listesi alınamazsa boş bırak, gönderimde 400 ile fark edilir */ }
 }
 
 document.getElementById("kullaniciForm")?.addEventListener("submit", async (e) => {
   e.preventDefault();
   const sonuc = document.getElementById("kullaniciSonuc");
+  const rol = document.getElementById("yeniRol").value;
+  if (rol === "sakin" && !document.getElementById("yeniKullaniciKisi").value) {
+    sonuc.className = "small mt-2 text-danger";
+    sonuc.textContent = "'Sakin' rolü için bağlı kişi seçilmeli.";
+    return;
+  }
   try {
-    await apiCagir("/kullanicilar", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({
+    const govde = {
       kullanici_adi: document.getElementById("yeniKullanici").value,
       parola: document.getElementById("yeniParola").value,
-      rol: document.getElementById("yeniRol").value,
-    })});
+      rol,
+    };
+    if (rol === "sakin") govde.kisi_id = Number(document.getElementById("yeniKullaniciKisi").value);
+    await apiCagir("/kullanicilar", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(govde) });
     sonuc.className = "small mt-2 text-success"; sonuc.textContent = "Kullanıcı oluşturuldu.";
-    e.target.reset(); kullanicilariYukle();
+    e.target.reset();
+    document.getElementById("yeniKullaniciKisiAlani").classList.add("d-none");
+    kullanicilariYukle();
   } catch (err) { sonuc.className = "small mt-2 text-danger"; sonuc.textContent = err.message; }
 });
 

@@ -136,6 +136,12 @@ def _veritabani_migrasyon() -> None:
         f"ALTER TABLE plaka_kayitlari ADD {col_kw}manuel_giris {bool_tip}{bit_sonu}",
         f"ALTER TABLE plaka_kayitlari ADD {col_kw}duzenleyen VARCHAR(80)",
         f"ALTER TABLE plaka_kayitlari ADD {col_kw}duzenleme_tarihi DATETIME",
+        # "sakin" (site sakini öz-hizmet) rolü: bir giriş hesabını bir Kişi
+        # kaydına bağlar. NULL kabul eden, DEFAULT'suz bir INTEGER sütun
+        # olduğu için (manuel_giris'teki BIT DEFAULT 0 vakasının aksine) burada
+        # "WITH VALUES" ihtiyacı YOK -- var olan satırlarda zaten istenen
+        # değer olan NULL'a düşer, ayrıca bir UPDATE gerekmez.
+        f"ALTER TABLE kullanicilar ADD {col_kw}kisi_id INTEGER",
         # Yukarıdaki "WITH VALUES" yalnızca BUNDAN SONRA çalışacak taze
         # migrasyonları düzeltir -- kullanıcının veritabanında sütun zaten
         # NULL değerlerle eklenmiş olabileceğinden (birebir bu vakadaki gibi),
@@ -693,6 +699,42 @@ def _giris_gerekli(authorization: Optional[str] = Header(None), db: Session = De
 ROL_YONETICI = "yonetici"
 ROL_OPERATOR = "operatör"
 ROL_IZLEYICI = "izleyici"
+# "sakin": panel PERSONELİ değil, bir Kişi (abone/sakin) kaydına bağlı öz-hizmet
+# giriş hesabı (bkz. 2026-09-17 notu, README). Diğer üç rolden temelde
+# FARKLI: yönetici/operatör/izleyici hep aynı "panel personeli" ailesinin
+# kademeleri (izleyici en az yetkili, yonetici en çok), sakin ise bu
+# hiyerarşinin TAMAMEN DIŞINDA, yalnızca kendi /sakin/... uç noktalarına
+# erişebilen ayrı bir hesap türü. Bu yüzden ROL_SEVIYE benzeri bir
+# sıralamaya sokulmuyor; bkz. _personel_girisi_gerekli.
+ROL_SAKIN = "sakin"
+
+
+def _personel_girisi_gerekli(kullanici: models.Kullanici = Depends(_giris_gerekli)) -> models.Kullanici:
+    """`_giris_gerekli` ile aynı oturum zorunluluğuna EK olarak çağıranın panel
+    PERSONELİ (yönetici/operatör/izleyici) olmasını ister.
+
+    NEDEN GEREKLİ: aşağıdaki "sakin" (site sakini öz-hizmet portalı) rolü
+    eklenmeden önce, bu dosyadaki HER korumalı uç nokta ya `_giris_gerekli`
+    ile "herhangi bir giriş yapmış personel" (izleyici dahil salt-okunur
+    uçlar) ya da onun ÜZERİNE `_rol_dogrula(..., ROL_YONETICI, ROL_OPERATOR)`
+    ile daha dar bir personel alt kümesini şart koşuyordu — her iki durumda
+    da örtük varsayım "giriş yapabilen herkes güvenilir iç personeldir"
+    şeklindeydi. "sakin" ise bu varsayımı bozan İLK dış/daha az güvenilir
+    hesap türü: bir site sakini kendi plakasını/geçmişini görebilmeli ama
+    TÜM kişilerin listesini, tüm kameraları, tüm geçiş kayıtlarını,
+    sistem loglarını vb. GÖREMEMELİ. `_rol_dogrula(..., ROL_YONETICI,
+    ROL_OPERATOR)` ile zaten korunan yazma uçları "sakin"i otomatik
+    reddediyor (izin listesinde yok), ama yalnızca `_giris_gerekli` ile
+    korunan (ekstra rol kontrolü OLMAYAN, "her personel okuyabilir" niyetiyle
+    yazılmış) onlarca salt-okunur uç nokta bu ek kontrol olmadan "sakin"
+    rolüne de açık kalırdı. Bu yüzden TÜM dahili/genel amaçlı uç noktalar
+    (yeni `/sakin/...` öz-hizmet uçları VE `/auth/me` hariç) bu fonksiyonu
+    kullanmalı — tek bir merkezi kontrol, `_rol_dogrula`'nın kendi
+    docstring'indeki "aynı mantığın birden fazla bağımsız kopyası" hata
+    sınıfını burada da tekrarlamamak için."""
+    if kullanici.rol == ROL_SAKIN:
+        raise HTTPException(403, "Bu işlem için personel girişi gerekli")
+    return kullanici
 
 
 def _rol_dogrula(kullanici: models.Kullanici, *izinli_roller: str) -> None:
@@ -818,11 +860,15 @@ def giris_yap(istek: schemas.GirisIstegi, db: Session = Depends(get_db)):
 
 @app.get("/auth/me", response_model=schemas.KullaniciCevap)
 def mevcut_kullanici(kullanici: models.Kullanici = Depends(_giris_gerekli)):
+    # NOT: burada kasıtlı olarak _personel_girisi_gerekli DEĞİL, temel
+    # _giris_gerekli kullanılıyor -- "sakin" rolündeki bir hesap da giriş
+    # sonrası kendi rolünü öğrenip doğru arayüze (öz-hizmet paneli) yönlenmek
+    # için bu uç noktayı çağırabilmeli.
     return kullanici
 
 
 @app.get("/goruntuler/{dosya_adi}")
-def gorsel_getir(dosya_adi: str, _: models.Kullanici = Depends(_giris_gerekli)):
+def gorsel_getir(dosya_adi: str, _: models.Kullanici = Depends(_personel_girisi_gerekli)):
     """Araç/sürücü görsellerini (plaka + fotoğraf — KVKK kapsamında kişisel
     veri) YALNIZCA giriş yapmış kullanıcılara servis eder.
 
@@ -931,14 +977,14 @@ def _lisans_durumunu_yaz(durum: dict) -> None:
 
 
 @app.get("/lisans")
-def lisans_durumunu_getir(_: models.Kullanici = Depends(_giris_gerekli)):
+def lisans_durumunu_getir(_: models.Kullanici = Depends(_personel_girisi_gerekli)):
     durum = _lisans_durumunu_oku()
     durum["aktif"] = _lisans_aktif_mi()
     return durum
 
 
 @app.post("/lisans/aktive-et")
-def lisans_aktive_et(istek: schemas.LisansAktivasyonIstegi, kullanici: models.Kullanici = Depends(_giris_gerekli)):
+def lisans_aktive_et(istek: schemas.LisansAktivasyonIstegi, kullanici: models.Kullanici = Depends(_personel_girisi_gerekli)):
     _rol_dogrula(kullanici, ROL_YONETICI)
     temiz_anahtar = istek.anahtar.strip()
     payload = _lisans_anahtarini_coz(temiz_anahtar)
@@ -988,7 +1034,7 @@ def _kamera_guvenli_gorunum(kamera: dict) -> dict:
 
 
 @app.get("/kameralar")
-def kameralari_getir(_: models.Kullanici = Depends(_giris_gerekli)):
+def kameralari_getir(_: models.Kullanici = Depends(_personel_girisi_gerekli)):
     kameralar = _kameralari_oku()
     sonuclar = []
     for k in kameralar:
@@ -1007,7 +1053,7 @@ def kameralari_getir(_: models.Kullanici = Depends(_giris_gerekli)):
 
 
 @app.post("/kameralar/{kamera_id}/yeniden-baslat")
-def kamera_yeniden_baslat(kamera_id: str, kullanici: models.Kullanici = Depends(_giris_gerekli)):
+def kamera_yeniden_baslat(kamera_id: str, kullanici: models.Kullanici = Depends(_personel_girisi_gerekli)):
     _rol_dogrula(kullanici, ROL_YONETICI, ROL_OPERATOR)
     kamera = next((k for k in _kameralari_oku() if k["id"] == kamera_id), None)
     if not kamera:
@@ -1019,7 +1065,7 @@ def kamera_yeniden_baslat(kamera_id: str, kullanici: models.Kullanici = Depends(
 
 
 @app.patch("/kameralar/{kamera_id}/aktif")
-def kamera_aktif_toggle(kamera_id: str, kullanici: models.Kullanici = Depends(_giris_gerekli)):
+def kamera_aktif_toggle(kamera_id: str, kullanici: models.Kullanici = Depends(_personel_girisi_gerekli)):
     _rol_dogrula(kullanici, ROL_YONETICI, ROL_OPERATOR)
     kameralar = _kameralari_oku()
     kamera = next((k for k in kameralar if k["id"] == kamera_id), None)
@@ -1035,7 +1081,7 @@ def kamera_aktif_toggle(kamera_id: str, kullanici: models.Kullanici = Depends(_g
 
 
 @app.patch("/kameralar/{kamera_id}/yon")
-def kamera_yon_degistir(kamera_id: str, veri: schemas.KameraYonGuncelle, kullanici: models.Kullanici = Depends(_giris_gerekli)):
+def kamera_yon_degistir(kamera_id: str, veri: schemas.KameraYonGuncelle, kullanici: models.Kullanici = Depends(_personel_girisi_gerekli)):
     """Var olan bir kameranın giriş/çıkış yönünü DEĞİŞTİRİR (RTSP adresi/parola
     dokunulmadan) -- örn. iki kamera aynı fiziksel bariyeri/geçidi farklı
     açılardan izliyorsa ve biri yanlışlıkla ters yönle tanımlanmışsa (bkz.
@@ -1068,7 +1114,7 @@ def kamera_yon_degistir(kamera_id: str, veri: schemas.KameraYonGuncelle, kullani
 
 
 @app.patch("/kameralar/{kamera_id}/roi")
-def kamera_roi_guncelle(kamera_id: str, veri: schemas.KameraRoiGuncelle, kullanici: models.Kullanici = Depends(_giris_gerekli)):
+def kamera_roi_guncelle(kamera_id: str, veri: schemas.KameraRoiGuncelle, kullanici: models.Kullanici = Depends(_personel_girisi_gerekli)):
     """Bir kameranın tespit alanını (ROI -- region of interest) yüzde (0-100,
     çözünürlükten bağımsız) cinsinden sınırlar veya bu sınırı kaldırır.
 
@@ -1111,7 +1157,7 @@ def kamera_roi_guncelle(kamera_id: str, veri: schemas.KameraRoiGuncelle, kullani
 
 
 @app.get("/kameralar/{kamera_id}/goruntu")
-async def kamera_goruntu_al(kamera_id: str, _: models.Kullanici = Depends(_giris_gerekli)):
+async def kamera_goruntu_al(kamera_id: str, _: models.Kullanici = Depends(_personel_girisi_gerekli)):
     """Kameradan anlık JPEG kare alır. Pipeline çalışıyorsa cached+annotated frame döner (sıfır gecikme)."""
     kamera = next((k for k in _kameralari_oku() if k["id"] == kamera_id), None)
     if not kamera:
@@ -1199,7 +1245,7 @@ async def kamera_akis(kamera_id: str, request: Request, authorization: Optional[
 
 
 @app.get("/kameralar/{kamera_id}/son-plaka")
-def kamera_son_plaka(kamera_id: str, _: models.Kullanici = Depends(_giris_gerekli)):
+def kamera_son_plaka(kamera_id: str, _: models.Kullanici = Depends(_personel_girisi_gerekli)):
     """Pipeline'ın son tespit ettiği plaka(ları) döner (canlı overlay için)."""
     pipeline = _aktif_pipelineler.get(kamera_id)
     if not pipeline or not pipeline.calisiyor:
@@ -1211,7 +1257,7 @@ _GECERLI_KAMERA_SEMALARI = ("rtsp", "rtsps", "http", "https")
 
 
 @app.post("/kameralar")
-def kamera_ekle(kamera: dict = Body(...), kullanici: models.Kullanici = Depends(_giris_gerekli)):
+def kamera_ekle(kamera: dict = Body(...), kullanici: models.Kullanici = Depends(_personel_girisi_gerekli)):
     _rol_dogrula(kullanici, ROL_YONETICI, ROL_OPERATOR)
     lisans = _lisans_durumunu_oku()
     kameralar = _kameralari_oku()
@@ -1265,7 +1311,7 @@ def kamera_ekle(kamera: dict = Body(...), kullanici: models.Kullanici = Depends(
 
 
 @app.delete("/kameralar/{kamera_id}")
-def kamera_sil(kamera_id: str, kullanici: models.Kullanici = Depends(_giris_gerekli)):
+def kamera_sil(kamera_id: str, kullanici: models.Kullanici = Depends(_personel_girisi_gerekli)):
     _rol_dogrula(kullanici, ROL_YONETICI, ROL_OPERATOR)
     kameralar = _kameralari_oku()
     yeni_kameralar = [kamera for kamera in kameralar if kamera["id"] != kamera_id]
@@ -1281,7 +1327,7 @@ def kamera_sil(kamera_id: str, kullanici: models.Kullanici = Depends(_giris_gere
 # ==================================================================
 
 @app.post("/siteler", response_model=schemas.SiteCevap)
-def site_ekle(site: schemas.SiteOlustur, db: Session = Depends(get_db), kullanici: models.Kullanici = Depends(_giris_gerekli)):
+def site_ekle(site: schemas.SiteOlustur, db: Session = Depends(get_db), kullanici: models.Kullanici = Depends(_personel_girisi_gerekli)):
     _rol_dogrula(kullanici, ROL_YONETICI)
     if db.query(models.Site).filter(models.Site.ad == site.ad.strip()).first():
         raise HTTPException(409, "Bu site zaten kayıtlı")
@@ -1293,12 +1339,12 @@ def site_ekle(site: schemas.SiteOlustur, db: Session = Depends(get_db), kullanic
 
 
 @app.get("/siteler", response_model=List[schemas.SiteCevap])
-def siteleri_listele(db: Session = Depends(get_db), _: models.Kullanici = Depends(_giris_gerekli)):
+def siteleri_listele(db: Session = Depends(get_db), _: models.Kullanici = Depends(_personel_girisi_gerekli)):
     return db.query(models.Site).order_by(models.Site.ad).all()
 
 
 @app.delete("/siteler/{site_id}")
-def site_sil(site_id: int, db: Session = Depends(get_db), kullanici: models.Kullanici = Depends(_giris_gerekli)):
+def site_sil(site_id: int, db: Session = Depends(get_db), kullanici: models.Kullanici = Depends(_personel_girisi_gerekli)):
     _rol_dogrula(kullanici, ROL_YONETICI)
     site = db.query(models.Site).filter(models.Site.id == site_id).first()
     if not site:
@@ -1309,7 +1355,7 @@ def site_sil(site_id: int, db: Session = Depends(get_db), kullanici: models.Kull
 
 
 @app.post("/noktalar", response_model=schemas.NoktaCevap)
-def nokta_ekle(nokta: schemas.NoktaOlustur, db: Session = Depends(get_db), kullanici: models.Kullanici = Depends(_giris_gerekli)):
+def nokta_ekle(nokta: schemas.NoktaOlustur, db: Session = Depends(get_db), kullanici: models.Kullanici = Depends(_personel_girisi_gerekli)):
     _rol_dogrula(kullanici, ROL_YONETICI)
     if not db.query(models.Site).filter(models.Site.id == nokta.site_id).first():
         raise HTTPException(404, "Bağlı site bulunamadı")
@@ -1325,7 +1371,7 @@ def nokta_ekle(nokta: schemas.NoktaOlustur, db: Session = Depends(get_db), kulla
 
 
 @app.get("/noktalar", response_model=List[schemas.NoktaCevap])
-def noktalari_listele(site_id: Optional[int] = None, db: Session = Depends(get_db), _: models.Kullanici = Depends(_giris_gerekli)):
+def noktalari_listele(site_id: Optional[int] = None, db: Session = Depends(get_db), _: models.Kullanici = Depends(_personel_girisi_gerekli)):
     sorgu = db.query(models.Nokta)
     if site_id is not None:
         sorgu = sorgu.filter(models.Nokta.site_id == site_id)
@@ -1333,7 +1379,7 @@ def noktalari_listele(site_id: Optional[int] = None, db: Session = Depends(get_d
 
 
 @app.delete("/noktalar/{nokta_id}")
-def nokta_sil(nokta_id: int, db: Session = Depends(get_db), kullanici: models.Kullanici = Depends(_giris_gerekli)):
+def nokta_sil(nokta_id: int, db: Session = Depends(get_db), kullanici: models.Kullanici = Depends(_personel_girisi_gerekli)):
     _rol_dogrula(kullanici, ROL_YONETICI)
     nokta = db.query(models.Nokta).filter(models.Nokta.id == nokta_id).first()
     if not nokta:
@@ -1348,7 +1394,7 @@ def nokta_sil(nokta_id: int, db: Session = Depends(get_db), kullanici: models.Ku
 # ==================================================================
 
 @app.post("/kisiler", response_model=schemas.KisiCevap)
-def kisi_ekle(kisi: schemas.KisiOlustur, db: Session = Depends(get_db), kullanici: models.Kullanici = Depends(_giris_gerekli)):
+def kisi_ekle(kisi: schemas.KisiOlustur, db: Session = Depends(get_db), kullanici: models.Kullanici = Depends(_personel_girisi_gerekli)):
     _rol_dogrula(kullanici, ROL_YONETICI, ROL_OPERATOR)
     yeni_kisi = models.Kisi(**kisi.model_dump())
     db.add(yeni_kisi)
@@ -1363,7 +1409,7 @@ def kisileri_listele(
     aktif: Optional[bool] = None,
     arama: Optional[str] = None,
     db: Session = Depends(get_db),
-    _: models.Kullanici = Depends(_giris_gerekli),
+    _: models.Kullanici = Depends(_personel_girisi_gerekli),
 ):
     sorgu = db.query(models.Kisi)
     if tip:
@@ -1380,7 +1426,7 @@ def kisileri_listele(
 
 
 @app.get("/kisiler/{kisi_id}", response_model=schemas.KisiCevap)
-def kisi_getir(kisi_id: int, db: Session = Depends(get_db), _: models.Kullanici = Depends(_giris_gerekli)):
+def kisi_getir(kisi_id: int, db: Session = Depends(get_db), _: models.Kullanici = Depends(_personel_girisi_gerekli)):
     kisi = db.query(models.Kisi).filter(models.Kisi.id == kisi_id).first()
     if not kisi:
         raise HTTPException(404, "Kişi bulunamadı")
@@ -1388,7 +1434,7 @@ def kisi_getir(kisi_id: int, db: Session = Depends(get_db), _: models.Kullanici 
 
 
 @app.put("/kisiler/{kisi_id}", response_model=schemas.KisiCevap)
-def kisi_guncelle(kisi_id: int, degisiklik: schemas.KisiGuncelle, db: Session = Depends(get_db), kullanici: models.Kullanici = Depends(_giris_gerekli)):
+def kisi_guncelle(kisi_id: int, degisiklik: schemas.KisiGuncelle, db: Session = Depends(get_db), kullanici: models.Kullanici = Depends(_personel_girisi_gerekli)):
     _rol_dogrula(kullanici, ROL_YONETICI, ROL_OPERATOR)
     kisi = db.query(models.Kisi).filter(models.Kisi.id == kisi_id).first()
     if not kisi:
@@ -1401,26 +1447,32 @@ def kisi_guncelle(kisi_id: int, degisiklik: schemas.KisiGuncelle, db: Session = 
 
 
 @app.delete("/kisiler/{kisi_id}")
-def kisi_sil(kisi_id: int, db: Session = Depends(get_db), kullanici: models.Kullanici = Depends(_giris_gerekli)):
+def kisi_sil(kisi_id: int, db: Session = Depends(get_db), kullanici: models.Kullanici = Depends(_personel_girisi_gerekli)):
     _rol_dogrula(kullanici, ROL_YONETICI, ROL_OPERATOR)
     kisi = db.query(models.Kisi).filter(models.Kisi.id == kisi_id).first()
     if not kisi:
         raise HTTPException(404, "Kişi bulunamadı")
     db.query(models.Kayit).filter(models.Kayit.kisi_id == kisi_id).update({"kisi_id": None})
+    # Bu kişiye bağlı bir "sakin" öz-hizmet hesabı varsa (bkz.
+    # models.Kullanici.kisi_id), kişi silinince sarkan bir referans kalmasın
+    # diye bağlantı temizlenir -- hesabın kendisi silinmez, yalnızca artık
+    # hiçbir kişiye bağlı olmadığı için /sakin/... uçları 400 dönene kadar
+    # devre dışı kalır (bkz. main.py::_sakin_kisisini_al).
+    db.query(models.Kullanici).filter(models.Kullanici.kisi_id == kisi_id).update({"kisi_id": None})
     db.delete(kisi)
     db.commit()
     return {"mesaj": "Kişi silindi"}
 
 
 @app.get("/kisiler/{kisi_id}/plakalar", response_model=List[schemas.KisiPlakaCevap])
-def kisi_plakalarini_listele(kisi_id: int, db: Session = Depends(get_db), _: models.Kullanici = Depends(_giris_gerekli)):
+def kisi_plakalarini_listele(kisi_id: int, db: Session = Depends(get_db), _: models.Kullanici = Depends(_personel_girisi_gerekli)):
     if not db.query(models.Kisi).filter(models.Kisi.id == kisi_id).first():
         raise HTTPException(404, "Kişi bulunamadı")
     return db.query(models.KisiPlaka).filter(models.KisiPlaka.kisi_id == kisi_id).all()
 
 
 @app.post("/kisiler/{kisi_id}/plakalar", response_model=schemas.KisiPlakaCevap)
-def kisi_plaka_ekle(kisi_id: int, istek: schemas.KisiPlakaOlustur, db: Session = Depends(get_db), kullanici: models.Kullanici = Depends(_giris_gerekli)):
+def kisi_plaka_ekle(kisi_id: int, istek: schemas.KisiPlakaOlustur, db: Session = Depends(get_db), kullanici: models.Kullanici = Depends(_personel_girisi_gerekli)):
     _rol_dogrula(kullanici, ROL_YONETICI, ROL_OPERATOR)
     if not db.query(models.Kisi).filter(models.Kisi.id == kisi_id).first():
         raise HTTPException(404, "Kişi bulunamadı")
@@ -1432,7 +1484,7 @@ def kisi_plaka_ekle(kisi_id: int, istek: schemas.KisiPlakaOlustur, db: Session =
 
 
 @app.delete("/kisiler/{kisi_id}/plakalar/{plaka_id}")
-def kisi_plaka_sil(kisi_id: int, plaka_id: int, db: Session = Depends(get_db), kullanici: models.Kullanici = Depends(_giris_gerekli)):
+def kisi_plaka_sil(kisi_id: int, plaka_id: int, db: Session = Depends(get_db), kullanici: models.Kullanici = Depends(_personel_girisi_gerekli)):
     _rol_dogrula(kullanici, ROL_YONETICI, ROL_OPERATOR)
     kayit = db.query(models.KisiPlaka).filter(models.KisiPlaka.id == plaka_id, models.KisiPlaka.kisi_id == kisi_id).first()
     if not kayit:
@@ -1447,12 +1499,12 @@ def kisi_plaka_sil(kisi_id: int, plaka_id: int, db: Session = Depends(get_db), k
 # ==================================================================
 
 @app.get("/kara-listesi", response_model=List[schemas.KaraListesiCevap])
-def kara_listesini_getir(db: Session = Depends(get_db), _: models.Kullanici = Depends(_giris_gerekli)):
+def kara_listesini_getir(db: Session = Depends(get_db), _: models.Kullanici = Depends(_personel_girisi_gerekli)):
     return db.query(models.KaraListesi).order_by(desc(models.KaraListesi.olusturma_tarihi)).all()
 
 
 @app.post("/kara-listesi", response_model=schemas.KaraListesiCevap)
-def kara_listeye_ekle(istek: schemas.KaraListesiOlustur, db: Session = Depends(get_db), kullanici: models.Kullanici = Depends(_giris_gerekli)):
+def kara_listeye_ekle(istek: schemas.KaraListesiOlustur, db: Session = Depends(get_db), kullanici: models.Kullanici = Depends(_personel_girisi_gerekli)):
     _rol_dogrula(kullanici, ROL_YONETICI, ROL_OPERATOR)
     mevcut = db.query(models.KaraListesi).filter(models.KaraListesi.plaka_no == istek.plaka_no).first()
     if mevcut:
@@ -1471,7 +1523,7 @@ def kara_listeye_ekle(istek: schemas.KaraListesiOlustur, db: Session = Depends(g
 
 
 @app.delete("/kara-listesi/{kayit_id}")
-def kara_listeden_cikar(kayit_id: int, db: Session = Depends(get_db), kullanici: models.Kullanici = Depends(_giris_gerekli)):
+def kara_listeden_cikar(kayit_id: int, db: Session = Depends(get_db), kullanici: models.Kullanici = Depends(_personel_girisi_gerekli)):
     _rol_dogrula(kullanici, ROL_YONETICI, ROL_OPERATOR)
     kayit = db.query(models.KaraListesi).filter(models.KaraListesi.id == kayit_id).first()
     if not kayit:
@@ -1746,7 +1798,7 @@ async def _webhook_bildir(db: Session, yetki_durumu: str, veri: dict) -> None:
 
 
 @app.post("/kayitlar", response_model=schemas.KayitCevap)
-def kayit_ekle_manuel(kayit: schemas.KayitManuel, db: Session = Depends(get_db), kullanici: models.Kullanici = Depends(_giris_gerekli)):
+def kayit_ekle_manuel(kayit: schemas.KayitManuel, db: Session = Depends(get_db), kullanici: models.Kullanici = Depends(_personel_girisi_gerekli)):
     """Elle / test amaçlı kayıt ekleme (görsel olmadan). Panel üzerindeki 'Test Kaydı Ekle' formu bunu kullanır."""
     _rol_dogrula(kullanici, ROL_YONETICI, ROL_OPERATOR)
     return _kayit_olustur_ve_bildir(
@@ -1823,7 +1875,7 @@ def kayitlari_listele(
     limit: int = 50,
     offset: int = 0,
     db: Session = Depends(get_db),
-    _: models.Kullanici = Depends(_giris_gerekli),
+    _: models.Kullanici = Depends(_personel_girisi_gerekli),
 ):
     sorgu = db.query(models.Kayit)
     if plaka:
@@ -1852,7 +1904,7 @@ def kayitlar_sayfa_bilgisi(
     kamera_id: Optional[str] = None,
     limit: int = 50,
     db: Session = Depends(get_db),
-    _: models.Kullanici = Depends(_giris_gerekli),
+    _: models.Kullanici = Depends(_personel_girisi_gerekli),
 ):
     """Sayfalama için toplam kayıt sayısını döndürür."""
     sorgu = db.query(models.Kayit)
@@ -1872,7 +1924,7 @@ def kayitlar_sayfa_bilgisi(
 
 
 @app.get("/olaylar", response_model=List[schemas.KayitCevap])
-def olaylari_getir(since_id: int = 0, limit: int = 100, db: Session = Depends(get_db), _: models.Kullanici = Depends(_giris_gerekli)):
+def olaylari_getir(since_id: int = 0, limit: int = 100, db: Session = Depends(get_db), _: models.Kullanici = Depends(_personel_girisi_gerekli)):
     """Canlı ekran için son olayları veya verilen ID'den sonrasını döndürür."""
     sorgu = db.query(models.Kayit).filter(models.Kayit.id > since_id)
     return sorgu.order_by(desc(models.Kayit.id)).limit(min(limit, 500)).all()
@@ -1884,7 +1936,7 @@ def alarmlari_listele(
     alarm_tipi: Optional[str] = None,
     limit: int = 100,
     db: Session = Depends(get_db),
-    _: models.Kullanici = Depends(_giris_gerekli),
+    _: models.Kullanici = Depends(_personel_girisi_gerekli),
 ):
     sorgu = db.query(models.Alarm)
     if sadece_acik:
@@ -1895,7 +1947,7 @@ def alarmlari_listele(
 
 
 @app.patch("/alarmlar/{alarm_id}/okundu", response_model=schemas.AlarmCevap)
-def alarmi_okundu_isaretle(alarm_id: int, db: Session = Depends(get_db), kullanici: models.Kullanici = Depends(_giris_gerekli)):
+def alarmi_okundu_isaretle(alarm_id: int, db: Session = Depends(get_db), kullanici: models.Kullanici = Depends(_personel_girisi_gerekli)):
     _rol_dogrula(kullanici, ROL_YONETICI, ROL_OPERATOR)
     alarm = db.query(models.Alarm).filter(models.Alarm.id == alarm_id).first()
     if not alarm:
@@ -1907,7 +1959,7 @@ def alarmi_okundu_isaretle(alarm_id: int, db: Session = Depends(get_db), kullani
 
 
 @app.post("/alarmlar/tumu-okundu")
-def tum_alarmlari_okundu_isaretle(db: Session = Depends(get_db), kullanici: models.Kullanici = Depends(_giris_gerekli)):
+def tum_alarmlari_okundu_isaretle(db: Session = Depends(get_db), kullanici: models.Kullanici = Depends(_personel_girisi_gerekli)):
     _rol_dogrula(kullanici, ROL_YONETICI, ROL_OPERATOR)
     guncellenen = db.query(models.Alarm).filter(models.Alarm.okundu == False).update({"okundu": True})  # noqa: E712
     db.commit()
@@ -1915,7 +1967,7 @@ def tum_alarmlari_okundu_isaretle(db: Session = Depends(get_db), kullanici: mode
 
 
 @app.delete("/kayitlar/{kayit_id}")
-def kayit_sil(kayit_id: int, db: Session = Depends(get_db), kullanici: models.Kullanici = Depends(_giris_gerekli)):
+def kayit_sil(kayit_id: int, db: Session = Depends(get_db), kullanici: models.Kullanici = Depends(_personel_girisi_gerekli)):
     _rol_dogrula(kullanici, ROL_YONETICI)
     kayit = db.query(models.Kayit).filter(models.Kayit.id == kayit_id).first()
     if not kayit:
@@ -1927,7 +1979,16 @@ def kayit_sil(kayit_id: int, db: Session = Depends(get_db), kullanici: models.Ku
     return {"mesaj": "Kayıt silindi"}
 
 
-_KAYIT_GECERLI_YETKI_DURUMLARI = ("yetkili", "yetkisiz", "suresi_dolmus", "kara_liste", "bilinmiyor")
+# "ziyaretci_onayli": bir görevlinin, bir geçişi (ister kamera tespitinden
+# ister elle girilmiş olsun) BİLİNÇLİ OLARAK ziyaretçi olarak onaylayıp
+# bariyeri açtığı durumları, otomatik sınıflandırılan diğer durumlardan
+# ("yetkili" = tanımlı/otomatik onaylı, "yetkisiz"/"kara_liste" = reddedilen,
+# "suresi_dolmus" = süresi geçmiş kayıtlı ziyaretçi) ayırt etmek için
+# eklendi (bkz. README'deki 2026-09-17 "Ziyaretçi Girişi" notu). Panelde
+# ayrı bir rozet/etiketle gösterilir; _rol_dogrula'nın aksine burada
+# yetki_durumu bir DB CHECK constraint'i değil, yalnızca bu whitelist ile
+# sınırlanan serbest bir string sütun (models.Kayit.yetki_durumu).
+_KAYIT_GECERLI_YETKI_DURUMLARI = ("yetkili", "yetkisiz", "suresi_dolmus", "kara_liste", "bilinmiyor", "ziyaretci_onayli")
 
 
 @app.patch("/kayitlar/{kayit_id}", response_model=schemas.KayitCevap)
@@ -1935,7 +1996,7 @@ def kayit_duzenle(
     kayit_id: int,
     veri: schemas.KayitDuzenle,
     db: Session = Depends(get_db),
-    kullanici: models.Kullanici = Depends(_giris_gerekli),
+    kullanici: models.Kullanici = Depends(_personel_girisi_gerekli),
 ):
     """Mevcut bir geçiş kaydının panelden tam düzenlenmesi -- OCR'ın yanlış
     okuduğu bir plakanın düzeltilmesi, yanlış hesaplanmış yetki durumunun
@@ -2004,7 +2065,7 @@ def kayit_duzenle(
 
 
 @app.get("/kayitlar/istatistik")
-def istatistikler(db: Session = Depends(get_db), _: models.Kullanici = Depends(_giris_gerekli)):
+def istatistikler(db: Session = Depends(get_db), _: models.Kullanici = Depends(_personel_girisi_gerekli)):
     bugun = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
     toplam = db.query(models.Kayit).count()
     bugunku = db.query(models.Kayit).filter(models.Kayit.tarih_saat >= bugun).count()
@@ -2023,7 +2084,7 @@ def istatistikler(db: Session = Depends(get_db), _: models.Kullanici = Depends(_
 
 
 @app.get("/kayitlar/grafik")
-def grafik_verisi(gun: int = 7, db: Session = Depends(get_db), _: models.Kullanici = Depends(_giris_gerekli)):
+def grafik_verisi(gun: int = 7, db: Session = Depends(get_db), _: models.Kullanici = Depends(_personel_girisi_gerekli)):
     """Son N günlük istatistik — dashboard grafikleri için."""
     baslangic = datetime.now() - timedelta(days=max(1, min(gun, 90)))
     kayitlar = db.query(models.Kayit).filter(models.Kayit.tarih_saat >= baslangic).all()
@@ -2049,7 +2110,7 @@ def grafik_verisi(gun: int = 7, db: Session = Depends(get_db), _: models.Kullani
 
 
 @app.get("/kayitlar/analiz/{plaka_no}")
-def plaka_analiz(plaka_no: str, db: Session = Depends(get_db), _: models.Kullanici = Depends(_giris_gerekli)):
+def plaka_analiz(plaka_no: str, db: Session = Depends(get_db), _: models.Kullanici = Depends(_personel_girisi_gerekli)):
     """Bir plaka için geçiş geçmişi, kişi bilgisi ve kara liste durumu."""
     hedef = _plaka_normalize(plaka_no)
     kayitlar = (db.query(models.Kayit)
@@ -2185,12 +2246,12 @@ def kisileri_excel_indir(tip: Optional[str] = None, db: Session = Depends(get_db
 # ==================================================================
 
 @app.get("/led/ayarlar")
-def led_ayarlarini_getir(_: models.Kullanici = Depends(_giris_gerekli)):
+def led_ayarlarini_getir(_: models.Kullanici = Depends(_personel_girisi_gerekli)):
     return led_panel.ayarlari_oku()
 
 
 @app.put("/led/ayarlar")
-def led_ayarlarini_guncelle(ayarlar: dict, kullanici: models.Kullanici = Depends(_giris_gerekli)):
+def led_ayarlarini_guncelle(ayarlar: dict, kullanici: models.Kullanici = Depends(_personel_girisi_gerekli)):
     _rol_dogrula(kullanici, ROL_YONETICI, ROL_OPERATOR)
     mevcut = led_panel.ayarlari_oku()
     mevcut.update(ayarlar)
@@ -2199,7 +2260,7 @@ def led_ayarlarini_guncelle(ayarlar: dict, kullanici: models.Kullanici = Depends
 
 
 @app.post("/led/test")
-def led_test_mesaji(mesaj: str = Query("PTS SİSTEMİ TEST MESAJI"), kullanici: models.Kullanici = Depends(_giris_gerekli)):
+def led_test_mesaji(mesaj: str = Query("PTS SİSTEMİ TEST MESAJI"), kullanici: models.Kullanici = Depends(_personel_girisi_gerekli)):
     _rol_dogrula(kullanici, ROL_YONETICI, ROL_OPERATOR)
     basarili = led_panel.led_mesaj_gonder(mesaj)
     return {"basarili": basarili, "mesaj": mesaj}
@@ -2210,20 +2271,22 @@ def led_test_mesaji(mesaj: str = Query("PTS SİSTEMİ TEST MESAJI"), kullanici: 
 # ==================================================================
 
 @app.get("/kullanicilar", response_model=List[schemas.KullaniciCevap])
-def kullanicilari_listele(db: Session = Depends(get_db), kullanici: models.Kullanici = Depends(_giris_gerekli)):
+def kullanicilari_listele(db: Session = Depends(get_db), kullanici: models.Kullanici = Depends(_personel_girisi_gerekli)):
     _rol_dogrula(kullanici, ROL_YONETICI)
     return db.query(models.Kullanici).order_by(models.Kullanici.olusturma_tarihi).all()
 
 
 @app.post("/kullanicilar", response_model=schemas.KullaniciCevap)
-def kullanici_ekle(istek: schemas.KullaniciOlustur, db: Session = Depends(get_db), kullanici: models.Kullanici = Depends(_giris_gerekli)):
+def kullanici_ekle(istek: schemas.KullaniciOlustur, db: Session = Depends(get_db), kullanici: models.Kullanici = Depends(_personel_girisi_gerekli)):
     _rol_dogrula(kullanici, ROL_YONETICI)
     if db.query(models.Kullanici).filter(models.Kullanici.kullanici_adi == istek.kullanici_adi).first():
         raise HTTPException(409, "Bu kullanıcı adı zaten kullanımda")
+    kisi_id = _sakin_kisi_id_dogrula(db, istek.rol, istek.kisi_id)
     yeni = models.Kullanici(
         kullanici_adi=istek.kullanici_adi.strip(),
         parola_hash=_parola_hashle(istek.parola),
         rol=istek.rol,
+        kisi_id=kisi_id,
     )
     db.add(yeni)
     db.commit()
@@ -2232,14 +2295,37 @@ def kullanici_ekle(istek: schemas.KullaniciOlustur, db: Session = Depends(get_db
     return yeni
 
 
+def _sakin_kisi_id_dogrula(db: Session, rol: str, kisi_id: Optional[int]) -> Optional[int]:
+    """`rol="sakin"` için `kisi_id` ZORUNLUDUR ve var olan bir Kişi kaydını
+    göstermelidir; diğer roller için `kisi_id` her zaman yok sayılır (None
+    döner) -- bir "sakin" hesabının kime bağlı olduğu belirsiz kalamaz, ve
+    yönetici/operatör/izleyici hesaplarında bu alanın anlamı yoktur."""
+    if rol != ROL_SAKIN:
+        return None
+    if kisi_id is None:
+        raise HTTPException(400, "'sakin' rolü için kisi_id zorunludur")
+    if not db.query(models.Kisi).filter(models.Kisi.id == kisi_id).first():
+        raise HTTPException(404, "Bağlanacak kişi bulunamadı")
+    return kisi_id
+
+
 @app.put("/kullanicilar/{kullanici_id}", response_model=schemas.KullaniciCevap)
-def kullanici_guncelle(kullanici_id: int, istek: schemas.KullaniciGuncelle, db: Session = Depends(get_db), kullanici: models.Kullanici = Depends(_giris_gerekli)):
+def kullanici_guncelle(kullanici_id: int, istek: schemas.KullaniciGuncelle, db: Session = Depends(get_db), kullanici: models.Kullanici = Depends(_personel_girisi_gerekli)):
     _rol_dogrula(kullanici, ROL_YONETICI)
     hedef = db.query(models.Kullanici).filter(models.Kullanici.id == kullanici_id).first()
     if not hedef:
         raise HTTPException(404, "Kullanıcı bulunamadı")
     if istek.rol is not None:
+        # Rol "sakin"e değişiyorsa (ya da zaten "sakin" olup kisi_id
+        # gönderilmişse) bağlantı yeniden doğrulanır; "sakin"den başka bir
+        # role geçiliyorsa eski kisi_id artık anlamsız olduğu için temizlenir.
+        yeni_kisi_id = _sakin_kisi_id_dogrula(
+            db, istek.rol, istek.kisi_id if istek.kisi_id is not None else hedef.kisi_id
+        )
         hedef.rol = istek.rol
+        hedef.kisi_id = yeni_kisi_id
+    elif istek.kisi_id is not None and hedef.rol == ROL_SAKIN:
+        hedef.kisi_id = _sakin_kisi_id_dogrula(db, ROL_SAKIN, istek.kisi_id)
     if istek.aktif is not None:
         if hedef.id == kullanici.id:
             raise HTTPException(400, "Kendinizi pasif yapamazsınız")
@@ -2252,7 +2338,7 @@ def kullanici_guncelle(kullanici_id: int, istek: schemas.KullaniciGuncelle, db: 
 
 
 @app.delete("/kullanicilar/{kullanici_id}")
-def kullanici_sil(kullanici_id: int, db: Session = Depends(get_db), kullanici: models.Kullanici = Depends(_giris_gerekli)):
+def kullanici_sil(kullanici_id: int, db: Session = Depends(get_db), kullanici: models.Kullanici = Depends(_personel_girisi_gerekli)):
     _rol_dogrula(kullanici, ROL_YONETICI)
     hedef = db.query(models.Kullanici).filter(models.Kullanici.id == kullanici_id).first()
     if not hedef:
@@ -2265,16 +2351,119 @@ def kullanici_sil(kullanici_id: int, db: Session = Depends(get_db), kullanici: m
 
 
 # ==================================================================
+# SAKİN ÖZ-HİZMET PORTALI (2026-09-17)
+# ==================================================================
+# "sakin" rolündeki bir hesap, bir Kişi (site sakini) kaydına bağlıdır (bkz.
+# models.Kullanici.kisi_id) ve panel PERSONELİ değildir -- yalnızca burada
+# tanımlanan uçlara erişebilir (bkz. _personel_girisi_gerekli, ki tüm dahili/
+# genel amaçlı uçları bu rolden korur). Amaç: bir sakinin kendi plaka(lar)ını
+# ve kendi giriş/çıkış geçmişini görebilmesi, gerekirse kendi ek aracını
+# eklemesi -- başka hiçbir kişinin, kameranın veya sistem verisinin GÖRÜLMESİ
+# MÜMKÜN OLMAMALI. Bu yüzden hiçbir uç noktada kaynak kimliği (kisi_id) istek
+# gövdesinden/parametresinden alınmaz; her zaman `kullanici.kisi_id` (JWT'den
+# çözülen, DB'de doğrulanan oturum sahibi) kullanılır.
+
+def _sakin_girisi_gerekli(kullanici: models.Kullanici = Depends(_giris_gerekli)) -> models.Kullanici:
+    """Yalnızca 'sakin' rolündeki hesaplara izin verir (bkz.
+    _personel_girisi_gerekli'nin tam tersi kısıtlaması)."""
+    if kullanici.rol != ROL_SAKIN:
+        raise HTTPException(403, "Bu işlem yalnızca sakin hesapları için geçerli")
+    return kullanici
+
+
+def _sakin_kisisini_al(db: Session, kullanici: models.Kullanici) -> models.Kisi:
+    """Oturumdaki sakin hesabının bağlı olduğu Kişi kaydını döner; hesap henüz
+    bağlanmamışsa ya da bağlı olduğu kişi silinmişse (bkz. main.py::kisi_sil)
+    açık bir hata verir -- sessizce boş veri dönmek, sakinin "hesabım bozuk
+    mu" diye anlamasını zorlaştırırdı."""
+    if not kullanici.kisi_id:
+        raise HTTPException(400, "Bu hesap henüz bir sakin kaydına bağlanmamış. Yöneticinizle iletişime geçin.")
+    kisi = db.query(models.Kisi).filter(models.Kisi.id == kullanici.kisi_id).first()
+    if not kisi:
+        raise HTTPException(404, "Bağlı sakin kaydı bulunamadı. Yöneticinizle iletişime geçin.")
+    return kisi
+
+
+@app.get("/sakin/profilim", response_model=schemas.KisiCevap)
+def sakin_profilim(db: Session = Depends(get_db), kullanici: models.Kullanici = Depends(_sakin_girisi_gerekli)):
+    """Sakinin kendi Kişi kaydını (ad/soyad, ana plaka, daire/departman,
+    aktiflik, erişim pencereleri) ve ek plakalarını döner."""
+    return _sakin_kisisini_al(db, kullanici)
+
+
+@app.post("/sakin/arac-ekle", response_model=schemas.KisiPlakaCevap)
+def sakin_arac_ekle(istek: schemas.KisiPlakaOlustur, db: Session = Depends(get_db), kullanici: models.Kullanici = Depends(_sakin_girisi_gerekli)):
+    """Sakinin kendi hesabına EK bir araç plakası eklemesi (bkz.
+    models.KisiPlaka) -- ana plaka (Kişi.plaka_no) yönetici/operatör
+    tarafından belirlendiği için burada değiştirilemez, yalnızca ek plaka
+    eklenebilir."""
+    kisi = _sakin_kisisini_al(db, kullanici)
+    yeni = models.KisiPlaka(kisi_id=kisi.id, plaka_no=istek.plaka_no, aciklama=istek.aciklama)
+    db.add(yeni)
+    db.commit()
+    db.refresh(yeni)
+    logger.info("Sakin kendi hesabına araç ekledi: kişi=%s plaka=%s", kisi.id, yeni.plaka_no)
+    return yeni
+
+
+@app.delete("/sakin/arac/{plaka_id}")
+def sakin_arac_sil(plaka_id: int, db: Session = Depends(get_db), kullanici: models.Kullanici = Depends(_sakin_girisi_gerekli)):
+    """Sakinin kendi eklediği bir ek plakayı kaldırması. Sorgu kasıtlı olarak
+    hem `id` hem `kisi_id == kullanici.kisi_id` ile filtrelenir -- aksi halde
+    bir sakin, başka bir kişiye ait plaka_id'yi tahmin ederek onu silebilirdi
+    (IDOR)."""
+    kisi = _sakin_kisisini_al(db, kullanici)
+    kayit = db.query(models.KisiPlaka).filter(models.KisiPlaka.id == plaka_id, models.KisiPlaka.kisi_id == kisi.id).first()
+    if not kayit:
+        raise HTTPException(404, "Plaka kaydı bulunamadı")
+    db.delete(kayit)
+    db.commit()
+    return {"mesaj": "Plaka silindi"}
+
+
+@app.get("/sakin/gecmisim", response_model=List[schemas.KayitCevap])
+def sakin_gecmisim(
+    limit: int = 50,
+    offset: int = 0,
+    db: Session = Depends(get_db),
+    kullanici: models.Kullanici = Depends(_sakin_girisi_gerekli),
+):
+    """Sakinin KENDİ plakalarına ait geçiş kayıtları -- sorgu her zaman
+    `kisi_id == kullanici.kisi_id` ile sınırlanır, hiçbir filtre parametresi
+    bu sınırı genişletemez (bkz. dosya başındaki güvenlik notu)."""
+    kisi = _sakin_kisisini_al(db, kullanici)
+    sorgu = db.query(models.Kayit).filter(models.Kayit.kisi_id == kisi.id)
+    return sorgu.order_by(desc(models.Kayit.tarih_saat)).offset(max(0, offset)).limit(min(limit, 200)).all()
+
+
+@app.get("/sakin/goruntu/{kayit_id}")
+def sakin_goruntu(kayit_id: int, db: Session = Depends(get_db), kullanici: models.Kullanici = Depends(_sakin_girisi_gerekli)):
+    """Sakinin kendi bir geçiş kaydının fotoğrafını görebilmesi. Genel
+    `/goruntuler/{dosya_adi}` ucunun aksine dosya adı istekten ALINMAZ --
+    yalnızca `kayit_id` alınır ve o kaydın gerçekten bu sakine ait olduğu
+    (`kisi_id == kullanici.kisi_id`) DB'de doğrulanıp goruntu_yolu oradan
+    okunur; böylece bir sakin başka bir dosya adı tahmin ederek başka bir
+    sakinin fotoğrafını göremez (IDOR)."""
+    kisi = _sakin_kisisini_al(db, kullanici)
+    kayit = db.query(models.Kayit).filter(models.Kayit.id == kayit_id, models.Kayit.kisi_id == kisi.id).first()
+    if not kayit or not kayit.goruntu_yolu:
+        raise HTTPException(404, "Görsel bulunamadı")
+    if not os.path.isfile(kayit.goruntu_yolu):
+        raise HTTPException(404, "Görsel bulunamadı")
+    return FileResponse(kayit.goruntu_yolu, media_type="image/jpeg")
+
+
+# ==================================================================
 # BARİYER KONTROLÜ
 # ==================================================================
 
 @app.get("/bariyer/ayarlar")
-def bariyer_ayarlarini_getir(db: Session = Depends(get_db), _: models.Kullanici = Depends(_giris_gerekli)):
+def bariyer_ayarlarini_getir(db: Session = Depends(get_db), _: models.Kullanici = Depends(_personel_girisi_gerekli)):
     return db.query(models.BariyerAyarlari).all()
 
 
 @app.post("/bariyer/ayarlar")
-def bariyer_ekle(istek: dict = Body(...), db: Session = Depends(get_db), kullanici: models.Kullanici = Depends(_giris_gerekli)):
+def bariyer_ekle(istek: dict = Body(...), db: Session = Depends(get_db), kullanici: models.Kullanici = Depends(_personel_girisi_gerekli)):
     _rol_dogrula(kullanici, ROL_YONETICI, ROL_OPERATOR)
     yeni = models.BariyerAyarlari(
         ad=str(istek.get("ad", "Bariyer")).strip()[:80],
@@ -2291,7 +2480,7 @@ def bariyer_ekle(istek: dict = Body(...), db: Session = Depends(get_db), kullani
 
 
 @app.post("/bariyer/{bariyer_id}/ac")
-def bariyer_ac(bariyer_id: int, db: Session = Depends(get_db), kullanici: models.Kullanici = Depends(_giris_gerekli)):
+def bariyer_ac(bariyer_id: int, db: Session = Depends(get_db), kullanici: models.Kullanici = Depends(_personel_girisi_gerekli)):
     _rol_dogrula(kullanici, ROL_YONETICI, ROL_OPERATOR)
     bariyer = db.query(models.BariyerAyarlari).filter(models.BariyerAyarlari.id == bariyer_id, models.BariyerAyarlari.aktif == True).first()  # noqa: E712
     if not bariyer:
@@ -2318,7 +2507,7 @@ def bariyer_ac(bariyer_id: int, db: Session = Depends(get_db), kullanici: models
 
 
 @app.delete("/bariyer/ayarlar/{bariyer_id}")
-def bariyer_sil(bariyer_id: int, db: Session = Depends(get_db), kullanici: models.Kullanici = Depends(_giris_gerekli)):
+def bariyer_sil(bariyer_id: int, db: Session = Depends(get_db), kullanici: models.Kullanici = Depends(_personel_girisi_gerekli)):
     _rol_dogrula(kullanici, ROL_YONETICI, ROL_OPERATOR)
     b = db.query(models.BariyerAyarlari).filter(models.BariyerAyarlari.id == bariyer_id).first()
     if not b:
@@ -2408,7 +2597,7 @@ def _anpr_dedektor_esigi_bilgisi_al() -> Optional[dict]:
 @app.post("/sistem/dogruluk-testi")
 async def dogruluk_testi_calistir(
     istek: schemas.DogrulukTestiIstegi,
-    kullanici: models.Kullanici = Depends(_giris_gerekli),
+    kullanici: models.Kullanici = Depends(_personel_girisi_gerekli),
 ):
     """Etiketli bir fotoğraf klasörü (bkz. camera_reader.py::toplu_dogruluk_testi
     docstring'i — Dahua NVR'ın ANPR dışa aktarım adlandırmasıyla uyumlu:
@@ -2464,7 +2653,7 @@ def _log_satirini_maskele(satir: str) -> str:
 
 
 @app.get("/sistem/loglar")
-def son_loglari_getir(satir: int = 200, kullanici: models.Kullanici = Depends(_giris_gerekli)):
+def son_loglari_getir(satir: int = 200, kullanici: models.Kullanici = Depends(_personel_girisi_gerekli)):
     # GÜVENLİK: log satırları kamera bağlantı adresleri (RTSP kimlik bilgileri
     # dahil, bkz. _log_satirini_maskele) ve dahili hata detayları içerebilir —
     # salt-okunur "izleyici" rolüne açık bırakılmamalı.
@@ -2485,12 +2674,12 @@ def son_loglari_getir(satir: int = 200, kullanici: models.Kullanici = Depends(_g
 # ==================================================================
 
 @app.get("/bildirim/ayarlar")
-def bildirim_ayarlarini_getir(db: Session = Depends(get_db), _: models.Kullanici = Depends(_giris_gerekli)):
+def bildirim_ayarlarini_getir(db: Session = Depends(get_db), _: models.Kullanici = Depends(_personel_girisi_gerekli)):
     return db.query(models.BildirimAyarlari).order_by(models.BildirimAyarlari.olusturma_tarihi).all()
 
 
 @app.post("/bildirim/ayarlar")
-def bildirim_ayari_ekle(istek: dict = Body(...), db: Session = Depends(get_db), kullanici: models.Kullanici = Depends(_giris_gerekli)):
+def bildirim_ayari_ekle(istek: dict = Body(...), db: Session = Depends(get_db), kullanici: models.Kullanici = Depends(_personel_girisi_gerekli)):
     _rol_dogrula(kullanici, ROL_YONETICI)
     ad = re.sub(r"[<>&\"']", "", str(istek.get("ad", "Bildirim"))).strip()[:80] or "Bildirim"
     hedef = str(istek.get("hedef", "")).strip()
@@ -2510,7 +2699,7 @@ def bildirim_ayari_ekle(istek: dict = Body(...), db: Session = Depends(get_db), 
 
 
 @app.patch("/bildirim/ayarlar/{ayar_id}/aktif")
-def bildirim_aktif_toggle(ayar_id: int, db: Session = Depends(get_db), kullanici: models.Kullanici = Depends(_giris_gerekli)):
+def bildirim_aktif_toggle(ayar_id: int, db: Session = Depends(get_db), kullanici: models.Kullanici = Depends(_personel_girisi_gerekli)):
     _rol_dogrula(kullanici, ROL_YONETICI)
     ayar = db.query(models.BildirimAyarlari).filter(models.BildirimAyarlari.id == ayar_id).first()
     if not ayar:
@@ -2521,7 +2710,7 @@ def bildirim_aktif_toggle(ayar_id: int, db: Session = Depends(get_db), kullanici
 
 
 @app.delete("/bildirim/ayarlar/{ayar_id}")
-def bildirim_ayari_sil(ayar_id: int, db: Session = Depends(get_db), kullanici: models.Kullanici = Depends(_giris_gerekli)):
+def bildirim_ayari_sil(ayar_id: int, db: Session = Depends(get_db), kullanici: models.Kullanici = Depends(_personel_girisi_gerekli)):
     _rol_dogrula(kullanici, ROL_YONETICI)
     ayar = db.query(models.BildirimAyarlari).filter(models.BildirimAyarlari.id == ayar_id).first()
     if not ayar:
@@ -2532,7 +2721,7 @@ def bildirim_ayari_sil(ayar_id: int, db: Session = Depends(get_db), kullanici: m
 
 
 @app.post("/bildirim/test/{ayar_id}")
-async def bildirim_test_gonder(ayar_id: int, db: Session = Depends(get_db), kullanici: models.Kullanici = Depends(_giris_gerekli)):
+async def bildirim_test_gonder(ayar_id: int, db: Session = Depends(get_db), kullanici: models.Kullanici = Depends(_personel_girisi_gerekli)):
     _rol_dogrula(kullanici, ROL_YONETICI)
     ayar = db.query(models.BildirimAyarlari).filter(models.BildirimAyarlari.id == ayar_id).first()
     if not ayar:
@@ -2549,7 +2738,7 @@ async def bildirim_test_gonder(ayar_id: int, db: Session = Depends(get_db), kull
 # ==================================================================
 
 @app.get("/kameralar/{kamera_id}/saglik")
-async def kamera_saglik_kontrol(kamera_id: str, _: models.Kullanici = Depends(_giris_gerekli)):
+async def kamera_saglik_kontrol(kamera_id: str, _: models.Kullanici = Depends(_personel_girisi_gerekli)):
     """Kameranın TCP portuna bağlanabilirliğini ve pipeline durumunu raporlar."""
     kamera = next((k for k in _kameralari_oku() if k["id"] == kamera_id), None)
     if not kamera:
@@ -2607,7 +2796,7 @@ async def kamera_saglik_kontrol(kamera_id: str, _: models.Kullanici = Depends(_g
 
 
 @app.get("/kameralar/saglik/tumu")
-async def tum_kameralar_saglik(_: models.Kullanici = Depends(_giris_gerekli)):
+async def tum_kameralar_saglik(_: models.Kullanici = Depends(_personel_girisi_gerekli)):
     """Tüm kameralar için sağlık kontrolü — toplu sorgu."""
     kameralar = _kameralari_oku()
     if not kameralar:
@@ -2661,7 +2850,7 @@ async def tum_kameralar_saglik(_: models.Kullanici = Depends(_giris_gerekli)):
 async def toplu_kisi_import(
     dosya: UploadFile = File(...),
     db: Session = Depends(get_db),
-    kullanici: models.Kullanici = Depends(_giris_gerekli),
+    kullanici: models.Kullanici = Depends(_personel_girisi_gerekli),
 ):
     """
     Excel (.xlsx) dosyasından toplu kişi içe aktarır.
@@ -2739,12 +2928,12 @@ async def toplu_kisi_import(
 # ==================================================================
 
 @app.get("/sistem/ayarlar")
-def sistem_ayarlarini_getir(_: models.Kullanici = Depends(_giris_gerekli)):
+def sistem_ayarlarini_getir(_: models.Kullanici = Depends(_personel_girisi_gerekli)):
     return _sistem_ayarlari_oku()
 
 
 @app.put("/sistem/ayarlar")
-def sistem_ayarlarini_guncelle(yeni: dict = Body(...), kullanici: models.Kullanici = Depends(_giris_gerekli)):
+def sistem_ayarlarini_guncelle(yeni: dict = Body(...), kullanici: models.Kullanici = Depends(_personel_girisi_gerekli)):
     _rol_dogrula(kullanici, ROL_YONETICI)
     mevcut = _sistem_ayarlari_oku()
     for k, v in yeni.items():
@@ -2759,7 +2948,7 @@ def sistem_ayarlarini_guncelle(yeni: dict = Body(...), kullanici: models.Kullani
 # ==================================================================
 
 @app.get("/araclar/iceridedurum")
-def araclar_iceridedurum(db: Session = Depends(get_db), _: models.Kullanici = Depends(_giris_gerekli)):
+def araclar_iceridedurum(db: Session = Depends(get_db), _: models.Kullanici = Depends(_personel_girisi_gerekli)):
     """Her plaka için son yetkili geçiş 'giris' ise aracı içeride sayar."""
     from sqlalchemy import func
     son_kayit_sq = (
@@ -2800,7 +2989,7 @@ def araclar_iceridedurum(db: Session = Depends(get_db), _: models.Kullanici = De
 # ==================================================================
 
 @app.get("/sistem/disk-kullanimi")
-def disk_kullanimi(_: models.Kullanici = Depends(_giris_gerekli)):
+def disk_kullanimi(_: models.Kullanici = Depends(_personel_girisi_gerekli)):
     toplam_mb = 0.0
     dosya_sayisi = 0
     try:
@@ -2840,7 +3029,7 @@ def _goruntu_temizle_calistir(gun: int, db: Session) -> tuple[int, "datetime"]:
 
 
 @app.post("/sistem/goruntu-temizle")
-def goruntu_temizle(gun: int = Query(30, ge=1, le=365), kullanici: models.Kullanici = Depends(_giris_gerekli), db: Session = Depends(get_db)):
+def goruntu_temizle(gun: int = Query(30, ge=1, le=365), kullanici: models.Kullanici = Depends(_personel_girisi_gerekli), db: Session = Depends(get_db)):
     _rol_dogrula(kullanici, ROL_YONETICI, ROL_OPERATOR)
     silinen, sinir = _goruntu_temizle_calistir(gun, db)
     logger.info("Görüntü temizliği (manuel): %d dosya silindi (>%d gün)", silinen, gun)
@@ -2848,7 +3037,7 @@ def goruntu_temizle(gun: int = Query(30, ge=1, le=365), kullanici: models.Kullan
 
 
 @app.get("/sistem/yedek")
-def veritabani_yedek(kullanici: models.Kullanici = Depends(_giris_gerekli)):
+def veritabani_yedek(kullanici: models.Kullanici = Depends(_personel_girisi_gerekli)):
     _rol_dogrula(kullanici, ROL_YONETICI)
     if not SQLALCHEMY_DATABASE_URL.startswith("sqlite"):
         raise HTTPException(400, "Otomatik yedek sadece SQLite için desteklenir. SQL Server için veritabanı yönetim araçlarını kullanın.")

@@ -39,17 +39,38 @@ def yetkili_header(admin_token):
     return {"Authorization": f"Bearer {admin_token}"}
 
 
-def _rol_ile_kullanici_olustur_ve_giris_yap(client, yetkili_header, kullanici_adi: str, rol: str) -> dict:
+def _rol_ile_kullanici_olustur_ve_giris_yap(client, yetkili_header, kullanici_adi: str, rol: str, kisi_id: int = None) -> dict:
     """Verilen role sahip yeni bir kullanıcı oluşturur (yönetici gerektirir),
     onunla giriş yapar ve Authorization header'ını döner. RBAC testlerinde
-    kullanılır."""
-    r = client.post("/kullanicilar", json={
-        "kullanici_adi": kullanici_adi, "parola": "GucluParola123!", "rol": rol,
-    }, headers=yetkili_header)
+    kullanılır. `kisi_id`, yalnızca rol="sakin" iken anlamlıdır (bkz.
+    main.py::_sakin_kisi_id_dogrula)."""
+    govde = {"kullanici_adi": kullanici_adi, "parola": "GucluParola123!", "rol": rol}
+    if kisi_id is not None:
+        govde["kisi_id"] = kisi_id
+    r = client.post("/kullanicilar", json=govde, headers=yetkili_header)
     assert r.status_code == 200, r.text
     r2 = client.post("/auth/giris", json={"kullanici_adi": kullanici_adi, "parola": "GucluParola123!"})
     assert r2.status_code == 200, r2.text
     return {"Authorization": f"Bearer {r2.json()['token']}"}
+
+
+@pytest.fixture(scope="module")
+def sakin_kisi_id(client, yetkili_header):
+    """'sakin' (site sakini öz-hizmet portalı) RBAC/işlevsellik testlerinde
+    kullanılacak, sakin hesabına bağlanacak Kişi kaydı."""
+    r = client.post("/kisiler", json={
+        "ad_soyad": "Sakin Test Kişi", "plaka_no": "34 SKN 01", "tip": "abone",
+        "daire_departman": "A Blok Daire 5",
+    }, headers=yetkili_header)
+    assert r.status_code == 200, r.text
+    return r.json()["id"]
+
+
+@pytest.fixture(scope="module")
+def sakin_header(client, admin_token, sakin_kisi_id):
+    return _rol_ile_kullanici_olustur_ve_giris_yap(
+        client, {"Authorization": f"Bearer {admin_token}"}, "rbac-sakin", "sakin", kisi_id=sakin_kisi_id
+    )
 
 
 @pytest.fixture(scope="module")
@@ -979,3 +1000,199 @@ def test_kamera_roi_guncelle_izleyici_yetkisiz_403_doner(client, izleyici_header
     r = client.patch(f"/kameralar/{roi_test_kamera_id}/roi",
                       json={"x1": 0, "y1": 0, "x2": 100, "y2": 100}, headers=izleyici_header)
     assert r.status_code == 403
+
+
+# ------------------------------------------------------------------
+# "sakin" (site sakini öz-hizmet portalı) rolü — 2026-09-17
+# ------------------------------------------------------------------
+# Kök neden: kullanıcı, ekran görüntüleriyle bir referans ürünün "Abone
+# Düzenle" ekranını göstererek site sakinlerinin kendi kullanıcı adı/
+# şifresiyle giriş yapıp kendi araç/geçmiş bilgisini yönetebildiği bir
+# öz-hizmet hesabı istedi. Bu, panelin önceki üç rolünden (yönetici/
+# operatör/izleyici — hepsi "güvenilir iç personel") temelde farklı: bir
+# "sakin" DIŞARIDAN bir hesap olduğu için, yalnızca kendi verisine
+# erişebilmesi ve tüm dahili/genel amaçlı uçlara (kişi listesi, tüm
+# kayıtlar, kameralar, sistem logları vb.) KESİNLİKLE erişememesi gerekir
+# (bkz. main.py::_personel_girisi_gerekli ve _sakin_girisi_gerekli).
+
+def test_sakin_olusturma_kisi_id_zorunlu_400_doner(client, yetkili_header):
+    r = client.post("/kullanicilar", json={
+        "kullanici_adi": "sakin-kisisiz", "parola": "GucluParola123!", "rol": "sakin",
+    }, headers=yetkili_header)
+    assert r.status_code == 400, r.text
+
+
+def test_sakin_olusturma_olmayan_kisi_404_doner(client, yetkili_header):
+    r = client.post("/kullanicilar", json={
+        "kullanici_adi": "sakin-yokkisi", "parola": "GucluParola123!", "rol": "sakin", "kisi_id": 999999,
+    }, headers=yetkili_header)
+    assert r.status_code == 404, r.text
+
+
+def test_sakin_olusturma_gecerli_kisiyle_basarili(client, yetkili_header, sakin_kisi_id):
+    r = client.post("/kullanicilar", json={
+        "kullanici_adi": "sakin-basarili", "parola": "GucluParola123!", "rol": "sakin", "kisi_id": sakin_kisi_id,
+    }, headers=yetkili_header)
+    assert r.status_code == 200, r.text
+    assert r.json()["kisi_id"] == sakin_kisi_id
+    assert r.json()["rol"] == "sakin"
+
+
+def test_sakin_olmayan_rolde_kisi_id_yok_sayilir(client, yetkili_header, sakin_kisi_id):
+    """rol != 'sakin' iken kisi_id gönderilse bile anlamsızdır ve kayda
+    geçmemeli (bkz. main.py::_sakin_kisi_id_dogrula)."""
+    r = client.post("/kullanicilar", json={
+        "kullanici_adi": "izleyici-kisili", "parola": "GucluParola123!", "rol": "izleyici", "kisi_id": sakin_kisi_id,
+    }, headers=yetkili_header)
+    assert r.status_code == 200, r.text
+    assert r.json()["kisi_id"] is None
+
+
+def test_kullanici_guncelle_sakine_terfi_kisi_id_gerektirir(client, yetkili_header):
+    r = client.post("/kullanicilar", json={
+        "kullanici_adi": "terfi-oncesi", "parola": "GucluParola123!", "rol": "izleyici",
+    }, headers=yetkili_header)
+    kid = r.json()["id"]
+    r2 = client.put(f"/kullanicilar/{kid}", json={"rol": "sakin"}, headers=yetkili_header)
+    assert r2.status_code == 400, r2.text
+
+
+def test_kullanici_guncelle_sakinden_baska_role_kisi_id_temizlenir(client, yetkili_header, sakin_kisi_id):
+    r = client.post("/kullanicilar", json={
+        "kullanici_adi": "sakin-sonra-operator", "parola": "GucluParola123!", "rol": "sakin", "kisi_id": sakin_kisi_id,
+    }, headers=yetkili_header)
+    kid = r.json()["id"]
+    r2 = client.put(f"/kullanicilar/{kid}", json={"rol": "operatör"}, headers=yetkili_header)
+    assert r2.status_code == 200, r2.text
+    assert r2.json()["kisi_id"] is None
+
+
+def test_kisi_silinince_bagli_sakin_hesabinin_kisi_id_temizlenir(client, yetkili_header):
+    rk = client.post("/kisiler", json={
+        "ad_soyad": "Silinecek Sakin Kişisi", "plaka_no": "34 SLN 02", "tip": "abone",
+    }, headers=yetkili_header)
+    kisi_id = rk.json()["id"]
+    ru = client.post("/kullanicilar", json={
+        "kullanici_adi": "sakin-yetim-olacak", "parola": "GucluParola123!", "rol": "sakin", "kisi_id": kisi_id,
+    }, headers=yetkili_header)
+    kullanici_id = ru.json()["id"]
+
+    rs = client.delete(f"/kisiler/{kisi_id}", headers=yetkili_header)
+    assert rs.status_code == 200, rs.text
+
+    rl = client.get("/kullanicilar", headers=yetkili_header)
+    hedef = next(k for k in rl.json() if k["id"] == kullanici_id)
+    assert hedef["kisi_id"] is None
+
+
+@pytest.mark.parametrize("yol", ["/kisiler", "/kayitlar", "/kameralar", "/kara-listesi", "/bariyer/ayarlar", "/siteler"])
+def test_sakin_genel_amacli_uclara_erisemez_403_doner(client, sakin_header, yol):
+    """KÖK NEDEN testi: _personel_girisi_gerekli eklenmeden önce bu uçlar
+    yalnızca _giris_gerekli ile korunuyordu -- yani giriş yapmış HERHANGİ
+    bir hesap (sakin dahil) tüm kişileri/kayıtları/kameraları görebilirdi."""
+    r = client.get(yol, headers=sakin_header)
+    assert r.status_code == 403, f"GET {yol}: sakin 403 almalıydı, {r.status_code} aldı ({r.text})"
+
+
+def test_sakin_auth_me_cagirabilir(client, sakin_header):
+    """Bu tek istisna: frontend'in doğru arayüze (öz-hizmet paneli) karar
+    verebilmesi için sakin de /auth/me'yi çağırabilmeli."""
+    r = client.get("/auth/me", headers=sakin_header)
+    assert r.status_code == 200, r.text
+    assert r.json()["rol"] == "sakin"
+
+
+def test_sakin_olmayan_roller_sakin_uclarina_erisemez_403_doner(client, izleyici_header, operator_header, yetkili_header):
+    for header in (izleyici_header, operator_header, yetkili_header):
+        r = client.get("/sakin/profilim", headers=header)
+        assert r.status_code == 403, r.text
+
+
+def test_sakin_profilim_kendi_kisi_kaydini_doner(client, sakin_header, sakin_kisi_id):
+    r = client.get("/sakin/profilim", headers=sakin_header)
+    assert r.status_code == 200, r.text
+    assert r.json()["id"] == sakin_kisi_id
+    assert r.json()["ad_soyad"] == "Sakin Test Kişi"
+    assert r.json()["ek_plakalar"] == []
+
+
+def test_sakin_arac_ekle_ve_sil(client, sakin_header):
+    r = client.post("/sakin/arac-ekle", json={"plaka_no": "34 SKN 02", "aciklama": "ikinci aracım"}, headers=sakin_header)
+    assert r.status_code == 200, r.text
+    plaka_id = r.json()["id"]
+
+    r2 = client.get("/sakin/profilim", headers=sakin_header)
+    assert any(p["id"] == plaka_id for p in r2.json()["ek_plakalar"])
+
+    r3 = client.delete(f"/sakin/arac/{plaka_id}", headers=sakin_header)
+    assert r3.status_code == 200, r3.text
+
+    r4 = client.get("/sakin/profilim", headers=sakin_header)
+    assert not any(p["id"] == plaka_id for p in r4.json()["ek_plakalar"])
+
+
+def test_sakin_baska_kisinin_plakasini_silemez_404_doner(client, sakin_header, yetkili_header):
+    """IDOR regresyonu: bir sakin, kendi kisi_id'sine ait olmayan bir
+    KisiPlaka id'sini tahmin ederek silemesin (bkz. main.py::sakin_arac_sil)."""
+    rk = client.post("/kisiler", json={
+        "ad_soyad": "Başka Sakin", "plaka_no": "34 BSK 03", "tip": "abone",
+    }, headers=yetkili_header)
+    baska_kisi_id = rk.json()["id"]
+    rp = client.post(f"/kisiler/{baska_kisi_id}/plakalar", json={"plaka_no": "34 BSK 04"}, headers=yetkili_header)
+    baska_plaka_id = rp.json()["id"]
+
+    r = client.delete(f"/sakin/arac/{baska_plaka_id}", headers=sakin_header)
+    assert r.status_code == 404, r.text
+
+
+def test_sakin_gecmisim_yalnizca_kendi_kayitlarini_doner(client, sakin_header, operator_header, sakin_kisi_id):
+    # Sakinin kendi kişisine bağlı bir kayıt oluştur.
+    r1 = client.post("/kayitlar", json={"plaka_no": "34 SKN 01", "kamera_id": "TEST-SAKIN", "yon": "giris"}, headers=operator_header)
+    assert r1.status_code == 200, r1.text
+    assert r1.json()["kisi_id"] == sakin_kisi_id, "Test öncülü: plaka zaten sakin_kisi_id'ye eşleşmeliydi"
+
+    # Başka bir plakaya ait, sakine bağlı OLMAYAN bir kayıt da oluştur.
+    r2 = client.post("/kayitlar", json={"plaka_no": "34 BASKASI 05", "kamera_id": "TEST-SAKIN", "yon": "giris"}, headers=operator_header)
+    assert r2.status_code == 200, r2.text
+
+    r3 = client.get("/sakin/gecmisim", headers=sakin_header)
+    assert r3.status_code == 200, r3.text
+    plakalar = {k["plaka_no"] for k in r3.json()}
+    assert "34 SKN 01" in plakalar
+    assert "34 BASKASI 05" not in plakalar
+
+
+def test_sakin_hesabi_yetim_kalinca_400_doner(client, yetkili_header):
+    """_sakin_kisisini_al'ın 'hesap henüz bağlanmamış' savunmasını, normal
+    API akışında bu duruma ULAŞILABİLECEK tek yoldan (bağlı Kişi silinince
+    kisi_id NULL'lanır, bkz. test_kisi_silinince_bagli_sakin... ve
+    main.py::kisi_sil) uçtan uca doğrular -- ayrı bir kişi/hesap kullanılır
+    ki paylaşılan `sakin_header`/`sakin_kisi_id` fixture'ları başka testler
+    için bozulmasın."""
+    rk = client.post("/kisiler", json={
+        "ad_soyad": "Yetim Kalacak Sakin", "plaka_no": "34 YTM 07", "tip": "abone",
+    }, headers=yetkili_header)
+    kisi_id = rk.json()["id"]
+    ru = client.post("/kullanicilar", json={
+        "kullanici_adi": "sakin-yetim-kalan", "parola": "GucluParola123!", "rol": "sakin", "kisi_id": kisi_id,
+    }, headers=yetkili_header)
+    assert ru.status_code == 200, ru.text
+    r2 = client.post("/auth/giris", json={"kullanici_adi": "sakin-yetim-kalan", "parola": "GucluParola123!"})
+    yetim_header = {"Authorization": f"Bearer {r2.json()['token']}"}
+
+    rs = client.delete(f"/kisiler/{kisi_id}", headers=yetkili_header)
+    assert rs.status_code == 200, rs.text
+
+    r3 = client.get("/sakin/profilim", headers=yetim_header)
+    assert r3.status_code == 400, r3.text
+
+
+def test_ziyaretci_onayli_yetki_durumu_kayit_duzenlede_kabul_edilir(client, operator_header):
+    """Yeni "Ziyaretçi Girişi" akışının (bkz. app.js::_ziyaretciGirisiKutusunuAyarla,
+    ziyaretciBilgileriKaydet) dayandığı whitelist genişletmesi: kayit_duzenle
+    artık yetki_durumu="ziyaretci_onayli" değerini kabul etmeli."""
+    r = client.post("/kayitlar", json={"plaka_no": "34 ZYR 06", "kamera_id": "TEST-ZYR", "yon": "giris"}, headers=operator_header)
+    kayit_id = r.json()["id"]
+    r2 = client.patch(f"/kayitlar/{kayit_id}", json={"yetki_durumu": "ziyaretci_onayli"}, headers=operator_header)
+    assert r2.status_code == 200, r2.text
+    assert r2.json()["yetki_durumu"] == "ziyaretci_onayli"

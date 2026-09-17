@@ -25,9 +25,18 @@ class Kullanici(Base):
     id = Column(Integer, primary_key=True, index=True)
     kullanici_adi = Column(String(80), nullable=False, unique=True, index=True)
     parola_hash = Column(String(255), nullable=False)
-    rol = Column(String(30), nullable=False, default="izleyici")  # yonetici | operatör | izleyici
+    rol = Column(String(30), nullable=False, default="izleyici")  # yonetici | operatör | izleyici | sakin
     aktif = Column(Boolean, default=True)
     son_giris = Column(DateTime, nullable=True)
+    # Yalnızca rol="sakin" hesaplarında dolu: bu giriş hesabının hangi Kişi
+    # (site sakini) kaydına ait olduğunu belirtir -- "sakin" bu bağlantı
+    # üzerinden SADECE kendi araç/geçmiş bilgisine erişebilir (bkz.
+    # main.py::_sakin_girisi_gerekli ve /sakin/... uç noktaları). Diğer üç
+    # rol için her zaman NULL'dır. Ham ALTER TABLE ile eklendiği için burada
+    # FK kısıtlaması DB seviyesinde uygulanmıyor (bkz. _veritabani_migrasyon
+    # -- noktalar.bariyer_id ile aynı desen); kisi silinirse main.py::kisi_sil
+    # bu alanı NULL'a çeker.
+    kisi_id = Column(Integer, ForeignKey("kisiler.id"), nullable=True)
     olusturma_tarihi = Column(DateTime, default=datetime.now)
 
 

@@ -5,7 +5,10 @@ from datetime import datetime
 from typing import Optional, List
 
 GECERLI_TIPLER = ("abone", "personel", "ziyaretci")
-GECERLI_ROLLER = ("yonetici", "operatör", "izleyici")
+# "sakin": bir Kişi kaydına bağlı, yalnızca kendi araç/geçmiş bilgisine
+# erişebilen öz-hizmet giriş hesabı (bkz. main.py::_personel_girisi_gerekli
+# ve /sakin/... uç noktaları, 2026-09-17 notu).
+GECERLI_ROLLER = ("yonetici", "operatör", "izleyici", "sakin")
 
 
 def plaka_normalize(v: str) -> str:
@@ -90,6 +93,8 @@ class KullaniciCevap(BaseModel):
     aktif: bool
     son_giris: Optional[datetime] = None
     olusturma_tarihi: Optional[datetime] = None
+    # Yalnızca rol="sakin" hesaplarında dolu (bkz. models.Kullanici.kisi_id).
+    kisi_id: Optional[int] = None
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -98,6 +103,9 @@ class KullaniciOlustur(BaseModel):
     kullanici_adi: str = Field(min_length=3, max_length=80)
     parola: str = Field(min_length=8)
     rol: str = "izleyici"
+    # rol="sakin" iken ZORUNLU: bu hesabın hangi Kişi kaydına bağlanacağı
+    # (bkz. main.py::kullanici_ekle). Diğer roller için yok sayılır.
+    kisi_id: Optional[int] = None
 
     @field_validator("rol")
     @classmethod
@@ -111,6 +119,10 @@ class KullaniciGuncelle(BaseModel):
     rol: Optional[str] = None
     aktif: Optional[bool] = None
     parola: Optional[str] = Field(None, min_length=8)
+    # Yalnızca rol="sakin"ya geçilirken/geçiliyken anlamlı; bkz.
+    # main.py::kullanici_guncelle. None = "değiştirme" (diğer alanlarla aynı
+    # kural), bağlantıyı kaldırmak için bu uç nokta kullanılmaz.
+    kisi_id: Optional[int] = None
 
     @field_validator("rol")
     @classmethod

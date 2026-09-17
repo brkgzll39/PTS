@@ -466,6 +466,74 @@ kutularından birine yazı yazıyorsa (`_kayitlarFiltresiDuzenleniyorMu`) arama
 kutusunun elinin altından değişip yarım kalan aramasının bozulmaması için o
 turda yalnızca Kayıtlar tablosu atlanıyor, Panel yine de tazeleniyor.
 
+**2026-09-17 (devam) — Ziyaretçi girişi ve site sakini öz-hizmet portalı.**
+Kullanıcı, rakip bir üründen ekran görüntüleri paylaşarak benzer bir "ziyaretçi
+kabulü" ve "sakin/abone paneli" deneyimi istedi. Görsellerdeki kapsam çok
+genişti (Site > Blok > Daire hiyerarşisi, daire bazlı araç/kişi kotaları,
+otopark/kart yönetimi dahil); kullanıcıyla netleştirme sonrasında YALNIZCA
+aşağıdaki üç parça, PTS'nin MEVCUT düz (flat) Kişi veri modeli üzerine
+uygulandı — **Site > Blok > Daire yapısı ve daire bazlı limitler bilinçli
+olarak KAPSAM DIŞI bırakıldı** ve bu sistemde yoktur:
+
+- **Kayıt detayında tek tuşla "Ziyaretçi Girişi":** Bir tespit "yetkisiz",
+  "kara liste" veya "bilinmiyor" olarak işaretlendiğinde, olay detay
+  penceresinde (operatör/yönetici için) yeni bir "Ziyaretçi Girişi" kutusu
+  çıkar. Görevli isteğe bağlı olarak tespiti bir Kişi/daireye bağlayabilir,
+  kısa bir not girebilir (ör. "kargo", "misafir") ve TEK düğmeyle hem kaydı
+  `yetki_durumu=ziyaretci_onayli` olarak onaylar hem de (nokta bir bariyere
+  bağlıysa) bariyeri açar. Kara listedeki bir plaka için ekstra bir onay
+  istemi (`confirm()`) çıkar. Bu akış, yeni bir backend uç noktası
+  GEREKTİRMEDİ — var olan `PATCH /kayitlar/{id}` ve `POST /bariyer/{id}/ac`
+  uçlarının bir bileşimidir; yalnızca `yetki_durumu` beyaz listesine
+  (`_KAYIT_GECERLI_YETKI_DURUMLARI`) yeni bir değer eklendi. Kayıtlar
+  filtresine ve durum rozetlerine de bu yeni değer eklendi.
+- **Bağımsız "Ziyaretçi Girişi" formu:** Panel (Kontrol Merkezi) sekmesine
+  eklenen "+ Ziyaretçi Girişi" düğmesi, herhangi bir kamera tespiti olmadan
+  (ör. telefonla önceden haber verilmiş bir ziyaretçi için) elle plaka girip
+  hangi bariyer/erişim noktasının açılacağını seçebileceğiniz bağımsız bir
+  form açar. Açılacak nokta seçimi ZORUNLUDUR (referans üründeki "hangi
+  bariyerin açılacağını seçin" davranışıyla birebir) ve yalnızca gerçekten bir
+  bariyere bağlı noktalar listede görünür. Kaydet düğmesi sırasıyla `POST
+  /kayitlar` (manuel kayıt oluştur) → `PATCH /kayitlar/{id}`
+  (`ziyaretci_onayli` yap, isteğe bağlı kişiye bağla) → `POST
+  /bariyer/{id}/ac` (bariyeri fiilen aç) uçlarını zincirler — burada da yeni
+  bir backend uç noktası gerekmedi.
+- **"sakin" rolü — site sakini öz-hizmet portalı:** Kullanıcılar sekmesinde
+  artık yönetici/operatör/izleyicinin yanında dördüncü bir rol olarak
+  "Sakin" oluşturulabiliyor. Bu rol, panel PERSONELİNİN (yönetici/operatör/
+  izleyici) bir üyesi DEĞİLDİR — dışarıdan, daha az güvenilen bir hesap
+  türüdür ve mutlaka var olan bir Kişi kaydına bağlanır
+  (`Kullanici.kisi_id`, bkz. `main.py::_sakin_kisi_id_dogrula`; kişi
+  silinirse bu bağlantı `kisi_sil` tarafından otomatik temizlenir ve hesap
+  "yetim" kalıp `/sakin/...` uçlarından açık bir 400 hatası döner). Bir sakin
+  giriş yaptığında normal personel arayüzü (sidebar + sekmeler) hiç
+  gösterilmez; bunun yerine yalnızca kendi profilini (ad/soyad, ana plaka,
+  daire/departman, aktiflik), kendi ek araçlarını (ekleme/silme) ve kendi
+  giriş/çıkış geçmişini gördüğü sadeleştirilmiş, ayrı bir sayfa açılır (`GET
+  /sakin/profilim`, `POST /sakin/arac-ekle`, `DELETE /sakin/arac/{id}`, `GET
+  /sakin/gecmisim`, `GET /sakin/goruntu/{kayit_id}`). Bu uçların HİÇBİRİ
+  istekten kaynak kimliği (kisi_id) almaz — her zaman JWT'den çözülüp DB'de
+  doğrulanan oturum sahibinin `kisi_id`'si kullanılır ve sahiplik SQL
+  filtrelerinde ikinci kez doğrulanır (IDOR koruması: bir sakin başka bir
+  kişinin plaka id'sini veya kayıt id'sini tahmin ederek onun verisini
+  göremez/silemez).
+  - **Yan etki — önemli güvenlik sıkılaştırması:** "sakin" rolünü eklemek,
+    var olan bir varsayımı gün yüzüne çıkardı: dahili/genel amaçlı uçların
+    (kişi listesi, kayıtlar, kameralar, kara liste, siteler, sistem logları
+    vb. — yaklaşık 70 uç nokta) çoğu yalnızca `_giris_gerekli` (yani "giriş
+    yapmış HERHANGİ bir hesap") ile korunuyordu. Yeni, daha az güvenilir
+    "sakin" rolü eklenince bu artık kabul edilemezdi. Bu yüzden yeni bir
+    bağımlılık olan `_personel_girisi_gerekli` (sakin hariç her rolü kabul
+    eder) tüm bu uçlara uygulandı; yalnızca `/auth/me` (sakinin kendi
+    rolünü tespit edebilmesi için) eski `_giris_gerekli` davranışını
+    korudu. Sonuç: bir sakin hesabı artık başka hiçbir kişiyi, kaydı,
+    kamerayı veya sistem bilgisini göremez — yalnızca kendi verisine ve
+    `/sakin/...` uçlarına erişebilir.
+  - **Otopark ve Kart yönetimi YOK:** Referans üründeki "Otopark Listesi"
+    (daire bazlı park yeri ataması) ve "Kart" (fiziksel erişim kartı)
+    kavramları bu sistemin veri modelinde karşılığı olmadığı ve kullanıcının
+    seçtiği kapsamda yer almadığı için uygulanmadı.
+
 ## Kamera Bağlantı Güvenilirliği
 
 Bu bölüm, kamera bağlantılarının/araç geçişi görüntülerinin donmaması için yapılan

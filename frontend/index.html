@@ -46,7 +46,19 @@
 <div class="modal fade" id="olayDetayModal" tabindex="-1" aria-hidden="true">
   <div class="modal-dialog modal-xl modal-dialog-centered"><div class="modal-content event-detail-modal">
     <div class="modal-header" id="olayModalBaslik"><h5 class="modal-title" id="olayModalTur">TANIMLI ARAÇ</h5><button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Kapat"></button></div>
-    <div class="modal-body"><div class="row g-3"><div class="col-lg-8"><div class="event-image-wrap"><img id="olayModalGorsel" alt="Araç geçiş görseli"><div id="olayModalGorselYok" class="empty-state">Bu kayıt için görsel bulunmuyor</div></div><div class="detail-table mt-3"><div><b>TARİH</b><span id="olayModalTarih">-</span></div><div><b>SAAT</b><span id="olayModalSaat">-</span></div><div><b>SİTE</b><span id="olayModalSite">-</span></div><div><b>NOKTA</b><span id="olayModalNokta">-</span></div><div><b>YÖN</b><span id="olayModalYon">-</span></div></div></div><div class="col-lg-4"><div class="plate-display" id="olayModalPlaka">-</div><div class="vehicle-facts"><div><b>ARAÇ TİPİ</b><span id="olayModalAracTipi">-</span></div></div><div class="vehicle-facts person-facts"><div><b>İSİM</b><span id="olayModalKisi">-</span></div><div><b>DAİRE / BLOK</b><span id="olayModalDaire">-</span></div><div><b>GÜVEN SKORU</b><span id="olayModalGuven">-</span></div><div><b>OCR DÜZELTMESİ</b><span id="olayModalDuzeltme">-</span></div></div><div class="modal-actions"><button class="btn btn-success" id="bariyerAcBtn"><i class="bi bi-unlock-fill"></i> Bariyer Aç</button><button class="btn btn-outline-secondary" data-bs-dismiss="modal">Kapat</button></div></div></div></div>
+    <div class="modal-body"><div class="row g-3"><div class="col-lg-8"><div class="event-image-wrap"><img id="olayModalGorsel" alt="Araç geçiş görseli"><div id="olayModalGorselYok" class="empty-state">Bu kayıt için görsel bulunmuyor</div></div><div class="detail-table mt-3"><div><b>TARİH</b><span id="olayModalTarih">-</span></div><div><b>SAAT</b><span id="olayModalSaat">-</span></div><div><b>SİTE</b><span id="olayModalSite">-</span></div><div><b>NOKTA</b><span id="olayModalNokta">-</span></div><div><b>YÖN</b><span id="olayModalYon">-</span></div></div></div><div class="col-lg-4"><div class="plate-display" id="olayModalPlaka">-</div><div class="vehicle-facts"><div><b>ARAÇ TİPİ</b><span id="olayModalAracTipi">-</span></div></div><div class="vehicle-facts person-facts"><div><b>İSİM</b><span id="olayModalKisi">-</span></div><div><b>DAİRE / BLOK</b><span id="olayModalDaire">-</span></div><div><b>GÜVEN SKORU</b><span id="olayModalGuven">-</span></div><div><b>OCR DÜZELTMESİ</b><span id="olayModalDuzeltme">-</span></div></div>
+      <!-- Ziyaretçi Girişi: tanımsız/yetkisiz bir tespiti tek adımda bir kişiye/daireye
+           bağlayıp aynı anda bariyeri açan hızlı onay bölümü (bkz. app.js::ziyaretciGirisiOnayla,
+           main.py::kayit_duzenle + bariyer_ac'ın birleşimi). README'deki 2026-09-17
+           "Ziyaretçi Girişi" notuna bakınız. -->
+      <div class="card card-body py-2 mt-2 d-none" id="ziyaretciGirisiKutusu" data-rol-min="operatör" data-rol-davranis="gizle">
+        <label class="form-label small mb-1" for="olayModalKisiSecim">Ziyaretçi Girişi — kişiye bağla (opsiyonel) ve onayla</label>
+        <select class="form-select form-select-sm mb-2" id="olayModalKisiSecim"><option value="">Kişiye bağlamadan onayla</option></select>
+        <input type="text" class="form-control form-control-sm mb-2" id="olayModalZiyaretciNot" placeholder="Not (örn. kargo, misafir, teslimat)" maxlength="500">
+        <button type="button" class="btn btn-sm btn-success" id="ziyaretciGirisiBtn"><i class="bi bi-person-check-fill"></i> Ziyaretçi Girişi (onayla + bariyeri aç)</button>
+        <div id="ziyaretciGirisiSonuc" class="small mt-1"></div>
+      </div>
+      <div class="modal-actions"><button class="btn btn-success" id="bariyerAcBtn"><i class="bi bi-unlock-fill"></i> Bariyer Aç</button><button class="btn btn-outline-secondary" data-bs-dismiss="modal">Kapat</button></div></div></div></div>
   </div></div>
 </div>
 
@@ -123,6 +135,7 @@
               <option value="yetkili">Yetkili</option>
               <option value="yetkisiz">Yetkisiz</option>
               <option value="suresi_dolmus">Süresi Dolmuş</option>
+              <option value="ziyaretci_onayli">Ziyaretçi Girişi Onaylandı</option>
               <option value="kara_liste">Kara Liste</option>
               <option value="bilinmiyor">Bilinmiyor</option>
             </select>
@@ -177,10 +190,101 @@
   </div></div>
 </div>
 
+<!-- Bağımsız Ziyaretçi Girişi: herhangi bir kamera tespitine bağlı olmadan, elle
+     plaka girip hangi bariyer/erişim noktasının açılacağını seçebileceğiniz form
+     (bkz. app.js::ziyaretciBilgileriAc/ziyaretciBilgileriKaydet, README'deki
+     2026-09-17 "Ziyaretçi Girişi" notu). -->
+<div class="modal fade" id="ziyaretciBilgileriModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered"><div class="modal-content">
+    <div class="modal-header"><h5 class="modal-title"><i class="bi bi-person-plus-fill me-1"></i>Ziyaretçi Girişi</h5><button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Kapat"></button></div>
+    <div class="modal-body">
+      <div class="mb-2">
+        <label class="form-label small" for="zbPlaka">Plaka</label>
+        <input type="text" class="form-control" id="zbPlaka" placeholder="34 ABC 123" required>
+      </div>
+      <div class="mb-2">
+        <label class="form-label small" for="zbKisiSecim">Kişiye bağla (opsiyonel)</label>
+        <select class="form-select" id="zbKisiSecim"><option value="">Kişiye bağlamadan devam et</option></select>
+      </div>
+      <div class="mb-2">
+        <label class="form-label small" for="zbNot">Not</label>
+        <textarea class="form-control" id="zbNot" rows="2" placeholder="örn. kargo, misafir, teslimat" maxlength="500"></textarea>
+      </div>
+      <div class="mb-2">
+        <label class="form-label small" for="zbNokta">Açılacak bariyer / erişim noktası</label>
+        <select class="form-select" id="zbNokta" required><option value="">Nokta seçiniz...</option></select>
+        <div class="form-text">Yalnızca bir bariyere bağlı noktalar listelenir (bkz. Site / Erişim Noktası).</div>
+      </div>
+      <div id="zbSonuc" class="small"></div>
+    </div>
+    <div class="modal-footer">
+      <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Kapat</button>
+      <button type="button" class="btn btn-success" id="zbKaydetBtn" onclick="ziyaretciBilgileriKaydet()"><i class="bi bi-unlock-fill"></i> Kaydet ve Bariyeri Aç</button>
+    </div>
+  </div></div>
+</div>
+
 <nav class="navbar navbar-dark navbar-pts px-3">
   <span class="navbar-brand mb-0 h1"><i class="bi bi-camera-video-fill me-2"></i>TPAO PTS <small>Canlı İzleme</small></span>
-  <span class="text-white-50 small d-none d-md-inline"><span id="oturumKullanici"></span> <span id="saatGosterge"></span></span>
+  <span class="text-white-50 small d-none d-md-inline me-3"><span id="oturumKullanici"></span> <span id="saatGosterge"></span></span>
+  <button class="btn btn-sm btn-outline-light" onclick="oturumKapat()" title="Çıkış yap"><i class="bi bi-box-arrow-right"></i> Çıkış</button>
 </nav>
+
+<!-- ================= SAKİN ÖZ-HİZMET PANELİ ================= -->
+<!-- "sakin" rolündeki bir hesap giriş yapınca normal personel arayüzü (sidebar +
+     sekmeler) TAMAMEN gizlenir, bunun yerine yalnızca bu bölüm gösterilir (bkz.
+     app.js::sakinModunuBaslat). Kendi profili/plakaları/geçmişi dışında hiçbir
+     veriye erişimi olmadığı için ayrı, sadeleştirilmiş bir görünüm. -->
+<div id="sakinPaneli" class="container-fluid py-4 d-none" style="max-width:900px;">
+  <div class="card mb-3">
+    <div class="card-header"><i class="bi bi-person-badge me-1"></i>Sakin Bilgilerim</div>
+    <div class="card-body">
+      <div class="detail-table">
+        <div><b>AD SOYAD</b><span id="sakinAdSoyad">-</span></div>
+        <div><b>ANA PLAKA</b><span id="sakinAnaPlaka">-</span></div>
+        <div><b>DAİRE / DEPARTMAN</b><span id="sakinDaire">-</span></div>
+        <div><b>DURUM</b><span id="sakinDurum">-</span></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card mb-3">
+    <div class="card-header d-flex justify-content-between align-items-center">
+      <span><i class="bi bi-car-front-fill me-1"></i>Araçlarım</span>
+    </div>
+    <div class="card-body">
+      <table class="table table-sm mb-3">
+        <thead><tr><th>Plaka</th><th>Açıklama</th><th></th></tr></thead>
+        <tbody id="sakinAraclarTablo"><tr><td colspan="3" class="text-muted text-center py-2">Yükleniyor...</td></tr></tbody>
+      </table>
+      <form id="sakinAracEkleForm" class="row g-2 align-items-end">
+        <div class="col-auto">
+          <label class="form-label small mb-0" for="sakinYeniPlaka">Yeni araç plakası</label>
+          <input type="text" class="form-control form-control-sm" id="sakinYeniPlaka" placeholder="34 ABC 123" required>
+        </div>
+        <div class="col">
+          <label class="form-label small mb-0" for="sakinYeniAciklama">Açıklama</label>
+          <input type="text" class="form-control form-control-sm" id="sakinYeniAciklama" placeholder="örn. ikinci aracım" maxlength="100">
+        </div>
+        <div class="col-auto"><button type="submit" class="btn btn-sm btn-primary">Ekle</button></div>
+      </form>
+      <div id="sakinAracSonuc" class="small mt-1"></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-header d-flex justify-content-between align-items-center">
+      <span><i class="bi bi-clock-history me-1"></i>Giriş/Çıkış Geçmişim</span>
+      <button class="btn btn-sm btn-outline-secondary" onclick="sakinPaneliYukle()"><i class="bi bi-arrow-clockwise"></i> Yenile</button>
+    </div>
+    <div class="card-body p-0">
+      <table class="table table-sm mb-0">
+        <thead><tr><th>Tarih/Saat</th><th>Nokta</th><th>Yön</th><th>Durum</th></tr></thead>
+        <tbody id="sakinGecmisTablo"><tr><td colspan="4" class="text-muted text-center py-2">Yükleniyor...</td></tr></tbody>
+      </table>
+    </div>
+  </div>
+</div>
 
 <div class="app-layout">
   <aside class="pts-sidebar">
@@ -242,7 +346,7 @@
 
     <!-- ================= PANEL (DASHBOARD) ================= -->
     <div class="tab-pane fade" id="panel-sekme">
-      <div class="dashboard-heading"><div><span class="eyebrow">GENEL BAKIŞ</span><h1>Kontrol Merkezi</h1><p>Plaka hareketleri ve sistem durumunu tek ekrandan yönetin.</p></div><button class="btn btn-outline-secondary" onclick="panelYenile()"><i class="bi bi-arrow-clockwise"></i> Yenile</button></div>
+      <div class="dashboard-heading"><div><span class="eyebrow">GENEL BAKIŞ</span><h1>Kontrol Merkezi</h1><p>Plaka hareketleri ve sistem durumunu tek ekrandan yönetin.</p></div><div class="d-flex gap-2"><button class="btn btn-success" onclick="ziyaretciBilgileriAc()" data-rol-min="operatör" data-rol-davranis="gizle"><i class="bi bi-person-plus-fill"></i> Ziyaretçi Girişi</button><button class="btn btn-outline-secondary" onclick="panelYenile()"><i class="bi bi-arrow-clockwise"></i> Yenile</button></div></div>
       <div class="quick-grid mb-4"><button class="quick-tile blue" data-target="#canli-sekme"><i class="bi bi-display"></i><strong>Canlı İzleme</strong><span>Kamera duvarı</span></button><button class="quick-tile green" data-target="#kayitlar-sekme"><i class="bi bi-arrow-left-right"></i><strong>Geçiş Kayıtları</strong><span>Hareket geçmişi</span></button><button class="quick-tile amber" data-target="#kisiler-sekme"><i class="bi bi-person-badge"></i><strong>Kişiler</strong><span>Yetkili plakalar</span></button><button class="quick-tile slate" data-target="#kamera-sekme"><i class="bi bi-camera-video"></i><strong>Kamera Yönetimi</strong><span>RTSP bağlantıları</span></button><button class="quick-tile red" data-target="#lisans-sekme"><i class="bi bi-shield-lock"></i><strong>Lisans</strong><span>Durum ve limitler</span></button></div>
       <div class="row g-3 mb-3">
         <div class="col-6 col-md-3">
@@ -346,6 +450,8 @@
                 <option value="yetkili">Yetkili</option>
                 <option value="yetkisiz">Yetkisiz</option>
                 <option value="suresi_dolmus">Süresi Dolmuş</option>
+                <option value="ziyaretci_onayli">Ziyaretçi Girişi Onaylandı</option>
+                <option value="kara_liste">Kara Liste</option>
               </select>
             </div>
             <div class="col-md-3 d-flex gap-2">
@@ -764,11 +870,20 @@
                 <div class="mb-2"><label class="form-label small" for="yeniParola">Parola</label>
                   <input type="password" class="form-control" id="yeniParola" minlength="8" required></div>
                 <div class="mb-2"><label class="form-label small" for="yeniRol">Rol</label>
-                  <select class="form-select" id="yeniRol">
+                  <select class="form-select" id="yeniRol" onchange="yeniKullaniciRolDegisti()">
                     <option value="izleyici">İzleyici (salt okunur)</option>
                     <option value="operatör">Operatör</option>
                     <option value="yonetici">Yönetici (tam yetki)</option>
+                    <option value="sakin">Sakin (öz-hizmet portalı)</option>
                   </select>
+                </div>
+                <!-- Yalnızca rol="sakin" seçilince görünür: bkz. app.js::yeniKullaniciRolDegisti,
+                     main.py::_sakin_kisi_id_dogrula. Bir sakin hesabı MUTLAKA bir Kişi kaydına
+                     bağlı olmalı -- öz-hizmet uçları bu bağlantı üzerinden çalışır. -->
+                <div class="mb-2 d-none" id="yeniKullaniciKisiAlani">
+                  <label class="form-label small" for="yeniKullaniciKisi">Bağlı Kişi (site sakini)</label>
+                  <select class="form-select" id="yeniKullaniciKisi"><option value="">Kişi seçiniz...</option></select>
+                  <div class="form-text">Bu hesap, giriş yaptığında yalnızca bu kişinin kendi plaka/geçmiş bilgisini görebilir.</div>
                 </div>
                 <button type="submit" class="btn btn-primary w-100"><i class="bi bi-person-check"></i> Kullanıcı Oluştur</button>
               </form>
@@ -784,7 +899,7 @@
             </div>
             <div class="card-body p-0">
               <table class="table table-hover mb-0 align-middle">
-                <thead class="table-light"><tr><th>Kullanıcı Adı</th><th>Rol</th><th>Son Giriş</th><th>Durum</th><th></th></tr></thead>
+                <thead class="table-light"><tr><th>Kullanıcı Adı</th><th>Rol</th><th>Bağlı Kişi</th><th>Son Giriş</th><th>Durum</th><th></th></tr></thead>
                 <tbody id="kullanicilarTablo"></tbody>
               </table>
             </div>
