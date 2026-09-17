@@ -29,6 +29,32 @@
     </div>
   </div>
 </div>
+
+<!-- Görsel büyütme (zoom/pan) modalı: Panel/Kayıtlar/Plaka Analizi tablolarındaki
+     küçük resimler VE olay detayının ana görseli (.thumb, .zoomable-img) için
+     ortak lightbox. Zoom: fare tekerleği / +,- düğmeleri / çift tık; Pan: fare/
+     dokunmatik sürükleme (yalnızca yakınlaştırılmışken). Kapanışta otomatik
+     sıfırlanır (bkz. app.js::buyukGorselAc ve hidden.bs.modal dinleyicisi). -->
+<div class="modal fade" id="gorselBuyutModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-fullscreen">
+    <div class="modal-content">
+      <div class="modal-header border-0">
+        <h5 class="modal-title text-white"><i class="bi bi-zoom-in me-2"></i>Görsel Önizleme</h5>
+        <div class="gorsel-buyut-araclar">
+          <button type="button" class="btn btn-sm btn-outline-light" id="gorselKucultBtn" title="Uzaklaştır" aria-label="Uzaklaştır"><i class="bi bi-dash-lg"></i></button>
+          <span class="text-white small mx-1" id="gorselBuyutYuzde">100%</span>
+          <button type="button" class="btn btn-sm btn-outline-light" id="gorselBuyutBtn" title="Yakınlaştır" aria-label="Yakınlaştır"><i class="bi bi-plus-lg"></i></button>
+          <button type="button" class="btn btn-sm btn-outline-light" id="gorselSifirlaBtn" title="Sıfırla" aria-label="Yakınlaştırmayı sıfırla"><i class="bi bi-arrow-counterclockwise"></i></button>
+        </div>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Kapat"></button>
+      </div>
+      <div class="modal-body p-0" id="gorselBuyutKapsayici">
+        <img id="gorselBuyutImg" alt="Büyütülmüş araç geçiş görseli">
+      </div>
+    </div>
+  </div>
+</div>
+
 <div id="authKapisi" class="auth-gate">
   <div class="auth-panel">
     <div class="auth-mark"><i class="bi bi-camera-video-fill"></i></div>
@@ -46,7 +72,7 @@
 <div class="modal fade" id="olayDetayModal" tabindex="-1" aria-hidden="true">
   <div class="modal-dialog modal-xl modal-dialog-centered"><div class="modal-content event-detail-modal">
     <div class="modal-header" id="olayModalBaslik"><h5 class="modal-title" id="olayModalTur">TANIMLI ARAÇ</h5><button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Kapat"></button></div>
-    <div class="modal-body"><div class="row g-3"><div class="col-lg-8"><div class="event-image-wrap"><img id="olayModalGorsel" alt="Araç geçiş görseli"><div id="olayModalGorselYok" class="empty-state">Bu kayıt için görsel bulunmuyor</div></div><div class="detail-table mt-3"><div><b>TARİH</b><span id="olayModalTarih">-</span></div><div><b>SAAT</b><span id="olayModalSaat">-</span></div><div><b>SİTE</b><span id="olayModalSite">-</span></div><div><b>NOKTA</b><span id="olayModalNokta">-</span></div><div><b>YÖN</b><span id="olayModalYon">-</span></div></div></div><div class="col-lg-4"><div class="plate-display" id="olayModalPlaka">-</div><div class="vehicle-facts"><div><b>ARAÇ TİPİ</b><span id="olayModalAracTipi">-</span></div></div><div class="vehicle-facts person-facts"><div><b>İSİM</b><span id="olayModalKisi">-</span></div><div><b>DAİRE / BLOK</b><span id="olayModalDaire">-</span></div><div><b>GÜVEN SKORU</b><span id="olayModalGuven">-</span></div><div><b>OCR DÜZELTMESİ</b><span id="olayModalDuzeltme">-</span></div></div>
+    <div class="modal-body"><div class="row g-3"><div class="col-lg-8"><div class="event-image-wrap"><img id="olayModalGorsel" class="zoomable-img" role="button" tabindex="0" alt="Araç geçiş görseli, büyütmek için tıklayın veya Enter'a basın"><div id="olayModalGorselYok" class="empty-state">Bu kayıt için görsel bulunmuyor</div></div><div class="detail-table mt-3"><div><b>TARİH</b><span id="olayModalTarih">-</span></div><div><b>SAAT</b><span id="olayModalSaat">-</span></div><div><b>SİTE</b><span id="olayModalSite">-</span></div><div><b>NOKTA</b><span id="olayModalNokta">-</span></div><div><b>YÖN</b><span id="olayModalYon">-</span></div></div></div><div class="col-lg-4"><div class="plate-display" id="olayModalPlaka">-</div><div class="vehicle-facts"><div><b>ARAÇ TİPİ</b><span id="olayModalAracTipi">-</span></div></div><div class="vehicle-facts person-facts"><div><b>İSİM</b><span id="olayModalKisi">-</span></div><div><b>DAİRE / BLOK</b><span id="olayModalDaire">-</span></div><div><b>GÜVEN SKORU</b><span id="olayModalGuven">-</span></div><div><b>OCR DÜZELTMESİ</b><span id="olayModalDuzeltme">-</span></div></div>
       <!-- Ziyaretçi Girişi: tanımsız/yetkisiz bir tespiti tek adımda bir kişiye/daireye
            bağlayıp aynı anda bariyeri açan hızlı onay bölümü (bkz. app.js::ziyaretciGirisiOnayla,
            main.py::kayit_duzenle + bariyer_ac'ın birleşimi). README'deki 2026-09-17

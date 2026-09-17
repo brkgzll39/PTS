@@ -656,6 +656,55 @@ OLAN `test_plaka_analiz_yeni_alanlari_dondurur` testinin de bu hata
 yüzünden aslında hiç geçemeyeceği (boş bir listeden ilk elemanı almaya
 çalışırdı) fark edildi.
 
+**2026-09-17 (devam) — Araç görselleri artık büyük/net görünüyor VE
+uygulama içinde yakınlaştırılıp (zoom) plaka yakından incelenebiliyor;
+ayrıca küçük resimlere tıklama özelliğinin baştan beri hiç çalışmadığı
+ortaya çıkarıldı.** Kullanıcı, çalışan bir "Plaka Analizi" ekran
+görüntüsü paylaşarak görsellerin daha net görünmesini ve TÜM araç
+görsellerine (Panel, Kayıtlar, Plaka Analizi, olay detayı) yakınlaştırıp
+plakayı yakından görebilmeyi istedi. İnceleme sırasında ayrı, öncesinde
+fark edilmemiş bir hata bulundu:
+
+- Küçük resimler (`.thumb`) `data-goruntu-yolu` attribute'u taşıyan bir
+  seçiciyle (`.thumb[data-goruntu-yolu]`) tıklamaya/büyütmeye açılıyordu.
+  Ancak bir tablo render edildikten HEMEN SONRA çağrılan
+  `korumaliGorselleriYukle()`, görsel yüklenmeyi (asenkron `fetch`) hiç
+  beklemeden bu attribute'u DOM'dan siliyordu
+  (`img.removeAttribute("data-goruntu-yolu")`). Yani bir kullanıcı
+  fiziksel olarak tıklayabilene kadar geçen sürede bu seçici zaten
+  hiçbir şeye eşleşmiyordu — **küçük resimlere tıklayıp büyütme özelliği
+  uygulamanın HER YERİNDE (Panel "Son Kayıtlar", Kayıtlar tablosu, Plaka
+  Analizi) baştan beri hiç çalışmamıştı**, ayrıca olay detayı
+  penceresindeki ana görsel (`#olayModalGorsel`) için bu özellik hiç
+  kablolanmamıştı bile.
+- Küçük resimler yalnızca 56×40px boyutundaydı — plakayı okumak pratikte
+  imkânsızdı.
+- Büyütülmüş görsel, `window.open(imgEl.src)` ile blob: URL'ini yeni bir
+  sekmede açıyordu; yakınlaştırma imkânı yoktu ve blob URL'leri için bu
+  davranış tarayıcıdan tarayıcıya tutarsızdı.
+
+**Düzeltme:**
+
+- `.thumb` küçük resimleri 96×68px'e büyütüldü ve hover'da hafif bir
+  büyüme/gölge efekti eklendi (`frontend/style.css`).
+- Tıklama/klavye (Enter/Boşluk) olay delegasyonu artık kalıcı olan
+  `.thumb`/`.zoomable-img` SINIF adlarına göre eşleşiyor — silinen
+  `data-goruntu-yolu` attribute'una değil (`frontend/app.js`). Bu,
+  yukarıdaki tıklama hatasını da düzeltir.
+- Yeni bir uygulama-içi büyütme (lightbox) penceresi eklendi
+  (`#gorselBuyutModal`): fare tekerleğiyle imlecin altındaki noktayı
+  sabit tutarak yakınlaştırma, +/- ve "sıfırla" düğmeleri, çift tıkla
+  2.5x yakınlaştır/sıfırla, ve (yakınlaştırılmışken) fare/dokunmatik ile
+  sürükleyerek kaydırma (pan). Modal kapanınca zoom/pan durumu otomatik
+  sıfırlanır. Görsel zaten korumalı bir blob: URL olarak yüklü olduğu
+  için (bkz. `korumaliGorselAta`) tekrar sunucudan çekilmiyor, aynı blob
+  URL'i lightbox'a aktarılıyor.
+- Olay detayı penceresinin ana görseli (`#olayModalGorsel`) artık
+  `zoomable-img` sınıfı ve `role="button" tabindex="0"` ile aynı
+  lightbox'ı kullanıyor — önceden bu görsel hiç tıklanamıyordu.
+- Bu değişiklikler yalnızca `frontend/` içindedir; backend/veritabanı
+  davranışı etkilenmedi (test sayısı 95'te sabit kaldı).
+
 ## Kamera Bağlantı Güvenilirliği
 
 Bu bölüm, kamera bağlantılarının/araç geçişi görüntülerinin donmaması için yapılan

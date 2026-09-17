@@ -62,29 +62,139 @@ document.addEventListener("click", (e) => {
     karaListeyeEkleModal(karaEkleEl.dataset.karaEkle);
     return;
   }
-  const thumbEl = e.target.closest(".thumb[data-goruntu-yolu]");
+  // NOT (2026-09-17): burada eskiden `.thumb[data-goruntu-yolu]` seçiciydi.
+  // Ancak korumaliGorselleriYukle() bir tabloyu doldurduktan HEMEN SONRA, o
+  // görsel yüklenmeyi bile beklemeden `data-goruntu-yolu` attribute'unu DOM'dan
+  // SİLİYOR (bkz. aşağısı) — yani bir kullanıcı fiziksel olarak tıklayana kadar
+  // bu seçici zaten hiçbir şeye eşleşmiyordu. Küçük resimlere tıklayıp büyütme
+  // özelliği UYGULAMANIN HER YERİNDE (Panel, Kayıtlar, Plaka Analizi) baştan
+  // beri hiç çalışmamıştı. Artık kalıcı olan `.thumb`/`.zoomable-img`
+  // sınıflarına göre eşleşiyor.
+  const thumbEl = e.target.closest(".thumb, .zoomable-img");
   if (thumbEl) {
     buyukGorselAc(thumbEl);
   }
+});
+
+document.addEventListener("keydown", (e) => {
+  if (e.key !== "Enter" && e.key !== " " && e.key !== "Spacebar") return;
+  const thumbEl = e.target.closest && e.target.closest(".thumb, .zoomable-img");
+  if (!thumbEl) return;
+  e.preventDefault();
+  buyukGorselAc(thumbEl);
 });
 
 // ERİŞİLEBİLİRLİK: küçük resim (thumbnail) önizlemeleri bir <img> üzerinde
 // yalnızca `onclick` ile açılıyordu — bir <img> öntanımlı olarak klavyeyle
 // odaklanamaz/tetiklenemez, yani klavye veya ekran okuyucu kullanan biri bu
 // büyütülmüş görsele hiç erişemezdi. Şablonlarda artık `role="button"
-// tabindex="0"` ekleniyor (bkz. panelYenile/kayıtlar tabloları); bu da o
-// öğeleri Enter/Boşluk tuşuyla tetiklenebilir hale getiriyor.
-function buyukGorselAc(imgEl) {
-  if (imgEl && imgEl.src) window.open(imgEl.src);
+// tabindex="0"` ekleniyor (bkz. panelYenile/kayıtlar tabloları ve
+// olayModalGorsel); bu da o öğeleri Enter/Boşluk tuşuyla tetiklenebilir hale
+// getiriyor.
+//
+// GÖRSEL BÜYÜTME (ZOOM/PAN) LIGHTBOX (2026-09-17): eskiden `window.open(imgEl.src)`
+// yeni bir sekme açıyordu (blob: URL'leri için garip/tutarsız davranıyordu ve
+// yakınlaştırma imkânı yoktu). Artık uygulama içinde, plakayı yakından
+// görebilmek için yakınlaştırma/kaydırma (pan) destekli bir modal açılıyor.
+let _gorselZoom = 1;
+let _gorselPanX = 0;
+let _gorselPanY = 0;
+let _gorselSurukleniyor = false;
+let _gorselSurukleBaslangic = { x: 0, y: 0, panX: 0, panY: 0 };
+const GORSEL_ZOOM_MIN = 1;
+const GORSEL_ZOOM_MAX = 6;
+const GORSEL_ZOOM_ADIM = 0.5;
+
+function _gorselTransformUygula() {
+  const img = document.getElementById("gorselBuyutImg");
+  if (!img) return;
+  img.style.transform = `translate(${_gorselPanX}px, ${_gorselPanY}px) scale(${_gorselZoom})`;
+  img.style.cursor = _gorselZoom > GORSEL_ZOOM_MIN ? (_gorselSurukleniyor ? "grabbing" : "grab") : "zoom-in";
+  const yuzdeEl = document.getElementById("gorselBuyutYuzde");
+  if (yuzdeEl) yuzdeEl.textContent = `${Math.round(_gorselZoom * 100)}%`;
 }
 
-document.addEventListener("keydown", (e) => {
-  if (e.key !== "Enter" && e.key !== " " && e.key !== "Spacebar") return;
-  const thumbEl = e.target.closest && e.target.closest(".thumb[data-goruntu-yolu]");
-  if (!thumbEl) return;
-  e.preventDefault();
-  buyukGorselAc(thumbEl);
-});
+// `odakX`/`odakY` verilirse (fare tekerleği ile yakınlaştırmada), imlecin
+// altındaki nokta ekranda sabit kalacak şekilde pan orantılı olarak ölçeklenir.
+function gorselZoomAyarla(yeniZoom, odakX, odakY) {
+  const eskiZoom = _gorselZoom;
+  _gorselZoom = Math.min(GORSEL_ZOOM_MAX, Math.max(GORSEL_ZOOM_MIN, yeniZoom));
+  if (_gorselZoom === GORSEL_ZOOM_MIN) {
+    _gorselPanX = 0;
+    _gorselPanY = 0;
+  } else if (typeof odakX === "number" && eskiZoom !== _gorselZoom) {
+    const oran = _gorselZoom / eskiZoom;
+    _gorselPanX = odakX - (odakX - _gorselPanX) * oran;
+    _gorselPanY = odakY - (odakY - _gorselPanY) * oran;
+  }
+  _gorselTransformUygula();
+}
+
+function gorselZoomSifirla() {
+  _gorselZoom = 1;
+  _gorselPanX = 0;
+  _gorselPanY = 0;
+  _gorselTransformUygula();
+}
+
+function buyukGorselAc(imgEl) {
+  if (!imgEl || !imgEl.src) return;
+  const buyukImg = document.getElementById("gorselBuyutImg");
+  if (!buyukImg) return;
+  // Görsel zaten blob: URL olarak `imgEl.src`'de hazır (korumaliGorselAta ile
+  // atanmış) — tekrar fetch etmeye gerek yok, aynı blob URL'i yeniden kullanılır.
+  buyukImg.src = imgEl.src;
+  gorselZoomSifirla();
+  bootstrap.Modal.getOrCreateInstance(document.getElementById("gorselBuyutModal")).show();
+}
+
+(function () {
+  const modalEl = document.getElementById("gorselBuyutModal");
+  const kapsayici = document.getElementById("gorselBuyutKapsayici");
+  if (!modalEl || !kapsayici) return;
+
+  // Modal kapanınca zoom/pan durumu ve src sıfırlanır ki bir sonraki açılışta
+  // önceki görselin büyütülmüş hali bir an için görünmesin.
+  modalEl.addEventListener("hidden.bs.modal", () => {
+    gorselZoomSifirla();
+    const img = document.getElementById("gorselBuyutImg");
+    if (img) img.removeAttribute("src");
+  });
+
+  document.getElementById("gorselBuyutBtn")?.addEventListener("click", () => gorselZoomAyarla(_gorselZoom + GORSEL_ZOOM_ADIM));
+  document.getElementById("gorselKucultBtn")?.addEventListener("click", () => gorselZoomAyarla(_gorselZoom - GORSEL_ZOOM_ADIM));
+  document.getElementById("gorselSifirlaBtn")?.addEventListener("click", gorselZoomSifirla);
+
+  kapsayici.addEventListener("wheel", (e) => {
+    e.preventDefault();
+    const rect = kapsayici.getBoundingClientRect();
+    const odakX = e.clientX - rect.left - rect.width / 2;
+    const odakY = e.clientY - rect.top - rect.height / 2;
+    gorselZoomAyarla(_gorselZoom + (e.deltaY < 0 ? GORSEL_ZOOM_ADIM : -GORSEL_ZOOM_ADIM), odakX, odakY);
+  }, { passive: false });
+
+  // Çift tık: yakınlaştırılmamışsa 2.5x'e yakınlaştır, yakınlaştırılmışsa sıfırla.
+  kapsayici.addEventListener("dblclick", () => {
+    gorselZoomAyarla(_gorselZoom > GORSEL_ZOOM_MIN ? GORSEL_ZOOM_MIN : 2.5);
+  });
+
+  kapsayici.addEventListener("pointerdown", (e) => {
+    if (_gorselZoom <= GORSEL_ZOOM_MIN) return;
+    _gorselSurukleniyor = true;
+    _gorselSurukleBaslangic = { x: e.clientX, y: e.clientY, panX: _gorselPanX, panY: _gorselPanY };
+    kapsayici.setPointerCapture(e.pointerId);
+    _gorselTransformUygula();
+  });
+  kapsayici.addEventListener("pointermove", (e) => {
+    if (!_gorselSurukleniyor) return;
+    _gorselPanX = _gorselSurukleBaslangic.panX + (e.clientX - _gorselSurukleBaslangic.x);
+    _gorselPanY = _gorselSurukleBaslangic.panY + (e.clientY - _gorselSurukleBaslangic.y);
+    _gorselTransformUygula();
+  });
+  ["pointerup", "pointercancel", "pointerleave"].forEach(evtAdi =>
+    kapsayici.addEventListener(evtAdi, () => { _gorselSurukleniyor = false; _gorselTransformUygula(); })
+  );
+})();
 
 // ---------------------- YARDIMCI FONKSİYONLAR ----------------------
 

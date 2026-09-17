@@ -174,11 +174,58 @@ body {
 }
 
 .thumb {
-  width: 56px;
-  height: 40px;
+  /* 2026-09-17: eskiden 56x40px idi -- kullanıcı plakayı seçemeyecek kadar
+     küçük olduğunu bildirdi. Ayrıca bu tarihe kadar tıklama/büyütme özelliği
+     app.js'teki bir hata yüzünden ZATEN ÇALIŞMIYORDU (bkz. app.js üstündeki
+     "korumaliGorselleriYukle" notu) -- artık hem daha büyük hem tıklanabilir. */
+  width: 96px;
+  height: 68px;
   object-fit: cover;
-  border-radius: 4px;
-  cursor: pointer;
+  border-radius: 6px;
+  cursor: zoom-in;
+  transition: transform .12s ease, box-shadow .12s ease;
+}
+
+.thumb:hover, .zoomable-img:hover {
+  transform: scale(1.06);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, .25);
+}
+
+/* Olay detay modalının ana görseli de (thumb değil, event-image-wrap img'i)
+   artık tıklanıp büyütülebiliyor -- bkz. app.js::buyukGorselAc. */
+.zoomable-img {
+  cursor: zoom-in;
+}
+
+/* ---------------------- GÖRSEL BÜYÜTME (ZOOM/PAN) LIGHTBOX ---------------------- */
+#gorselBuyutModal .modal-content { background: #14181f; }
+#gorselBuyutModal .gorsel-buyut-araclar {
+  display: flex;
+  align-items: center;
+  gap: .25rem;
+  margin-left: auto;
+  margin-right: .75rem;
+}
+#gorselBuyutKapsayici {
+  height: calc(100vh - 64px);
+  overflow: hidden;
+  display: grid;
+  place-items: center;
+  touch-action: none;
+  background:
+    linear-gradient(45deg, #1c2029 25%, transparent 25%) 0 0 / 24px 24px,
+    linear-gradient(-45deg, #1c2029 25%, transparent 25%) 0 0 / 24px 24px,
+    linear-gradient(45deg, transparent 75%, #1c2029 75%) 0 0 / 24px 24px,
+    linear-gradient(-45deg, transparent 75%, #1c2029 75%) 0 0 / 24px 24px,
+    #10131a;
+}
+#gorselBuyutImg {
+  max-width: 96%;
+  max-height: 96%;
+  object-fit: contain;
+  will-change: transform;
+  user-select: none;
+  -webkit-user-drag: none;
 }
 
 .badge-yetkili { background-color: #16a34a; }
