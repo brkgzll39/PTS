@@ -1366,6 +1366,11 @@ async function sistemSagliginiYukle() {
     const dedektorEsigiSatiri = s.anpr_dedektor_esigi
       ? `<div class="info-row"><i class="bi bi-bullseye text-primary"></i> <span>Dedektör Eşiği</span><strong title="${escapeHtml(s.anpr_dedektor_esigi.kaynak)}">${s.anpr_dedektor_esigi.esik.toFixed(2)}</strong></div>`
       : "";
+    // "model" alanı yoksa (eski bir yedekten dönülmüş/uyumsuz bir versiyon
+    // ihtimaline karşı) bu satır sessizce gösterilmez.
+    const dedektorModeliSatiri = s.anpr_dedektor_esigi?.model
+      ? `<div class="info-row"><i class="bi bi-aspect-ratio text-primary"></i> <span>Dedektör Modeli</span><strong title="${escapeHtml(s.anpr_dedektor_esigi.model_kaynagi || "")}">${escapeHtml(s.anpr_dedektor_esigi.model)}</strong></div>`
+      : "";
     el.innerHTML = `
       <div class="info-row">${ikon(s.durum === "cevrimici")} <span>Uygulama</span><strong>${s.durum}</strong></div>
       <div class="info-row">${ikon(s.veritabani === "ok")} <span>Veritabanı</span><strong>${s.veritabani}</strong></div>
@@ -1375,6 +1380,7 @@ async function sistemSagliginiYukle() {
       ${yedekSatiri}
       ${gorselIzlemeSatiri}
       ${dedektorEsigiSatiri}
+      ${dedektorModeliSatiri}
       <div class="info-row"><i class="bi bi-code text-muted"></i> <span>Sürüm</span><strong>PTS v${s.surum}</strong></div>
       <div class="text-muted small mt-2">${new Date(s.zaman).toLocaleString("tr-TR")}</div>`;
   } catch (e) { console.error(e); }

@@ -667,10 +667,16 @@ def test_anpr_dedektor_esigi_motor_olusunca_fiili_deger_raporlanir(client, izley
     monkeypatch.setattr(pts_main, "_CAM_LIBS", True)
     monkeypatch.setattr(
         cr, "dedektor_esigi_bilgisi",
-        lambda: {"esik": 0.25, "kaynak": "PTS_ANPR_DETECTOR_ESIGI ortam değişkeni ('0.25')"},
+        lambda: {
+            "esik": 0.25, "kaynak": "PTS_ANPR_DETECTOR_ESIGI ortam değişkeni ('0.25')",
+            "model": "yolo-v9-s-608-license-plate-end2end",
+            "model_kaynagi": "PTS_ANPR_DETECTOR_MODEL ortam değişkeni",
+        },
     )
     r = client.get("/sistem/saglik", headers=izleyici_header)
     assert r.status_code == 200, r.text
     assert r.json()["anpr_dedektor_esigi"] == {
         "esik": 0.25, "kaynak": "PTS_ANPR_DETECTOR_ESIGI ortam değişkeni ('0.25')",
+        "model": "yolo-v9-s-608-license-plate-end2end",
+        "model_kaynagi": "PTS_ANPR_DETECTOR_MODEL ortam değişkeni",
     }

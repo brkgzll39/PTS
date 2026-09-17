@@ -759,6 +759,64 @@ görür. Doğru sıra:
    çalıştırıyorsanız `setx`, hizmeti YENİDEN OLUŞTURMADAN görünmez;
    hizmetin ortam değişkenlerini kendi yapılandırmasından ayarlamanız gerekir).
 
+**2026-09-17 (devam) — eşik yetmiyorsa: dedektörün giriş çözünürlüğü
+(`PTS_ANPR_DETECTOR_MODEL`):** `PTS_ANPR_DETECTOR_ESIGI` doğru şekilde
+uygulandıktan sonra bile, kamerada BÜYÜK/net/tam karşıdan görünen bir plaka
+("39 SR 525") sahada yine kayda düşmedi. Bu, sorunun artık "eşik çok katı"
+değil, muhtemelen **dedektörün giriş çözünürlüğü** olduğunu gösteriyor:
+
+FastALPR'ın kullandığı dedektör (`open_image_models` projesinden), önüne
+verilen KARENİN TAMAMINI kendi sabit giriş boyutuna (model ismindeki sayı,
+örn. `-384-`) küçültüp öyle işler. Kamera 1920x1080 gibi geniş bir görüş
+alanı çekiyorsa ve şu an kullanılan `yolo-v9-t-384-license-plate-end2end`
+modeli bu koca sahneyi yalnızca 384x384 piksele sıkıştırıyorsa, plaka insan
+gözüne "büyük ve net" görünse bile modelin GERÇEKTEN gördüğü küçültülmüş
+karede birkaç piksele düşüp fark edilemez hale gelebilir — bu, eşiği ne
+kadar düşürürseniz düşürün değişmeyen bir sınırlamadır (dedektör hiçbir
+aday üretmiyorsa, eşik onu zaten aşağı çekemez).
+
+`open_image_models` projesi AYNI kütüphanenin (yani `pip install fast-alpr`
+ile zaten kurulu olanın) İÇİNDE, farklı çözünürlüklerde birden fazla model
+sunuyor — bunlardan birini seçmek için tek yapılması gereken bir ortam
+değişkeni ayarlamak; **ayrı bir kurulum, "GitHub'dan entegrasyon" veya kod
+değişikliği gerekmiyor.** Kaynak: https://github.com/ankandrew/open-image-models
+(2026-09 itibarıyla):
+
+| Model | Giriş boyutu | Recall (kaçırmama oranı) | mAP50 |
+|---|---|---|---|
+| `yolo-v9-t-256-license-plate-end2end` | 256px | 0.797 | 0.858 |
+| `yolo-v9-t-384-license-plate-end2end` (PTS'nin **önceki** varsayılanı) | 384px | 0.863 | 0.920 |
+| `yolo-v9-t-416-license-plate-end2end` | 416px | 0.894 | 0.940 |
+| `yolo-v9-t-512-license-plate-end2end` | 512px | 0.901 | 0.948 |
+| `yolo-v9-t-640-license-plate-end2end` | 640px | 0.896 | 0.958 |
+| **`yolo-v9-s-608-license-plate-end2end`** (en iyi recall + mAP50) | 608px | **0.917** | **0.966** |
+
+`recall` sütunu tam olarak aradığımız metrik: kaçırma oranının tersi. En
+yüksek recall'a sahip `yolo-v9-s-608-license-plate-end2end`'i denemek için:
+
+```
+setx PTS_ANPR_DETECTOR_MODEL yolo-v9-s-608-license-plate-end2end
+```
+(yine YENİ bir terminal penceresinden `calistir.bat`'ı başlatın — bkz.
+yukarıdaki `setx` uyarısı). İlk açılışta bu model henüz indirilmemişse
+FastALPR onu otomatik indirir (birkaç MB, İNTERNET bağlantısı gerektirir,
+sadece ilk seferde); sonrasında yerel önbellekten çalışır. Panelin Sistem
+sekmesindeki yeni "Dedektör Modeli" satırından hangi modelin fiilen
+kullanıldığını doğrulayabilirsiniz. Bilinmeyen/yazım hatalı bir isim
+verilirse uygulama başlangıçta bunu loglar ama yine de değeri olduğu gibi
+dener (kütüphane kendi hata mesajını verir).
+
+**Ödünleşim:** büyük model = daha fazla piksel = daha iyi recall, ama biraz
+daha yavaş çıkarım (birkaç kamera için GPU/DirectML ile tipik olarak yeterince
+hızlıdır; sorun yaşarsanız `PTS_ANPR_PROVIDERS=cpu` ile karşılaştırın).
+Bilinçli bir mühendislik kararı olarak, PTS'ye tanımadığımız çok sayıda farklı
+açık kaynak projesini ("her şeyi GitHub'dan toplayıp entegre etmek") elle
+karıştırmak yerine, zaten kullanılan VE test edilmiş kütüphanenin kendi
+sunduğu, ölçülebilir (recall/mAP tabloları yayınlanmış) alternatifini
+seçilebilir hale getirmeyi tercih ettik — bu hem çok daha az risklidir
+(yeni bağımlılık, lisans, bakım yükü yok) hem de sorunun kök nedenine
+(çözünürlük) doğrudan hitap eder.
+
 ## Otomatik Görüntü/Kayıt Saklama
 
 Daha önce eski geçiş görüntülerini temizlemenin tek yolu `/sistem/goruntu-temizle`

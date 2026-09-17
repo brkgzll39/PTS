@@ -17,6 +17,31 @@ logger = logging.getLogger(__name__)
 # doğru raporlayabilmek için burada, tek bir yerde tanımlanır.
 DEDEKTOR_ESIGI_KUTUPHANE_VARSAYILANI = 0.4
 
+# open_image_models projesinin (fast_alpr'ın dedektörü buradan gelir) yayınladığı
+# TÜM plaka dedektörü modelleri — hepsi kütüphane zaten içindeyken (ayrı bir
+# "GitHub'dan entegrasyon" gerektirmeden) sadece isim değiştirerek seçilebilir.
+# Kaynak: https://github.com/ankandrew/open-image-models (2026-09 itibarıyla).
+# recall = gerçekte var olan plakaların kaçırılmadan tespit edilme oranı; PTS'nin
+# yaşadığı "net görünen araç hiç kayda düşmüyor" şikayeti tam olarak recall
+# sorunudur (yanlış pozitif değil, kaçırma). İsim = giriş görüntüsünün YOLO'ya
+# verilmeden önce KARENİN TAMAMININ resize edildiği kare boyutu (256-640 px) —
+# yani kamera 1920x1080 gibi geniş bir kare üretiyorsa, küçük bir model (256/384)
+# tüm sahneyi bu kadar küçük bir kareye sıkıştırır ve plaka -özellikle uzak/yan
+# çekimde- birkaç piksele düşüp dedektöre görünmez hale gelebilir; bu PTS'de
+# gözlemlenen "büyük, net, tam karşıdan görünen plaka bile kaçıyor" durumunun en
+# olası açıklamasıdır. Büyük model = daha fazla piksel = daha iyi recall, ama
+# biraz daha yavaş çıkarım.
+#   isim                                    boyut  precision  recall  mAP50  mAP50-95
+DEDEKTOR_MODELI_BILGILERI: dict[str, dict] = {
+    "yolo-v9-t-256-license-plate-end2end": {"boyut": 256, "recall": 0.797, "mAP50": 0.858},
+    "yolo-v9-t-384-license-plate-end2end": {"boyut": 384, "recall": 0.863, "mAP50": 0.920},
+    "yolo-v9-t-416-license-plate-end2end": {"boyut": 416, "recall": 0.894, "mAP50": 0.940},
+    "yolo-v9-t-512-license-plate-end2end": {"boyut": 512, "recall": 0.901, "mAP50": 0.948},
+    "yolo-v9-t-640-license-plate-end2end": {"boyut": 640, "recall": 0.896, "mAP50": 0.958},
+    "yolo-v9-s-608-license-plate-end2end": {"boyut": 608, "recall": 0.917, "mAP50": 0.966},
+}
+DEDEKTOR_MODELI_VARSAYILAN = "yolo-v9-t-384-license-plate-end2end"
+
 
 @dataclass
 class PlakaSonucu:
@@ -26,7 +51,35 @@ class PlakaSonucu:
 
 
 class ANPREngine:
-    def __init__(self, detector_model: str = "yolo-v9-t-384-license-plate-end2end", ocr_model: str = "cct-xs-v2-global-model"):
+    def __init__(self, detector_model: str = DEDEKTOR_MODELI_VARSAYILAN, ocr_model: str = "cct-xs-v2-global-model"):
+        # PTS_ANPR_DETECTOR_MODEL ortam değişkeni, yapıcıya (constructor) verilen
+        # değeri geçersiz kılar — tıpkı aşağıdaki PTS_ANPR_DETECTOR_ESIGI gibi,
+        # panelden DEĞİL, ortam değişkeniyle ayarlanır ve yalnızca açılışta okunur.
+        # Bilinmeyen bir isim verilirse (yazım hatası gibi) uyarı loglanır ama
+        # yine de fast_alpr'a olduğu gibi geçirilir — kütüphane yeni modeller
+        # eklerse burayı güncellemeden de kullanılabilsin.
+        dedektor_modeli_ortam = os.environ.get("PTS_ANPR_DETECTOR_MODEL", "").strip()
+        dedektor_modeli_kaynagi = "yapıcı/kütüphane varsayılanı"
+        if dedektor_modeli_ortam:
+            if dedektor_modeli_ortam not in DEDEKTOR_MODELI_BILGILERI:
+                logger.warning(
+                    "PTS_ANPR_DETECTOR_MODEL=%r bilinen model listesinde yok "
+                    "(bkz. anpr_engine.py::DEDEKTOR_MODELI_BILGILERI) — yine de "
+                    "olduğu gibi fast_alpr'a geçiriliyor; isimde yazım hatası "
+                    "olmadığından emin olun.",
+                    dedektor_modeli_ortam,
+                )
+            detector_model = dedektor_modeli_ortam
+            dedektor_modeli_kaynagi = "PTS_ANPR_DETECTOR_MODEL ortam değişkeni"
+        self.dedektor_modeli_etkin = detector_model
+        self.dedektor_modeli_kaynagi = dedektor_modeli_kaynagi
+        logger.info(
+            "ANPR dedektör modeli = %s — kaynak: %s%s",
+            detector_model, dedektor_modeli_kaynagi,
+            f" (giriş boyutu: {DEDEKTOR_MODELI_BILGILERI[detector_model]['boyut']}px, "
+            f"beklenen recall: {DEDEKTOR_MODELI_BILGILERI[detector_model]['recall']:.3f})"
+            if detector_model in DEDEKTOR_MODELI_BILGILERI else "",
+        )
         try:
             from fast_alpr import ALPR
         except ImportError as exc:

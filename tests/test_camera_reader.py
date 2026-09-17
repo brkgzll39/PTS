@@ -37,11 +37,14 @@ class _SahteEngine:
     def __init__(self, *a, plaka="34ABC123", guven=0.95, **kw):
         self._plaka = plaka
         self._guven = guven
-        # Gerçek ANPREngine'deki dedektor_esigi_etkin/detektor_esigi_kaynagi
-        # alanlarını taklit eder (bkz. anpr_engine.py) — dedektor_esigi_bilgisi()
-        # ve /sistem/saglik'in bunları okuyabildiğini test edebilmek için.
+        # Gerçek ANPREngine'deki detektor_esigi_etkin/detektor_esigi_kaynagi ve
+        # dedektor_modeli_etkin/dedektor_modeli_kaynagi alanlarını taklit eder
+        # (bkz. anpr_engine.py) — dedektor_esigi_bilgisi() ve /sistem/saglik'in
+        # bunları okuyabildiğini test edebilmek için.
         self.detektor_esigi_etkin = 0.4
         self.detektor_esigi_kaynagi = "kütüphane varsayılanı (ortam değişkeni ayarlanmamış)"
+        self.dedektor_modeli_etkin = "yolo-v9-t-384-license-plate-end2end"
+        self.dedektor_modeli_kaynagi = "yapıcı/kütüphane varsayılanı"
 
     def tahmin_et(self, frame):
         return [_SahteSonuc(self._plaka, self._guven)]
@@ -437,3 +440,5 @@ def test_dedektor_esigi_bilgisi_motor_olusturulunca_etkin_degeri_raporlar(tmp_pa
     assert bilgi is not None
     assert bilgi["esik"] == 0.4
     assert "varsayılan" in bilgi["kaynak"]
+    assert bilgi["model"] == "yolo-v9-t-384-license-plate-end2end"
+    assert "varsayılan" in bilgi["model_kaynagi"]

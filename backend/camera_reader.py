@@ -110,14 +110,19 @@ def dedektor_esigi_bilgisi() -> Optional[dict]:
 
     Motor henüz oluşturulmadıysa None döner — bu çağrı BİLEREK motoru tetiklemez
     (ağır ONNX model yüklemesini /sistem/saglik gibi sık çağrılabilecek bir
-    teşhis ucundan tetiklemek istemeyiz). Panelde/logda "PTS_ANPR_DETECTOR_ESIGI
-    ayarım kabul edildi mi?" sorusuna kod okumadan cevap verebilmek için eklendi.
+    teşhis ucundan tetiklemek istemeyiz). Panelde/logda "PTS_ANPR_DETECTOR_ESIGI /
+    PTS_ANPR_DETECTOR_MODEL ayarım kabul edildi mi?" sorusuna kod okumadan cevap
+    verebilmek için eklendi. NOT: "esik"/"kaynak" anahtarları geriye dönük
+    uyumluluk için korunuyor (patch #21'de eklendi); "model"/"model_kaynagi"
+    burada yeni eklendi.
     """
     if _paylasilan_motor is None:
         return None
     return {
         "esik": getattr(_paylasilan_motor, "detektor_esigi_etkin", 0.4),
         "kaynak": getattr(_paylasilan_motor, "detektor_esigi_kaynagi", "bilinmiyor"),
+        "model": getattr(_paylasilan_motor, "dedektor_modeli_etkin", None),
+        "model_kaynagi": getattr(_paylasilan_motor, "dedektor_modeli_kaynagi", "bilinmiyor"),
     }
 
 
@@ -542,17 +547,25 @@ class KameraPipeline:
                 # ve şu an hangi değerin geçerli olduğunu her zaman doğru yansıtır.
                 _etkin_esik = getattr(self.motor, "detektor_esigi_etkin", 0.4)
                 _esik_kaynagi = getattr(self.motor, "detektor_esigi_kaynagi", "bilinmiyor")
+                _etkin_model = getattr(self.motor, "dedektor_modeli_etkin", "bilinmiyor")
                 logger.info(
                     "[%s] Son %.0f sn içinde dedektör %d karede hiçbir plaka adayı "
                     "bulamadı (OCR'a hiç ulaşmadan elendi). Bu her zaman normaldir "
                     "(trafiksiz an); ama net görünen bir araç yine de hiç kayda "
-                    "düşmüyorsa dedektör eşiğini (şu an %.2f, kaynak: %s) düşürmeyi "
-                    "deneyin: PTS_ANPR_DETECTOR_ESIGI işletim sistemi ortam değişkenini "
-                    "ayarlayıp uygulamayı YENİ bir terminalden yeniden başlatın — bu "
-                    "panelin 'Min. plaka tanıma güveni' ayarından FARKLI bir eşiktir "
-                    "ve panelden değiştirilemez (bkz. anpr_engine.py).",
+                    "düşmüyorsa önce dedektör eşiğini (şu an %.2f, kaynak: %s) "
+                    "düşürmeyi deneyin: PTS_ANPR_DETECTOR_ESIGI işletim sistemi ortam "
+                    "değişkenini ayarlayıp uygulamayı YENİ bir terminalden yeniden "
+                    "başlatın — bu panelin 'Min. plaka tanıma güveni' ayarından FARKLI "
+                    "bir eşiktir ve panelden değiştirilemez (bkz. anpr_engine.py). Eşiği "
+                    "düşürmek yetmiyorsa (BÜYÜK/net/tam karşıdan görünen bir plaka bile "
+                    "kaçıyorsa) asıl sorun eşik değil, dedektör modelinin giriş "
+                    "çözünürlüğü olabilir (şu an: %s) — geniş/uzak çekimlerde tüm kare "
+                    "küçük bir kareye sıkıştırıldığı için plaka fark edilmeyecek kadar "
+                    "küçülüyor olabilir; PTS_ANPR_DETECTOR_MODEL=yolo-v9-s-608-license-"
+                    "plate-end2end gibi daha yüksek çözünürlüklü bir modele geçmeyi "
+                    "deneyin (bkz. README.md, anpr_engine.py::DEDEKTOR_MODELI_BILGILERI).",
                     self.kamera_id, BOS_TESPIT_LOG_ARALIK_SN, self._bos_tespit_sayaci_son_logdan_beri,
-                    _etkin_esik, _esik_kaynagi,
+                    _etkin_esik, _esik_kaynagi, _etkin_model,
                 )
                 self._son_bos_tespit_log_zamani = _simdi_mono
                 self._bos_tespit_sayaci_son_logdan_beri = 0
