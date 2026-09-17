@@ -442,3 +442,114 @@ def test_dedektor_esigi_bilgisi_motor_olusturulunca_etkin_degeri_raporlar(tmp_pa
     assert "varsayılan" in bilgi["kaynak"]
     assert bilgi["model"] == "yolo-v9-t-384-license-plate-end2end"
     assert "varsayılan" in bilgi["model_kaynagi"]
+
+
+# ------------------------------------------------------------------
+# toplu_dogruluk_testi() — canlı sisteme dokunmadan, etiketli bir fotoğraf
+# klasörü üzerinde ANPR doğruluğunu ölçen araç (bkz. camera_reader.py'deki
+# fonksiyonun docstring'i; Dahua NVR'ın ANPR dışa aktarım adlandırmasıyla
+# ("ONEK_PLAKA.jpg" / "ONEK_PLAKA_plate.jpg") uyumlu).
+# ------------------------------------------------------------------
+
+class _SahteSiraliMotor:
+    """Her tahmin_et() çağrısında, önceden verilen sırayla bir sonraki canned
+    yanıtı döndürür. toplu_dogruluk_testi() dosyaları sorted(os.listdir(...))
+    sırasıyla işlediği için, test dosyalarını bu sıraya göre adlandırıp hangi
+    çağrının hangi dosyaya karşılık geldiğini önceden biliriz."""
+
+    def __init__(self, sirali_sonuclar):
+        self._sirali_sonuclar = list(sirali_sonuclar)
+        self._cagri_sayisi = 0
+
+    def tahmin_et(self, frame):
+        sonuc = self._sirali_sonuclar[self._cagri_sayisi]
+        self._cagri_sayisi += 1
+        return sonuc
+
+
+@pytest.fixture
+def sahte_sirali_motor(monkeypatch):
+    """sahte_engine'in aksine, motoru burada BİZ oluşturup doğrudan paylaşılan
+    singleton'a yerleştiriyoruz -- her dosya için FARKLI bir canned yanıt
+    vermemiz gerektiği için (gerçek/sahte ANPREngine hep AYNI yanıtı verir)."""
+    def _kur(sirali_sonuclar):
+        motor = _SahteSiraliMotor(sirali_sonuclar)
+        monkeypatch.setattr(camera_reader, "_paylasilan_motor", motor)
+        return motor
+    return _kur
+
+
+def test_toplu_dogruluk_testi_tum_sonuc_kategorilerini_dogru_sayar(tmp_path, sahte_sirali_motor):
+    kok = tmp_path / "etiketli_fotograflar"
+    kok.mkdir()
+    # Sıralama önemli: sorted(os.listdir(...)) ile eşleşsin diye 01.. öneki kullanıldı.
+    _ornek_gorsel_yaz(kok / "01_34ABC123.jpg")   # doğru okunacak
+    _ornek_gorsel_yaz(kok / "02_06AA22.jpg")     # yanlış okunacak (06AA23 dönecek)
+    _ornek_gorsel_yaz(kok / "03_35BC456.jpg")    # eşik altında kalacak
+    _ornek_gorsel_yaz(kok / "04_41CD789.jpg")    # dedektör hiç aday bulamayacak
+    _ornek_gorsel_yaz(kok / "05_Unlicensed.jpg")  # dosya adından geçerli plaka çıkarılamaz
+    _ornek_gorsel_yaz(kok / "06_34ABC123_plate.jpg")  # kırpılmış plaka görseli -- ATLANMALI
+
+    sahte_sirali_motor([
+        [_SahteSonuc("34ABC123", 0.90)],
+        [_SahteSonuc("06AA23", 0.90)],
+        [_SahteSonuc("35BC456", 0.20)],
+        [],
+    ])
+
+    sonuc = camera_reader.toplu_dogruluk_testi(str(kok))
+
+    assert sonuc["toplam"] == 5  # "_plate.jpg" dosyası toplama hiç katılmadı
+    assert sonuc["dogru"] == 1
+    assert sonuc["yanlis"] == 1
+    assert sonuc["esik_altinda"] == 1
+    assert sonuc["tespit_edilemedi"] == 1
+    assert sonuc["etiketlenemedi"] == 1
+    assert sonuc["dogruluk_orani"] == pytest.approx(1 / 4)  # 5 - 1 etiketlenemedi = 4 etiketli dosya
+
+    detay_sozlugu = {d["dosya"]: d for d in sonuc["detaylar"]}
+    assert detay_sozlugu["01_34ABC123.jpg"]["sonuc"] == "dogru"
+    assert detay_sozlugu["02_06AA22.jpg"]["sonuc"] == "yanlis"
+    assert detay_sozlugu["02_06AA22.jpg"]["okunan_plaka"] == "06 AA 23"
+    assert detay_sozlugu["03_35BC456.jpg"]["sonuc"] == "esik_altinda"
+    assert detay_sozlugu["04_41CD789.jpg"]["sonuc"] == "tespit_edilemedi"
+    assert detay_sozlugu["05_Unlicensed.jpg"]["sonuc"] == "etiketlenemedi"
+    assert "06_34ABC123_plate.jpg" not in detay_sozlugu
+
+
+def test_toplu_dogruluk_testi_min_guven_skoru_parametresi_esigi_degistirir(tmp_path, sahte_sirali_motor):
+    """Aynı okuma (güven=0.20), varsayılan eşikte (0.4) 'esik_altinda' sayılırken,
+    daha düşük bir min_guven_skoru ile çağrıldığında 'dogru' sayılmalı -- bu,
+    kullanıcının farklı eşik değerlerini canlı sisteme dokunmadan karşılaştırmasını
+    sağlayan tam olarak bu parametredir."""
+    kok = tmp_path / "etiketli_fotograflar"
+    kok.mkdir()
+    _ornek_gorsel_yaz(kok / "01_34ABC123.jpg")
+
+    sahte_sirali_motor([[_SahteSonuc("34ABC123", 0.20)]])
+    varsayilan_sonuc = camera_reader.toplu_dogruluk_testi(str(kok))
+    assert varsayilan_sonuc["esik_altinda"] == 1
+    assert varsayilan_sonuc["dogru"] == 0
+
+    sahte_sirali_motor([[_SahteSonuc("34ABC123", 0.20)]])
+    dusuk_esikli_sonuc = camera_reader.toplu_dogruluk_testi(str(kok), min_guven_skoru=0.1)
+    assert dusuk_esikli_sonuc["dogru"] == 1
+    assert dusuk_esikli_sonuc["esik_altinda"] == 0
+
+
+def test_toplu_dogruluk_testi_kontrast_iyilestir_parametresi_hatasiz_calisir(tmp_path, sahte_sirali_motor):
+    """kontrast_iyilestir=True verildiğinde dedektöre CLAHE uygulanmış kare
+    gitmeli ve akış hatasız tamamlanmalı (motor sahte olduğu için gerçek
+    piksel farkı doğrulanmaz, yalnızca uçtan uca çalıştığı doğrulanır)."""
+    kok = tmp_path / "etiketli_fotograflar"
+    kok.mkdir()
+    _ornek_gorsel_yaz(kok / "01_34ABC123.jpg")
+
+    sahte_sirali_motor([[_SahteSonuc("34ABC123", 0.90)]])
+    sonuc = camera_reader.toplu_dogruluk_testi(str(kok), kontrast_iyilestir=True)
+    assert sonuc["dogru"] == 1
+
+
+def test_toplu_dogruluk_testi_olmayan_klasor_hata_verir(sahte_engine):
+    with pytest.raises(ValueError):
+        camera_reader.toplu_dogruluk_testi("/var/olmayan/bir/klasor/kesinlikle")

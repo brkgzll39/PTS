@@ -289,3 +289,13 @@ class BariyerAyarlariGuncelle(BaseModel):
     http_govde: Optional[str] = None
     gpio_pin: Optional[int] = None
     aktif: Optional[bool] = None
+
+
+class DogrulukTestiIstegi(BaseModel):
+    """/sistem/dogruluk-testi isteği — bkz. camera_reader.py::toplu_dogruluk_testi.
+    Yalnızca sunucudaki (kamerayı çalıştıran bilgisayardaki) bir klasör yoluna
+    işaret eder; dosya YÜKLEMESİ değildir (fotoğraflar zaten Dahua NVR'dan
+    dışa aktarılıp bir klasöre konmuş olmalı)."""
+    klasor: str
+    min_guven_skoru: Optional[float] = None
+    kontrast_iyilestir: bool = False

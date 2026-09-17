@@ -2194,6 +2194,44 @@ def _anpr_dedektor_esigi_bilgisi_al() -> Optional[dict]:
         return None
 
 
+@app.post("/sistem/dogruluk-testi")
+async def dogruluk_testi_calistir(
+    istek: schemas.DogrulukTestiIstegi,
+    kullanici: models.Kullanici = Depends(_giris_gerekli),
+):
+    """Etiketli bir fotoğraf klasörü (bkz. camera_reader.py::toplu_dogruluk_testi
+    docstring'i — Dahua NVR'ın ANPR dışa aktarım adlandırmasıyla uyumlu:
+    "ONEK_PLAKA.jpg") üzerinde ANPR doğruluğunu ölçer. CANLI SİSTEME HİÇBİR
+    YAN ETKİSİ YOKTUR (kayıt oluşturmaz, veritabanına dokunmaz) — farklı
+    PTS_ANPR_DETECTOR_ESIGI / PTS_ANPR_DETECTOR_MODEL / kontrast ayarlarını,
+    üretimi hiç etkilemeden, GERÇEK geçmiş fotoğraflarla karşılaştırmak için
+    kullanılır. Yönetici/operatör ile sınırlıdır: sunucudaki dosya sistemini
+    okuyan bir işlem olduğu için izleyici rolüne açılmamıştır.
+
+    ONNX çıkarımı CPU'yu bloke eden senkron bir işlemdir; event loop'u
+    kilitlememek için run_in_executor ile ayrı bir thread'de çalıştırılır
+    (bkz. bu dosyadaki diğer run_in_executor kullanımları)."""
+    _rol_dogrula(kullanici, ROL_YONETICI, ROL_OPERATOR)
+    if not _CAM_LIBS:
+        raise HTTPException(400, "Kamera/ANPR kütüphaneleri kurulu değil.")
+    try:
+        from backend.camera_reader import (
+            toplu_dogruluk_testi as _testi_calistir,
+            VARSAYILAN_MIN_GUVEN_SKORU as _varsayilan_esik,
+        )
+        sonuc = await asyncio.get_event_loop().run_in_executor(
+            None,
+            lambda: _testi_calistir(
+                istek.klasor,
+                min_guven_skoru=istek.min_guven_skoru if istek.min_guven_skoru is not None else _varsayilan_esik,
+                kontrast_iyilestir=istek.kontrast_iyilestir,
+            ),
+        )
+    except (ValueError, RuntimeError) as exc:
+        raise HTTPException(400, str(exc)) from exc
+    return sonuc
+
+
 _RTSP_KIMLIK_MASKELE_DESENI = re.compile(r"(rtsp://)([^/@\s:]+):([^/@\s]+)@")
 
 

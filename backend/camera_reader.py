@@ -1028,3 +1028,115 @@ def tek_gorsel_test(gorsel_yolu: str, api_url: str = "http://localhost:8000/kayi
     else:
         print("Görselde geçerli formatta bir plaka tespit edilemedi.")
     return gonderilenler
+
+
+def toplu_dogruluk_testi(klasor: str, min_guven_skoru: float = VARSAYILAN_MIN_GUVEN_SKORU,
+                          kontrast_iyilestir: bool = False) -> dict:
+    """Etiketli bir fotoğraf klasörü üzerinde ANPR motorunun doğruluğunu ÖLÇER.
+
+    CANLI SİSTEME HİÇBİR YAN ETKİSİ YOKTUR: API'ye kayıt POST ETMEZ,
+    veritabanına dokunmaz, oturum/konsensüs mantığını çalıştırmaz -- yalnızca
+    motor.tahmin_et() ile doğrudan çıkarım yapar (bkz. _kareyi_isle'nin aksine
+    burada API çağrısı YOK). Bu yüzden PTS_ANPR_DETECTOR_ESIGI,
+    PTS_ANPR_DETECTOR_MODEL veya bu fonksiyonun kendi min_guven_skoru/
+    kontrast_iyilestir parametrelerini üretim sistemini hiç etkilemeden,
+    GERÇEK geçmiş fotoğraflar üzerinde sayısal olarak karşılaştırmak için
+    kullanılabilir (örn. "eşiği 0.25 yapınca kaç tanesi artık doğru okunuyor?").
+
+    Klasördeki dosyalar Dahua NVR'ın ANPR olay listesinden dışa aktarılan
+    fotoğraflarla AYNI adlandırma biçiminde olmalı: "ONEK_PLAKA.jpg" (örn.
+    "20260917130536_34MRU796.jpg" -- dosya adının SON "_" ile ayrılmış parçası
+    gerçek/etiketli plaka olarak okunur). Aynı klasörde bulunabilecek
+    "..._plate.jpg" kırpılmış plaka görselleri OTOMATİK ATLANIR: bunlar
+    dedektörün asıl işini (geniş bir sahnenin İÇİNDE plakayı BULMASINI) test
+    etmez, çünkü plaka zaten kırpılmış görselin neredeyse tamamını kaplar --
+    bu tam olarak PTS'nin sahada yaşadığı sorun (plaka insan gözüne büyük
+    görünse de, kameranın TÜM sahnesi küçük bir kareye sıkıştırıldığında
+    dedektöre görünmez hale gelmesi) değildir. Dosya adından geçerli bir Türk
+    plaka formatı çıkarılamazsa (örn. "..._Unlicensed.jpg") o dosya
+    "etiketlenemedi" sayılır ve doğruluk oranına hiç katılmaz.
+
+    Döndürülen sözlük:
+      toplam, dogru, yanlis, esik_altinda, tespit_edilemedi, etiketlenemedi,
+      dogruluk_orani (yalnızca ETİKETLİ dosyalar üzerinden: dogru / (toplam -
+      etiketlenemedi); etiketli hiç dosya yoksa None), detaylar (her dosya
+      için {"dosya", "gercek_plaka", "sonuc", "okunan_plaka", "guven"}).
+    """
+    if not KUTUPHANELER_MEVCUT:
+        raise RuntimeError(
+            "Gerekli kütüphaneler kurulu değil. "
+            "Kurulum: pip install \"fast-alpr[onnx]\" opencv-python"
+        )
+    if not os.path.isdir(klasor):
+        raise ValueError(f"Klasör bulunamadı: {klasor}")
+
+    motor = _paylasilan_motoru_al()
+    sayaclar = {"dogru": 0, "yanlis": 0, "esik_altinda": 0, "tespit_edilemedi": 0, "etiketlenemedi": 0}
+    detaylar: list[dict] = []
+
+    dosyalar = sorted(
+        ad for ad in os.listdir(klasor)
+        if ad.lower().endswith(KlasorIzleyici.DESTEKLENEN_UZANTILAR)
+        and not os.path.splitext(ad)[0].lower().endswith("_plate")
+    )
+
+    for dosya in dosyalar:
+        govde = os.path.splitext(dosya)[0]
+        ham_plaka = govde.rsplit("_", 1)[-1] if "_" in govde else govde
+        gercek_plaka = plaka_dogrula(ham_plaka)
+        if gercek_plaka is None:
+            sayaclar["etiketlenemedi"] += 1
+            detaylar.append({
+                "dosya": dosya, "gercek_plaka": None, "sonuc": "etiketlenemedi",
+                "okunan_plaka": None, "guven": None,
+            })
+            continue
+
+        frame = cv2.imread(os.path.join(klasor, dosya))
+        if frame is None:
+            sayaclar["tespit_edilemedi"] += 1
+            detaylar.append({
+                "dosya": dosya, "gercek_plaka": gercek_plaka, "sonuc": "tespit_edilemedi",
+                "okunan_plaka": None, "guven": None, "not": "görsel okunamadı (bozuk dosya?)",
+            })
+            continue
+
+        dedektore_giden = _kontrast_iyilestirmesi_uygula(frame) if kontrast_iyilestir else frame
+        with _motor_cagri_kilit:
+            tespitler = motor.tahmin_et(dedektore_giden)
+
+        if not tespitler:
+            sayaclar["tespit_edilemedi"] += 1
+            detaylar.append({
+                "dosya": dosya, "gercek_plaka": gercek_plaka, "sonuc": "tespit_edilemedi",
+                "okunan_plaka": None, "guven": None,
+            })
+            continue
+
+        # Birden fazla aday varsa en yüksek güvenli olanı al -- canlı sistemdeki
+        # PlakaOturumTakipcisi çok kareli oy birleştirmesinin tek-kare hali;
+        # burada zaman içinde birikim yapılmadığı için oylamaya gerek yok.
+        en_iyi = max(tespitler, key=lambda t: t.guven_skoru)
+        okunan_plaka = plaka_dogrula(en_iyi.plaka_no)
+
+        if en_iyi.guven_skoru < min_guven_skoru:
+            sonuc = "esik_altinda"
+        elif okunan_plaka == gercek_plaka:
+            sonuc = "dogru"
+        else:
+            sonuc = "yanlis"
+        sayaclar[sonuc] += 1
+        detaylar.append({
+            "dosya": dosya, "gercek_plaka": gercek_plaka, "sonuc": sonuc,
+            "okunan_plaka": okunan_plaka or en_iyi.plaka_no, "guven": round(en_iyi.guven_skoru, 3),
+        })
+
+    etiketli_toplam = len(dosyalar) - sayaclar["etiketlenemedi"]
+    dogruluk_orani = round(sayaclar["dogru"] / etiketli_toplam, 3) if etiketli_toplam else None
+
+    return {
+        "toplam": len(dosyalar),
+        **sayaclar,
+        "dogruluk_orani": dogruluk_orani,
+        "detaylar": detaylar,
+    }

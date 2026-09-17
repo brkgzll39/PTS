@@ -680,3 +680,58 @@ def test_anpr_dedektor_esigi_motor_olusunca_fiili_deger_raporlanir(client, izley
         "model": "yolo-v9-s-608-license-plate-end2end",
         "model_kaynagi": "PTS_ANPR_DETECTOR_MODEL ortam değişkeni",
     }
+
+
+def test_dogruluk_testi_izleyici_erisemez(client, izleyici_header):
+    """Sunucudaki dosya sistemini okuyan bir işlem olduğu için izleyici
+    rolüne açık değil -- bkz. main.py::dogruluk_testi_calistir."""
+    r = client.post("/sistem/dogruluk-testi", json={"klasor": "/tmp/herhangi"}, headers=izleyici_header)
+    assert r.status_code == 403
+
+
+def test_dogruluk_testi_kutuphane_yoksa_400_doner(client, operator_header, monkeypatch):
+    monkeypatch.setattr(pts_main, "_CAM_LIBS", False)
+    r = client.post("/sistem/dogruluk-testi", json={"klasor": "/tmp/herhangi"}, headers=operator_header)
+    assert r.status_code == 400
+
+
+def test_dogruluk_testi_operator_calistirabilir_ve_sonucu_doner(client, operator_header, monkeypatch):
+    """toplu_dogruluk_testi() gerçekten çağrılıyor mu, verilen parametreler
+    (klasor/min_guven_skoru/kontrast_iyilestir) doğru iletiliyor mu ve
+    dönen sonuç istemciye olduğu gibi ulaşıyor mu -- bunu doğrular."""
+    monkeypatch.setattr(pts_main, "_CAM_LIBS", True)
+
+    cagrilar = []
+
+    def _sahte_test(klasor, min_guven_skoru, kontrast_iyilestir):
+        cagrilar.append((klasor, min_guven_skoru, kontrast_iyilestir))
+        return {
+            "toplam": 2, "dogru": 1, "yanlis": 0, "esik_altinda": 0,
+            "tespit_edilemedi": 1, "etiketlenemedi": 0, "dogruluk_orani": 0.5,
+            "detaylar": [],
+        }
+
+    from backend import camera_reader as cr
+    monkeypatch.setattr(cr, "toplu_dogruluk_testi", _sahte_test)
+
+    r = client.post(
+        "/sistem/dogruluk-testi",
+        json={"klasor": "/tmp/etiketli-fotograflar", "min_guven_skoru": 0.25, "kontrast_iyilestir": True},
+        headers=operator_header,
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["dogruluk_orani"] == 0.5
+    assert cagrilar == [("/tmp/etiketli-fotograflar", 0.25, True)]
+
+
+def test_dogruluk_testi_klasor_bulunamazsa_400_doner(client, operator_header, monkeypatch):
+    monkeypatch.setattr(pts_main, "_CAM_LIBS", True)
+
+    def _hata_firlat(klasor, min_guven_skoru, kontrast_iyilestir):
+        raise ValueError(f"Klasör bulunamadı: {klasor}")
+
+    from backend import camera_reader as cr
+    monkeypatch.setattr(cr, "toplu_dogruluk_testi", _hata_firlat)
+
+    r = client.post("/sistem/dogruluk-testi", json={"klasor": "/olmayan"}, headers=operator_header)
+    assert r.status_code == 400

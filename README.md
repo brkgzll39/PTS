@@ -817,6 +817,46 @@ seçilebilir hale getirmeyi tercih ettik — bu hem çok daha az risklidir
 (yeni bağımlılık, lisans, bakım yükü yok) hem de sorunun kök nedenine
 (çözünürlük) doğrudan hitap eder.
 
+**2026-09-17 (devam) — sahadaki gerçek fotoğraflarla doğrulama:** Kullanıcının
+paylaştığı, Dahua NVR'ın kendi ANPR'ının BAŞARIYLA okuduğu 7 aracın hem tam kare
+(2688x1584px) hem de kırpılmış plaka (ör. 272x112px) görselleri üzerinde ölçüldü:
+tam kare `-384-` modele küçültüldüğünde plaka yaklaşık **34-48x14-16px**'e
+düşüyor (bazı araçlarda 16x9px kadar küçük) — bir "tiny" YOLO modeli için
+gerçekten zorlayıcı bir boyut. Aynı plakalar `-608-` modelde yaklaşık
+**54-76x22-25px**'e (yaklaşık %60 daha büyük) çıkıyor. Bu, README'nin
+yukarısındaki tavsiyeyi (yolo-v9-s-608'e geçiş) somut verilerle doğruluyor.
+
+## Toplu Doğruluk Testi (Canlı Sisteme Dokunmadan Eşik/Model Karşılaştırma)
+
+Farklı `PTS_ANPR_DETECTOR_ESIGI` / `PTS_ANPR_DETECTOR_MODEL` / kontrast
+ayarlarının GERÇEK doğruluk üzerindeki etkisini, canlı sisteme hiçbir kayıt
+atmadan, sayısal olarak ölçmek için `POST /sistem/dogruluk-testi` uç noktası
+eklendi (yönetici/operatör; panelde Sistem sekmesinde "Toplu Doğruluk Testi"
+kartı olarak da mevcuttur).
+
+Kullanım: Dahua NVR'ın ANPR olay listesinden (Aramak/ANPR ekranı) geçmiş
+geçişleri "ONEK_PLAKA.jpg" adlandırmasıyla dışa aktarıp bir klasöre koyun
+(örn. `C:\pts-test-fotograflari\20260917130536_34MRU796.jpg`) — bu, kaçırılan
+geçişleri Dahua'nın kendi ANPR'ı zaten doğru okuduğu için mükemmel bir
+"etiketli test seti" oluşturur. Klasördeki `..._plate.jpg` (kırpılmış plaka)
+görselleri otomatik atlanır (dedektörün asıl işini test etmezler); dosya
+adından geçerli bir Türk plaka formatı çıkarılamayan dosyalar (`Unlicensed`
+gibi) "etiketlenemedi" sayılır ve doğruluk oranına katılmaz.
+
+```
+POST /sistem/dogruluk-testi
+{"klasor": "C:\\pts-test-fotograflari", "min_guven_skoru": 0.25, "kontrast_iyilestir": false}
+```
+
+Yanıt: `toplam, dogru, yanlis, esik_altinda, tespit_edilemedi, etiketlenemedi,
+dogruluk_orani, detaylar` (her dosya için gerçek/okunan plaka, güven skoru ve
+sonuç kategorisi). `min_guven_skoru` verilmezse panelin mevcut "Min. plaka
+tanıma güveni" ayarı kullanılır. Bu araç `motor.tahmin_et()`'i DOĞRUDAN
+çağırır (`_kareyi_isle`'nin API POST/oturum mantığını hiç çalıştırmaz) —
+yani `PTS_ANPR_DETECTOR_ESIGI`/`PTS_ANPR_DETECTOR_MODEL` ortam değişkenlerini
+her denemede değiştirip uygulamayı yeniden başlatarak, AYNI fotoğraf klasörü
+üzerinde doğruluk oranının nasıl değiştiğini karşılaştırabilirsiniz.
+
 ## Otomatik Görüntü/Kayıt Saklama
 
 Daha önce eski geçiş görüntülerini temizlemenin tek yolu `/sistem/goruntu-temizle`

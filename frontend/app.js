@@ -1396,6 +1396,62 @@ async function loglariYukle() {
   } catch (e) { console.error(e); }
 }
 
+// Toplu doğruluk testi (bkz. camera_reader.py::toplu_dogruluk_testi,
+// main.py::/sistem/dogruluk-testi) — canlı sisteme hiç dokunmadan, etiketli
+// bir fotoğraf klasörü üzerinde farklı eşik/model/kontrast ayarlarının
+// GERÇEK doğruluk oranını karşılaştırmak için kullanılır.
+async function dogrulukTestiCalistir(olay) {
+  olay.preventDefault();
+  const buton = document.getElementById("dogrulukTestiButon");
+  const sonucEl = document.getElementById("dogrulukTestiSonuc");
+  const klasor = document.getElementById("dogrulukTestiKlasor").value.trim();
+  const esikHam = document.getElementById("dogrulukTestiEsik").value.trim();
+  const kontrast = document.getElementById("dogrulukTestiKontrast").checked;
+  if (!klasor) return;
+
+  buton.disabled = true;
+  buton.innerHTML = '<span class="spinner-border spinner-border-sm"></span> Çalışıyor…';
+  sonucEl.innerHTML = '<div class="text-muted small">Fotoğraflar işleniyor, klasör büyükse biraz sürebilir…</div>';
+  try {
+    const govde = { klasor, kontrast_iyilestir: kontrast };
+    if (esikHam) govde.min_guven_skoru = parseFloat(esikHam.replace(",", "."));
+    const r = await apiCagir("/sistem/dogruluk-testi", {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(govde),
+    });
+    const oranYuzde = r.dogruluk_orani != null ? `%${(r.dogruluk_orani * 100).toFixed(1)}` : "—";
+    const detaySatirlari = r.detaylar.map(d => {
+      const rozetRenk = { dogru: "success", yanlis: "danger", esik_altinda: "warning", tespit_edilemedi: "secondary", etiketlenemedi: "light" }[d.sonuc] || "secondary";
+      return `<tr>
+        <td class="small">${escapeHtml(d.dosya)}</td>
+        <td class="small">${escapeHtml(d.gercek_plaka || "—")}</td>
+        <td class="small">${escapeHtml(d.okunan_plaka || "—")}</td>
+        <td class="small">${d.guven != null ? d.guven.toFixed(2) : "—"}</td>
+        <td><span class="badge bg-${rozetRenk} text-${rozetRenk === "light" ? "dark" : "white"}">${escapeHtml(d.sonuc)}</span></td>
+      </tr>`;
+    }).join("");
+    sonucEl.innerHTML = `
+      <div class="alert alert-info py-2 px-3 mb-2">
+        <strong>Doğruluk oranı: ${oranYuzde}</strong>
+        (${r.dogru}/${r.toplam - r.etiketlenemedi} etiketli dosya doğru okundu)
+      </div>
+      <div class="small text-muted mb-2">
+        Doğru: ${r.dogru} · Yanlış: ${r.yanlis} · Eşik altında: ${r.esik_altinda} ·
+        Tespit edilemedi: ${r.tespit_edilemedi} · Etiketlenemedi: ${r.etiketlenemedi}
+      </div>
+      <div class="table-responsive" style="max-height:320px;overflow-y:auto">
+        <table class="table table-sm table-borderless mb-0">
+          <thead><tr><th class="small">Dosya</th><th class="small">Gerçek</th><th class="small">Okunan</th><th class="small">Güven</th><th class="small">Sonuç</th></tr></thead>
+          <tbody>${detaySatirlari}</tbody>
+        </table>
+      </div>`;
+  } catch (err) {
+    sonucEl.innerHTML = `<div class="alert alert-danger py-2 px-3 small mb-0">${escapeHtml(err.message)}</div>`;
+  } finally {
+    buton.disabled = false;
+    buton.innerHTML = '<i class="bi bi-play-fill"></i> Testi Çalıştır';
+  }
+}
+
 // Sistem sekmesi açıldığında logları ve sağlık bilgisini otomatik yükle
 document.querySelector('[data-bs-target="#sistem-sekme"]')?.addEventListener("click", () => {
   sistemSagliginiYukle(); loglariYukle(); sistemAyarlariYukle(); diskBilgisiYukle();
