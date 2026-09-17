@@ -117,6 +117,7 @@ def _veritabani_migrasyon() -> None:
         f"ALTER TABLE plaka_kayitlari ADD {col_kw}ham_plaka_metni VARCHAR(20)",
         f"ALTER TABLE noktalar ADD {col_kw}kamera_id VARCHAR(64)",
         f"ALTER TABLE noktalar ADD {col_kw}bariyer_id INTEGER",
+        f"ALTER TABLE plaka_kayitlari ADD {col_kw}dogrulama_kare_sayisi INTEGER",
     ]
     with engine.connect() as conn:
         for sql in adimlar:
@@ -1472,7 +1473,8 @@ def _bilinen_plakaya_yakinlik_duzelt(db: Session, ham_plaka: str, guven_skoru: O
 
 
 def _kayit_olustur_ve_bildir(db: Session, plaka_no: str, kamera_id: str, yon: str,
-                              guven_skoru: Optional[float], goruntu_yolu: Optional[str]):
+                              guven_skoru: Optional[float], goruntu_yolu: Optional[str],
+                              dogrulama_kare_sayisi: Optional[int] = None):
     plaka_no = re.sub(r"[^A-Za-z0-9 ]", "", plaka_no).strip().upper() or "BILINMEYEN"
     kamera_id = re.sub(r"[^A-Za-z0-9 _.\-]", "", str(kamera_id)).strip()[:50] or "KAMERA-1"
 
@@ -1496,6 +1498,7 @@ def _kayit_olustur_ve_bildir(db: Session, plaka_no: str, kamera_id: str, yon: st
         yetki_durumu=yetki,
         kisi_id=kisi_id,
         kisi_tip_anlik=kisi_tip,
+        dogrulama_kare_sayisi=dogrulama_kare_sayisi,
     )
     db.add(kayit)
     db.commit()
@@ -1637,6 +1640,7 @@ async def kayit_ekle_otomatik(
     kamera_id: str = Form("KAMERA-1"),
     yon: str = Form("giris"),
     guven_skoru: Optional[float] = Form(None),
+    dogrulama_kare_sayisi: Optional[int] = Form(None),
     gorsel: Optional[UploadFile] = File(None),
     x_pts_kamera_anahtari: Optional[str] = Header(None),
     db: Session = Depends(get_db),
@@ -1685,7 +1689,7 @@ async def kayit_ekle_otomatik(
                 f"Görsel {MAKS_GORSEL_BOYUTU_BAYT // (1024 * 1024)} MB sınırını aşıyor",
             )
 
-    return _kayit_olustur_ve_bildir(db, plaka_no, kamera_id, yon, guven_skoru, goruntu_yolu)
+    return _kayit_olustur_ve_bildir(db, plaka_no, kamera_id, yon, guven_skoru, goruntu_yolu, dogrulama_kare_sayisi)
 
 
 @app.get("/kayitlar", response_model=List[schemas.KayitCevap])

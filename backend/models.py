@@ -108,6 +108,13 @@ class Kayit(Base):
     yetki_durumu = Column(String(20), default="bilinmiyor")  # yetkili | yetkisiz | suresi_dolmus | kara_liste
     kisi_id = Column(Integer, ForeignKey("kisiler.id"), nullable=True)
     kisi_tip_anlik = Column(String(20), nullable=True)
+    # Bu okumanın kaç FARKLI KAREDE tekrarlanıp oy aldığı (bkz.
+    # camera_reader.py::PlakaOyBirikimi.toplam_kare_sayisi) -- kamera
+    # pipeline'ından gelmeyen kayıtlarda (manuel giriş, eski kayıtlar) None
+    # kalır. 1 ise bu okuma başka HİÇBİR karede doğrulanmadan tek başına
+    # kesinleşmiş demektir (yanlış okuma riski daha yüksek); panelde bu
+    # kayıtlar ayrıca işaretlenir (bkz. README.md'deki 2026-09-17 notu).
+    dogrulama_kare_sayisi = Column(Integer, nullable=True)
     olusturma_tarihi = Column(DateTime, default=datetime.now)
 
     kisi = relationship("Kisi", back_populates="kayitlar")

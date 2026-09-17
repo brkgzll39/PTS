@@ -191,6 +191,11 @@ body {
 .badge-personel { background-color: #7c3aed; }
 .badge-ziyaretci { background-color: #0891b2; }
 
+/* Kayıtlar tablosundaki "Doğrulama" sütunu: bu okumanın kaç farklı karede
+   tekrarlanıp doğrulandığını gösterir (bkz. app.js::dogrulamaRozeti). */
+.badge-dogrulama-zayif { background-color: #d97706; }
+.badge-dogrulama-guclu { background-color: #16a34a; }
+
 /* Alarm satırı */
 .alarm-row { background: #fff8f0; border-left: 3px solid #e0833d; }
 

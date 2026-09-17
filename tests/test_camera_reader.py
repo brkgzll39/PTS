@@ -199,6 +199,23 @@ def test_ayni_plakanin_tekrarlanan_okumalari_tek_oturumda_birlesir():
     assert bitmis[0]["plaka"] == "34 ABC 123"
     assert bitmis[0]["farkli_okuma_sayisi"] == 1
     assert bitmis[0]["guven"] == 0.90  # görülen en yüksek güven
+    # farkli_okuma_sayisi (metin VARYANT sayısı) 1 olsa bile, bu okuma
+    # aslında 3 AYRI karede tekrarlanıp doğrulandı -- bunu panelde ayırt
+    # edebilmek için toplam_kare_sayisi AYRICA tutulur (bkz. 2026-09-17 notu).
+    assert bitmis[0]["toplam_kare_sayisi"] == 3
+
+
+def test_tek_karede_gorulen_okuma_toplam_kare_sayisi_bir_olur():
+    """KÖK NEDEN: panelde kafa karıştıran vakanın regresyon testi -- bir araç
+    sadece TEK bir karede (örn. "39 SU 877" yerine yanlışlıkla "04 SD 377"
+    olarak) okunup başka hiçbir karede doğrulanmadan oturum kapanırsa,
+    toplam_kare_sayisi 1 olmalı ki panel bunu diğer (birden çok karede
+    doğrulanmış) kayıtlardan ayırt edip işaretleyebilsin."""
+    t = camera_reader.PlakaOturumTakipcisi(oturum_kapanma_sn=1.0)
+    t.guncelle("04 SD 377", 0.86, simdi=0.0)
+    bitmis = t.bitmis_oturumlari_al(simdi=2.0)
+    assert len(bitmis) == 1
+    assert bitmis[0]["toplam_kare_sayisi"] == 1
 
 
 def test_farkli_okumalarin_oydasmasiyla_cogunluk_kazanir():
@@ -216,6 +233,9 @@ def test_farkli_okumalarin_oydasmasiyla_cogunluk_kazanir():
     kazanan = bitmis[0]
     assert kazanan["plaka"] == "34 ABC 123", "Çoğunluk oyu (2/3) yerine azınlık kazandı"
     assert kazanan["farkli_okuma_sayisi"] == 2
+    # 3 okuma yapıldı (2 farklı metin varyantına dağılsa da) -- toplam_kare_sayisi
+    # bunu doğru yansıtmalı, farkli_okuma_sayisi (2) ile karıştırılmamalı.
+    assert kazanan["toplam_kare_sayisi"] == 3
 
 
 def test_farkli_araclarin_oturumlari_karismaz():
@@ -267,6 +287,37 @@ def test_dusuk_guvenli_okuma_pipeline_isleyisinde_oya_hic_girmez(sahte_engine):
     gonderilenler = pipeline._kareyi_isle(kare, oturumu_hemen_kapat=True)
     assert gonderilenler == [], "0.5 güvenli okuma, 0.9 eşiğinin altında olmasına rağmen gönderildi"
     assert pipeline._oturum_takipcisi.acik_oturum_sayisi() == 0
+
+
+def test_kayit_api_istegine_dogrulama_kare_sayisi_eklenir(monkeypatch, sahte_engine):
+    """KÖK NEDEN regresyonu: panelin 'tek karede görülüp başka hiçbir karede
+    doğrulanmadı' okumalarını (bkz. README.md'deki 2026-09-17 notu ve
+    "39 SU 877"nin tek bir karede "04 SD 377" olarak yanlış okunup öylece
+    kaydolduğu vaka) ayırt edebilmesi için, API'ye gönderilen istekte bu
+    okumanın kaç farklı karede oy aldığı da (dogrulama_kare_sayisi) yer
+    almalı -- önceden bu bilgi hiç gönderilmiyordu."""
+    import numpy as np
+
+    yakalanan = {}
+
+    def sahte_post(url, data=None, files=None, headers=None, timeout=None):
+        yakalanan["data"] = data
+
+        class _Yanit:
+            status_code = 200
+
+        return _Yanit()
+
+    monkeypatch.setattr(camera_reader.requests, "post", sahte_post)
+
+    pipeline = camera_reader.KameraPipeline(
+        video_kaynagi="kullanilmiyor.mp4", kamera_id="TEST-DOGRULAMA",
+    )
+    kare = np.full((100, 100, 3), 128, dtype=np.uint8)
+    gonderilenler = pipeline._kareyi_isle(kare, oturumu_hemen_kapat=True)
+
+    assert gonderilenler == ["34 ABC 123"]
+    assert yakalanan["data"]["dogrulama_kare_sayisi"] == 1
 
 
 class _BosSonucDondurenEngine:

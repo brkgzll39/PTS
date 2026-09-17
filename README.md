@@ -285,6 +285,38 @@ Her ikisi de Sistem Ayarları panelinden ayarlanabilir (`min_tanima_guveni`,
 kapsamlı testleri var (eşleşen/eşleşmeyen okumalar, belirsizlik durumu,
 eşik altı okumaların elenmesi, vb.).
 
+**Kayıtlar panelinde "Doğrulama" sütunu (2026-09-17):** Kök neden düzeltmesi
+sonrası (bkz. yukarıdaki Toplu Doğruluk Testi bölümündeki not) sistem artık
+gerçekten plaka tespit etmeye başlayınca, sahada şu kafa karıştırıcı durum
+gözlemlendi: bir araç doğru okunup ("39 SU 877") kaydolduktan hemen sonra,
+AYNI aracın bir başka karesinde OCR yanlış okuyup ("04 SD 377", %86 güven)
+bunun da AYRI bir kayıt olarak panele düşmesi — çünkü metin farkı oturum
+birleştirme eşiğinden (Levenshtein ≤2) büyük olduğu için ayrı bir "oturum"
+sayılıyor ve tek bir okumayla (başka hiçbir kare doğrulamadan) doğrudan
+kesinleşiyor. Bu YANLIŞ bir tespit değil (dedektör/OCR görevini yapıyor),
+ama panelde iki farklı plaka görünmesi operatörün kafasını karıştırıyor.
+
+Kaydı sessizce SİLMEK yerine (bu, nadir de olsa gerçekten TEK bir karede
+görünüp geçen bir aracın kaydını da yok edebilir — güvenlik açısından kabul
+edilemez), her kayda artık kaç FARKLI karede tekrarlanıp doğrulandığı bilgisi
+eklendi: `PlakaOyBirikimi.toplam_kare_sayisi` (kamera pipeline'ından API'ye
+`dogrulama_kare_sayisi` alanıyla gönderilir, `plaka_kayitlari` tablosunda
+saklanır). Kayıtlar tablosunda yeni bir "Doğrulama" sütunu bunu gösterir:
+
+- **⚠ 1 kare** (turuncu): bu okuma yalnızca TEK bir karede yapıldı, başka
+  hiçbir karede doğrulanmadı — yanlış okuma ihtimali daha yüksektir,
+  operatör bu kayda dikkatli yaklaşmalı.
+- **✓ N kare** (yeşil, N≥2): N farklı karenin oydaşmasıyla kesinleşti — daha
+  güvenilir.
+- **-**: kamera pipeline'ından gelmeyen kayıt (manuel giriş veya bu özellik
+  eklenmeden önceki eski kayıtlar) — uygulanamaz.
+
+Hiçbir kayıt gizlenmez/silinmez; operatör panelde ikisini de görüp kendi
+değerlendirmesini yapabilir. `tests/test_camera_reader.py` içinde hem
+`toplam_kare_sayisi`in doğru sayıldığını (tek okuma, tekrarlanan okuma, farklı
+varyantların oydaşması) hem bu değerin API isteğine gerçekten eklendiğini
+doğrulayan regresyon testleri var.
+
 ## Kamera Bağlantı Güvenilirliği
 
 Bu bölüm, kamera bağlantılarının/araç geçişi görüntülerinin donmaması için yapılan

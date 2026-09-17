@@ -252,6 +252,7 @@ class KayitCevap(BaseModel):
     yetki_durumu: str
     kisi_id: Optional[int] = None
     kisi_tip_anlik: Optional[str] = None
+    dogrulama_kare_sayisi: Optional[int] = None
 
     model_config = ConfigDict(from_attributes=True)
 

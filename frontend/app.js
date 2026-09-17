@@ -159,6 +159,21 @@ function tipRozeti(tip) {
   return `<span class="badge badge-${tip}">${etiketler[tip] || escapeHtml(tip)}</span>`;
 }
 
+// Bu okumanın kaç farklı karede tekrarlanıp oy aldığını gösterir (bkz.
+// backend/camera_reader.py::PlakaOyBirikimi.toplam_kare_sayisi ve
+// README.md'deki 2026-09-17 notu). null/undefined: kamera pipeline'ından
+// gelmeyen (manuel giriş, eski) kayıt -- uygulanamaz. 1: bu okuma başka
+// HİÇBİR karede doğrulanmadan tek başına kesinleşmiş -- yanlış okuma riski
+// daha yüksek, operatör dikkat etsin diye ayrıca işaretlenir. >=2: birden
+// fazla karenin oydaşmasıyla kesinleşmiş, daha güvenilir.
+function dogrulamaRozeti(kareSayisi) {
+  if (kareSayisi === null || kareSayisi === undefined) return '<span class="text-muted small">-</span>';
+  if (kareSayisi <= 1) {
+    return `<span class="badge badge-dogrulama-zayif" title="Bu okuma yalnızca TEK bir karede yapıldı, başka hiçbir karede doğrulanmadı -- yanlış okuma ihtimali daha yüksektir.">⚠ 1 kare</span>`;
+  }
+  return `<span class="badge badge-dogrulama-guclu" title="Bu okuma ${kareSayisi} farklı karenin oydaşmasıyla kesinleşti.">✓ ${kareSayisi} kare</span>`;
+}
+
 function saatiGuncelle() {
   const el = document.getElementById("saatGosterge");
   if (el) el.textContent = new Date().toLocaleString("tr-TR");
@@ -615,9 +630,10 @@ async function kayitlariYukle(sifirla = true) {
       <td>${durumRozeti(k.yetki_durumu)}</td>
       <td>${tipRozeti(k.kisi_tip_anlik)}</td>
       <td>${k.guven_skoru ? (k.guven_skoru * 100).toFixed(0) + "%" : "-"}</td>
+      <td>${dogrulamaRozeti(k.dogrulama_kare_sayisi)}</td>
       <td><button class="btn btn-sm btn-outline-danger" onclick="kayitPdfIndir(${k.id})" title="PDF indir" aria-label="PDF indir"><i class="bi bi-file-earmark-pdf"></i></button></td>
     </tr>
-  `).join("") || `<tr><td colspan="10" class="text-center text-muted py-3">Kayıt bulunamadı</td></tr>`;
+  `).join("") || `<tr><td colspan="11" class="text-center text-muted py-3">Kayıt bulunamadı</td></tr>`;
   korumaliGorselleriYukle(tbody);
 
   // Sayfalama kontrolleri

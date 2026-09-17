@@ -214,9 +214,20 @@ HAM_KARE_MAKS_DOSYA_KAMERA_BASINA = 300
 
 class PlakaOyBirikimi:
     """Tek bir 'geçiş oturumu' (aynı aracın kamera görüş alanında kaldığı süre)
-    boyunca toplanan OCR okumalarını ağırlıklı oyla birleştirir."""
+    boyunca toplanan OCR okumalarını ağırlıklı oyla birleştirir.
 
-    __slots__ = ("oylar", "ilk_gorulme", "son_gorulme", "en_yuksek_guven", "en_iyi_jpeg")
+    NOT (2026-09-17): `farkli_okuma_sayisi` (len(self.oylar)) bu oturumda
+    görülen FARKLI plaka METİN VARYANTLARININ sayısıdır -- aynı doğru metnin
+    3 farklı karede tekrar tekrar okunması bunu ARTIRMAZ (hepsi aynı Counter
+    anahtarına yığılır). Bir okumanın kaç FARKLI KAREDEN geldiğini (yani
+    gerçekten "birden fazla kare tarafından doğrulandı mı" sorusunun cevabını)
+    öğrenmek için ayrıca `toplam_kare_sayisi` tutulur -- bu, oturuma kaç kez
+    `ekle()` çağrıldığının (+ ilk okuma) TOPLAMIDIR, metin farklı olsa da olsun.
+    Panelde "tek bir karede görülüp hiç doğrulanmamış" okumaları (bkz.
+    camera_reader.py::_kareyi_isle'deki kullanım ve README.md'deki ilgili not)
+    ayırt etmek için eklendi."""
+
+    __slots__ = ("oylar", "ilk_gorulme", "son_gorulme", "en_yuksek_guven", "en_iyi_jpeg", "toplam_kare_sayisi")
 
     def __init__(self, plaka: str, guven: float, simdi: float, jpeg: Optional[bytes] = None):
         self.oylar: "Counter[str]" = Counter({plaka: guven})
@@ -224,10 +235,12 @@ class PlakaOyBirikimi:
         self.son_gorulme = simdi
         self.en_yuksek_guven = guven
         self.en_iyi_jpeg = jpeg
+        self.toplam_kare_sayisi = 1
 
     def ekle(self, plaka: str, guven: float, simdi: float, jpeg: Optional[bytes] = None) -> None:
         self.oylar[plaka] += guven
         self.son_gorulme = simdi
+        self.toplam_kare_sayisi += 1
         if jpeg is not None and guven >= self.en_yuksek_guven:
             self.en_yuksek_guven = guven
             self.en_iyi_jpeg = jpeg
@@ -241,6 +254,7 @@ class PlakaOyBirikimi:
             "guven": self.en_yuksek_guven,
             "farkli_okuma_sayisi": len(self.oylar),
             "toplam_oy": round(sum(self.oylar.values()), 3),
+            "toplam_kare_sayisi": self.toplam_kare_sayisi,
             "jpeg": self.en_iyi_jpeg,
         }
 
@@ -660,7 +674,16 @@ class KameraPipeline:
                     yanit = requests.post(
                         self.api_url,
                         data={"plaka_no": plaka, "kamera_id": self.kamera_id,
-                              "yon": self.yon, "guven_skoru": round(oturum["guven"], 3)},
+                              "yon": self.yon, "guven_skoru": round(oturum["guven"], 3),
+                              # PANELDE "TEK KAREDE GÖRÜLDÜ, HİÇ DOĞRULANMADI" AYRIMI
+                              # İÇİN (bkz. PlakaOyBirikimi.toplam_kare_sayisi ve
+                              # README.md'deki ilgili not): bu okumanın kaç farklı
+                              # karede tekrarlandığı/oy aldığı da kayıtla birlikte
+                              # gönderilir. 1 ise operatör panelde bunu görüp o
+                              # kayda özellikle dikkat edebilir (ör. "39 SU 877"nin
+                              # tek bir karede "04 SD 377" olarak yanlış okunup
+                              # başka hiçbir karede doğrulanmadan kaydolduğu vaka).
+                              "dogrulama_kare_sayisi": oturum.get("toplam_kare_sayisi")},
                         files={"gorsel": f},
                         headers=_istek_basliklari,
                         timeout=5,
