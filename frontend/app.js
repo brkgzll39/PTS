@@ -371,9 +371,15 @@ async function lisansYukle() {
   } catch (err) { console.error(err); }
 }
 
+// Kamera Yön/ROI değişikliklerinde (kameraYonDegistir, kameraRoiAc/Kaydet)
+// RTSP adresi gibi başka alanlara tekrar erişebilmek için son yüklenen liste
+// burada tutulur.
+let _kameralarCache = [];
+
 async function kameralariYukle() {
   try {
     const kameralar = await apiCagir("/kameralar");
+    _kameralarCache = kameralar;
     document.getElementById("kameraSayac").textContent = `${kameralar.length} kamera tanımlı`;
     document.getElementById("kameralarTablo").innerHTML = kameralar.map(k => {
       const durum = !k.kutuphaneler_mevcut
@@ -392,16 +398,152 @@ async function kameralariYukle() {
             ? `<span class="badge bg-success" title="${saglik.gecikme_ms}ms">${saglik.gecikme_ms}ms</span>`
             : `<span class="badge bg-danger">Erişilemiyor</span>`)
         : `<span class="badge bg-light text-muted">-</span>`;
+      // Yön artık düz metin değil, DÜZENLENEBİLİR bir seçim kutusu: iki kamera
+      // aynı bariyeri farklı açılardan izlediğinde biri yanlış yönle
+      // tanımlanmış olabiliyor (bkz. README.md'deki 2026-09-17 notu) — bunu
+      // düzeltmenin tek yolu artık kamerayı silip RTSP'yi elden yeniden
+      // yazmak değil, burada tek tıkla değiştirmek (kamera id'si/RTSP'si hiç
+      // değişmez, bkz. main.py::kamera_yon_degistir).
+      const yonSecim = rolYeterli("operatör")
+        ? `<select class="form-select form-select-sm" style="width:auto" onchange="kameraYonDegistir('${k.id}', this)">
+             <option value="giris" ${k.yon === "giris" ? "selected" : ""}>Giriş</option>
+             <option value="cikis" ${k.yon === "cikis" ? "selected" : ""}>Çıkış</option>
+           </select>`
+        : (k.yon === "giris" ? "Giriş" : "Çıkış");
+      const roiRozeti = k.roi
+        ? `<span class="badge bg-info-subtle text-info-emphasis ms-1" title="Tespit alanı sınırlı: yalnızca karenin %${Math.round(k.roi.x1)}-%${Math.round(k.roi.x2)} (yatay) / %${Math.round(k.roi.y1)}-%${Math.round(k.roi.y2)} (dikey) bölgesi geçerli"><i class="bi bi-crop"></i> Alan sınırlı</span>`
+        : "";
+      const roiBtn = rolYeterli("operatör")
+        ? `<button class="btn btn-sm btn-outline-warning ms-1" title="Tespit alanını (ROI) ayarla" onclick="kameraRoiAc('${k.id}')"><i class="bi bi-crop"></i></button>`
+        : "";
       const yenidenBtn = rolYeterli("operatör")
         ? `<button class="btn btn-sm btn-outline-secondary ms-1" title="Pipeline'ı yeniden başlat" onclick="kameraYenidenBaslat('${k.id}')"><i class="bi bi-arrow-repeat"></i></button>`
         : "";
       const silBtn = rolYeterli("operatör")
         ? `<button class="btn btn-sm btn-outline-danger" title="Kamerayı sil" onclick="kameraSil('${k.id}')"><i class="bi bi-trash"></i></button>`
         : "";
-      return `<tr><td><strong>${escapeHtml(k.ad)}</strong></td><td>${k.yon === "giris" ? "Giriş" : "Çıkış"}</td><td class="text-muted small text-truncate" style="max-width: 180px">${escapeHtml(k.rtsp_url)}</td><td>${durum}${yenidenBaglanmaBadge}</td><td>${tcpBadge}</td><td>${silBtn}${yenidenBtn}</td></tr>`;
+      return `<tr><td><strong>${escapeHtml(k.ad)}</strong>${roiRozeti}</td><td>${yonSecim}</td><td class="text-muted small text-truncate" style="max-width: 180px">${escapeHtml(k.rtsp_url)}</td><td>${durum}${yenidenBaglanmaBadge}</td><td>${tcpBadge}</td><td class="text-nowrap">${silBtn}${yenidenBtn}${roiBtn}</td></tr>`;
     }).join("") || '<tr><td colspan="6" class="text-center text-muted py-4">Henüz kamera tanımlanmadı</td></tr>';
     kameraDuvariniGuncelle(kameralar);
   } catch (err) { console.error(err); }
+}
+
+async function kameraYonDegistir(id, selectEl) {
+  const eskiDeger = selectEl.value === "giris" ? "cikis" : "giris";  // geri almak için
+  try {
+    await apiCagir(`/kameralar/${id}/yon`, {
+      method: "PATCH", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ yon: selectEl.value }),
+    });
+    toastGoster("Kamera yönü güncellendi, pipeline yeniden başlatılıyor.", "basari");
+    kameralariYukle();
+  } catch (err) {
+    selectEl.value = eskiDeger;  // istek başarısızsa arayüzü eski haline döndür
+    alert(err.message);
+  }
+}
+
+// ---------------------- KAMERA TESPİT ALANI (ROI) ----------------------
+// Giriş ve çıkış kameralarının açıları birbirinin şeridini de görüyorsa, bir
+// araç her iki kamerada da tespit edilip hem "giriş" hem "çıkış" olarak ayrı
+// ayrı kaydedilebiliyor (bkz. README.md'deki 2026-09-17 notu). Bu modal, canlı
+// bir kare üzerinde yüzdesel bir dikdörtgen (ROI) tanımlayarak her kameranın
+// SADECE kendi şeridine denk gelen bölgeyi izlemesini sağlar.
+
+function _roiOnizlemeGuncelle() {
+  const kutu = document.getElementById("roiKutuOnizleme");
+  const x1 = parseFloat(document.getElementById("roiX1").value) || 0;
+  const y1 = parseFloat(document.getElementById("roiY1").value) || 0;
+  const x2 = parseFloat(document.getElementById("roiX2").value);
+  const y2 = parseFloat(document.getElementById("roiY2").value);
+  const x2Guvenli = isNaN(x2) ? 100 : x2;
+  const y2Guvenli = isNaN(y2) ? 100 : y2;
+  kutu.style.left = `${Math.max(0, Math.min(100, x1))}%`;
+  kutu.style.top = `${Math.max(0, Math.min(100, y1))}%`;
+  kutu.style.width = `${Math.max(0, Math.min(100, x2Guvenli) - Math.max(0, Math.min(100, x1)))}%`;
+  kutu.style.height = `${Math.max(0, Math.min(100, y2Guvenli) - Math.max(0, Math.min(100, y1)))}%`;
+}
+
+["roiX1", "roiY1", "roiX2", "roiY2"].forEach(id => {
+  document.getElementById(id)?.addEventListener("input", _roiOnizlemeGuncelle);
+});
+
+async function kameraRoiAc(id) {
+  const kamera = _kameralarCache.find(k => k.id === id);
+  if (!kamera) return;
+  document.getElementById("roiKameraId").value = id;
+  document.getElementById("roiKameraAdi").textContent = kamera.ad;
+  document.getElementById("roiX1").value = kamera.roi ? Math.round(kamera.roi.x1) : "";
+  document.getElementById("roiY1").value = kamera.roi ? Math.round(kamera.roi.y1) : "";
+  document.getElementById("roiX2").value = kamera.roi ? Math.round(kamera.roi.x2) : "";
+  document.getElementById("roiY2").value = kamera.roi ? Math.round(kamera.roi.y2) : "";
+  document.getElementById("roiSonuc").textContent = "";
+  _roiOnizlemeGuncelle();
+  bootstrap.Modal.getOrCreateInstance(document.getElementById("kameraRoiModal")).show();
+  // Anlık kare, diğer korumalı görseller gibi (bkz. korumaliGorselAta) token'lı
+  // fetch + blob URL ile yüklenir -- ama o yardımcı fonksiyon sabit olarak
+  // `/goruntuler/<dosya adı>` yoluna göre çalışıyor, burada ise doğrudan
+  // `/kameralar/{id}/goruntu` uç noktasından ANLIK bir kare çekiliyor, bu
+  // yüzden aynı desen (token + blob URL + eski blob'u serbest bırakma) burada
+  // ayrıca uygulanıyor.
+  const imgEl = document.getElementById("roiOnizlemeGorsel");
+  try {
+    const token = sessionStorage.getItem("pts_token");
+    const yanit = await fetch(`/kameralar/${id}/goruntu`, { headers: { Authorization: `Bearer ${token}` } });
+    if (yanit.ok) {
+      const blob = await yanit.blob();
+      const eskiUrl = _korumaliGorselBlobURLleri.get(imgEl);
+      if (eskiUrl) URL.revokeObjectURL(eskiUrl);
+      const url = URL.createObjectURL(blob);
+      _korumaliGorselBlobURLleri.set(imgEl, url);
+      imgEl.src = url;
+    } else {
+      document.getElementById("roiSonuc").textContent = "Kameradan anlık görüntü alınamadı (kamera durmuş olabilir) -- yine de yüzdeleri elle girip kaydedebilirsiniz.";
+    }
+  } catch (e) {
+    document.getElementById("roiSonuc").textContent = "Kameradan anlık görüntü alınamadı -- yine de yüzdeleri elle girip kaydedebilirsiniz.";
+  }
+}
+
+async function kameraRoiKaydet() {
+  const id = document.getElementById("roiKameraId").value;
+  const sonuc = document.getElementById("roiSonuc");
+  const x1 = document.getElementById("roiX1").value;
+  const y1 = document.getElementById("roiY1").value;
+  const x2 = document.getElementById("roiX2").value;
+  const y2 = document.getElementById("roiY2").value;
+  if (x1 === "" || y1 === "" || x2 === "" || y2 === "") {
+    sonuc.className = "small mt-2 text-danger";
+    sonuc.textContent = "Dört değer de (Sol/Üst/Sağ/Alt) girilmeli. Sınırı tamamen kaldırmak için 'Sınırı Kaldır' butonunu kullanın.";
+    return;
+  }
+  try {
+    await apiCagir(`/kameralar/${id}/roi`, {
+      method: "PATCH", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ x1: Number(x1), y1: Number(y1), x2: Number(x2), y2: Number(y2) }),
+    });
+    bootstrap.Modal.getInstance(document.getElementById("kameraRoiModal"))?.hide();
+    toastGoster("Tespit alanı kaydedildi, pipeline yeniden başlatılıyor.", "basari");
+    kameralariYukle();
+  } catch (err) {
+    sonuc.className = "small mt-2 text-danger"; sonuc.textContent = err.message;
+  }
+}
+
+async function kameraRoiKaldir() {
+  const id = document.getElementById("roiKameraId").value;
+  const sonuc = document.getElementById("roiSonuc");
+  try {
+    await apiCagir(`/kameralar/${id}/roi`, {
+      method: "PATCH", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ temizle: true }),
+    });
+    bootstrap.Modal.getInstance(document.getElementById("kameraRoiModal"))?.hide();
+    toastGoster("Tespit alanı sınırı kaldırıldı.", "basari");
+    kameralariYukle();
+  } catch (err) {
+    sonuc.className = "small mt-2 text-danger"; sonuc.textContent = err.message;
+  }
 }
 
 // Kamera başına açık MJPEG canlı akış bağlantısını (AbortController) tutar.

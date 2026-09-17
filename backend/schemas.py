@@ -293,6 +293,29 @@ class KayitDuzenle(BaseModel):
     not_metni: Optional[str] = None
 
 
+class KameraYonGuncelle(BaseModel):
+    """Var olan bir kameranın yönünü (giriş/çıkış) DEĞİŞTİRİR -- RTSP adresine/
+    parolasına dokunmadan (bkz. main.py::kamera_yon_degistir)."""
+    yon: str
+
+
+class KameraRoiGuncelle(BaseModel):
+    """Bir kameranın tespit alanını (ROI -- region of interest) kare
+    genişliğinin/yüksekliğinin YÜZDESİ (0-100, çözünürlükten bağımsız olsun
+    diye piksel değil yüzde) olarak sınırlar. Örn. giriş ve çıkış
+    kameralarının açıları birbirinin şeridini de görüyorsa, her kamera için
+    SADECE kendi şeridine denk gelen bölge tanımlanır; bu bölgenin dışındaki
+    tespitler oy birikimine hiç girmez (bkz.
+    camera_reader.py::_kutu_roi_icinde_mi, main.py::kamera_roi_guncelle).
+    `temizle=True` gönderilirse x1/y1/x2/y2 yok sayılır ve sınır tamamen
+    kaldırılır (kare tamamı tekrar geçerli olur)."""
+    x1: Optional[float] = None
+    y1: Optional[float] = None
+    x2: Optional[float] = None
+    y2: Optional[float] = None
+    temizle: bool = False
+
+
 class AlarmCevap(BaseModel):
     id: int
     kayit_id: Optional[int] = None

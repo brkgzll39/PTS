@@ -221,6 +221,7 @@ def _pipeline_baslat(kamera: dict) -> bool:
                 kamera_id=kamera["ad"],
                 yon=kamera.get("yon", "giris"),
                 min_guven_skoru=min_guven,
+                roi=kamera.get("roi"),
             )
             p.baslat()
             _aktif_pipelineler[kid] = p
@@ -1033,6 +1034,82 @@ def kamera_aktif_toggle(kamera_id: str, kullanici: models.Kullanici = Depends(_g
     return {"id": kamera_id, "aktif": kamera["aktif"]}
 
 
+@app.patch("/kameralar/{kamera_id}/yon")
+def kamera_yon_degistir(kamera_id: str, veri: schemas.KameraYonGuncelle, kullanici: models.Kullanici = Depends(_giris_gerekli)):
+    """Var olan bir kameranın giriş/çıkış yönünü DEĞİŞTİRİR (RTSP adresi/parola
+    dokunulmadan) -- örn. iki kamera aynı fiziksel bariyeri/geçidi farklı
+    açılardan izliyorsa ve biri yanlışlıkla ters yönle tanımlanmışsa (bkz.
+    README.md'deki 2026-09-17 notu: aynı plakanın aynı dakikada hem "giriş" hem
+    "çıkış" olarak iki ayrı kayda düşmesi).
+
+    Önceden bunu düzeltmenin TEK yolu kamerayı SİLİP RTSP adresini (ve varsa
+    parolasını) elle yeniden yazarak baştan eklemekti -- ama panel, güvenlik
+    gereği RTSP adresindeki parolayı istemciye asla düz metin göndermiyor
+    (bkz. _kamera_guvenli_gorunum), yani kullanıcı parolayı unuttuysa/notlarında
+    yoksa kamerayı siler silmez o bağlantıyı yeniden kuramaz hale gelebilirdi.
+    Bu uç nokta yalnızca `yon` alanını değiştirdiği için kameranın `id`'si,
+    RTSP adresi ve parolası hiç değişmeden kalır; yön değişikliği pipeline'a
+    yansısın diye kamera etkinse yeniden başlatılır."""
+    _rol_dogrula(kullanici, ROL_YONETICI, ROL_OPERATOR)
+    kameralar = _kameralari_oku()
+    kamera = next((k for k in kameralar if k["id"] == kamera_id), None)
+    if not kamera:
+        raise HTTPException(404, "Kamera bulunamadı")
+    yon = veri.yon.strip().lower()
+    if yon not in ("giris", "cikis"):
+        raise HTTPException(400, "Yön 'giris' veya 'cikis' olmalıdır")
+    kamera["yon"] = yon
+    _kameralari_yaz(kameralar)
+    if kamera.get("aktif", True):
+        _pipeline_durdur(kamera_id)
+        time.sleep(0.3)
+        _pipeline_baslat(kamera)
+    return _kamera_guvenli_gorunum(kamera)
+
+
+@app.patch("/kameralar/{kamera_id}/roi")
+def kamera_roi_guncelle(kamera_id: str, veri: schemas.KameraRoiGuncelle, kullanici: models.Kullanici = Depends(_giris_gerekli)):
+    """Bir kameranın tespit alanını (ROI -- region of interest) yüzde (0-100,
+    çözünürlükten bağımsız) cinsinden sınırlar veya bu sınırı kaldırır.
+
+    NEDEN GEREKLİ (2026-09-17): sahada giriş ve çıkış kameralarının açıları
+    birbirinin şeridini de görebiliyor -- bu durumda giriş yapan bir araç
+    çıkış kamerasına da yansıyıp "çıkış" olarak, çıkış yapan araç da giriş
+    kamerasına yansıyıp "giriş" olarak kaydediliyor; aynı plaka aynı dakikada
+    hem giriş hem çıkış olarak iki ayrı kayda düşerek paneli kafa karıştırıcı
+    hale getiriyor. Her kameraya SADECE kendi şeridine denk gelen bir ROI
+    tanımlanarak, komşu şeritteki araçların merkez noktası bu dikdörtgenin
+    dışında kaldığı için oy birikimine hiç girmemesi sağlanır (bkz.
+    camera_reader.py::_kutu_roi_icinde_mi, `_kareyi_isle`).
+
+    ROI, kameranın id'sini, RTSP adresini/parolasını DEĞİŞTİRMEZ -- yalnızca
+    bu alanı günceller; değişikliğin pipeline'a yansıması için kamera etkinse
+    yeniden başlatılır."""
+    _rol_dogrula(kullanici, ROL_YONETICI, ROL_OPERATOR)
+    kameralar = _kameralari_oku()
+    kamera = next((k for k in kameralar if k["id"] == kamera_id), None)
+    if not kamera:
+        raise HTTPException(404, "Kamera bulunamadı")
+    if veri.temizle:
+        kamera.pop("roi", None)
+    else:
+        degerler = (veri.x1, veri.y1, veri.x2, veri.y2)
+        if any(v is None for v in degerler):
+            raise HTTPException(400, "x1, y1, x2, y2 değerlerinin hepsi gönderilmeli (veya temizle=true)")
+        x1, y1, x2, y2 = (float(v) for v in degerler)
+        if not all(0 <= v <= 100 for v in (x1, y1, x2, y2)):
+            raise HTTPException(400, "Değerler 0-100 arasında olmalı")
+        if x1 >= x2 or y1 >= y2:
+            raise HTTPException(400, "x1 < x2 ve y1 < y2 olmalı")
+        kamera["roi"] = {"x1": x1, "y1": y1, "x2": x2, "y2": y2}
+    _kameralari_yaz(kameralar)
+    if kamera.get("aktif", True):
+        _pipeline_durdur(kamera_id)
+        time.sleep(0.3)
+        _pipeline_baslat(kamera)
+    return _kamera_guvenli_gorunum(kamera)
+
+
 @app.get("/kameralar/{kamera_id}/goruntu")
 async def kamera_goruntu_al(kamera_id: str, _: models.Kullanici = Depends(_giris_gerekli)):
     """Kameradan anlık JPEG kare alır. Pipeline çalışıyorsa cached+annotated frame döner (sıfır gecikme)."""
@@ -1159,6 +1236,19 @@ def kamera_ekle(kamera: dict = Body(...), kullanici: models.Kullanici = Depends(
     if yon not in ("giris", "cikis"):
         raise HTTPException(400, "Yön 'giris' veya 'cikis' olmalıdır")
 
+    # Opsiyonel tespit alanı (ROI) -- eklerken de belirtilebilir, bkz.
+    # PATCH /kameralar/{id}/roi'nin docstring'i (aynı doğrulama kuralları).
+    roi = kamera.get("roi")
+    roi_temiz = None
+    if roi:
+        try:
+            x1, y1, x2, y2 = float(roi["x1"]), float(roi["y1"]), float(roi["x2"]), float(roi["y2"])
+        except (KeyError, TypeError, ValueError):
+            raise HTTPException(400, "roi alanı x1, y1, x2, y2 (0-100) içermeli")
+        if not all(0 <= v <= 100 for v in (x1, y1, x2, y2)) or x1 >= x2 or y1 >= y2:
+            raise HTTPException(400, "roi değerleri geçersiz (0-100 arası ve x1<x2, y1<y2 olmalı)")
+        roi_temiz = {"x1": x1, "y1": y1, "x2": x2, "y2": y2}
+
     yeni_kamera = {
         "id": str(uuid.uuid4()),
         "ad": str(kamera["ad"]).strip(),
@@ -1166,6 +1256,8 @@ def kamera_ekle(kamera: dict = Body(...), kullanici: models.Kullanici = Depends(
         "yon": yon,
         "aktif": True,
     }
+    if roi_temiz:
+        yeni_kamera["roi"] = roi_temiz
     kameralar.append(yeni_kamera)
     _kameralari_yaz(kameralar)
     _pipeline_baslat(yeni_kamera)

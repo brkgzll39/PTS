@@ -160,6 +160,8 @@ _OVERLAY_RENK = (0, 220, 80)       # yeşil kutu / metin
 _OVERLAY_ARKA = (0, 0, 0)          # metin arkaplanı
 _YAZI_OLCEK = 0.8
 _YAZI_KALINLIK = 2
+_ROI_CIZGI_RENK = (0, 220, 255)    # sarı — yapılandırılmış tespit alanı (ROI) sınır çizgisi
+_ROI_DISI_RENK = (140, 140, 140)   # gri — ROI dışında kaldığı için oy birikimine girmeyen tespit
 
 # Aynı plaka için son görülme zamanlarının ne kadar süre saklanacağı (bellek
 # şişmesin diye budama eşiği = tekrar gecikmesinin birkaç katı).
@@ -316,19 +318,54 @@ def plaka_dogrula(text: str) -> Optional[str]:
     return None
 
 
-def _kare_uzerine_ciz(frame, tespitler: list) -> None:
-    """Tespit edilen plakaları kare üzerine in-place çizer."""
+def _roi_pixel_sinirlarini_hesapla(roi: dict, genislik: int, yukseklik: int) -> tuple:
+    """Yüzde (0-100, çözünürlükten bağımsız) cinsinden tanımlanmış bir ROI'yi
+    VERİLEN karenin piksel boyutlarına göre piksel dikdörtgenine çevirir."""
+    x1 = int(round(roi["x1"] / 100.0 * genislik))
+    y1 = int(round(roi["y1"] / 100.0 * yukseklik))
+    x2 = int(round(roi["x2"] / 100.0 * genislik))
+    y2 = int(round(roi["y2"] / 100.0 * yukseklik))
+    return x1, y1, x2, y2
+
+
+def _kutu_roi_icinde_mi(kutu, roi_piksel: tuple) -> bool:
+    """Bir tespit kutusunun MERKEZ noktası ROI dikdörtgeninin içinde mi?
+
+    Kutunun tamamının içeride olması ŞART koşulmuyor -- bir araç/plaka ROI
+    sınırına yakın durursa kutu kısmen dışarı taşabilir; bu durumda bile
+    aracın "gerçekten o şeritte" olduğunu merkez noktası daha güvenilir
+    yansıtır."""
+    if not kutu:
+        return False
+    x1, y1, x2, y2 = kutu
+    merkez_x = (x1 + x2) / 2
+    merkez_y = (y1 + y2) / 2
+    rx1, ry1, rx2, ry2 = roi_piksel
+    return rx1 <= merkez_x <= rx2 and ry1 <= merkez_y <= ry2
+
+
+def _kare_uzerine_ciz(frame, tespitler: list, roi_piksel: Optional[tuple] = None) -> None:
+    """Tespit edilen plakaları ve (varsa) yapılandırılmış tespit alanı (ROI)
+    sınırını kare üzerine in-place çizer. ROI dışında kaldığı için oy
+    birikimine hiç girmeyen tespitler (bkz. `_kareyi_isle`) gri renkte
+    çizilir -- operatör bu sayede kamerayı canlı izlerken ROI'yi
+    ayarlarken/doğrularken hangi araçların filtrelendiğini görsel olarak
+    doğrulayabilir (bkz. README.md'deki ROI/alan sınırı notu)."""
+    if roi_piksel:
+        rx1, ry1, rx2, ry2 = roi_piksel
+        cv2.rectangle(frame, (rx1, ry1), (rx2, ry2), _ROI_CIZGI_RENK, 2)
     for t in tespitler:
+        renk = _OVERLAY_RENK if t.get("roi_icinde", True) else _ROI_DISI_RENK
         if t.get("kutu"):
             x1, y1, x2, y2 = t["kutu"]
-            cv2.rectangle(frame, (x1, y1), (x2, y2), _OVERLAY_RENK, 2)
-        metin = f"{t['plaka']}  {t['guven']:.0%}"
+            cv2.rectangle(frame, (x1, y1), (x2, y2), renk, 2)
+        metin = f"{t['plaka']}  {t['guven']:.0%}" + ("" if t.get("roi_icinde", True) else "  (alan dışı)")
         kutu_x = t["kutu"][0] if t.get("kutu") else 10
         kutu_y = (t["kutu"][1] - 10) if t.get("kutu") else 30
         kutu_y = max(kutu_y, 20)
         (tw, th), _ = cv2.getTextSize(metin, cv2.FONT_HERSHEY_SIMPLEX, _YAZI_OLCEK, _YAZI_KALINLIK)
         cv2.rectangle(frame, (kutu_x - 3, kutu_y - th - 6), (kutu_x + tw + 3, kutu_y + 4), _OVERLAY_ARKA, -1)
-        cv2.putText(frame, metin, (kutu_x, kutu_y), cv2.FONT_HERSHEY_SIMPLEX, _YAZI_OLCEK, _OVERLAY_RENK, _YAZI_KALINLIK)
+        cv2.putText(frame, metin, (kutu_x, kutu_y), cv2.FONT_HERSHEY_SIMPLEX, _YAZI_OLCEK, renk, _YAZI_KALINLIK)
 
 
 def _kontrast_iyilestirme_aktif_mi() -> bool:
@@ -371,7 +408,8 @@ class KameraPipeline:
     def __init__(self, video_kaynagi: str, api_url: str = "http://localhost:8000/kayitlar/otomatik",
                  kamera_id: str = "KAMERA-1", tekrar_gecikme_sn: int = 30, yon: str = "giris",
                  baglanti_zaman_asimi_sn: float = 8.0, donma_esigi_sn: float = 10.0,
-                 min_guven_skoru: float = VARSAYILAN_MIN_GUVEN_SKORU):
+                 min_guven_skoru: float = VARSAYILAN_MIN_GUVEN_SKORU,
+                 roi: Optional[dict] = None):
         if not KUTUPHANELER_MEVCUT:
             raise RuntimeError(
                 "Gerekli kütüphaneler kurulu değil. "
@@ -390,6 +428,15 @@ class KameraPipeline:
         self.donma_esigi_sn = donma_esigi_sn
         # Bu güven skorunun altındaki OCR sonuçları oy birikimine hiç girmez.
         self.min_guven_skoru = min_guven_skoru
+        # TESPİT ALANI SINIRI (ROI, region of interest) -- yüzde (0-100,
+        # çözünürlükten bağımsız) cinsinden {"x1","y1","x2","y2"} veya None
+        # (sınır yok, kare tamamı geçerli). Giriş ve çıkış kameralarının
+        # açıları birbirinin şeridini de görüyorsa (bkz. README.md'deki
+        # 2026-09-17 notu: aynı aracın hem giriş hem çıkış kamerasında art
+        # arda görünmesi), her kamera için SADECE kendi şeridine denk gelen
+        # bölge tanımlanarak komşu şeritteki araçların yanlışlıkla o kameranın
+        # kaydına düşmesi engellenir.
+        self.roi = roi
 
         self.motor = _paylasilan_motoru_al()
         self.calisiyor = False
@@ -606,11 +653,23 @@ class KameraPipeline:
                 "kutu": list(sonuc.kutu) if sonuc.kutu else None,
             })
 
+        # TESPİT ALANI SINIRI (ROI): kameraya bir ROI tanımlıysa, kare
+        # boyutuna göre piksel sınırlarını hesaplayıp her tespiti "alan
+        # içinde mi" diye işaretle. Bu işaretleme burada (oy birikimine
+        # girmeden HEMEN önce) yapılıyor ki hem `_kare_uzerine_ciz` (canlı
+        # önizleme/kalibrasyon) hem aşağıdaki oy döngüsü AYNI sonucu kullansın.
+        roi_piksel = None
+        if self.roi:
+            yukseklik, genislik = frame.shape[:2]
+            roi_piksel = _roi_pixel_sinirlarini_hesapla(self.roi, genislik, yukseklik)
+            for t in tespitler:
+                t["roi_icinde"] = _kutu_roi_icinde_mi(t.get("kutu"), roi_piksel)
+
         # Kare üstüne tüm tespitleri çiz (overlay kopyası) — bu, oy birikimine
         # girme eşiğinden bağımsız olarak operatöre HER geçerli-formatlı ham
-        # okumayı gösterir (şeffaflık için).
+        # okumayı gösterir (şeffaflık için). ROI dışında kalanlar gri çizilir.
         annotated = frame.copy()
-        _kare_uzerine_ciz(annotated, tespitler)
+        _kare_uzerine_ciz(annotated, tespitler, roi_piksel)
         _, buf = cv2.imencode(".jpg", annotated, [cv2.IMWRITE_JPEG_QUALITY, 75])
         jpeg_bytes = buf.tobytes()
         with self._goruntu_kilit:
@@ -628,6 +687,21 @@ class KameraPipeline:
         bitmis_oturumlar = self._oturum_takipcisi.bitmis_oturumlari_al(simdi)
 
         for t in tespitler:
+            if self.roi and not t.get("roi_icinde", True):
+                # GÖZLEMLENEBİLİRLİK: bu tespit format ve güven olarak geçerliydi
+                # ama yapılandırılmış tespit alanının (ROI) DIŞINDA kaldığı için
+                # oy birikimine hiç girmedi -- tipik olarak komşu şeridi de gören
+                # bir kameranın, o şeritteki (asıl kendi şeridine ait olmayan)
+                # bir aracı yanlışlıkla kaydetmesini önlemek içindir (bkz.
+                # README.md'deki "giriş ve çıkış kameraları birbirinin şeridini
+                # görüyor" notu). `min_guven_skoru` filtresiyle aynı gözlemlenebilirlik
+                # ilkesini izler: sessizce elenmez, burada loglanır.
+                logger.info(
+                    "[%s] Tespit yapılandırılmış alan (ROI) dışında kaldı, oy "
+                    "birikimine girmedi: %s (kutu=%s)",
+                    self.kamera_id, t["plaka"], t.get("kutu"),
+                )
+                continue
             if t["guven"] < self.min_guven_skoru:
                 # GÖZLEMLENEBİLİRLİK: format olarak geçerli bir plaka okundu ama
                 # güven eşiğinin altında kaldığı için oy birikimine HİÇ girmedi —

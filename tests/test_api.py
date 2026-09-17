@@ -874,3 +874,108 @@ def test_plaka_analiz_yeni_alanlari_dondurur(client, operator_header):
         assert alan in kayit, f"'{alan}' alanı /kayitlar/analiz yanıtında eksik"
     assert kayit["not_metni"] == "analiz ekranı testi"
     assert kayit["manuel_giris"] is True
+
+
+# ------------------------------------------------------------------
+# Kamera yön değiştirme + tespit alanı (ROI) sınırlama
+# ------------------------------------------------------------------
+# Kök neden (2026-09-17, gerçek kullanıcı ortamında bulundu): giriş ve çıkış
+# kameralarının açıları birbirinin şeridini de görecek şekilde örtüşünce,
+# giriş yapan bir araç çıkış kamerasına da yansıyıp aynı anda hem "giriş" hem
+# "çıkış" olarak iki ayrı kayıt oluşturuyordu. Bunu çözmek için: (1) bir
+# kameranın yönünü RTSP adresini/parolasını yeniden girmeye gerek kalmadan
+# yerinde değiştirebilen PATCH /kameralar/{id}/yon ve (2) her kameraya
+# yüzde tabanlı bir tespit alanı (ROI) tanımlayıp bu alanın dışındaki
+# tespitleri oy birikimine hiç sokmayan PATCH /kameralar/{id}/roi eklendi.
+
+@pytest.fixture(scope="module")
+def roi_test_kamera_id(client, yetkili_header):
+    """Bu modüldeki lisans limiti daha önceki testlerde (bkz.
+    test_lisans_aktivasyonu_ve_kamera_limiti) 1 olarak aktifleştirilip o tek
+    hak da kullanılmış durumda -- bu yüzden burada limiti yükselten YENİ bir
+    lisans aktive edip kendi test kameramızı ekliyoruz."""
+    anahtar = lisans.uret("ROI Test Site", kamera_limiti=10, gun=30)
+    r = client.post("/lisans/aktive-et", json={"anahtar": anahtar}, headers=yetkili_header)
+    assert r.status_code == 200, r.text
+
+    r2 = client.post("/kameralar", json={
+        "ad": "ROI Test Kamerası", "rtsp_url": "rtsp://127.0.0.1/roitest", "yon": "giris",
+    }, headers=yetkili_header)
+    assert r2.status_code == 200, r2.text
+    return r2.json()["id"]
+
+
+def test_kamera_yon_degistir_operator_calistirabilir_ve_yon_gunceller(client, operator_header, roi_test_kamera_id):
+    r = client.patch(f"/kameralar/{roi_test_kamera_id}/yon", json={"yon": "cikis"}, headers=operator_header)
+    assert r.status_code == 200, r.text
+    assert r.json()["yon"] == "cikis"
+
+    # Panel/başka testler karışmasın diye eski haline geri alıyoruz.
+    r2 = client.patch(f"/kameralar/{roi_test_kamera_id}/yon", json={"yon": "giris"}, headers=operator_header)
+    assert r2.status_code == 200
+    assert r2.json()["yon"] == "giris"
+
+
+def test_kamera_yon_degistir_gecersiz_deger_400_doner(client, operator_header, roi_test_kamera_id):
+    r = client.patch(f"/kameralar/{roi_test_kamera_id}/yon", json={"yon": "yukari"}, headers=operator_header)
+    assert r.status_code == 400
+
+
+def test_kamera_yon_degistir_bulunamayan_kamera_404_doner(client, operator_header):
+    r = client.patch("/kameralar/YOK-BOYLE-BIR-KAMERA/yon", json={"yon": "giris"}, headers=operator_header)
+    assert r.status_code == 404
+
+
+def test_kamera_yon_degistir_izleyici_yetkisiz_403_doner(client, izleyici_header, roi_test_kamera_id):
+    r = client.patch(f"/kameralar/{roi_test_kamera_id}/yon", json={"yon": "cikis"}, headers=izleyici_header)
+    assert r.status_code == 403
+
+
+def test_kamera_roi_guncelle_operator_calistirabilir_ve_alani_kaydeder(client, operator_header, roi_test_kamera_id):
+    r = client.patch(f"/kameralar/{roi_test_kamera_id}/roi",
+                      json={"x1": 10, "y1": 5, "x2": 90, "y2": 95}, headers=operator_header)
+    assert r.status_code == 200, r.text
+    kamera = r.json()
+    assert kamera["roi"] == {"x1": 10.0, "y1": 5.0, "x2": 90.0, "y2": 95.0}
+
+    # Kalıcı mı diye /kameralar listesinden de doğrula.
+    r2 = client.get("/kameralar", headers=operator_header)
+    kaydedilen = next(k for k in r2.json() if k["id"] == roi_test_kamera_id)
+    assert kaydedilen["roi"] == {"x1": 10.0, "y1": 5.0, "x2": 90.0, "y2": 95.0}
+
+
+def test_kamera_roi_guncelle_temizle_alani_kaldirir(client, operator_header, roi_test_kamera_id):
+    # Önce bir alan tanımlı olduğundan emin ol.
+    r0 = client.patch(f"/kameralar/{roi_test_kamera_id}/roi",
+                       json={"x1": 0, "y1": 0, "x2": 50, "y2": 50}, headers=operator_header)
+    assert r0.status_code == 200 and r0.json()["roi"] is not None
+
+    r = client.patch(f"/kameralar/{roi_test_kamera_id}/roi", json={"temizle": True}, headers=operator_header)
+    assert r.status_code == 200, r.text
+    # NOT: temizlenince "roi" anahtarı sözlükten tamamen kaldırılıyor
+    # (kamera.pop("roi", None)) -- yanıt JSON'unda hiç bulunmaz, None değil.
+    assert r.json().get("roi") is None
+
+
+@pytest.mark.parametrize("govde", [
+    {"x1": 50, "y1": 0, "x2": 40, "y2": 100},   # x1 >= x2
+    {"x1": 0, "y1": 80, "x2": 100, "y2": 20},   # y1 >= y2
+    {"x1": -5, "y1": 0, "x2": 100, "y2": 100},  # 0-100 dışı
+    {"x1": 0, "y1": 0, "x2": 100, "y2": 150},   # 0-100 dışı
+    {"x1": 0, "y1": 0, "x2": 100},              # eksik alan (y2 yok), temizle=false
+])
+def test_kamera_roi_guncelle_gecersiz_degerler_400_doner(client, operator_header, roi_test_kamera_id, govde):
+    r = client.patch(f"/kameralar/{roi_test_kamera_id}/roi", json=govde, headers=operator_header)
+    assert r.status_code == 400, r.text
+
+
+def test_kamera_roi_guncelle_bulunamayan_kamera_404_doner(client, operator_header):
+    r = client.patch("/kameralar/YOK-BOYLE-BIR-KAMERA/roi",
+                      json={"x1": 0, "y1": 0, "x2": 100, "y2": 100}, headers=operator_header)
+    assert r.status_code == 404
+
+
+def test_kamera_roi_guncelle_izleyici_yetkisiz_403_doner(client, izleyici_header, roi_test_kamera_id):
+    r = client.patch(f"/kameralar/{roi_test_kamera_id}/roi",
+                      json={"x1": 0, "y1": 0, "x2": 100, "y2": 100}, headers=izleyici_header)
+    assert r.status_code == 403

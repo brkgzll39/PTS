@@ -147,6 +147,36 @@
   </div></div>
 </div>
 
+<!-- Kamera tespit alanı (ROI) modalı: giriş/çıkış kameralarının açıları birbirinin
+     şeridini de görüyorsa, her kamera için sadece kendi şeridine denk gelen bölgeyi
+     tanımlamaya yarar (bkz. main.py::kamera_roi_guncelle). Canlı bir kare üzerinde
+     yüzdesel bir dikdörtgen çizerek kalibrasyonu görsel olarak yapılabilir kılar. -->
+<div class="modal fade" id="kameraRoiModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-lg modal-dialog-centered"><div class="modal-content">
+    <div class="modal-header"><h5 class="modal-title">Tespit Alanı (ROI): <span id="roiKameraAdi">-</span></h5><button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Kapat"></button></div>
+    <div class="modal-body">
+      <p class="small text-muted">Kameranın SADECE bu dikdörtgen içindeki araçları kaydetmesini istiyorsanız aşağıdaki yüzdeleri ayarlayın. Komşu şeridi de gören bir kamerada, o şeridi dışarıda bırakacak şekilde daraltın. Boş bırakırsanız (veya "Sınırı Kaldır" derseniz) kameranın tüm görüş alanı geçerli olur.</p>
+      <input type="hidden" id="roiKameraId">
+      <div class="roi-onizleme-kapsayici position-relative mb-3" style="background:#000;">
+        <img id="roiOnizlemeGorsel" class="w-100 d-block" style="opacity:0.9;" alt="Kamera anlık görüntüsü">
+        <div id="roiKutuOnizleme" class="position-absolute border border-3 border-warning" style="pointer-events:none; box-shadow:0 0 0 2000px rgba(0,0,0,0.35);"></div>
+      </div>
+      <div class="row g-2">
+        <div class="col-3"><label class="form-label small">Sol %</label><input type="number" min="0" max="100" step="1" class="form-control form-control-sm" id="roiX1"></div>
+        <div class="col-3"><label class="form-label small">Üst %</label><input type="number" min="0" max="100" step="1" class="form-control form-control-sm" id="roiY1"></div>
+        <div class="col-3"><label class="form-label small">Sağ %</label><input type="number" min="0" max="100" step="1" class="form-control form-control-sm" id="roiX2"></div>
+        <div class="col-3"><label class="form-label small">Alt %</label><input type="number" min="0" max="100" step="1" class="form-control form-control-sm" id="roiY2"></div>
+      </div>
+      <div id="roiSonuc" class="small mt-2"></div>
+    </div>
+    <div class="modal-footer">
+      <button type="button" class="btn btn-outline-danger me-auto" onclick="kameraRoiKaldir()"><i class="bi bi-x-circle"></i> Sınırı Kaldır</button>
+      <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Vazgeç</button>
+      <button type="button" class="btn btn-primary" onclick="kameraRoiKaydet()"><i class="bi bi-check-circle"></i> Kaydet</button>
+    </div>
+  </div></div>
+</div>
+
 <nav class="navbar navbar-dark navbar-pts px-3">
   <span class="navbar-brand mb-0 h1"><i class="bi bi-camera-video-fill me-2"></i>TPAO PTS <small>Canlı İzleme</small></span>
   <span class="text-white-50 small d-none d-md-inline"><span id="oturumKullanici"></span> <span id="saatGosterge"></span></span>

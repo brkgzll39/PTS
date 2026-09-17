@@ -388,6 +388,66 @@ olan bir kayıt ekleyen ve `GET /kayitlar`'ın hâlâ 200 döndüğünü doğrul
 regresyon testi eklendi; düzeltme ayrıca gerçek Pydantic modeliyle (fastapi
 olmadan, sadece pydantic kullanılarak) bu sandbox'ta da elle doğrulandı.
 
+**⚠️ 2026-09-17 (devam) — Aynı araç aynı dakikada hem "giriş" hem "çıkış"
+olarak İKİ kayda düşüyordu: kameraların görüş açıları örtüşüyordu.**
+Kullanıcı, panelde "39 AEL 670" plakalı bir aracın aynı dakikada hem giriş
+kamerasından "Giriş", hem de nizamiye kapısı kamerasından "Çıkış" olarak iki
+ayrı kayda düştüğünü bildirdi. Kameraların fiziksel olarak birbirinden ayrı,
+farklı noktalarda olduğu doğrulandıktan sonra kullanıcı gerçek kök nedeni
+kendisi tespit etti: **giriş ve çıkış kameralarının ikisinin de açısı,
+kendi şeridinin yanı sıra KOMŞU şeridi de görecek şekilde ayarlıydı** —
+yani giriş yapan bir araç çıkış kamerasının görüş alanına da giriyor (ve
+"çıkış" olarak kaydediliyor), çıkış yapan araç da aynı şekilde giriş
+kamerasına yansıyıp "giriş" olarak kaydediliyordu. Bu, kamera açılarının
+fiziksel olarak yeniden hizalanmasını gerektirmeden, YAZILIMSAL olarak da
+çözülebilecek bir sorun: her kameraya, yalnızca kendi şeridini kapsayan bir
+**tespit alanı (ROI — region of interest)** tanımlanarak komşu şeritteki
+araçların o kameranın kaydına hiç düşmemesi sağlanabilir.
+
+İki yeni yetenek eklendi:
+
+- **Kamera Yönünü Yerinde Değiştirme (`PATCH /kameralar/{id}/yon`).**
+  Önceden yanlış yapılandırılmış bir kameranın yönünü (giriş/çıkış)
+  düzeltmenin TEK yolu kamerayı SİLİP RTSP adresini (ve varsa parolasını)
+  elle yeniden yazarak baştan eklemekti. Ama panel, güvenlik gereği RTSP
+  adresindeki parolayı istemciye asla düz metin göndermiyor (bkz.
+  `_kamera_guvenli_gorunum`) — yani operatör parolayı not almadıysa/
+  hatırlamıyorsa kamerayı siler silmez o bağlantıyı yeniden kuramaz hale
+  gelebilirdi. Bu yeni uç nokta yalnızca `yon` alanını değiştirir; kameranın
+  `id`'si, RTSP adresi ve parolası hiç değişmeden kalır. Panelde Kameralar
+  sekmesindeki her satırın Yön hücresi artık (operatör/yönetici için) tek
+  tıkla değiştirilebilen bir açılır listeye dönüştü.
+- **Tespit Alanı Sınırlama / ROI (`PATCH /kameralar/{id}/roi`).** Her
+  kameraya, kare boyutunun YÜZDESİ (0-100, çözünürlükten bağımsız) cinsinden
+  bir dikdörtgen (`x1,y1,x2,y2`) tanımlanabiliyor. Bir tespitin bu alanın
+  içinde sayılıp sayılmayacağına, kutunun TAMAMININ içeride olup olmadığına
+  değil, MERKEZ NOKTASININ içeride olup olmadığına bakılarak karar veriliyor
+  (bir araç ROI sınırına yakınsa kutusu sınırı kısmen aşabilir; merkez nokta
+  testi bu durumda daha isabetli). ROI dışında kalan tespitler, çok-kareli oy
+  birikim sistemine (`PlakaOturumTakipcisi`) HİÇ girmiyor — yani API'ye asla
+  ulaşmıyor, panelde hiç görünmüyor. Panelde Kameralar sekmesinde yeni bir
+  "Alan Sınırı" (makas ikonlu) düğme, kameranın CANLI görüntüsünü gösteren bir
+  modal açıyor; operatör bu modalda 4 sayısal alanı (X1/Y1/X2/Y2, yüzde)
+  değiştirdikçe görüntü üzerinde sarı bir dikdörtgen önizlemesi anlık olarak
+  güncelleniyor — böylece gerçek trafiği izleyerek gözle kalibrasyon
+  yapılabiliyor. Kamera pipeline'ının canlı önizleme karesinde de artık ROI
+  sınırı (sarı çizgi) ve her tespit, ROI içinde mi dışında mı olduğuna göre
+  yeşil/gri (ve "(alan dışı)" etiketiyle) renklendiriliyor. Bir kameranın ROI'si
+  `temizle=true` gönderilerek tamamen kaldırılabiliyor.
+
+Her iki uç nokta da yalnızca yönetici/operatör rolüne açık (izleyici 403
+alır); değişiklik kamera etkinse pipeline'ı otomatik olarak yeniden başlatıp
+uygulamaya alıyor. `tests/test_camera_reader.py`'ye ROI'nin yüzdeden piksele
+doğru çevrildiğini, bir tespitin merkez noktasına göre içeri/dışarı
+sınıflandırıldığını ve ROI dışındaki bir tespitin pipeline seviyesinde oy
+birikimine ve API'ye HİÇ ulaşmadığını (buna karşılık ROI içindeki bir
+tespitin normal şekilde ulaştığını) doğrulayan testler eklendi.
+`tests/test_api.py`'ye de her iki uç nokta için RBAC (yönetici/operatör
+izinli, izleyici 403), alan doğrulama (geçersiz yön değeri; eksik/0-100 dışı/
+x1≥x2 veya y1≥y2 olan ROI değerleri; `temizle=true` ile mevcut bir ROI'nin
+kaldırılması) ve olmayan kamera id'si için 404 dönüşünü doğrulayan testler
+eklendi.
+
 ## Kamera Bağlantı Güvenilirliği
 
 Bu bölüm, kamera bağlantılarının/araç geçişi görüntülerinin donmaması için yapılan

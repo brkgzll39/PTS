@@ -648,3 +648,73 @@ def test_toplu_dogruluk_testi_motor_hata_firlatirsa_ayri_kategoride_sayilir_ve_d
     assert detay_sozlugu["01_34ABC123.jpg"]["sonuc"] == "hata"
     assert "onnxruntime" in detay_sozlugu["01_34ABC123.jpg"]["hata_mesaji"]
     assert detay_sozlugu["02_06AA22.jpg"]["sonuc"] == "dogru"
+
+
+# ------------------------------------------------------------------
+# TESPİT ALANI SINIRI (ROI) -- bkz. README.md'deki 2026-09-17 notu: giriş ve
+# çıkış kameralarının açıları birbirinin şeridini de görebiliyor, bu yüzden
+# aynı araç her iki kamerada da tespit edilip hem "giriş" hem "çıkış" olarak
+# ayrı ayrı kaydedilebiliyor. ROI, her kameranın SADECE kendi şeridine denk
+# gelen bölgeyi izlemesini sağlayarak bunu engeller.
+# ------------------------------------------------------------------
+
+def test_roi_pixel_sinirlari_yuzdeden_dogru_hesaplanir():
+    roi = {"x1": 25, "y1": 10, "x2": 75, "y2": 90}
+    x1, y1, x2, y2 = camera_reader._roi_pixel_sinirlarini_hesapla(roi, genislik=200, yukseklik=100)
+    assert (x1, y1, x2, y2) == (50, 10, 150, 90)
+
+
+@pytest.mark.parametrize("kutu, roi_piksel, beklenen", [
+    ((10, 10, 100, 60), (0, 0, 50, 100), False),    # merkez (55,35) -- x sınırın dışında
+    ((10, 10, 100, 60), (50, 0, 100, 100), True),   # merkez (55,35) -- x sınırın içinde
+    (None, (0, 0, 50, 100), False),                 # kutu yoksa asla içeride sayılmaz
+])
+def test_kutu_roi_icinde_mi_merkez_noktasina_gore_karar_verir(kutu, roi_piksel, beklenen):
+    assert camera_reader._kutu_roi_icinde_mi(kutu, roi_piksel) is beklenen
+
+
+def test_roi_disindaki_tespit_oy_birikimine_hic_girmez_ve_api_ye_gonderilmez(sahte_engine):
+    """KÖK NEDEN düzeltmesi: iki kamera aynı bariyeri farklı açılardan
+    izlediğinde (veya açıları örtüştüğünde), bir kameranın ROI'si komşu
+    şeridi dışarıda bırakacak şekilde daraltılırsa, o şeritteki bir araç
+    (sahte motorun sabit kutusu (10,10,100,60), 100x100'lük karede merkezi
+    (55,35)) artık bu kameranın kaydına hiç düşmemeli."""
+    import numpy as np
+
+    pipeline = camera_reader.KameraPipeline(
+        video_kaynagi="kullanilmiyor.mp4", kamera_id="TEST-ROI-DISI",
+        roi={"x1": 0, "y1": 0, "x2": 50, "y2": 100},  # yalnızca SOL yarı geçerli
+    )
+    kare = np.zeros((100, 100, 3), dtype=np.uint8)
+    gonderilenler = pipeline._kareyi_isle(kare, oturumu_hemen_kapat=True)
+
+    assert gonderilenler == [], "ROI dışındaki (sağ yarıdaki) bir tespit yine de gönderildi"
+    assert pipeline._oturum_takipcisi.acik_oturum_sayisi() == 0
+
+
+def test_roi_icindeki_tespit_normal_sekilde_islenir(monkeypatch, sahte_engine):
+    """Aynı senaryo ama ROI bu sefer tespitin GERÇEKTEN olduğu tarafı
+    kapsıyor -- normal şekilde oy birikimine girip API'ye gönderilmeli,
+    ROI'nin varlığı meşru tespitleri de engellememeli.
+
+    (requests.post gerçek ağa gitmesin diye sahte_post ile taklit
+    ediliyor -- bkz. test_kayit_api_istegine_dogrulama_kare_sayisi_eklenir'deki
+    aynı desen.)"""
+    import numpy as np
+
+    def sahte_post(url, data=None, files=None, headers=None, timeout=None):
+        class _Yanit:
+            status_code = 200
+
+        return _Yanit()
+
+    monkeypatch.setattr(camera_reader.requests, "post", sahte_post)
+
+    pipeline = camera_reader.KameraPipeline(
+        video_kaynagi="kullanilmiyor.mp4", kamera_id="TEST-ROI-ICI",
+        roi={"x1": 50, "y1": 0, "x2": 100, "y2": 100},  # yalnızca SAĞ yarı geçerli
+    )
+    kare = np.zeros((100, 100, 3), dtype=np.uint8)
+    gonderilenler = pipeline._kareyi_isle(kare, oturumu_hemen_kapat=True)
+
+    assert gonderilenler == ["34 ABC 123"]
