@@ -2276,6 +2276,7 @@ async function sistemAyarlariYukle() {
       { key: "panel_yenileme_sn", label: "Panel yenileme aralığı (sn)", tip: "number" },
       { key: "min_tanima_guveni", label: "Min. OCR okuma güveni — oy birikimine giriş eşiği (0-1)", tip: "number", step: "0.05" },
       { key: "otomatik_kayit_min_guven_skoru", label: "Min. kayıt güven skoru — kayda düşme eşiği (0-1)", tip: "number", step: "0.01" },
+      { key: "otomatik_kayit_min_guven_skoru_bilinen_arac", label: "Min. kayıt güven skoru — BİLİNEN araç istisnası (0-1)", tip: "number", step: "0.01" },
     ];
     el.innerHTML = `<form id="sistemAyarlariForm" data-rol-min="yonetici">${satirlar.map(s =>
       `<div class="mb-2"><label class="form-label small">${escapeHtml(s.label)}</label>
@@ -2284,7 +2285,11 @@ async function sistemAyarlariYukle() {
       <p class="small text-muted mb-2">"OCR okuma güveni" tek tek kamera karelerinin oylamaya katılıp
         katılmayacağına bakar; "kayıt güven skoru" ise oturum kapanıp nihai güven belirlendikten sonra
         tespitin panele/kayıtlara hiç düşüp düşmeyeceğine karar verir — düşük güvenli, hatalı okunan
-        plakaların kayıtları şişirmesini engellemek için varsayılan %97'dir.</p>
+        plakaların kayıtları şişirmesini engellemek için varsayılan %97'dir. "BİLİNEN araç istisnası"
+        (varsayılan %80), sahada zaten kayıtlı (abone/personel) bir plakayla tam/çok yakın eşleşen bir
+        tespitin, genel eşiğin altında kalsa bile bu daha düşük eşiği geçtiği sürece yine de kaydedilmesini
+        sağlar — kayıtlı bir aracın düşük ışık/açı yüzünden düşük OCR güveniyle okunup girişte hiç
+        kaydedilmemesi (ama çıkışta kaydedilmesi gibi tutarsızlıklar) buradan kaynaklanır.</p>
       <div class="form-check mb-2">
         <input type="checkbox" class="form-check-input" id="ayar_bilinen_plaka_duzeltme_aktif" ${ayarlar.bilinen_plaka_duzeltme_aktif ? "checked" : ""}>
         <label class="form-check-label small" for="ayar_bilinen_plaka_duzeltme_aktif">Bilinen plakaya göre OCR düzeltmesi (tek karakter hataları)</label>

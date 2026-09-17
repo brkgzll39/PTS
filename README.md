@@ -591,6 +591,43 @@ eklendi çünkü ikisi farklı aşamalarda çalışır:
   geçişlerin sistematik olarak kaybolduğu görülürse eşiğin (Sistem
   Ayarları'ndan) düşürülmesi gerekebilir.
 
+**⚠️ 2026-09-17 (devam) — az yukarıdaki "bilinen dengeleme notu"nda öngörülen
+risk gerçekleşti: kullanıcının kendi (sistemde kayıtlı) aracı, girişte %96.6
+güvenle okundu ama %97'lik genel eşiğin az altında kaldığı için o geçiş HİÇ
+KAYDEDİLMEDİ — aynı araç çıkışta (daha yüksek güvenle) kaydedildiği için
+Kayıtlar sekmesinde giriş kaydı olmayan, yalnızca çıkışı olan tutarsız bir
+görünüm oluştu.** Basitçe genel eşiği düşürmek yeni bir ödünleşim yaratırdı
+(gerçekten hatalı/yabancı okumaların yeniden kayıtlara sızması); bunun yerine
+daha hedefli bir çözüm eklendi — **"bilinen araç istisnası"**:
+
+- Yeni ayar: `otomatik_kayit_min_guven_skoru_bilinen_arac` (varsayılan **0.80**,
+  Sistem Ayarları panelinde genel eşiğin hemen altında gösterilir).
+- Genel eşiğin altında kalan bir otomatik tespit artık hemen atılmıyor;
+  önce ham plaka metni, sahadaki bilinen (abone/personel) ana VE ek
+  plakalarla (`Kisi.plaka_no` + `KisiPlaka.plaka_no`) TAM eşleşiyor mu ya da
+  (`en_yakin_bilinen_plakayi_bul` ile) tek karakter farkla eşleşiyor mu diye
+  kontrol edilir (`main.py::_bilinen_plakaya_yakin_mi` — bu kontrol,
+  `_bilinen_plakaya_yakinlik_duzelt`'in kullandığı sorgu mantığıyla ortak bir
+  yardımcı fonksiyonda, `_bilinen_plakalar_sozlugu`, birleştirildi ki iki
+  yerde birbirinden bağımsız kopya olarak var olmasın).
+- Eşleşme varsa VE güven skoru daha düşük olan bu ikinci eşiği (varsayılan
+  %80) geçiyorsa, tespit yine de kaydedilir. Eşleşme yoksa (bilinmeyen/yabancı
+  bir plaka) ya da güven bu ikinci eşiğin de altındaysa, davranış eskisi gibi
+  aynen devam eder — kayıt hiç oluşturulmaz.
+- Mantık: genel eşik esasen sistemde HİÇ KAYITLI OLMAYAN plakaların (yanlış
+  okunmuş, hiçbir gerçek araca karşılık gelmeyen) kayıtları şişirmesini
+  önlemek içindir. Sahada zaten kayıtlı bir plakayla tam/çok yakın eşleşen bir
+  tespit için düşük bir OCR güven skoru genellikle ışık/açı/kısmi görüş gibi
+  görüntü kalitesi sorunlarından kaynaklanır — okunan METNİN kendisi kuvvetle
+  muhtemelen yine doğrudur, dolayısıyla bu durumda kaydı atmak (fayda yerine)
+  yalnızca zarar verir (kayıp giriş/çıkış kaydı).
+- 4 yeni test eklendi: bilinen-araç eşiğinin varsayılanı (0.80), genel eşiğin
+  altında ama bilinen-araç eşiğinin üzerindeki TANIMLI bir aracın artık
+  kaydedildiği (kullanıcının canlı senaryosunun birebir tekrarı), bilinmeyen
+  bir plaka için istisnanın devreye GİRMEDİĞİ, ve bilinen bir araç olsa bile
+  bilinen-araç eşiğinin de altında kalan bir tespitin yine atlandığı
+  (istisnanın bir güvenlik tabanını atlamadığı).
+
 **2026-09-17 (devam) — Kişiler sekmesinde plaka artık tıklanabilir.**
 Kayıtlar ve Kara Liste sekmelerinde bir plakaya tıklamak zaten "Plaka
 Analizi" penceresini (geçiş geçmişi + her geçişin görseli) açıyordu, ama

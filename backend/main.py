@@ -195,6 +195,18 @@ _VARSAYILAN_AYARLAR = {
     # bkz. kayit_ekle_manuel) ETKİLEMEZ -- personel bilinçli olarak girdiği
     # bir kaydın OCR güveniyle değerlendirilmemesi gerektiği için.
     "otomatik_kayit_min_guven_skoru": 0.97,
+    # BİLİNEN ARAÇ İSTİSNASI (2026-09-17, devam): kullanıcının kendi aracı
+    # girişte %96.6 güvenle okundu ama genel eşik (%97) altında kaldığı için
+    # o geçiş HİÇ KAYDEDİLMEDİ (bkz. _bilinen_plakaya_yakin_mi'nin
+    # docstring'i). Genel eşik esasen SİSTEMDE KAYITLI OLMAYAN plakaların
+    # (yanlış OCR okumaları) kayıtları şişirmesini önlemek içindir; sahada
+    # zaten kayıtlı (abone/personel) bir plakayla TAM ya da tek karakter
+    # farkla eşleşen bir tespit için bu, daha düşük/daha toleranslı bir ikinci
+    # eşiktir. Bu eşiğin de altına düşen tespitler (bilinen araç olsa bile)
+    # yine atlanır -- bu bir güvenlik tabanı değil, yalnızca "muhtemelen
+    # doğru okunmuş bilinen bir araç" ile "muhtemelen gerçekten hatalı okuma"
+    # ayrımı içindir.
+    "otomatik_kayit_min_guven_skoru_bilinen_arac": 0.80,
 }
 
 
@@ -1635,6 +1647,56 @@ def _plaka_yetki_kontrol(db: Session, plaka_no: str):
 _BILINEN_PLAKA_DUZELTME_GUVEN_TAVANI = 0.90  # bu güvenin ÜZERİNDEKİ okumalar zaten güvenilir, dokunma
 
 
+def _bilinen_plakalar_sozlugu(db: Session) -> dict:
+    """normalize edilmiş (boşluksuz, büyük harf) plaka -> orijinal (admin'in
+    girdiği, boşluklu) biçim. Sahadaki TÜM bilinen (abone/personel) ana ve ek
+    plakaları kapsar.
+
+    Hem `_bilinen_plakaya_yakinlik_duzelt` (OCR düzeltmesi) hem de
+    `_bilinen_plakaya_yakin_mi` (otomatik-kayıt güven eşiği filtresindeki
+    "bilinen araç" istisnası, bkz. kayit_ekle_otomatik) tarafından ortak
+    kullanılır -- aynı sorgu mantığının iki yerde birbirinden bağımsız,
+    zamanla sapabilecek iki kopyası olmasın diye (bu depoda daha önce görülen
+    "sessiz tekrar" hata sınıfının bir başka biçimi, bkz. metin_araclari.py).
+    """
+    sozluk: dict = {}
+    for k in db.query(models.Kisi).filter(models.Kisi.aktif == True).all():  # noqa: E712
+        norm = _plaka_normalize(k.plaka_no)
+        if norm:
+            sozluk.setdefault(norm, k.plaka_no)
+    for ek in db.query(models.KisiPlaka).filter(models.KisiPlaka.aktif == True).all():  # noqa: E712
+        norm = _plaka_normalize(ek.plaka_no)
+        if norm:
+            sozluk.setdefault(norm, ek.plaka_no)
+    return sozluk
+
+
+def _bilinen_plakaya_yakin_mi(db: Session, ham_plaka: str) -> bool:
+    """Ham OCR metni, sahadaki bilinen (abone/personel) bir plakayla TAM
+    eşleşiyor ya da (en_yakin_bilinen_plakayi_bul'daki gibi) tek karakter
+    farkla eşleşiyor mu?
+
+    KÖK NEDEN (kullanıcı bildirimi, 2026-09-17 devam): kullanıcının kendi
+    aracı girişte %96.6 güvenle okundu ama genel otomatik-kayıt eşiği
+    (varsayılan %97) altında kaldığı için o geçiş HİÇ KAYDEDİLMEDİ -- aynı
+    araç çıkışta (daha yüksek güvenle) kaydedildiği için giriş/çıkış kayıtları
+    tutarsız hale geldi. Genel eşik, aslında SİSTEMDE HİÇ KAYITLI OLMAYAN
+    (yani yanlış/hatalı okunmuş) plakaların kayıtları şişirmesini önlemek
+    için var; ama sahada zaten kayıtlı bir araç için düşük bir OCR güven
+    skoru genellikle ışık/açı gibi görüntü kalitesi sorunlarından kaynaklanır,
+    okunan METNİN kendisi çoğu zaman yine de doğrudur. Bu fonksiyon, güven
+    eşiği filtresinin böyle bir tespiti yanlışlıkla atmasını önlemek için
+    kullanılır (bkz. kayit_ekle_otomatik'teki "bilinen araç" istisnası).
+    """
+    hedef = _plaka_normalize(ham_plaka)
+    if not hedef:
+        return False
+    bilinenler = _bilinen_plakalar_sozlugu(db)
+    if hedef in bilinenler:
+        return True
+    return en_yakin_bilinen_plakayi_bul(hedef, set(bilinenler.keys())) is not None
+
+
 def _bilinen_plakaya_yakinlik_duzelt(db: Session, ham_plaka: str, guven_skoru: Optional[float]) -> tuple:
     """OCR'ın tek bir karakteri yanlış okuduğu durumları, sahadaki BİLİNEN
     (abone/personel) plakalara karşı çapraz kontrol ederek düzeltir.
@@ -1664,15 +1726,7 @@ def _bilinen_plakaya_yakinlik_duzelt(db: Session, ham_plaka: str, guven_skoru: O
     # normalize edilmiş (boşluksuz) hal -> orijinal (admin'in girdiği) biçim.
     # Böylece düzeltme sonucu, sitedeki kayda göre TUTARLI bir biçimde
     # (örn. "34 ABC 123") döner; ham OCR metninin boşluk düzeni değil.
-    bilinen_plakalar: dict = {}
-    for k in db.query(models.Kisi).filter(models.Kisi.aktif == True).all():  # noqa: E712
-        norm = _plaka_normalize(k.plaka_no)
-        if norm:
-            bilinen_plakalar.setdefault(norm, k.plaka_no)
-    for ek in db.query(models.KisiPlaka).filter(models.KisiPlaka.aktif == True).all():  # noqa: E712
-        norm = _plaka_normalize(ek.plaka_no)
-        if norm:
-            bilinen_plakalar.setdefault(norm, ek.plaka_no)
+    bilinen_plakalar = _bilinen_plakalar_sozlugu(db)
 
     en_yakin_norm = en_yakin_bilinen_plakayi_bul(hedef, set(bilinen_plakalar.keys()))
     if en_yakin_norm is not None:
@@ -1910,12 +1964,36 @@ async def kayit_ekle_otomatik(
     # isteklere uygulanır; bu uç nokta yalnızca kamera pipeline'ı/harici ANPR
     # sistemleri tarafından çağrıldığından (bkz. fonksiyon docstring'i) elle
     # girilen kayıtlar (kayit_ekle_manuel) bu filtreden HİÇ etkilenmez.
-    esik = _sistem_ayarlari_oku().get("otomatik_kayit_min_guven_skoru", 0.97)
+    ayarlar = _sistem_ayarlari_oku()
+    esik = ayarlar.get("otomatik_kayit_min_guven_skoru", 0.97)
     try:
         esik = max(0.0, min(1.0, float(esik)))
     except (TypeError, ValueError):
         esik = 0.97
     if guven_skoru is not None and not (esik <= guven_skoru <= 1.0001):
+        # BİLİNEN ARAÇ İSTİSNASI (2026-09-17, devam) -- bkz.
+        # _bilinen_plakaya_yakin_mi'nin docstring'i: genel eşiğin altında
+        # kalan bir tespit, sahada zaten kayıtlı bir plakayla TAM/çok yakın
+        # eşleşiyorsa VE daha düşük "bilinen araç" eşiğini geçiyorsa yine de
+        # kaydedilir -- kullanıcının kendi aracının, düşük bir OCR güven
+        # skoru yüzünden girişte hiç kayda düşmeyip çıkışta düşmesi (giriş/
+        # çıkış tutarsızlığı) buradan kaynaklanıyordu.
+        bilinen_esik = ayarlar.get("otomatik_kayit_min_guven_skoru_bilinen_arac", 0.80)
+        try:
+            bilinen_esik = max(0.0, min(1.0, float(bilinen_esik)))
+        except (TypeError, ValueError):
+            bilinen_esik = 0.80
+        bilinen_arac_istisnasi = (
+            guven_skoru >= bilinen_esik and _bilinen_plakaya_yakin_mi(db, plaka_no)
+        )
+        if bilinen_arac_istisnasi:
+            logger.info(
+                "[%s] Bilinen araca yakın düşük güvenli tespit YİNE DE kaydedildi: "
+                "plaka=%s güven=%.3f (genel eşik=%.3f, bilinen araç eşiği=%.3f)",
+                kamera_id, plaka_no, guven_skoru, esik, bilinen_esik,
+            )
+            return _kayit_olustur_ve_bildir(db, plaka_no, kamera_id, yon, guven_skoru, goruntu_yolu, dogrulama_kare_sayisi)
+
         if goruntu_yolu and os.path.isfile(goruntu_yolu):
             try:
                 os.remove(goruntu_yolu)

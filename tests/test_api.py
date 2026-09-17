@@ -1358,6 +1358,97 @@ def test_kayit_ekle_manuel_dusuk_guven_filtreden_etkilenmez(client, operator_hea
     assert len(r2.json()) == 1
 
 
+# ------------------------------------------------------------------
+# Otomatik kayıt güven eşiği filtresi — "bilinen araç" istisnası (2026-09-17, devam)
+# ------------------------------------------------------------------
+# Kök neden (kullanıcı bildirimi): kullanıcının kendi aracı girişte %96.6
+# güvenle okundu ama genel eşik (varsayılan %97) altında kaldığı için o geçiş
+# HİÇ KAYDEDİLMEDİ; aynı araç çıkışta (daha yüksek güvenle) kaydedildiği için
+# giriş/çıkış kayıtları tutarsız hale geldi. Genel eşik, sistemde HİÇ KAYITLI
+# OLMAYAN (yanlış okunmuş) plakaların kayıtları şişirmesini önlemek içindir;
+# sahada zaten kayıtlı bir plakayla TAM/çok yakın eşleşen düşük güvenli bir
+# tespit için artık daha düşük, ikinci bir "bilinen araç" eşiği uygulanıyor
+# (bkz. main.py::_bilinen_plakaya_yakin_mi).
+
+def _mevcut_otomatik_kayit_esigi_bilinen_arac(client, yetkili_header) -> float:
+    r = client.get("/sistem/ayarlar", headers=yetkili_header)
+    assert r.status_code == 200, r.text
+    return float(r.json().get("otomatik_kayit_min_guven_skoru_bilinen_arac", 0.80))
+
+
+def test_otomatik_kayit_bilinen_arac_esigi_varsayilan_080(client, yetkili_header):
+    assert _mevcut_otomatik_kayit_esigi_bilinen_arac(client, yetkili_header) == pytest.approx(0.80)
+
+
+def test_kayit_ekle_otomatik_bilinen_arac_dusuk_guvenle_de_kaydedilir(client, yetkili_header):
+    """Genel eşiğin altında ama bilinen-araç eşiğinin üzerinde, sistemde
+    kayıtlı bir plakayla TAM eşleşen bir tespit -- artık atlanmıyor, aynen
+    kullanıcının bildirdiği canlı senaryodaki gibi."""
+    r = client.post("/kisiler", json={
+        "ad_soyad": "Bilinen Arac Testi", "plaka_no": "39 BG 262", "tip": "abone",
+    }, headers=yetkili_header)
+    assert r.status_code == 200, r.text
+
+    genel_esik = _mevcut_otomatik_kayit_esigi(client, yetkili_header)
+    bilinen_esik = _mevcut_otomatik_kayit_esigi_bilinen_arac(client, yetkili_header)
+    assert bilinen_esik < genel_esik, "Test, bilinen-araç eşiğinin genel eşikten düşük olduğunu varsayıyor"
+    guven = (genel_esik + bilinen_esik) / 2
+
+    r2 = client.post("/kayitlar/otomatik", data={
+        "plaka_no": "39 BG 262", "kamera_id": "TEST-BILINEN-ARAC", "yon": "giris",
+        "guven_skoru": guven,
+    })
+    assert r2.status_code == 200, r2.text
+    veri = r2.json()
+    assert "atlandi" not in veri, "Bilinen araç olduğu halde tespit yanlışlıkla atlandı"
+    assert veri["plaka_no"] == "39 BG 262"
+
+    r3 = client.get("/kayitlar", params={"plaka": "39 BG 262"}, headers=yetkili_header)
+    assert r3.status_code == 200, r3.text
+    assert len(r3.json()) == 1, "Bilinen araç, genel eşiğin altında kalsa bile kaydedilmeliydi"
+
+
+def test_kayit_ekle_otomatik_bilinmeyen_arac_dusuk_guvenle_yine_atlanir(client, yetkili_header):
+    """Bilinen-araç istisnası yalnızca SİSTEMDE KAYITLI bir plakayla eşleşen
+    tespitler için geçerli -- alakasız/bilinmeyen bir plaka için genel eşik
+    hâlâ olduğu gibi uygulanmalı, aksi halde istisna filtreyi anlamsız
+    kılardı."""
+    genel_esik = _mevcut_otomatik_kayit_esigi(client, yetkili_header)
+    bilinen_esik = _mevcut_otomatik_kayit_esigi_bilinen_arac(client, yetkili_header)
+    guven = (genel_esik + bilinen_esik) / 2
+
+    r = client.post("/kayitlar/otomatik", data={
+        "plaka_no": "06 XYZ 999", "kamera_id": "TEST-BILINMEYEN-ARAC", "yon": "giris",
+        "guven_skoru": guven,
+    })
+    assert r.status_code == 200, r.text
+    veri = r.json()
+    assert veri["atlandi"] is True
+    assert veri["sebep"] == "dusuk_guven_skoru"
+
+
+def test_kayit_ekle_otomatik_bilinen_arac_esiginin_de_altinda_atlanir(client, yetkili_header):
+    """Bilinen araç istisnası bir güvenlik tabanını atlamaz -- bilinen-araç
+    eşiğinin de altındaki (çok düşük güvenli, muhtemelen gerçekten hatalı)
+    bir tespit, plaka bilinen bir araca eşleşse bile yine atlanmalı."""
+    r = client.post("/kisiler", json={
+        "ad_soyad": "Cok Dusuk Guven Testi", "plaka_no": "34 CDG 555", "tip": "abone",
+    }, headers=yetkili_header)
+    assert r.status_code == 200, r.text
+
+    bilinen_esik = _mevcut_otomatik_kayit_esigi_bilinen_arac(client, yetkili_header)
+    cok_dusuk = max(0.0, bilinen_esik - 0.30)
+
+    r2 = client.post("/kayitlar/otomatik", data={
+        "plaka_no": "34 CDG 555", "kamera_id": "TEST-COK-DUSUK-BILINEN", "yon": "giris",
+        "guven_skoru": cok_dusuk,
+    })
+    assert r2.status_code == 200, r2.text
+    veri = r2.json()
+    assert veri["atlandi"] is True
+    assert veri["sebep"] == "dusuk_guven_skoru"
+
+
 def test_dusuk_guven_kayitlarini_temizle_yalnizca_otomatik_ve_dusuk_olanlari_siler(client, yetkili_header):
     """Geriye dönük temizlik uç noktası (bkz. main.py::dusuk_guven_kayitlarini_temizle):
     yalnızca guven_skoru dolu VE eşiğin altında VE manuel_giris=False olan
