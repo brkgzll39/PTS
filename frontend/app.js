@@ -729,6 +729,15 @@ document.getElementById("lisansForm").addEventListener("submit", async (e) => {
 let _kayitlarSayfa = 0;
 const _kayitlarLimit = 50;
 
+// Otomatik arka plan yenilemesi (bkz. _canliBolumleriTazeleDebounce ve
+// aşağıdaki 15 sn'lik yedek polling) kullanıcı tam o anda Kayıtlar filtre
+// alanlarından birine yazı yazıyorken tabloyu ELİNİN ALTINDAN değiştirip
+// yarım kalan aramasını bozmasın diye bu durumu tespit eder.
+function _kayitlarFiltresiDuzenleniyorMu() {
+  const aktif = document.activeElement;
+  return !!aktif && ["filtrePlaka", "filtreBaslangic", "filtreBitis", "filtreDurum"].includes(aktif.id);
+}
+
 function filtreParametreleri() {
   const params = new URLSearchParams();
   const plaka = document.getElementById("filtrePlaka").value.trim();
@@ -1102,8 +1111,17 @@ document.getElementById("testKayitForm").addEventListener("submit", async (e) =>
 
 authBaslat().then(() => {
   ziyaretciAlanGoster();
-  // SSE bağlıysa polling azaltılır; bağlı değilse 15 sn'de yenile
-  setInterval(() => { if (sessionStorage.getItem("pts_token") && !_sseAktif) panelYenile(); }, 15000);
+  // SSE bağlıysa (gerçek zamanlı olaylar zaten Panel+Kayıtlar'ı tazeliyor,
+  // bkz. _sseKayitAl -> _canliBolumleriTazeleDebounce) bu yedek polling'e
+  // gerek yok; SSE bağlı DEĞİLSE (bağlantı koptu/henüz kurulmadıysa) 15
+  // sn'de bir Panel VE Kayıtlar sekmesi otomatik olarak yeniden yüklenir --
+  // kullanıcının müdahalesi olmadan sayfa arka planda kendini güncel tutar.
+  setInterval(() => {
+    if (sessionStorage.getItem("pts_token") && !_sseAktif) {
+      panelYenile();
+      if (!_kayitlarFiltresiDuzenleniyorMu()) kayitlariYukle(false);
+    }
+  }, 15000);
 });
 
 // ================================================================
@@ -1195,7 +1213,7 @@ function _sseKayitAl(kayit) {
   const yon = kayit.yon === "giris" ? "Giriş" : "Çıkış";
   toastGoster(`${kayit.plaka_no} · ${yon} · ${kayit.kamera_id}`, tip);
 
-  // Panel'deki canlı olay listesini anlık güncelle
+  // Panel'deki canlı olay listesini anlık güncelle (sıfır gecikmeli ilk his)
   const canliOlaylar = document.getElementById("canliOlaylar");
   if (canliOlaylar) {
     const yeniSatir = `<button class="event-row event-button" onclick="olayDetayAc(${kayit.id})"><div class="event-icon ${kayit.yetki_durumu === "yetkili" ? "allowed" : "blocked"}"><i class="bi ${kayit.yon === "giris" ? "bi-box-arrow-in-right" : "bi-box-arrow-right"}"></i></div><div class="event-main"><strong>${escapeHtml(kayit.plaka_no)}</strong><span>${escapeHtml(kayit.kamera_id)} · ${yon}</span></div><div class="event-time">${new Date(kayit.tarih_saat).toLocaleTimeString("tr-TR")}</div></button>`;
@@ -1208,6 +1226,30 @@ function _sseKayitAl(kayit) {
   // Yenileme zamanını güncelle
   const el = document.getElementById("canliYenileme");
   if (el) el.textContent = new Date().toLocaleTimeString("tr-TR");
+
+  // Kullanıcı hiçbir şey yapmadan Panel VE Kayıtlar bölümlerinin kendiliğinden
+  // tazelenmesi isteniyor (araç girişi/çıkışı olduğunda) -- yukarıdaki anlık
+  // DOM yaması sadece "canlı olaylar" listesini ve toast'u günceller; panel
+  // sayaçları (toplam/bugünkü/yetkisiz/araç içeride/kara liste vb.) ve
+  // Kayıtlar sekmesindeki tam tablo bundan etkilenmez. Bu yüzden her SSE
+  // olayında ikisini de arka planda tam olarak yeniden yüklüyoruz.
+  _canliBolumleriTazeleDebounce();
+}
+
+// Aynı anda birden fazla araç geçtiğinde (art arda gelen SSE olaylarında)
+// panel+kayıtlar'ı her olay için ayrı ayrı değil, kısa bir pencerede TEK
+// seferde tazelemek için debounce edilir -- gereksiz API isteği yığılmasını
+// önler.
+let _canliYenilemeZamanlayici = null;
+function _canliBolumleriTazeleDebounce() {
+  if (_canliYenilemeZamanlayici) return;
+  _canliYenilemeZamanlayici = setTimeout(async () => {
+    _canliYenilemeZamanlayici = null;
+    try { await panelYenile(); } catch (e) { console.error("Panel otomatik yenileme hatası:", e); }
+    if (!_kayitlarFiltresiDuzenleniyorMu()) {
+      try { await kayitlariYukle(false); } catch (e) { console.error("Kayıtlar otomatik yenileme hatası:", e); }
+    }
+  }, 400);
 }
 
 // ================================================================

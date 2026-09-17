@@ -448,6 +448,24 @@ x1≥x2 veya y1≥y2 olan ROI değerleri; `temizle=true` ile mevcut bir ROI'nin
 kaldırılması) ve olmayan kamera id'si için 404 dönüşünü doğrulayan testler
 eklendi.
 
+**2026-09-17 (devam) — Panel ve Kayıtlar sekmeleri artık araç geçişinde
+KENDİLİĞİNDEN yenileniyor.** Önceden gerçek zamanlı SSE bağlantısı yalnızca
+Panel'deki "canlı olaylar" küçük listesini ve bir toast bildirimini anlık
+güncelliyordu; Panel'in sayaçları (toplam/bugünkü/yetkisiz giriş/araç
+içeride/kara liste sayısı vb.) ve Kayıtlar sekmesindeki asıl tablo, kullanıcı
+elle "yenile"/sayfayı yeniden açana kadar ESKİ kalıyordu. Artık her SSE
+"kayit" olayında (`_sseKayitAl` → `_canliBolumleriTazeleDebounce`) hem
+`panelYenile()` hem de `kayitlariYukle(false)` arka planda otomatik olarak
+çalışıyor — kullanıcı hiçbir şey yapmadan hem Panel hem Kayıtlar güncel
+kalıyor. Art arda hızlı gelen olaylar (aynı anda birden fazla araç geçişi)
+400ms'lik bir pencerede TEK yenileme turuna toplanıyor (debounce), gereksiz
+API isteği yığılması önleniyor. SSE bağlantısı koptuğunda devreye giren 15
+saniyelik yedek polling de artık yalnızca Panel'i değil Kayıtlar'ı da
+kapsıyor. Kullanıcı o an Kayıtlar sekmesindeki plaka/tarih/durum filtre
+kutularından birine yazı yazıyorsa (`_kayitlarFiltresiDuzenleniyorMu`) arama
+kutusunun elinin altından değişip yarım kalan aramasının bozulmaması için o
+turda yalnızca Kayıtlar tablosu atlanıyor, Panel yine de tazeleniyor.
+
 ## Kamera Bağlantı Güvenilirliği
 
 Bu bölüm, kamera bağlantılarının/araç geçişi görüntülerinin donmaması için yapılan
