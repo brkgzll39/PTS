@@ -534,6 +534,47 @@ olarak KAPSAM DIŞI bırakıldı** ve bu sistemde yoktur:
     kavramları bu sistemin veri modelinde karşılığı olmadığı ve kullanıcının
     seçtiği kapsamda yer almadığı için uygulanmadı.
 
+**2026-09-17 (devam) — "Son kullanılan not" önerisi, her gece 23:59'da
+sıfırlanır.** Kullanıcının somut örneği: yetkisiz bir kargo aracına
+("PTT Kargo") panelden elle bir not eklendiğinde, aynı araç aynı gün
+içinde tekrar gelirse (örn. 09:00 giriş, 13:00 çıkış) görevli notu yeniden
+yazmak zorunda kalmamalı — ama kullanıcı bu önerinin bir sonraki güne HİÇ
+taşınmamasını, her gün saat 23:59'da (gün değişiminde) sıfırlanmasını
+açıkça istedi.
+
+- **Önemli ayrım:** Bu, `Kayit.not_metni` gibi KALICI/denetime tabi bir alan
+  DEĞİLDİR. Her giriş/çıkış kaydının kendi notu (bkz. yukarıdaki "Plaka
+  Analizi ekranında tam düzenleme, notlar ve manuel kayıt" bölümü) zaten o
+  kayda özeldir ve sonsuza dek olduğu gibi saklanır — geçmiş kayıtlara
+  ASLA dokunulmaz/silinmez. Yeni eklenen şey, yalnızca bir sonraki not
+  giriş kutusuna otomatik ÖNERİ olarak sunulan, sunucu belleğinde tutulan
+  GEÇİCİ bir önbellektir (`main.py::_SON_NOT_ONBELLEGI`) — sunucu yeniden
+  başlatıldığında da zaten kaybolur, ayrıca her gece 23:59'da aktif olarak
+  temizlenir (`_son_not_onbellek_temizlik_dongu`, her dakika kontrol eder)
+  ve okuma sırasında da pasif olarak süresi dolar (`_son_not_oku`, önbellek
+  kaydı bugüne ait değilse anında yok sayar — aktif döngü henüz çalışmamış
+  olsa bile doğruluk garantilenir).
+- Bir kayda not eklenen/güncellenen HER yer bu önbelleği besler: manuel
+  kayıt ekleme (Kayıtlar sekmesi "Test Kaydı Ekle" formu ve Plaka Analizi
+  "Manuel Kayıt Ekle" formu — ikisi de `POST /kayitlar`), Kayıt Düzenle ve
+  Ziyaretçi Girişi (ikisi de `PATCH /kayitlar/{id}`).
+- Yeni uç nokta: `GET /kayitlar/son-not?plaka=...` → `{"not_metni": "..."}`
+  (yoksa `null`). Panelde dört ayrı not kutusu bunu tüketir: olay
+  detayındaki Ziyaretçi Girişi kutusu, Kayıt Düzenle modalı (yalnızca o
+  kaydın KENDİ notu boşsa), bağımsız "Ziyaretçi Girişi" panel formu (plaka
+  alanından çıkılınca/blur), ve Plaka Analizi'nin "Manuel Kayıt Ekle"
+  formu (bu ekranda plaka zaten sabit olduğundan `plaka_analiz` uç
+  noktasının kendi yanıtına eklenen `son_not_onerisi` alanı üzerinden,
+  ekstra bir istek atmadan). Öneri HER ZAMAN düzenlenebilir kalır —
+  görevli isterse değiştirip kaydedebilir.
+- 5 yeni test: kayıtsız bir plaka için boş dönüş, manuel kayıt notunun
+  (kullanıcının "PTT Kargo" örneğinin birebir tekrarı) önbelleğe yansıması
+  ve aynı gün ikinci bir kayıtla (çıkış) bozulmaması, Kayıt Düzenle/
+  Ziyaretçi Girişi üzerinden eklenen notun da yansıması, Plaka Analizi
+  yanıtındaki `son_not_onerisi` alanı, ve önbellekteki tarih doğrudan
+  "dün"e çekilerek gün değişiminin öneriyi gerçekten sıfırladığının
+  doğrulanması.
+
 **2026-09-17 (devam) — Otomatik tespitler için "kayıt güven eşiği" filtresi.**
 Kullanıcı, düşük güvenli (hatalı/yanlış okunan) OCR tespitlerinin panele ve
 Kayıtlar sekmesine düşüp kayıtları şişirdiğini bildirdi ve yalnızca **%97-%100**

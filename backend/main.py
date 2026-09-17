@@ -428,6 +428,79 @@ async def _goruntu_temizlik_dongu() -> None:
 
 
 # ================================================================
+# SON KULLANILAN NOT ÖNBELLEĞİ — kullanıcı talebi (2026-09-17, devam)
+# ================================================================
+# Kullanıcı senaryosu: yetkisiz bir araca (örn. bir kargo aracına) panelden
+# elle bir not eklendiğinde ("PTT Kargo" gibi), aynı plaka aynı gün içinde
+# tekrar geldiğinde görevli notu yeniden yazmak zorunda kalmasın istendi --
+# ama bu önerinin bir SONRAKİ güne hiç taşınmaması, her gece sıfırlanması
+# açıkça talep edildi. Bu, `Kayit.not_metni` gibi KALICI/denetime tabi bir
+# alan DEĞİLDİR -- yalnızca bir kullanıcı kolaylığı (öneri) önbelleğidir;
+# sunucu yeniden başlatıldığında da zaten kaybolur. Geçmiş kayıtlardaki
+# gerçek notlar (Kayit.not_metni) bundan HİÇBİR ŞEKİLDE etkilenmez, onlar
+# denetim/soruşturma amaçlı olarak sonsuza dek olduğu gibi saklanır -- bkz.
+# Kayit.not_metni'nin kendi docstring'i.
+_SON_NOT_ONBELLEGI: dict = {}  # normalize edilmiş plaka -> {"not_metni": str, "tarih": date}
+
+
+def _son_not_kaydet(plaka_no: str, not_metni: Optional[str]) -> None:
+    """Bir kayda not eklendiğinde/güncellendiğinde çağrılır (bkz.
+    _kayit_olustur_ve_bildir ve kayit_duzenle); o plaka için "son kullanılan
+    not" önerisini bugünün tarihiyle günceller."""
+    if not not_metni or not not_metni.strip():
+        return
+    hedef = _plaka_normalize(plaka_no)
+    if not hedef:
+        return
+    _SON_NOT_ONBELLEGI[hedef] = {"not_metni": not_metni.strip(), "tarih": datetime.now().date()}
+
+
+def _son_not_oku(plaka_no: str) -> Optional[str]:
+    """Bir plaka için (varsa) son kullanılan not önerisini döner. Önbellekteki
+    kayıt BUGÜNE ait değilse (gün değişmiş), pasif olarak sıfırlanır ve None
+    döner -- aktif temizlik döngüsü (aşağısı) henüz çalışmamış olsa bile
+    doğruluk garanti edilir, döngü yalnızca belleği erkenden boşaltmak
+    içindir."""
+    hedef = _plaka_normalize(plaka_no)
+    if not hedef:
+        return None
+    kayit = _SON_NOT_ONBELLEGI.get(hedef)
+    if not kayit:
+        return None
+    if kayit["tarih"] != datetime.now().date():
+        _SON_NOT_ONBELLEGI.pop(hedef, None)
+        return None
+    return kayit["not_metni"]
+
+
+SON_NOT_ONBELLEK_TEMIZLIK_ARALIK_SN = 60  # her dakika saat 23:59'u kontrol et
+
+
+async def _son_not_onbellek_temizlik_dongu() -> None:
+    """Kullanıcının açık talebi: "her gün 23:59'da, yani bir sonraki güne
+    geçişte araçların notları sıfırlansın". Her dakika saatin 23:59 olup
+    olmadığına bakar, olduğunda (o gün için daha önce yapılmadıysa) SON
+    KULLANILAN NOT önbelleğini tamamen temizler. Bu yalnızca yukarıdaki
+    öneri önbelleğini etkiler -- kalıcı Kayit.not_metni alanına dokunmaz."""
+    son_temizlenen_gun = None
+    while True:
+        try:
+            simdi = datetime.now()
+            if simdi.hour == 23 and simdi.minute == 59 and son_temizlenen_gun != simdi.date():
+                adet = len(_SON_NOT_ONBELLEGI)
+                _SON_NOT_ONBELLEGI.clear()
+                son_temizlenen_gun = simdi.date()
+                if adet:
+                    logger.info(
+                        "Son kullanılan not önbelleği gece yarısı sıfırlandı (%d kayıt temizlendi)",
+                        adet,
+                    )
+        except Exception as exc:
+            logger.error("[son-not-onbellek] Temizlik döngüsünde hata: %s", exc, exc_info=True)
+        await asyncio.sleep(SON_NOT_ONBELLEK_TEMIZLIK_ARALIK_SN)
+
+
+# ================================================================
 # SSE (Server-Sent Events) YAYINCISI — gerçek zamanlı istemci bildirimi
 # ================================================================
 _sse_istemcileri: list = []
@@ -621,6 +694,14 @@ async def _goruntu_temizligini_baslat():
     """Arka planda sürekli çalışan otomatik görüntü/kayıt saklama görevini başlatır."""
     asyncio.ensure_future(_goruntu_temizlik_dongu())
     logger.info("Otomatik görüntü temizliği başlatıldı (her %d sn kontrol)", GORUNTU_TEMIZLIK_ARALIK_SN)
+
+
+@app.on_event("startup")
+async def _son_not_onbellek_temizligini_baslat():
+    """Arka planda sürekli çalışan, "son kullanılan not" önbelleğini her gece
+    23:59'da sıfırlayan görevi başlatır (bkz. yukarısı)."""
+    asyncio.ensure_future(_son_not_onbellek_temizlik_dongu())
+    logger.info("Son kullanılan not önbelleği temizliği başlatıldı (her gece 23:59)")
 
 
 _klasor_izleyici = None  # bkz. _klasor_izlemeyi_baslat_gerekirse — /sistem/saglik'te de raporlanır
@@ -1751,6 +1832,7 @@ def _kayit_olustur_ve_bildir(db: Session, plaka_no: str, kamera_id: str, yon: st
 
     yetki, kisi_id, kisi_tip = _plaka_yetki_kontrol(db, plaka_no)
 
+    not_metni_temiz = (not_metni or "").strip() or None
     kayit = models.Kayit(
         plaka_no=plaka_no.upper().strip(),
         kamera_id=kamera_id,
@@ -1762,12 +1844,18 @@ def _kayit_olustur_ve_bildir(db: Session, plaka_no: str, kamera_id: str, yon: st
         kisi_id=kisi_id,
         kisi_tip_anlik=kisi_tip,
         dogrulama_kare_sayisi=dogrulama_kare_sayisi,
-        not_metni=(not_metni or "").strip() or None,
+        not_metni=not_metni_temiz,
         manuel_giris=manuel_giris,
     )
     db.add(kayit)
     db.commit()
     db.refresh(kayit)
+
+    # SON KULLANILAN NOT ÖNBELLEĞİ (2026-09-17, devam): bkz. modülün üst
+    # kısmındaki açıklama -- kalıcı kayda (yukarıdaki not_metni) HİÇ
+    # dokunmaz, yalnızca bir sonraki not girişi için geçici bir öneri sağlar.
+    if not_metni_temiz:
+        _son_not_kaydet(plaka_no, not_metni_temiz)
 
     if yetki == "yetkili":
         mesaj = f"HOŞ GELDİNİZ {plaka_no.upper()}"
@@ -2203,6 +2291,12 @@ def kayit_duzenle(
         if yeni_not != kayit.not_metni:
             kayit.not_metni = yeni_not
             degisti = True
+        # SON KULLANILAN NOT ÖNBELLEĞİ (2026-09-17, devam): Ziyaretçi Girişi
+        # akışı da (bkz. app.js::_ziyaretciGirisiKutusunuAyarla) bu uç
+        # noktadan (PATCH /kayitlar/{id}) not ekliyor -- bu yüzden öneri
+        # önbelleği burada da güncellenir (bkz. modülün üst kısmındaki not).
+        if yeni_not:
+            _son_not_kaydet(kayit.plaka_no, yeni_not)
 
     if degisti:
         kayit.duzenleyen = kullanici.kullanici_adi
@@ -2258,6 +2352,17 @@ def grafik_verisi(gun: int = 7, db: Session = Depends(get_db), _: models.Kullani
     return {"gunluk": gunluk, "yetki_dagilimi": yetki_dagilimi}
 
 
+@app.get("/kayitlar/son-not")
+def son_not_getir(plaka: str, _: models.Kullanici = Depends(_personel_girisi_gerekli)):
+    """Bir plaka için (varsa) "son kullanılan not" önerisini döner (bkz.
+    modülün üst kısmındaki _SON_NOT_ONBELLEGI açıklaması). Panelde
+    Ziyaretçi Girişi, Kayıt Düzenle ve Ziyaretçi Bilgileri (panel) not
+    kutuları açılırken bu uç nokta çağrılır ki görevli aynı gün aynı plaka
+    için notu yeniden yazmak zorunda kalmasın; öneri her zaman DÜZENLENEBİLİR
+    kalır ve her gece 23:59'da otomatik olarak sıfırlanır."""
+    return {"not_metni": _son_not_oku(plaka)}
+
+
 @app.get("/kayitlar/analiz/{plaka_no}")
 def plaka_analiz(plaka_no: str, db: Session = Depends(get_db), _: models.Kullanici = Depends(_personel_girisi_gerekli)):
     """Bir plaka için geçiş geçmişi, kişi bilgisi ve kara liste durumu."""
@@ -2299,6 +2404,10 @@ def plaka_analiz(plaka_no: str, db: Session = Depends(get_db), _: models.Kullani
         "kisi": {"id": kisi.id, "ad_soyad": kisi.ad_soyad, "tip": kisi.tip, "telefon": kisi.telefon} if kisi else None,
         "kara_listesinde": kara is not None,
         "kara_sebep": kara.sebep if kara else None,
+        # Bu ekrandaki "Manuel Kayıt Ekle" not kutusunu doldurmak için (bkz.
+        # _SON_NOT_ONBELLEGI) -- her gece 23:59'da sıfırlanan, kalıcı OLMAYAN
+        # bir öneridir.
+        "son_not_onerisi": _son_not_oku(goruntu_plaka),
         "son_kayitlar": [
             # NOT: bu alanların tamamı, panelin "Kayıtlar" tablosundaki
             # kayitDuzenleAc()/kayitSil() fonksiyonlarının aynı obje şeklini

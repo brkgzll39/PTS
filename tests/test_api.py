@@ -978,6 +978,106 @@ def test_plaka_analiz_kara_liste_durumunu_dogru_gosterir(client, yetkili_header)
 
 
 # ------------------------------------------------------------------
+# "Son kullanılan not" önerisi -- her gece 23:59'da sıfırlanır (2026-09-17, devam)
+# ------------------------------------------------------------------
+# Kullanıcı senaryosu: yetkisiz bir araca (örn. bir kargo aracına, "PTT
+# Kargo" örneğindeki gibi) panelden elle not eklendiğinde, aynı plaka aynı
+# gün tekrar geldiğinde görevli notu yeniden yazmasın diye bir sonraki not
+# kutusuna ÖNERİ olarak sunulur (bkz. main.py::_SON_NOT_ONBELLEGI). Kullanıcı
+# açıkça bu önerinin bir sonraki güne HİÇ taşınmamasını istedi -- gerçek
+# denetim kaydı olan Kayit.not_metni'nden TAMAMEN AYRI, geçici bir önbellek.
+
+def test_son_not_onerisi_kayitsiz_plaka_icin_bos_doner(client, yetkili_header):
+    r = client.get("/kayitlar/son-not", params={"plaka": "34 YOK 99"}, headers=yetkili_header)
+    assert r.status_code == 200, r.text
+    assert r.json()["not_metni"] is None
+
+
+def test_manuel_kayit_notu_son_not_onerisine_yansir(client, operator_header, yetkili_header):
+    """Kullanıcının verdiği örneğin birebir tekrarı: yetkisiz bir araca
+    (kargo aracı) "PTT Kargo" notuyla manuel bir giriş kaydı eklenir; aynı
+    plaka için son-not önerisi bu notu döndürmeli."""
+    r = client.post("/kayitlar", json={
+        "plaka_no": "34 PTT 01", "kamera_id": "PANEL-MANUEL", "yon": "giris",
+        "guven_skoru": None, "not_metni": "PTT Kargo",
+    }, headers=operator_header)
+    assert r.status_code == 200, r.text
+    assert r.json()["yetki_durumu"] in ("yetkisiz", "bilinmiyor")
+
+    r2 = client.get("/kayitlar/son-not", params={"plaka": "34 PTT 01"}, headers=yetkili_header)
+    assert r2.status_code == 200, r2.text
+    assert r2.json()["not_metni"] == "PTT Kargo"
+
+    # Aynı gün içinde aynı aracın çıkış kaydı ayrıca eklense bile (örn. saat
+    # 13:00), öneri hâlâ aynı notu göstermeli -- kalıcı kayda hiç dokunmadan.
+    r3 = client.post("/kayitlar", json={
+        "plaka_no": "34 PTT 01", "kamera_id": "PANEL-MANUEL", "yon": "cikis",
+    }, headers=operator_header)
+    assert r3.status_code == 200, r3.text
+    r4 = client.get("/kayitlar/son-not", params={"plaka": "34 PTT 01"}, headers=yetkili_header)
+    assert r4.json()["not_metni"] == "PTT Kargo"
+
+
+def test_kayit_duzenle_notu_da_son_not_onerisine_yansir(client, operator_header, yetkili_header):
+    """Not yalnızca yeni kayıt eklerken değil, mevcut bir kaydı (Kayıt
+    Düzenle / Ziyaretçi Girişi -- ikisi de PATCH /kayitlar/{id} kullanır)
+    düzenlerken eklenirse de önbelleğe yansımalı."""
+    r = client.post("/kayitlar", json={"plaka_no": "34 DZL 02", "kamera_id": "TEST", "yon": "giris"},
+                     headers=operator_header)
+    assert r.status_code == 200, r.text
+    kayit_id = r.json()["id"]
+
+    r2 = client.patch(f"/kayitlar/{kayit_id}", json={"not_metni": "Misafir - B Blok"}, headers=operator_header)
+    assert r2.status_code == 200, r2.text
+
+    r3 = client.get("/kayitlar/son-not", params={"plaka": "34 DZL 02"}, headers=yetkili_header)
+    assert r3.status_code == 200, r3.text
+    assert r3.json()["not_metni"] == "Misafir - B Blok"
+
+
+def test_plaka_analiz_son_not_onerisini_dondurur(client, operator_header):
+    """Plaka Analizi ekranındaki "Manuel Kayıt Ekle" not kutusunun
+    doldurulabilmesi için, analiz uç noktası da öneriyi kendi yanıtında
+    döndürmeli (bkz. main.py::plaka_analiz'deki son_not_onerisi alanı)."""
+    r = client.post("/kayitlar", json={
+        "plaka_no": "34 SNO 03", "kamera_id": "PANEL-MANUEL", "yon": "giris", "not_metni": "PTT Kargo",
+    }, headers=operator_header)
+    assert r.status_code == 200, r.text
+
+    r2 = client.get("/kayitlar/analiz/34 SNO 03", headers=operator_header)
+    assert r2.status_code == 200, r2.text
+    assert r2.json()["son_not_onerisi"] == "PTT Kargo"
+
+
+def test_son_not_onerisi_gun_degisince_sifirlanir(client, yetkili_header, operator_header):
+    """Kullanıcının açık talebi: bir önceki günün notu bir sonraki güne HİÇ
+    taşınmamalı. Arka plan temizlik döngüsünün saat 23:59'u beklemesini
+    test içinde simüle etmek yerine (bu, gerçek zamanı beklemeyi gerektirir),
+    önbellekteki tarihi doğrudan DÜN olarak ayarlayıp pasif sona erme
+    mantığının (_son_not_oku) çalıştığını doğruluyoruz -- aktif 23:59
+    döngüsü yalnızca belleği erkenden boşaltmak içindir, doğruluk buna değil
+    bu pasif kontrole dayanır (bkz. main.py::_son_not_oku'nun docstring'i)."""
+    r = client.post("/kayitlar", json={
+        "plaka_no": "34 DUN 04", "kamera_id": "PANEL-MANUEL", "yon": "giris", "not_metni": "PTT Kargo",
+    }, headers=operator_header)
+    assert r.status_code == 200, r.text
+
+    r2 = client.get("/kayitlar/son-not", params={"plaka": "34 DUN 04"}, headers=yetkili_header)
+    assert r2.json()["not_metni"] == "PTT Kargo", "Önce normal şekilde önbelleğe düşmeli"
+
+    # Önbellekteki tarihi doğrudan "dün"e çekerek gün değişimini simüle et.
+    hedef = pts_main._plaka_normalize("34 DUN 04")
+    assert hedef in pts_main._SON_NOT_ONBELLEGI
+    pts_main._SON_NOT_ONBELLEGI[hedef]["tarih"] = (datetime.now() - timedelta(days=1)).date()
+
+    r3 = client.get("/kayitlar/son-not", params={"plaka": "34 DUN 04"}, headers=yetkili_header)
+    assert r3.status_code == 200, r3.text
+    assert r3.json()["not_metni"] is None, "Dünden kalan not önerisi bugüne taşınmamalıydı"
+    # Pasif sıfırlama, önbellekten de fiilen silmeli (bellek şişmesin diye).
+    assert hedef not in pts_main._SON_NOT_ONBELLEGI
+
+
+# ------------------------------------------------------------------
 # Kamera yön değiştirme + tespit alanı (ROI) sınırlama
 # ------------------------------------------------------------------
 # Kök neden (2026-09-17, gerçek kullanıcı ortamında bulundu): giriş ve çıkış

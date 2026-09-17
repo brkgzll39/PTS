@@ -307,6 +307,24 @@ async function apiCagir(yol, secenekler = {}) {
   return cevap.status === 204 ? null : cevap.json();
 }
 
+// SON KULLANILAN NOT ÖNERİSİ (2026-09-17, devam): kullanıcı talebi -- aynı
+// plakaya (örn. bir kargo aracına) art arda günlerde not eklerken görevli
+// notu her seferinde yeniden yazmak zorunda kalmasın diye, bir önceki not
+// giriş kutusuna ÖNERİ olarak sunulur (her zaman düzenlenebilir). Bu bir
+// kalıcı kayıt DEĞİLDİR -- backend'de her gece 23:59'da otomatik sıfırlanan
+// geçici bir önbellektir (bkz. main.py::_SON_NOT_ONBELLEGI), yani ertesi
+// güne asla taşınmaz. Herhangi bir sebeple alınamazsa (ağ hatası, boş sonuç)
+// sessizce boş döner -- bu yalnızca bir kolaylık, işlemi asla engellemez.
+async function sonNotOnerisiGetir(plaka) {
+  if (!plaka) return "";
+  try {
+    const r = await apiCagir(`/kayitlar/son-not?plaka=${encodeURIComponent(plaka)}`);
+    return r?.not_metni || "";
+  } catch {
+    return "";
+  }
+}
+
 async function authBaslat() {
   const durum = await apiCagir("/auth/durum");
   if (!durum.kurulum_tamamlandi) {
@@ -556,6 +574,12 @@ async function _ziyaretciGirisiKutusunuAyarla(kayit, nokta) {
     return;
   }
   kutu.classList.remove("d-none");
+  // Not kutusu boş açılır (yukarısı); varsa aynı plakanın bugün için "son
+  // kullanılan not" önerisi asenkron olarak doldurulur (kutu zaten boşsa).
+  sonNotOnerisiGetir(kayit.plaka_no).then(oneri => {
+    const notEl = document.getElementById("olayModalZiyaretciNot");
+    if (oneri && notEl && !notEl.value) notEl.value = oneri;
+  });
   const secim = document.getElementById("olayModalKisiSecim");
   try {
     const kisiler = await apiCagir("/kisiler");
@@ -858,6 +882,17 @@ async function ziyaretciBilgileriAc() {
   }
   bootstrap.Modal.getOrCreateInstance(document.getElementById("ziyaretciBilgileriModal")).show();
 }
+
+// Bu formda plaka önceden bilinmediği (görevli elle yazdığı) için modal
+// açılışında değil, plaka alanından çıkıldığında (blur) "son kullanılan not"
+// önerisi denenir -- yalnızca not kutusu hâlâ boşsa doldurulur.
+document.getElementById("zbPlaka")?.addEventListener("blur", async () => {
+  const notEl = document.getElementById("zbNot");
+  const plaka = document.getElementById("zbPlaka").value.trim();
+  if (!plaka || !notEl || notEl.value) return;
+  const oneri = await sonNotOnerisiGetir(plaka);
+  if (oneri && !notEl.value) notEl.value = oneri;
+});
 
 async function ziyaretciBilgileriKaydet() {
   const sonuc = document.getElementById("zbSonuc");
@@ -1186,6 +1221,14 @@ async function kayitDuzenleAc(id) {
   document.getElementById("duzenleKayitYon").value = kayit.yon;
   document.getElementById("duzenleKayitDurum").value = kayit.yetki_durumu;
   document.getElementById("duzenleKayitNot").value = kayit.not_metni || "";
+  if (!kayit.not_metni) {
+    // Bu kaydın kendi notu yoksa, aynı plakanın bugün için "son kullanılan
+    // not" önerisini asenkron olarak dener (bkz. sonNotOnerisiGetir).
+    sonNotOnerisiGetir(kayit.plaka_no).then(oneri => {
+      const notEl = document.getElementById("duzenleKayitNot");
+      if (oneri && notEl && !notEl.value) notEl.value = oneri;
+    });
+  }
   document.getElementById("duzenleKayitSonuc").textContent = "";
   const denetim = document.getElementById("duzenleKayitDenetim");
   denetim.textContent = kayit.duzenleyen
@@ -1726,7 +1769,7 @@ async function plakaAnalizAc(plaka) {
             </div>
             <div class="col">
               <label class="form-label small mb-0">Not</label>
-              <input type="text" id="analizManuelNot" class="form-control form-control-sm" placeholder="örn. teslimat aracı, güvenlik onayıyla alındı" maxlength="500">
+              <input type="text" id="analizManuelNot" class="form-control form-control-sm" value="${escapeHtml(v.son_not_onerisi || "")}" placeholder="örn. teslimat aracı, güvenlik onayıyla alındı" maxlength="500">
             </div>
             <div class="col-auto">
               <button type="submit" class="btn btn-sm btn-primary">Kaydı Ekle</button>
