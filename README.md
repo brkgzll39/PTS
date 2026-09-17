@@ -1111,6 +1111,56 @@ sisteme ek bir font kurmasına gerek YOK. `tests/test_pdf_export.py`'ye,
 çıktığını doğrulayan (yalnızca "PDF üretildi mi" değil) kök neden regresyon
 testleri eklendi.
 
+## Geçmiş Kayıtları Yeni Eklenen/Düzenlenen Kişiye Bağlama (2026-09-18)
+
+Kullanıcı bildirimi: bir aracı ("39 AEZ 645") gerçek kamerayla test etti --
+araç o an sistemde tanımlı olmadığı için oluşan geçişler "yetkisiz" düştü.
+Ardından aracı personel olarak kaydetti. Yeni kamera tespitleri doğru şekilde
+"yetkili" gösterilmeye başladı (bu zaten çalışıyordu -- kamera pipeline'ının
+"bilinen plaka" önbelleği TUTMADIĞI, her tespitte canlı veritabanı sorgusu
+kullandığı ayrıca doğrulandı), ama kayıttan ÖNCEKİ eski tespitler "yetkisiz"
+olarak donmuş kaldı. Bu beklenen bir davranıştı (bir Kayıt satırının
+yetki_durumu/kisi_id'si oluşturulduğu ANDAKİ bilgiyle sabitlenir) ama
+kullanıcı bunların da düzeltilebilmesini istedi.
+
+**Yeni davranış:** bir Kişi eklendiğinde (`POST /kisiler`), düzenlendiğinde
+(`PUT /kisiler/{id}`, örn. abone→personel tip değişikliği veya plaka
+düzeltmesi) ya da kendisine bir ek plaka bağlandığında (`POST /kisiler/{id}/
+plakalar`), o plakaya (+ tüm ek plakalarına) ait, kayıt ANINDA bu kişi henüz
+tanımlı olmadığı için `"yetkisiz"` kalmış GEÇMİŞ `Kayit` satırları OTOMATİK
+olarak bulunup güncellenir (bkz. `backend/main.py::_gecmis_kayitlari_kisiye_
+bagla`). Toplu personel/abone/ziyaretçi içe aktarma (`/kisiler/toplu-import`)
+da her içe aktarılan kişi için aynı düzeltmeyi otomatik uygular ve yanıtta
+`guncellenen_gecmis_kayit` alanıyla kaç kaydın güncellendiğini bildirir.
+
+Bu özellik eklenmeden ÖNCE kaydedilmiş kişiler için panelin Kişiler
+sekmesine, her satırda bir **"Geçmiş Kayıtları Güncelle"** (saat simgeli)
+düğmesi eklendi -- bu, aynı düzeltmeyi `POST /kisiler/{id}/gecmis-kayitlari-
+guncelle` ile elle tetikler ve kaç kaydın güncellendiğini bir uyarı olarak
+gösterir.
+
+**Güvenlik/doğruluk sınırları (kasıtlı ve test edilmiş):**
+
+- Yalnızca şu ANDA `yetki_durumu="yetkisiz"` VE `kisi_id IS NULL` olan
+  satırlara dokunulur. Kara liste (`kara_liste`), süresi dolmuş ziyaretçi
+  (`suresi_dolmus`) ya da BAŞKA bir kişiye zaten bağlı satırlar ASLA
+  sessizce üzerine yazılmaz -- örneğin bir plaka HEM kara listede HEM de
+  (çelişkili biçimde) yeni eklenen bir Kişi'ye karşılık geliyorsa, kara
+  liste her zaman önceliklidir ve o plakanın geçmiş kayıtları "yetkili"ye
+  çevrilmez.
+- Her satır, güncelleme ANINDAKİ "şimdi"ye göre DEĞİL, kendi ORİJİNAL
+  `tarih_saat`ine göre yeniden değerlendirilir (`_plaka_yetki_kontrol`'e
+  eklenen yeni `referans_zaman` parametresi sayesinde) -- aksi halde yalnızca
+  08:00-18:00 arası yetkili bir personelin GECE geçmiş eski bir kaydı,
+  güncelleme gündüz çalıştırılırsa yanlışlıkla "yetkili" işaretlenebilirdi.
+- Güncellenen her satırda denetlenebilirlik için `duzenleyen`/
+  `duzenleme_tarihi` de dolduruluyor (bu işlemi kimin/ne zaman tetiklediği
+  kişi eklendiyse otomatik olarak, elle tetiklendiyse elle tetikleyen
+  kullanıcı olarak kaydediliyor).
+- İşlem idempotenttir: zaten bu kişiye bağlanmış bir satır tekrar
+  "güncellenen" sayılmaz, bu yüzden "Geçmiş Kayıtları Güncelle" düğmesi
+  güvenle istenildiği kadar tekrar tıklanabilir.
+
 ## Kalıcı Test Altyapısı
 
 `tests/` klasöründe pytest tabanlı bir test paketi var:

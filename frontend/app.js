@@ -1350,6 +1350,7 @@ async function kisileriYukle() {
         ${rolYeterli("operatör") ? `
         <button class="btn btn-sm btn-outline-primary" onclick="kisiDuzenleAc(${k.id})" title="Düzenle"><i class="bi bi-pencil"></i></button>
         <button class="btn btn-sm btn-outline-secondary" onclick="kisiDurumDegistir(${k.id}, ${!k.aktif})" title="Aktif/Pasif Yap"><i class="bi bi-toggle2-on"></i></button>
+        <button class="btn btn-sm btn-outline-warning" onclick="kisiGecmisKayitlariGuncelle(${k.id})" title="Bu kişinin plakasına ait, kaydedilmeden ÖNCEKİ eski 'yetkisiz' geçişleri yeniden değerlendirir"><i class="bi bi-clock-history"></i></button>
         <button class="btn btn-sm btn-outline-danger" onclick="kisiSil(${k.id})" title="Sil"><i class="bi bi-trash"></i></button>
         ` : '<span class="text-muted small">-</span>'}
       </td>
@@ -1395,6 +1396,27 @@ async function kisiSil(id) {
   await apiCagir(`/kisiler/${id}`, { method: "DELETE" });
   kisileriYukle();
   panelYenile();
+}
+
+// 2026-09-18: kullanıcı bildirimi -- bir araç personel/abone olarak
+// kaydedildikten SONRA yeni kamera tespitleri doğru şekilde "yetkili"
+// gösteriliyor, ama kayıttan ÖNCEKİ eski tespitler "yetkisiz" olarak kalıyor
+// (bu, o an henüz kişi tanımlı olmadığı için beklenen bir davranış). Bu kişi
+// eklendiğinde/düzenlendiğinde arka planda ZATEN otomatik düzeltiliyor
+// (bkz. backend/main.py::_gecmis_kayitlari_kisiye_bagla) -- bu düğme, bu
+// özellik eklenmeden ÖNCE kaydedilmiş kişiler için elle tetiklemeyi sağlar.
+async function kisiGecmisKayitlariGuncelle(id) {
+  try {
+    const sonuc = await apiCagir(`/kisiler/${id}/gecmis-kayitlari-guncelle`, { method: "POST" });
+    if (sonuc.guncellenen_kayit_sayisi > 0) {
+      alert(`${sonuc.guncellenen_kayit_sayisi} adet geçmiş kayıt bu kişiyle güncellendi (artık "Yetkili" görünecek).`);
+      panelYenile();
+    } else {
+      alert("Bu kişiye ait güncellenecek geçmiş kayıt bulunamadı (zaten hepsi güncel ya da eşleşen kayıt yok).");
+    }
+  } catch (err) {
+    alert("Hata: " + err.message);
+  }
 }
 
 function kisilerExcelIndir() {

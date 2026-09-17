@@ -1533,6 +1533,15 @@ def kisi_ekle(kisi: schemas.KisiOlustur, db: Session = Depends(get_db), kullanic
     db.add(yeni_kisi)
     db.commit()
     db.refresh(yeni_kisi)
+    # 2026-09-18: bu plakaya ait, kayıt ANINDA henüz kişi bulunamadığı için
+    # "yetkisiz" kalmış GEÇMİŞ tespitler varsa, bu kişi eklendiği anda
+    # otomatik olarak düzeltilir (bkz. _gecmis_kayitlari_kisiye_bagla'nın
+    # docstring'i). Bir hata olursa (beklenmez) ana kişi ekleme işlemini
+    # BOZMAMALI -- yalnızca loglanır.
+    try:
+        _gecmis_kayitlari_kisiye_bagla(db, yeni_kisi, kullanici.kullanici_adi)
+    except Exception:
+        logger.exception("Kişi eklendikten sonra geçmiş kayıtları bağlama başarısız oldu (kişi id=%s)", yeni_kisi.id)
     return yeni_kisi
 
 
@@ -1576,6 +1585,12 @@ def kisi_guncelle(kisi_id: int, degisiklik: schemas.KisiGuncelle, db: Session = 
         setattr(kisi, alan, deger)
     db.commit()
     db.refresh(kisi)
+    # 2026-09-18: plaka veya tip değişmiş olabilir (ör. abone->personel) --
+    # bkz. kisi_ekle'deki aynı çağrının notu.
+    try:
+        _gecmis_kayitlari_kisiye_bagla(db, kisi, kullanici.kullanici_adi)
+    except Exception:
+        logger.exception("Kişi güncellendikten sonra geçmiş kayıtları bağlama başarısız oldu (kişi id=%s)", kisi.id)
     return kisi
 
 
@@ -1613,6 +1628,14 @@ def kisi_plaka_ekle(kisi_id: int, istek: schemas.KisiPlakaOlustur, db: Session =
     db.add(yeni)
     db.commit()
     db.refresh(yeni)
+    # 2026-09-18: yeni bağlanan bu ek plakaya ait geçmiş "yetkisiz" tespitler
+    # varsa düzeltilir (bkz. kisi_ekle'deki aynı çağrının notu).
+    try:
+        kisi = db.query(models.Kisi).filter(models.Kisi.id == kisi_id).first()
+        if kisi:
+            _gecmis_kayitlari_kisiye_bagla(db, kisi, kullanici.kullanici_adi)
+    except Exception:
+        logger.exception("Ek plaka eklendikten sonra geçmiş kayıtları bağlama başarısız oldu (kişi id=%s)", kisi_id)
     return yeni
 
 
@@ -1625,6 +1648,27 @@ def kisi_plaka_sil(kisi_id: int, plaka_id: int, db: Session = Depends(get_db), k
     db.delete(kayit)
     db.commit()
     return {"mesaj": "Plaka silindi"}
+
+
+@app.post("/kisiler/{kisi_id}/gecmis-kayitlari-guncelle")
+def kisi_gecmis_kayitlarini_guncelle(
+    kisi_id: int, db: Session = Depends(get_db),
+    kullanici: models.Kullanici = Depends(_personel_girisi_gerekli),
+):
+    """Bu kişinin plakasına (+ ek plakalarına) ait, kayıt ANINDA henüz bu
+    kişi tanımlı olmadığı için "yetkisiz" kalmış GEÇMİŞ tespitleri elle
+    yeniden değerlendirir (bkz. _gecmis_kayitlari_kisiye_bagla'nın
+    docstring'i, 2026-09-18). Bu aslında kisi_ekle/kisi_guncelle/
+    kisi_plaka_ekle her çağrıldığında ZATEN otomatik çalışır -- bu uç nokta,
+    bu özellik eklenmeden ÖNCE kaydedilmiş kişiler için panelden elle
+    tetiklenebilsin diye (ve kullanıcıya kaç kaydın güncellendiğini
+    gösterebilmek için) ayrıca sunulur."""
+    _rol_dogrula(kullanici, ROL_YONETICI, ROL_OPERATOR)
+    kisi = db.query(models.Kisi).filter(models.Kisi.id == kisi_id).first()
+    if not kisi:
+        raise HTTPException(404, "Kişi bulunamadı")
+    guncellenen = _gecmis_kayitlari_kisiye_bagla(db, kisi, kullanici.kullanici_adi)
+    return {"guncellenen_kayit_sayisi": guncellenen}
 
 
 # ==================================================================
@@ -1680,9 +1724,18 @@ def _plaka_normalize_sql(kolon):
     return func.replace(func.upper(kolon), " ", "")
 
 
-def _plaka_yetki_kontrol(db: Session, plaka_no: str):
-    """Önce kara liste, sonra aktif kişiler + saat/gün kısıtlaması kontrol edilir."""
-    simdi = datetime.now()
+def _plaka_yetki_kontrol(db: Session, plaka_no: str, referans_zaman: Optional[datetime] = None):
+    """Önce kara liste, sonra aktif kişiler + saat/gün kısıtlaması kontrol edilir.
+
+    `referans_zaman`: saat/gün kısıtlaması hangi ana göre değerlendirilsin?
+    Normal (canlı) bir tespitte bu HER ZAMAN "şimdi" olmalı (parametre
+    verilmezse varsayılan budur) -- ama GEÇMİŞ bir Kayıt satırını yeniden
+    değerlendirirken (bkz. _gecmis_kayitlari_kisiye_bagla, 2026-09-18) "şimdi"
+    YANLIŞ olur: örn. yalnızca 08:00-18:00 arası yetkili bir personelin
+    GECE geçmiş eski bir kaydı, bu fonksiyon "şimdi" gündüzse yanlışlıkla
+    yetkili işaretlerdi. Bu yüzden geçmişe dönük yeniden değerlendirmede
+    kaydın KENDİ `tarih_saat`i buraya verilir."""
+    simdi = referans_zaman or datetime.now()
     hedef = _plaka_normalize(plaka_no)
 
     # GÜVENLİK KÖK NEDEN DÜZELTMESİ (2026-09-17): bu iki sorgu (kara liste ve
@@ -1748,6 +1801,67 @@ def _plaka_yetki_kontrol(db: Session, plaka_no: str):
         pass
 
     return "yetkili", kisi.id, kisi.tip
+
+
+def _gecmis_kayitlari_kisiye_bagla(db: Session, kisi: models.Kisi, duzenleyen_kullanici_adi: str) -> int:
+    """Bir Kişi eklendikten/düzenlendikten (ya da bir ek plaka bağlandıktan)
+    SONRA, o kişinin plakasıyla eşleşen ama o an henüz kayıtlı olmadığı için
+    "yetkisiz" kalmış GEÇMİŞ `Kayit` satırlarını bulur ve bu kişiyle
+    günceller (kullanıcı bildirimi, 2026-09-18: "39 AEZ 645" aracı personel
+    olarak kaydedildikten SONRA o araca ait YENİ kamera tespitleri doğru
+    şekilde "yetkili" gösteriliyordu -- yalnızca kayıt ANINDA değerlendirilip
+    DONDURULMUŞ, kaydedilmeden ÖNCEKİ eski satırlar "yetkisiz" olarak geride
+    kalmıştı; bu beklenen bir davranıştı ama kullanıcı bunların da
+    düzeltilebilmesini istedi).
+
+    GÜVENLİK/DOĞRULUK: yalnızca şu ANDA `yetki_durumu="yetkisiz"` VE
+    `kisi_id IS NULL` olan satırlara dokunulur -- kara liste (`kara_liste`),
+    süresi dolmuş ziyaretçi (`suresi_dolmus`) ya da BAŞKA bir kişiye zaten
+    bağlı satırlar ASLA sessizce üzerine yazılmaz. Her satır, "şimdi" değil
+    KENDİ ORİJİNAL `tarih_saat`i referans alınarak yeniden değerlendirilir
+    (bkz. _plaka_yetki_kontrol'ün `referans_zaman` parametresi) -- bu sayede
+    saat/gün kısıtlaması olan bir personelin bu kısıtlamaya UYMAYAN eski bir
+    kaydı yanlışlıkla yetkili işaretlenmez. Döner: güncellenen kayıt sayısı."""
+    hedef_plakalar = {_plaka_normalize(kisi.plaka_no)}
+    for ek in db.query(models.KisiPlaka).filter(
+        models.KisiPlaka.kisi_id == kisi.id, models.KisiPlaka.aktif == True,  # noqa: E712
+    ).all():
+        hedef_plakalar.add(_plaka_normalize(ek.plaka_no))
+
+    adaylar = (
+        db.query(models.Kayit)
+        .filter(
+            models.Kayit.yetki_durumu == "yetkisiz",
+            models.Kayit.kisi_id.is_(None),
+            _plaka_normalize_sql(models.Kayit.plaka_no).in_(hedef_plakalar),
+        )
+        .all()
+    )
+
+    guncellenen = 0
+    for kayit in adaylar:
+        yeni_yetki, yeni_kisi_id, yeni_kisi_tip = _plaka_yetki_kontrol(
+            db, kayit.plaka_no, referans_zaman=kayit.tarih_saat
+        )
+        if yeni_kisi_id != kisi.id or yeni_yetki != "yetkili":
+            # Kara liste, farklı bir kişi ya da hâlâ saat/gün kısıtlamasına
+            # takılan bir satırsa DOKUNMA -- yalnızca GERÇEKTEN bu kişiye
+            # bağlanıp yetkili hale gelen satırlar güncellenir.
+            continue
+        kayit.yetki_durumu = yeni_yetki
+        kayit.kisi_id = yeni_kisi_id
+        kayit.kisi_tip_anlik = yeni_kisi_tip
+        kayit.duzenleyen = duzenleyen_kullanici_adi
+        kayit.duzenleme_tarihi = datetime.now()
+        guncellenen += 1
+
+    if guncellenen:
+        db.commit()
+        logger.info(
+            "Geçmiş kayıtlar yeniden değerlendirildi: kişi=%s (%s), güncellenen=%d/%d",
+            kisi.id, kisi.ad_soyad, guncellenen, len(adaylar),
+        )
+    return guncellenen
 
 
 _BILINEN_PLAKA_DUZELTME_GUVEN_TAVANI = 0.90  # bu güvenin ÜZERİNDEKİ okumalar zaten güvenilir, dokunma
@@ -3311,6 +3425,7 @@ async def toplu_kisi_import(
 
     eklendi = 0
     hatalar = []
+    olusturulan_kisiler = []
     GECERLI_TIPLER = ("abone", "personel", "ziyaretci")
 
     for satir_no, satir in enumerate(satirlar[1:], start=2):
@@ -3339,15 +3454,30 @@ async def toplu_kisi_import(
                 daire_departman=daire[:50] if daire else None,
             )
             db.add(yeni)
+            olusturulan_kisiler.append(yeni)
             eklendi += 1
         except Exception as exc:
             hatalar.append(f"Satır {satir_no}: {exc}")
 
+    guncellenen_gecmis_kayit = 0
     if eklendi:
         db.commit()
         logger.info("Toplu import: %d kişi eklendi (kullanıcı: %s)", eklendi, kullanici.kullanici_adi)
+        # 2026-09-18: her içe aktarılan kişi için de -- panelden tek tek
+        # eklerken olduğu gibi -- geçmiş "yetkisiz" tespitler otomatik
+        # düzeltilir (bkz. kisi_ekle'deki aynı çağrının notu).
+        for yeni_kisi in olusturulan_kisiler:
+            try:
+                guncellenen_gecmis_kayit += _gecmis_kayitlari_kisiye_bagla(db, yeni_kisi, kullanici.kullanici_adi)
+            except Exception:
+                logger.exception(
+                    "Toplu import sonrası geçmiş kayıtları bağlama başarısız oldu (kişi id=%s)", yeni_kisi.id
+                )
 
-    return {"eklendi": eklendi, "hatalar": hatalar[:20]}
+    return {
+        "eklendi": eklendi, "hatalar": hatalar[:20],
+        "guncellenen_gecmis_kayit": guncellenen_gecmis_kayit,
+    }
 
 
 # ==================================================================

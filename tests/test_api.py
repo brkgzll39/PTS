@@ -1828,3 +1828,183 @@ def test_kayitlar_raporu_kara_liste_plakasi_ayrica_isaretlenir(client, yetkili_h
     satir = _rapor_satirini_getir(client, yetkili_header, _RAPOR_TEST_PLAKA_KARALISTE)
     assert satir["Araç Tipi"] == "Kara Liste"
     assert satir["Daire"] is None
+
+
+# ------------------------------------------------------------------
+# Geçmiş kayıtları yeni eklenen/düzenlenen kişiye bağlama (2026-09-18)
+# ------------------------------------------------------------------
+# Kullanıcı bildirimi: "39 AEZ 645" aracını gerçek kamerayla test etti (araç
+# o an sistemde tanımlı değildi -> kayıtlar "yetkisiz" düştü), SONRA aracı
+# personel olarak kaydetti. Yeni tespitler doğru şekilde "yetkili"
+# gösteriliyordu (bu zaten çalışıyordu -- ayrı bir araştırmayla doğrulandı,
+# kamera pipeline'ında hiçbir "bilinen plaka" önbelleği yok, her tespit canlı
+# DB sorgusu kullanıyor), ama kayıttan ÖNCEKİ eski tespitler "yetkisiz"
+# olarak donmuş kalıyordu. Kullanıcı bunların da düzeltilebilmesini istedi.
+
+def _plaka_ile_manuel_kayit_olustur(client, yetkili_header, plaka: str, kamera_id: str = "TEST-GECMIS") -> dict:
+    r = client.post("/kayitlar", json={"plaka_no": plaka, "kamera_id": kamera_id, "yon": "giris"}, headers=yetkili_header)
+    assert r.status_code == 200, r.text
+    return r.json()
+
+
+def test_kisi_eklenince_gecmis_yetkisiz_kayitlar_otomatik_yetkiliye_donusur(client, yetkili_header):
+    """Kök senaryo: plaka önce bilinmiyorken kayıt oluşur (yetkisiz), SONRA
+    aynı plaka personel olarak eklenir -- kisi_ekle bu eski kaydı OTOMATİK
+    olarak günceller (bkz. backend/main.py::_gecmis_kayitlari_kisiye_bagla)."""
+    plaka = "77GECMIS01"
+    eski_kayit = _plaka_ile_manuel_kayit_olustur(client, yetkili_header, plaka)
+    assert eski_kayit["yetki_durumu"] == "yetkisiz"
+    assert eski_kayit["kisi_id"] is None
+
+    r = client.post("/kisiler", json={
+        "ad_soyad": "Test Personel", "plaka_no": plaka, "tip": "personel",
+        "daire_departman": "TEST DEPARTMANI",
+    }, headers=yetkili_header)
+    assert r.status_code == 200, r.text
+    kisi_id = r.json()["id"]
+
+    r2 = client.get("/kayitlar", params={"plaka": plaka}, headers=yetkili_header)
+    assert r2.status_code == 200, r2.text
+    guncellenmis = next(k for k in r2.json() if k["id"] == eski_kayit["id"])
+    assert guncellenmis["yetki_durumu"] == "yetkili", "kişi eklendikten sonra eski kayıt otomatik güncellenmedi"
+    assert guncellenmis["kisi_id"] == kisi_id
+    assert guncellenmis["kisi_tip_anlik"] == "personel"
+    assert guncellenmis["duzenleyen"] == "admin", "otomatik düzeltme de denetlenebilirlik için 'duzenleyen' alanını doldurmalı"
+
+
+def test_gecmis_kayitlari_guncelle_uc_noktasi_elle_tetiklenebilir_ve_idempotenttir(client, yetkili_header):
+    """Bu özellik eklenmeden ÖNCE kaydedilmiş kişiler için panelden elle
+    tetiklenen uç nokta (bkz. frontend/app.js::kisiGecmisKayitlariGuncelle)."""
+    plaka = "77GECMIS02"
+    eski_kayit = _plaka_ile_manuel_kayit_olustur(client, yetkili_header, plaka)
+
+    r = client.post("/kisiler", json={
+        "ad_soyad": "Test Abone", "plaka_no": plaka, "tip": "abone",
+    }, headers=yetkili_header)
+    kisi_id = r.json()["id"]
+
+    # kisi_ekle zaten otomatik güncellemiş olmalı (yukarıdaki test bunu
+    # doğruluyor) -- bu yüzden burada elle tetiklenen çağrı 0 dönmeli
+    # (idempotentlik: zaten bağlı bir kaydı ikinci kez "güncellenen" olarak
+    # saymamalı).
+    r2 = client.post(f"/kisiler/{kisi_id}/gecmis-kayitlari-guncelle", headers=yetkili_header)
+    assert r2.status_code == 200, r2.text
+    assert r2.json()["guncellenen_kayit_sayisi"] == 0
+
+
+def test_gecmis_kayitlari_guncelle_kara_listedeki_plakayi_yetkiliye_cevirmez(client, yetkili_header):
+    """GÜVENLİK: bir plaka HEM kara listede HEM de (çelişkili biçimde) bir
+    Kişi'ye bağlıysa, kara liste her zaman ÖNCELİKLİDİR (bkz.
+    _plaka_yetki_kontrol). Geçmiş kayıtları yeniden değerlendirme özelliği
+    bu önceliği BOZMAMALI -- yani bir güvenlik engelini sessizce "yetkili"ye
+    çevirmemeli."""
+    plaka = "77GECMIS03"
+    eski_kayit = _plaka_ile_manuel_kayit_olustur(client, yetkili_header, plaka)
+    assert eski_kayit["yetki_durumu"] == "yetkisiz"
+
+    r = client.post("/kara-listesi", json={"plaka_no": plaka, "sebep": "test"}, headers=yetkili_header)
+    assert r.status_code == 200, r.text
+
+    r2 = client.post("/kisiler", json={
+        "ad_soyad": "Çelişkili Kayıt", "plaka_no": plaka, "tip": "personel",
+    }, headers=yetkili_header)
+    assert r2.status_code == 200, r2.text
+
+    r3 = client.get("/kayitlar", params={"plaka": plaka}, headers=yetkili_header)
+    hala_eski = next(k for k in r3.json() if k["id"] == eski_kayit["id"])
+    assert hala_eski["yetki_durumu"] == "yetkisiz", (
+        "kara listedeki bir plaka, kişi eklendi diye yanlışlıkla yetkiliye çevrildi -- güvenlik regresyonu"
+    )
+    assert hala_eski["kisi_id"] is None
+
+
+def test_gecmis_kayitlari_guncelle_saat_kisitlamasina_uymayan_eski_kaydi_atlar(client, yetkili_header):
+    """DOĞRULUK: saat kısıtlaması olan bir personel eklendiğinde, geçmişte bu
+    kısıtlamaya UYMAYAN bir saatte oluşmuş eski kayıt "şimdi"ye göre değil
+    KENDİ ORİJİNAL saatine göre değerlendirilmeli -- aksi halde örn. yalnızca
+    08:00-18:00 arası yetkili bir personelin GECE geçmiş eski bir kaydı,
+    güncelleme "şimdi" gündüzse yanlışlıkla yetkili işaretlenirdi."""
+    from backend.database import SessionLocal
+    from backend import models
+
+    plaka = "77GECMIS04"
+    db = SessionLocal()
+    try:
+        gece_kaydi = models.Kayit(
+            plaka_no=plaka, kamera_id="TEST-GECMIS", yon="giris",
+            yetki_durumu="yetkisiz", kisi_id=None,
+            tarih_saat=datetime(2026, 9, 1, 23, 0, 0),  # 23:00 -- 08-18 dışında
+        )
+        db.add(gece_kaydi)
+        db.commit()
+        gece_kaydi_id = gece_kaydi.id
+    finally:
+        db.close()
+
+    r = client.post("/kisiler", json={
+        "ad_soyad": "Saatli Personel", "plaka_no": plaka, "tip": "personel",
+        "giris_saati_baslangic": "08:00", "giris_saati_bitis": "18:00",
+    }, headers=yetkili_header)
+    assert r.status_code == 200, r.text
+
+    db2 = SessionLocal()
+    try:
+        guncel = db2.query(models.Kayit).filter(models.Kayit.id == gece_kaydi_id).first()
+        assert guncel.yetki_durumu == "yetkisiz", (
+            "saat kısıtlamasına uymayan eski bir kayıt yanlışlıkla yetkili yapıldı -- "
+            "'referans_zaman' yerine 'şimdi' kullanılmış olabilir"
+        )
+        assert guncel.kisi_id is None
+    finally:
+        db2.close()
+
+
+def test_gecmis_kayitlari_guncelle_zaten_baska_kisiye_bagli_satiri_ezmiyor(client, yetkili_header):
+    """Bir Kayıt satırı zaten (yetki_durumu ne olursa olsun) BAŞKA bir
+    kisi_id'ye bağlıysa (ör. daha önce elle düzenlenmiş), yeni eklenen bir
+    kişi bu bağlantıyı sessizce ÜZERİNE YAZMAMALI -- yalnızca kisi_id IS NULL
+    olan satırlar aday olarak değerlendirilir."""
+    from backend.database import SessionLocal
+    from backend import models
+
+    plaka = "77GECMIS05"
+    r = client.post("/kisiler", json={
+        "ad_soyad": "Diğer Kişi", "plaka_no": "77GECMISDIGER", "tip": "abone",
+    }, headers=yetkili_header)
+    diger_kisi_id = r.json()["id"]
+
+    db = SessionLocal()
+    try:
+        bagli_kayit = models.Kayit(
+            plaka_no=plaka, kamera_id="TEST-GECMIS", yon="giris",
+            yetki_durumu="yetkisiz", kisi_id=diger_kisi_id,
+        )
+        db.add(bagli_kayit)
+        db.commit()
+        bagli_kayit_id = bagli_kayit.id
+    finally:
+        db.close()
+
+    r2 = client.post("/kisiler", json={
+        "ad_soyad": "Yeni Personel", "plaka_no": plaka, "tip": "personel",
+    }, headers=yetkili_header)
+    assert r2.status_code == 200, r2.text
+    yeni_kisi_id = r2.json()["id"]
+
+    db2 = SessionLocal()
+    try:
+        guncel = db2.query(models.Kayit).filter(models.Kayit.id == bagli_kayit_id).first()
+        assert guncel.kisi_id == diger_kisi_id, "zaten başka bir kişiye bağlı kayıt sessizce üzerine yazıldı"
+    finally:
+        db2.close()
+    assert yeni_kisi_id != diger_kisi_id
+
+
+def test_gecmis_kayitlari_guncelle_izleyici_yetkisiz_403_doner(client, izleyici_header):
+    r = client.post("/kisiler/1/gecmis-kayitlari-guncelle", headers=izleyici_header)
+    assert r.status_code == 403, r.text
+
+
+def test_gecmis_kayitlari_guncelle_olmayan_kisi_404_doner(client, yetkili_header):
+    r = client.post("/kisiler/999999/gecmis-kayitlari-guncelle", headers=yetkili_header)
+    assert r.status_code == 404, r.text
