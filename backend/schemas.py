@@ -263,6 +263,21 @@ class KayitCevap(BaseModel):
 
     model_config = ConfigDict(from_attributes=True)
 
+    @field_validator("manuel_giris", mode="before")
+    @classmethod
+    def manuel_giris_none_ise_false_say(cls, v):
+        """SAVUNMA KATMANI (2026-09-17): bu sütun sonradan ALTER TABLE ile
+        eklendiği için -- ve SQL Server'da (SQLite'ın aksine) bir DEFAULT'lu
+        ALTER TABLE, "WITH VALUES" açıkça verilmedikçe TABLODA HALİHAZIRDA VAR
+        OLAN satırları NULL bırakıyor -- canlı bir veritabanında bu alan hâlâ
+        NULL olan eski kayıtlarla karşılaşılabilir (bkz. main.py::
+        _veritabani_migrasyon'daki UPDATE ... WHERE manuel_giris IS NULL,
+        kök nedeni orada düzeltiyor). `bool` alanı Optional olmadığından
+        Pydantic bunu doğrulayamayıp tüm /kayitlar isteğini 500'e düşürüyordu;
+        burada None açıkça False'a çevrilerek bu uç noktalar migrasyon
+        adımından bağımsız olarak da kırılmaz hale getiriliyor."""
+        return False if v is None else v
+
 
 class KayitDuzenle(BaseModel):
     """Panelden mevcut bir geçiş kaydının tam düzenlenmesi (bkz.

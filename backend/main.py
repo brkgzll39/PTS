@@ -109,19 +109,40 @@ def _veritabani_migrasyon() -> None:
     sqlite_mod = SQLALCHEMY_DATABASE_URL.startswith("sqlite")
     col_kw = "COLUMN " if sqlite_mod else ""
     bool_tip = "INTEGER DEFAULT 0" if sqlite_mod else "BIT DEFAULT 0"
+    # SQL SERVER TUZAĞI (2026-09-17 canlı ortamda bulunan hata): "ADD <col>
+    # BIT DEFAULT 0" bir SQL Server ALTER TABLE'ında -- sütun NULL kabul
+    # ediyorsa (NOT NULL verilmediği için ediyor) -- yeni eklenen bu DEFAULT'u
+    # yalnızca BUNDAN SONRA eklenecek satırlara uygular; TABLODA HALİHAZIRDA
+    # VAR OLAN satırlar "WITH VALUES" açıkça belirtilmedikçe NULL kalır.
+    # SQLite'ta ise ADD COLUMN ... DEFAULT zaten var olan satırları da o
+    # değerle doldurur -- bu yüzden SQLite/SQL Server burada FARKLI davranıyor
+    # ve bu fark test edilmeden fark edilemedi (testler SQLite kullanıyor).
+    # Sonuç: kullanıcının gerçek SQL Server veritabanında manuel_giris sütunu
+    # eklendiğinde, migrasyondan ÖNCE var olan TÜM kayıtlarda bu alan NULL
+    # kaldı; schemas.KayitCevap.manuel_giris ise `bool` (Optional değil) olduğu
+    # için Pydantic bunu doğrulayamadı ve /kayitlar gibi uçlar
+    # ResponseValidationError ile 500 patlıyordu.
+    bit_sonu = "" if sqlite_mod else " WITH VALUES"
     adimlar = [
         f"ALTER TABLE kisiler ADD {col_kw}giris_saati_baslangic VARCHAR(5)",
         f"ALTER TABLE kisiler ADD {col_kw}giris_saati_bitis VARCHAR(5)",
         f"ALTER TABLE kisiler ADD {col_kw}izin_verilen_gunler VARCHAR(20)",
-        f"ALTER TABLE bariyer_ayarlari ADD {col_kw}auto_ac {bool_tip}",
+        f"ALTER TABLE bariyer_ayarlari ADD {col_kw}auto_ac {bool_tip}{bit_sonu}",
         f"ALTER TABLE plaka_kayitlari ADD {col_kw}ham_plaka_metni VARCHAR(20)",
         f"ALTER TABLE noktalar ADD {col_kw}kamera_id VARCHAR(64)",
         f"ALTER TABLE noktalar ADD {col_kw}bariyer_id INTEGER",
         f"ALTER TABLE plaka_kayitlari ADD {col_kw}dogrulama_kare_sayisi INTEGER",
         f"ALTER TABLE plaka_kayitlari ADD {col_kw}not_metni {'TEXT' if sqlite_mod else 'NVARCHAR(MAX)'}",
-        f"ALTER TABLE plaka_kayitlari ADD {col_kw}manuel_giris {bool_tip}",
+        f"ALTER TABLE plaka_kayitlari ADD {col_kw}manuel_giris {bool_tip}{bit_sonu}",
         f"ALTER TABLE plaka_kayitlari ADD {col_kw}duzenleyen VARCHAR(80)",
         f"ALTER TABLE plaka_kayitlari ADD {col_kw}duzenleme_tarihi DATETIME",
+        # Yukarıdaki "WITH VALUES" yalnızca BUNDAN SONRA çalışacak taze
+        # migrasyonları düzeltir -- kullanıcının veritabanında sütun zaten
+        # NULL değerlerle eklenmiş olabileceğinden (birebir bu vakadaki gibi),
+        # var olan NULL'ları da açıkça 0'a çeken bu UPDATE HER başlangıçta
+        # koşulsuz çalıştırılıyor (WHERE koşulu sayesinde etkisiz/idempotent --
+        # düzeltilecek satır kalmadıysa hiçbir şey değiştirmez).
+        "UPDATE plaka_kayitlari SET manuel_giris = 0 WHERE manuel_giris IS NULL",
     ]
     with engine.connect() as conn:
         for sql in adimlar:

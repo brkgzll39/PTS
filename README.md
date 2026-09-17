@@ -357,6 +357,37 @@ yönetici sınırları), alan doğrulama (geçersiz `yetki_durumu`, olmayan kay�
 kişi) ve `/kayitlar/analiz/{plaka_no}` yanıtının yeni alanları eksiksiz
 döndürdüğünü doğrulayan testler eklendi.
 
+**⚠️ 2026-09-17 (devam) — ACİL DÜZELTME: `manuel_giris` sütunu canlı SQL
+Server'da GET /kayitlar'ı 500'e düşürüyordu.** Yukarıdaki özellik teslim
+edildikten hemen sonra, kullanıcının gerçek üretim ortamında (SQL Server)
+`GET /kayitlar` `ResponseValidationError` ile çöktü: `manuel_giris` alanı 50
+kayıtta `null` geldi. Kök neden, SQLite ile SQL Server'ın **aynı** ALTER
+TABLE ifadesine (`ADD manuel_giris BIT DEFAULT 0`) FARKLI davranmasıydı:
+
+- **SQLite**'ta bir `DEFAULT`'lu `ADD COLUMN`, tablodaki VAR OLAN satırları da
+  otomatik olarak o değerle doldurur.
+- **SQL Server**'da ise sütun NULL kabul ediyorsa (NOT NULL verilmediği için
+  ediyordu) ve ifadeye açıkça `WITH VALUES` eklenmedikçe, `DEFAULT` yalnızca
+  BUNDAN SONRA eklenecek satırlara uygulanır — tabloda hâlihazırda var olan
+  TÜM satırlarda bu alan NULL kalır. Test paketi yalnızca SQLite kullandığı
+  için bu fark hiçbir testte yakalanamadı; `schemas.KayitCevap.manuel_giris`
+  ise `bool` (Optional değil) olduğundan Pydantic bu `null` değerleri
+  doğrulayamayıp isteğin TAMAMINI 500'e düşürüyordu (tek bir bozuk kayıt değil,
+  aynı sayfadaki TÜM kayıtlar).
+
+İki katmanlı düzeltme yapıldı: (1) `_veritabani_migrasyon()`'daki ALTER TABLE
+ifadelerine SQL Server için `WITH VALUES` eklendi (yeni kurulumlar artık
+doğru davranacak) VE kullanıcının veritabanındaki gibi HALİHAZIRDA NULL olan
+satırları düzelten `UPDATE plaka_kayitlari SET manuel_giris = 0 WHERE
+manuel_giris IS NULL` adımı her başlangıçta koşulsuz (idempotent) çalıştırılıyor;
+(2) savunma katmanı olarak `schemas.KayitCevap`'a bir `field_validator`
+eklendi — `manuel_giris` her ne sebeple NULL gelirse gelsin (bu migrasyon
+adımından bağımsız olarak) artık `False`'a çevrilip API asla çökmüyor.
+`tests/test_api.py`'ye, ORM'i atlayıp doğrudan SQL ile `manuel_giris=NULL`
+olan bir kayıt ekleyen ve `GET /kayitlar`'ın hâlâ 200 döndüğünü doğrulayan bir
+regresyon testi eklendi; düzeltme ayrıca gerçek Pydantic modeliyle (fastapi
+olmadan, sadece pydantic kullanılarak) bu sandbox'ta da elle doğrulandı.
+
 ## Kamera Bağlantı Güvenilirliği
 
 Bu bölüm, kamera bağlantılarının/araç geçişi görüntülerinin donmaması için yapılan

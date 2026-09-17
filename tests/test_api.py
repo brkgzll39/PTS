@@ -830,6 +830,32 @@ def test_kayit_duzenle_bulunamayan_kayit_404_doner(client, operator_header):
     assert r.status_code == 404
 
 
+def test_manuel_giris_null_olan_eski_kayit_500_patlamiyor(client, operator_header):
+    """REGRESYON (2026-09-17, gerçek kullanıcı ortamında bulundu): SQL
+    Server'da ALTER TABLE ... ADD manuel_giris BIT DEFAULT 0, "WITH VALUES"
+    açıkça verilmedikçe TABLODA HALİHAZIRDA VAR OLAN satırları NULL bırakıyor
+    (SQLite'ın aksine). `manuel_giris` alanı `bool` (Optional değil) olduğu
+    için bu, GET /kayitlar gibi uçlarda ResponseValidationError ile 500'e yol
+    açtı. Burada bunu, ORM'i atlayıp doğrudan SQL ile manuel_giris'i NULL
+    bırakan bir kayıt ekleyerek simüle ediyoruz -- normal POST /kayitlar akışı
+    Python tarafında zaten default=False uyguladığı için bunu üretemez, gerçek
+    hata yalnızca ham SQL/ALTER TABLE seviyesinde ortaya çıkıyor."""
+    from backend.database import engine
+    from sqlalchemy import text as sqltext
+    with engine.connect() as conn:
+        conn.execute(sqltext(
+            "INSERT INTO plaka_kayitlari (plaka_no, kamera_id, yon, yetki_durumu, manuel_giris) "
+            "VALUES ('34 NULLTEST 09', 'TEST', 'giris', 'bilinmiyor', NULL)"
+        ))
+        conn.commit()
+
+    r = client.get("/kayitlar", params={"plaka": "NULLTEST"}, headers=operator_header)
+    assert r.status_code == 200, r.text
+    kayitlar = r.json()
+    assert len(kayitlar) == 1
+    assert kayitlar[0]["manuel_giris"] is False
+
+
 def test_plaka_analiz_yeni_alanlari_dondurur(client, operator_header):
     """Plaka Analizi ekranının görsel/doğrulama/not/manuel-giriş/düzenleme
     denetim bilgilerini gösterebilmesi için bu alanların analiz uç
