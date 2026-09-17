@@ -603,6 +603,59 @@ sekmede açıldığı) ve kara liste durumunu gösteren aynı "Plaka Analizi"
 penceresi açılır. Yeni bir backend uç noktası veya mekanizma GEREKMEDİ —
 var olan `plakaAnalizAc()` işlevine tek bir eksik bağlantı eklendi.
 
+**⚠️ 2026-09-17 (devam) — KÖK NEDEN BULUNDU: "Plaka Analizi" HER ZAMAN
+"Toplam Geçiş: 0" gösteriyordu VE kara liste engeli fiilen hiç
+çalışmıyordu.** Kullanıcı, az önce eklenen tıklanabilir plaka bağlantısını
+denedikten sonra bir ekran görüntüsüyle "Toplam Geçiş: 0 / Kayıt yok"
+gösteren, gerçekte ise kayıtları listede görünen bir plaka için açılan boş
+bir "Plaka Analizi" penceresi bildirdi. Kök neden koddaki iki farklı
+normalize fonksiyonunun karıştırılmasıydı:
+
+- `main.py::_plaka_normalize` — boşlukları TAMAMEN KALDIRIR ("34 GA 0835" →
+  "34GA0835"). Bilinen-plaka yakınlık düzeltmesinde (Levenshtein) bilerek
+  kullanılır, orada doğru.
+- `schemas.py::plaka_normalize` — boşlukları KORUR, yalnızca geçersiz
+  karakterleri temizler ve büyük harfe çevirir. `Kisiler`, `KisiPlaka`,
+  `KaraListesi` ve `Kayit` tablolarının HEPSİ plaka_no'yu bu biçimde (boşluklu)
+  saklar.
+
+`plaka_analiz` ve `_plaka_yetki_kontrol` (gerçek zamanlı yetki kontrolü),
+`_plaka_normalize` ile ürettikleri BOŞLUKSUZ değeri, DB'de BOŞLUKLU saklanan
+sütunlarla `Model.plaka_no == hedef` biçiminde DOĞRUDAN karşılaştırıyordu —
+iki taraf da farklı biçimde olduğu için bu sorgular **HİÇBİR ZAMAN**
+eşleşmiyordu. Somut etkileri:
+
+- "Plaka Analizi" penceresi her plaka için her zaman "Toplam Geçiş: 0",
+  "Kayıt yok" gösteriyordu (kullanıcının bildirdiği belirti).
+- **Kara liste (blacklist) engeli, sistemin kurulduğu günden beri, hiçbir
+  gerçek kamera tespitinde veya elle girilen kayıtta FİİLEN ÇALIŞMIYORDU** —
+  bir plaka kara listeye eklense bile bir sonraki geçişinde yine "yetkisiz"
+  ya da (kayıtlıysa) "yetkili" olarak işleniyordu, asla "kara_liste" olarak
+  engellenmiyordu.
+- Bir kişinin panelden eklenen ek/ikincil plakaları (bkz. `POST
+  /kisiler/{id}/plakalar`) gerçek bir geçişte hiçbir zaman "yetkili" olarak
+  tanınmıyordu (yalnızca kişinin ANA plakası, Python tarafında doğru
+  normalize edilerek karşılaştırıldığı için, çalışıyordu).
+- "Plaka Analizi"nden manuel kayıt eklemek veya "Kara Listeye Ekle"ye
+  basmak, ekranda görünenin aksine, aslında boşluksuz/hatalı bir plaka
+  metniyle kaydediyordu.
+
+**Düzeltme:** yeni bir `_plaka_normalize_sql()` yardımcı fonksiyonu, aynı
+boşluksuzlaştırma+büyük-harf normalizasyonunu SQL tarafında
+(`REPLACE(UPPER(sütun), ' ', '')`) uygular; `_plaka_yetki_kontrol` ve
+`plaka_analiz`'deki BEŞ sorgunun tamamı (kara liste ×2, ek plaka ×2, geçiş
+kayıtları ×1) artık bunu kullanıyor — SQLite ve SQL Server'ın ikisinde de
+çalışan standart `REPLACE`/`UPPER` fonksiyonlarıyla. "Plaka Analizi"nin
+döndürdüğü plaka metni de artık normalize edilmiş (boşluksuz) hali değil,
+kayıtlardaki OKUNABİLİR (boşluklu) biçimiyle dönüyor. Bu, kod
+incelemesiyle (bu depoda fastapi/sqlalchemy kurulu olmadığı için
+`test_api.py` çalıştırılamıyor) bulunup 7 yeni testle (kara liste — aynı ve
+farklı boşluk biçimiyle —, ek plaka yetkilendirmesi, Plaka Analizi'nin
+doğru geçiş sayısı/kara liste durumu) doğrulandı; ayrıca bu depodaki VAR
+OLAN `test_plaka_analiz_yeni_alanlari_dondurur` testinin de bu hata
+yüzünden aslında hiç geçemeyeceği (boş bir listeden ilk elemanı almaya
+çalışırdı) fark edildi.
+
 ## Kamera Bağlantı Güvenilirliği
 
 Bu bölüm, kamera bağlantılarının/araç geçişi görüntülerinin donmaması için yapılan

@@ -29,7 +29,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import text
 from sqlalchemy.orm import Session
-from sqlalchemy import desc
+from sqlalchemy import desc, func
 
 from backend import models
 from backend import schemas
@@ -1552,14 +1552,38 @@ def _plaka_normalize(plaka: str) -> str:
     return plaka.upper().replace(" ", "").strip()
 
 
+def _plaka_normalize_sql(kolon):
+    """`_plaka_normalize()`'ın SQL karşılığı: DB'de saklanan plaka_no
+    değerinin (BOŞLUKLAR KORUNARAK saklanır, bkz. schemas.py::plaka_normalize)
+    boşluksuz/büyük harf halini, sorgu SIRASINDA (DB tarafında) üretir --
+    Kisi/KisiPlaka/KaraListesi/Kayit tablolarının HEPSİ zaten uppercase+temiz
+    saklandığı için func.upper() yalnızca eski/elle düzenlenmiş satırlara
+    karşı ekstra bir savunma katmanıdır."""
+    return func.replace(func.upper(kolon), " ", "")
+
+
 def _plaka_yetki_kontrol(db: Session, plaka_no: str):
     """Önce kara liste, sonra aktif kişiler + saat/gün kısıtlaması kontrol edilir."""
     simdi = datetime.now()
     hedef = _plaka_normalize(plaka_no)
 
+    # GÜVENLİK KÖK NEDEN DÜZELTMESİ (2026-09-17): bu iki sorgu (kara liste ve
+    # ek plaka) önceden `Model.plaka_no == hedef` biçiminde DOĞRUDAN eşitlik
+    # kullanıyordu. `hedef` boşluksuz normalize edilmiş bir değerken (bkz.
+    # _plaka_normalize), KaraListesi.plaka_no/KisiPlaka.plaka_no DB'de
+    # BOŞLUKLU saklanıyor (bkz. schemas.py::plaka_normalize, ki boşlukları
+    # KORUR ve tüm giriş uçlarında -- KaraListesiOlustur, KisiPlakaOlustur,
+    # KisiOlustur -- kullanılan TEK doğrulama kuralıdır). Sonuç: "34 GA 0835"
+    # kara listeye eklense bile gerçek bir kamera tespitinde ("34 GA 0835"
+    # okunduğunda hedef="34GA0835" olur) ASLA eşleşmiyordu -- kara liste
+    # engeli VE bir kişinin ek plakaları FİİLEN HİÇ ÇALIŞMIYORDU. Artık
+    # karşılaştırma DB tarafında da boşluksuzlaştırılarak (bkz.
+    # _plaka_normalize_sql) yapılıyor; aşağıdaki Kişi eşleştirmesi zaten
+    # bu deseni (Python tarafında normalize edip karşılaştırma) doğru
+    # uyguluyordu, artık üçü de tutarlı.
     kara = db.query(models.KaraListesi).filter(
         models.KaraListesi.aktif == True,  # noqa: E712
-        models.KaraListesi.plaka_no == hedef,
+        _plaka_normalize_sql(models.KaraListesi.plaka_no) == hedef,
     ).first()
     if kara:
         return "kara_liste", None, None
@@ -1573,7 +1597,7 @@ def _plaka_yetki_kontrol(db: Session, plaka_no: str):
     if not kisi:
         ek = db.query(models.KisiPlaka).filter(
             models.KisiPlaka.aktif == True,  # noqa: E712
-            models.KisiPlaka.plaka_no == hedef,
+            _plaka_normalize_sql(models.KisiPlaka.plaka_no) == hedef,
         ).first()
         if ek:
             kisi = db.query(models.Kisi).filter(
@@ -2160,8 +2184,18 @@ def grafik_verisi(gun: int = 7, db: Session = Depends(get_db), _: models.Kullani
 def plaka_analiz(plaka_no: str, db: Session = Depends(get_db), _: models.Kullanici = Depends(_personel_girisi_gerekli)):
     """Bir plaka için geçiş geçmişi, kişi bilgisi ve kara liste durumu."""
     hedef = _plaka_normalize(plaka_no)
+    # GÜVENLİK/DOĞRULUK KÖK NEDEN DÜZELTMESİ (2026-09-17): bkz.
+    # _plaka_yetki_kontrol'deki aynı başlıklı not -- `Kayit.plaka_no` DB'de
+    # BOŞLUKLU saklandığı için (bkz. _kayit_olustur_ve_bildir'in kendi
+    # temizleme mantığı, schemas.py::plaka_normalize ile BİREBİR AYNI), bu
+    # sorgu boşluksuz `hedef` ile karşılaştırıldığında ASLA eşleşmiyordu --
+    # "Plaka Analizi" penceresi HER ZAMAN "Toplam Geçiş: 0" gösteriyordu.
+    # Görünen plaka biçimi de artık boşluksuz `hedef` yerine, sahadaki
+    # kayıtlarla AYNI (boşluklu) biçime sahip `goruntu_plaka` ile dönüyor
+    # (ör. "Kara Listeye Ekle" düğmesi artık doğru biçimde plaka gönderir).
+    goruntu_plaka = re.sub(r"[^A-Za-z0-9 ]", "", plaka_no).strip().upper() or hedef
     kayitlar = (db.query(models.Kayit)
-                .filter(models.Kayit.plaka_no == hedef)
+                .filter(_plaka_normalize_sql(models.Kayit.plaka_no) == hedef)
                 .order_by(desc(models.Kayit.tarih_saat))
                 .limit(50).all())
     kisi = None
@@ -2170,12 +2204,18 @@ def plaka_analiz(plaka_no: str, db: Session = Depends(get_db), _: models.Kullani
             kisi = k
             break
     if not kisi:
-        ek = db.query(models.KisiPlaka).filter(models.KisiPlaka.plaka_no == hedef, models.KisiPlaka.aktif == True).first()  # noqa: E712
+        ek = db.query(models.KisiPlaka).filter(
+            _plaka_normalize_sql(models.KisiPlaka.plaka_no) == hedef,
+            models.KisiPlaka.aktif == True,  # noqa: E712
+        ).first()
         if ek:
             kisi = db.query(models.Kisi).filter(models.Kisi.id == ek.kisi_id).first()
-    kara = db.query(models.KaraListesi).filter(models.KaraListesi.plaka_no == hedef, models.KaraListesi.aktif == True).first()  # noqa: E712
+    kara = db.query(models.KaraListesi).filter(
+        _plaka_normalize_sql(models.KaraListesi.plaka_no) == hedef,
+        models.KaraListesi.aktif == True,  # noqa: E712
+    ).first()
     return {
-        "plaka_no": hedef,
+        "plaka_no": goruntu_plaka,
         "toplam_gecis": len(kayitlar),
         "son_gecis": kayitlar[0].tarih_saat.isoformat() if kayitlar else None,
         "kisi": {"id": kisi.id, "ad_soyad": kisi.ad_soyad, "tip": kisi.tip, "telefon": kisi.telefon} if kisi else None,

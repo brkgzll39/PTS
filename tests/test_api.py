@@ -167,6 +167,50 @@ def test_kara_listedeki_plaka_engellenir(client, yetkili_header):
     assert r2.json()["yetki_durumu"] == "kara_liste"
 
 
+def test_kara_liste_farkli_bosluklu_girişte_de_eslesir(client, yetkili_header):
+    """GÜVENLİK KÖK NEDEN REGRESYON TESTİ (2026-09-17): main.py::_plaka_yetki_kontrol
+    kara liste kontrolünü önceden boşluksuz normalize edilmiş bir değerle
+    (`_plaka_normalize`), boşluklu SAKLANAN `KaraListesi.plaka_no` (bkz.
+    schemas.py::plaka_normalize, boşlukları KORUR) arasında DOĞRUDAN SQL
+    eşitliğiyle yapıyordu -- iki taraf da farklı biçimde olduğu için ASLA
+    eşleşmiyordu, yani kara liste engeli FİİLEN HİÇ ÇALIŞMIYORDU (yalnızca
+    yukarıdaki test gibi aynı boşluk biçimiyle tesadüfen "çalışıyormuş gibi"
+    görünebilirdi -- oysa o test de aslında başarısız olurdu, çünkü sorgu
+    hiçbir zaman boşluklu bir değerle eşleşmiyordu). Bu test, kara listeye
+    BOŞLUKSUZ girilen bir plakanın, kamerada BOŞLUKLU okunan aynı plakayı da
+    doğru şekilde engellediğini kanıtlar."""
+    r = client.post("/kara-listesi", json={"plaka_no": "34KARA03", "sebep": "test"}, headers=yetkili_header)
+    assert r.status_code == 200, r.text
+
+    r2 = client.post("/kayitlar", json={"plaka_no": "34 KARA 03", "kamera_id": "TEST", "yon": "giris"},
+                      headers=yetkili_header)
+    assert r2.status_code == 200, r2.text
+    assert r2.json()["yetki_durumu"] == "kara_liste"
+
+
+def test_ek_plaka_yetkili_gelir(client, yetkili_header):
+    """GÜVENLİK KÖK NEDEN REGRESYON TESTİ (2026-09-17): bir kişinin ek/ikincil
+    plakası (bkz. POST /kisiler/{id}/plakalar) da aynı boşluk-normalizasyonu
+    hatasından etkileniyordu -- gerçek bir geçişte hiçbir zaman "yetkili"
+    olarak tanınmıyordu (yalnızca Kisi.plaka_no ANA plaka üzerinden yapılan
+    eşleştirme -- Python tarafında zaten doğru normalize ediliyordu --
+    çalışıyordu)."""
+    r = client.post("/kisiler", json={
+        "ad_soyad": "Ek Plaka Testi", "plaka_no": "34 EKA 01", "tip": "abone",
+    }, headers=yetkili_header)
+    assert r.status_code == 200, r.text
+    kisi_id = r.json()["id"]
+
+    r2 = client.post(f"/kisiler/{kisi_id}/plakalar", json={"plaka_no": "34 EKA 02"}, headers=yetkili_header)
+    assert r2.status_code == 200, r2.text
+
+    r3 = client.post("/kayitlar", json={"plaka_no": "34 EKA 02", "kamera_id": "TEST", "yon": "giris"},
+                      headers=yetkili_header)
+    assert r3.status_code == 200, r3.text
+    assert r3.json()["yetki_durumu"] == "yetkili"
+    assert r3.json()["kisi_id"] == kisi_id
+
+
 def test_suresi_dolmus_ziyaretci_dogru_isaretlenir(client, yetkili_header):
     gecmis_tarih = (datetime.now() - timedelta(days=1)).isoformat()
     r = client.post("/kisiler", json={
@@ -895,6 +939,42 @@ def test_plaka_analiz_yeni_alanlari_dondurur(client, operator_header):
         assert alan in kayit, f"'{alan}' alanı /kayitlar/analiz yanıtında eksik"
     assert kayit["not_metni"] == "analiz ekranı testi"
     assert kayit["manuel_giris"] is True
+
+
+def test_plaka_analiz_toplam_gecis_dogru_sayilir(client, operator_header):
+    """GÜVENLİK/DOĞRULUK KÖK NEDEN REGRESYON TESTİ (2026-09-17): kullanıcı,
+    panelde bir plakaya tıklayınca açılan "Plaka Analizi" penceresinin,
+    plakanın GERÇEKTEN var olan geçişlerine rağmen her zaman "Toplam Geçiş:
+    0 / Kayıt yok" gösterdiğini bildirdi. Kök neden: main.py::plaka_analiz
+    boşluksuz normalize edilmiş bir değerle, boşluklu SAKLANAN
+    `Kayit.plaka_no` arasında DOĞRUDAN SQL eşitliği kullanıyordu -- iki taraf
+    da farklı biçimde olduğu için sorgu HİÇBİR ZAMAN eşleşmiyordu."""
+    for _ in range(3):
+        r = client.post("/kayitlar", json={"plaka_no": "34 TGS 09", "kamera_id": "TEST", "yon": "giris"},
+                         headers=operator_header)
+        assert r.status_code == 200, r.text
+
+    r2 = client.get("/kayitlar/analiz/34 TGS 09", headers=operator_header)
+    assert r2.status_code == 200, r2.text
+    veri = r2.json()
+    assert veri["toplam_gecis"] == 3, "Plaka Analizi gerçek geçiş sayısını göstermeliydi (0 değil)"
+    assert veri["son_gecis"] is not None
+    assert len(veri["son_kayitlar"]) == 3
+    assert veri["plaka_no"] == "34 TGS 09", (
+        "Görüntülenen plaka, kayıtlardaki OKUNABİLİR (boşluklu) biçimde dönmeli, "
+        "normalize edilmiş/boşluksuz hali değil"
+    )
+
+
+def test_plaka_analiz_kara_liste_durumunu_dogru_gosterir(client, yetkili_header):
+    """Aynı kök nedenin bir başka belirtisi: Plaka Analizi'ndeki "Kara Liste"
+    rozeti, plaka gerçekten kara listede olsa bile her zaman "Temiz"
+    gösteriyordu (bkz. yukarıdaki not)."""
+    r = client.post("/kara-listesi", json={"plaka_no": "34 PAK 10", "sebep": "test"}, headers=yetkili_header)
+    assert r.status_code == 200, r.text
+    r2 = client.get("/kayitlar/analiz/34 PAK 10", headers=yetkili_header)
+    assert r2.status_code == 200, r2.text
+    assert r2.json()["kara_listesinde"] is True
 
 
 # ------------------------------------------------------------------
