@@ -1358,12 +1358,67 @@ kapandığını ve manuel kayıtların HİÇ etkilenmediğini doğrulayan) -- bu
 fastapi/sqlalchemy'ye ihtiyaç duyduğu için bu sandbox'ta çalıştırılamadı,
 yalnızca `py_compile` ile sözdizimi doğrulandı (bkz. depodaki genel not).
 
+## "Son Geçişler" Panelinden Plaka Geçmişine/Manuel Kayda Erişim (2026-09-18)
+
+Kullanıcı talebi: "bu ekranda son geçişlerde gözüken plakalara da
+tıklandığında ziyaretçi ekleme aracın resmini görme kayıt etme gibi şeylerin
+aynısını görmek istiyorum" -- Canlı İzleme sekmesindeki "Son Geçişler" yan
+panelinde listelenen plakalara tıklandığında, Kayıtlar/Kara Liste/Kişiler
+sekmelerinde zaten var olan plaka bazlı analiz ekranındaki imkanların
+(tam geçiş geçmişi tablosu, kişi/kara liste durumu, "+ Manuel Kayıt Ekle"
+formu) aynısı istendi.
+
+Kod incelemesinde, uygulamada zaten İKİ ayrı "detay görüntüleme" akışının bir
+arada var olduğu görüldü:
+
+- `olayDetayAc(id)` / `#olayDetayModal`: TEK bir geçiş kaydına özel modal.
+  "Son Geçişler" panelindeki satırlar zaten bunu açıyordu -- araç görseli,
+  olay tipi, plaka/tarih/saat/site/nokta/yön, bağlı kişi bilgisi, güven
+  skoru, OCR düzeltme notu, bariyer açma düğmesi ve (operatör+) "Ziyaretçi
+  Girişi" hızlı onay kutusunu (bir tespiti tek adımda bir kişiye/daireye
+  bağlayıp aynı anda bariyeri açan akış) gösteriyordu.
+- `plakaAnalizAc(plaka)` / `#plakaAnalizModal`: PLAKA bazlı, o plakanın TÜM
+  geçmişini gösteren zengin modal (istatistik kartları, kişi/kara liste
+  durumu, düzenle/sil destekli tam geçiş geçmişi tablosu, "Kara Listeye
+  Ekle" düğmesi, operatör+ için "+ Manuel Kayıt Ekle" formu). Bu ekran
+  yalnızca Kayıtlar/Kara Liste tablolarındaki `data-plaka-analiz` etiketli
+  plaka bağlantılarından açılabiliyordu -- "Son Geçişler" panelinden HİÇ
+  erişilemiyordu.
+
+Bu iki modal, işlevleri örtüşmeyen ve BİRBİRİNİ İKAME ETMEYEN farklı
+amaçlara hizmet ettiği için ("Ziyaretçi Girişi" hızlı onayı ve bariyer açma,
+o AN yakalanan olaya özel bilgi gerektirir; plaka geçmişi ve manuel kayıt ise
+plakanın kendisine özel, olaydan bağımsız bilgidir), biri diğerinin yerine
+geçirilmedi -- ikisi de "Son Geçişler" panelinden erişilebilir hale
+getirildi:
+
+- `olayDetayModal`'a yeni bir **"Plaka Geçmişi / Manuel Kayıt"** düğmesi
+  eklendi (`#olayModalAnalizBtn`, "Bariyer Aç" ile "Kapat" arasında).
+- Tıklandığında `olayDetayModal` kapanır ve aynı plaka ile `plakaAnalizAc()`
+  açılır -- kullanıcı böylece tek bir tıklamayla plakanın tüm geçmişini
+  görüp gerektiğinde manuel kayıt ekleyebilir veya kara listeye alabilir.
+- Güvenlik: plaka değeri düğmenin `onclick`/`data-*` attribute'una statik
+  olarak GÖMÜLMEDİ (bkz. app.js'teki mevcut XSS-önleme notu) -- her modal
+  açılışında `_olayModalAnalizButonunuAyarla(kayit)` çağrılarak düğmenin
+  `onclick`'i, `kayit.plaka_no`'yu doğrudan bir JS değişkeni olarak kullanan
+  bir kapanışla (closure) yeniden kuruluyor.
+- "Son Geçişler" panelindeki satırların kendi tıklama davranışı (hâlâ
+  `olayDetayAc(id)`) DEĞİŞMEDİ -- hem ilk yüklemede hem SSE ile canlı
+  eklenen satırlarda.
+
+Yeni `tests/test_olay_detay_plaka_analiz.py` dosyası (bağımlılığı hafif,
+gerçekten çalıştırılıp doğrulandı) şunları doğrular: düğmenin varlığını ve
+plaka değerini attribute'a gömmediğini, `olayDetayAc()`'ın yeni yardımcıyı
+çağırdığını, yardımcının doğru iki modalı (kapat/aç) yönettiğini, ve panel
+satırlarının hâlâ `olayDetayAc` çağırdığını.
+
 ## Kalıcı Test Altyapısı
 
 `tests/` klasöründe pytest tabanlı bir test paketi var:
 
 - `test_plaka_dogrula.py`, `test_lisans.py`, `test_schemas.py`, `test_camera_reader.py`,
-  `test_metin_araclari.py`, `test_pdf_export.py`, `test_excel_export.py`, `test_frontend_rbac.py`:
+  `test_metin_araclari.py`, `test_pdf_export.py`, `test_excel_export.py`, `test_frontend_rbac.py`,
+  `test_olay_detay_plaka_analiz.py`:
   bağımlılığı hafif (fastapi/sqlalchemy gerektirmez), yalnızca pydantic/opencv/requests/
   reportlab/pdfplumber/openpyxl/BeautifulSoup gibi hedefe özel kütüphaneler yeterlidir.
 - `test_api.py`: FastAPI `TestClient` + geçici bir SQLite veritabanı kullanarak

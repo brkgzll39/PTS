@@ -580,8 +580,29 @@ async function olayDetayAc(id) {
     ? `${kayit.ham_plaka_metni} → ${kayit.plaka_no} (bilinen plakaya göre düzeltildi)`
     : "-";
   _olayModalBariyerButonunuAyarla(nokta);
+  _olayModalAnalizButonunuAyarla(kayit);
   await _ziyaretciGirisiKutusunuAyarla(kayit, nokta);
   bootstrap.Modal.getOrCreateInstance(document.getElementById("olayDetayModal")).show();
+}
+
+// "Son Geçişler" panelinden (ve Ana Sayfa'daki son kayıtlar tablosundan)
+// olayDetayAc() ile açılan TEK bir geçiş kaydına özel bu modal, kullanıcının
+// başka ekranlarda (Kayıtlar/Kara Liste/Kişiler) zaten alışık olduğu, PLAKA
+// bazlı tam geçmiş + manuel kayıt ekleme ekranına (plakaAnalizAc) da buradan
+// erişim sağlar — bkz. kullanıcı isteği: "son geçişlerde gözüken plakalara
+// da tıklandığında ziyaretçi ekleme aracın resmini görme kayıt etme gibi
+// şeylerin aynısını görmek istiyorum". kayit.plaka_no zaten backend'de
+// schemas.py::plaka_normalize ile harf/rakam/boşluk dışı karakterlerden
+// arındırıldığı için burada güvenlidir; yine de HTML attribute'una GÖMMEK
+// yerine (bkz. yukarıdaki data-plaka-analiz güvenlik notu) kapanışta doğrudan
+// JS değişkeni olarak kullanılıyor.
+function _olayModalAnalizButonunuAyarla(kayit) {
+  const btn = document.getElementById("olayModalAnalizBtn");
+  if (!btn) return;
+  btn.onclick = () => {
+    bootstrap.Modal.getInstance(document.getElementById("olayDetayModal"))?.hide();
+    plakaAnalizAc(kayit.plaka_no);
+  };
 }
 
 // "Ziyaretçi Girişi" hızlı onay kutusu: bir tespiti tek tuşla bir kişiye/
