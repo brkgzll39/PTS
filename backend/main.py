@@ -132,6 +132,7 @@ def _veritabani_migrasyon() -> None:
         f"ALTER TABLE noktalar ADD {col_kw}kamera_id VARCHAR(64)",
         f"ALTER TABLE noktalar ADD {col_kw}bariyer_id INTEGER",
         f"ALTER TABLE plaka_kayitlari ADD {col_kw}dogrulama_kare_sayisi INTEGER",
+        f"ALTER TABLE plaka_kayitlari ADD {col_kw}farkli_okuma_sayisi INTEGER",
         f"ALTER TABLE plaka_kayitlari ADD {col_kw}not_metni {'TEXT' if sqlite_mod else 'NVARCHAR(MAX)'}",
         f"ALTER TABLE plaka_kayitlari ADD {col_kw}manuel_giris {bool_tip}{bit_sonu}",
         f"ALTER TABLE plaka_kayitlari ADD {col_kw}duzenleyen VARCHAR(80)",
@@ -1957,7 +1958,8 @@ def _bilinen_plakaya_yakinlik_duzelt(db: Session, ham_plaka: str, guven_skoru: O
 def _kayit_olustur_ve_bildir(db: Session, plaka_no: str, kamera_id: str, yon: str,
                               guven_skoru: Optional[float], goruntu_yolu: Optional[str],
                               dogrulama_kare_sayisi: Optional[int] = None,
-                              not_metni: Optional[str] = None, manuel_giris: bool = False):
+                              not_metni: Optional[str] = None, manuel_giris: bool = False,
+                              farkli_okuma_sayisi: Optional[int] = None):
     plaka_no = re.sub(r"[^A-Za-z0-9 ]", "", plaka_no).strip().upper() or "BILINMEYEN"
     kamera_id = re.sub(r"[^A-Za-z0-9 _.\-]", "", str(kamera_id)).strip()[:50] or "KAMERA-1"
 
@@ -1985,6 +1987,7 @@ def _kayit_olustur_ve_bildir(db: Session, plaka_no: str, kamera_id: str, yon: st
         dogrulama_kare_sayisi=dogrulama_kare_sayisi,
         not_metni=not_metni_temiz,
         manuel_giris=manuel_giris,
+        farkli_okuma_sayisi=farkli_okuma_sayisi,
     )
     db.add(kayit)
     db.commit()
@@ -2134,6 +2137,7 @@ async def kayit_ekle_otomatik(
     yon: str = Form("giris"),
     guven_skoru: Optional[float] = Form(None),
     dogrulama_kare_sayisi: Optional[int] = Form(None),
+    farkli_okuma_sayisi: Optional[int] = Form(None),
     gorsel: Optional[UploadFile] = File(None),
     x_pts_kamera_anahtari: Optional[str] = Header(None),
     db: Session = Depends(get_db),
@@ -2219,7 +2223,8 @@ async def kayit_ekle_otomatik(
                 "plaka=%s güven=%.3f (genel eşik=%.3f, bilinen araç eşiği=%.3f)",
                 kamera_id, plaka_no, guven_skoru, esik, bilinen_esik,
             )
-            return _kayit_olustur_ve_bildir(db, plaka_no, kamera_id, yon, guven_skoru, goruntu_yolu, dogrulama_kare_sayisi)
+            return _kayit_olustur_ve_bildir(db, plaka_no, kamera_id, yon, guven_skoru, goruntu_yolu,
+                                             dogrulama_kare_sayisi, farkli_okuma_sayisi=farkli_okuma_sayisi)
 
         if goruntu_yolu and os.path.isfile(goruntu_yolu):
             try:
@@ -2238,7 +2243,8 @@ async def kayit_ekle_otomatik(
             "esik": esik,
         })
 
-    return _kayit_olustur_ve_bildir(db, plaka_no, kamera_id, yon, guven_skoru, goruntu_yolu, dogrulama_kare_sayisi)
+    return _kayit_olustur_ve_bildir(db, plaka_no, kamera_id, yon, guven_skoru, goruntu_yolu,
+                                     dogrulama_kare_sayisi, farkli_okuma_sayisi=farkli_okuma_sayisi)
 
 
 @app.get("/kayitlar", response_model=List[schemas.KayitCevap])
@@ -2556,7 +2562,8 @@ def plaka_analiz(plaka_no: str, db: Session = Depends(get_db), _: models.Kullani
             {"id": k.id, "plaka_no": k.plaka_no, "tarih_saat": k.tarih_saat.isoformat(), "yon": k.yon,
              "yetki_durumu": k.yetki_durumu, "kamera_id": k.kamera_id,
              "goruntu_yolu": k.goruntu_yolu, "guven_skoru": k.guven_skoru,
-             "dogrulama_kare_sayisi": k.dogrulama_kare_sayisi, "not_metni": k.not_metni,
+             "dogrulama_kare_sayisi": k.dogrulama_kare_sayisi, "farkli_okuma_sayisi": k.farkli_okuma_sayisi,
+             "not_metni": k.not_metni,
              "manuel_giris": k.manuel_giris, "kisi_id": k.kisi_id,
              "duzenleyen": k.duzenleyen,
              "duzenleme_tarihi": k.duzenleme_tarihi.isoformat() if k.duzenleme_tarihi else None}

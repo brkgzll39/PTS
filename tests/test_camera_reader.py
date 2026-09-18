@@ -273,6 +273,88 @@ def test_zorla_kapatma_bekelemeden_kazanani_dondurur():
     assert len(bitmis) == 1 and bitmis[0]["plaka"] == "34 ABC 123"
 
 
+# ------------------------------------------------------------------
+# "Sondan karakter eksik" düzeltmesi + kazanan-varyanta-özel güven (2026-09-18)
+# ------------------------------------------------------------------
+# Kullanıcı bildirimi: kamerada net görünen "02 AFP 552" plakası, TÜM
+# karelerin (6/6) "oydaşmasıyla" %100 güvenle "02 AFP 55" (son rakam eksik)
+# olarak kaydedildi. Araştırma: fast_alpr, dedektör kutusunu HİÇ kenar
+# boşluğu eklemeden tam sınırlarından kırpıyor -- kutunun sağ kenarı son
+# karaktere yakınsa o karakter OCR'a hiç ulaşmadan kırpılabiliyor. Bu
+# testler hem bu düzeltmenin (yakın çağrılarda uzun varyantı tercih etme)
+# hem de "guven" alanının artık KAZANAN metnin kendi güvenine ait olduğunu
+# (önceden oturumdaki TÜM varyantlar arasındaki -- kazananla ilgisiz
+# olabilecek -- global en yükseği raporluyordu) doğrular.
+
+def test_sondan_karakter_eksik_yakin_cagrida_uzun_varyant_tercih_edilir():
+    """KÖK NEDEN regresyonu: kullanıcının bildirdiği tam senaryo -- kısa
+    (kırpılmış) varyant ÇOĞUNLUKTA ama EZİCİ değil; uzun (doğru) varyant da
+    ciddi bir azınlıkla var. Uzun varyant kazanmalı."""
+    t = camera_reader.PlakaOturumTakipcisi(oturum_kapanma_sn=1.0, benzerlik_esigi=2)
+    t.guncelle("02 AFP 55", 1.0, simdi=0.0)
+    t.guncelle("02 AFP 55", 1.0, simdi=0.1)
+    t.guncelle("02 AFP 552", 0.97, simdi=0.2)
+    t.guncelle("02 AFP 55", 1.0, simdi=0.3)
+    t.guncelle("02 AFP 552", 0.95, simdi=0.4)
+
+    bitmis = t.bitmis_oturumlari_al(simdi=2.0)
+    assert len(bitmis) == 1
+    kazanan = bitmis[0]
+    assert kazanan["plaka"] == "02 AFP 552", "Sonu eksik ama çoğunlukta olan varyant yanlışlıkla kazandı"
+    assert kazanan["uzun_varyant_tercih_edildi"] is True
+    # guven artık KAZANAN ("02 AFP 552") varyantının kendi en yüksek güveni
+    # olmalı (0.97), oturumdaki global en yüksek güven (1.0, "02 AFP 55"ye ait) DEĞİL.
+    assert kazanan["guven"] == 0.97
+
+
+def test_sondan_karakter_eksik_ezici_cogunlukta_gecersiz_kilinmaz():
+    """Uzun varyant sadece TEK bir kare/tesadüfi bir yanlış okumaysa (ezici
+    bir çoğunluk kısa varyantı destekliyorsa), düzeltme YİNE DE devreye
+    girmemeli -- gerçekten daha kısa bir plaka olma ihtimaline karşı çoğunluk
+    oyu korunmalı."""
+    t = camera_reader.PlakaOturumTakipcisi(oturum_kapanma_sn=1.0, benzerlik_esigi=2)
+    for i in range(9):
+        t.guncelle("34 AB 12", 0.98, simdi=i * 0.1)
+    t.guncelle("34 AB 123", 0.90, simdi=1.0)  # 10 karede yalnızca 1 kez uzun varyant
+
+    bitmis = t.bitmis_oturumlari_al(simdi=3.0)
+    assert len(bitmis) == 1
+    kazanan = bitmis[0]
+    assert kazanan["plaka"] == "34 AB 12", "Ezici çoğunluktaki kısa varyant yanlışlıkla geçersiz kılındı"
+    assert kazanan["uzun_varyant_tercih_edildi"] is False
+
+
+def test_ortadan_karakter_farkli_varyantlarda_uzunluk_tercihi_uygulanmaz():
+    """Fark SONDA değil ORTADA ise (örn. harf grubuna bir harf eklenmiş/
+    çıkmışsa), bu farklı bir hata sınıfıdır -- 'sondan karakter eksik'
+    düzeltmesi burada uygulanmamalı (yanlış pozitif riski)."""
+    t = camera_reader.PlakaOturumTakipcisi(oturum_kapanma_sn=1.0, benzerlik_esigi=2)
+    t.guncelle("34 A 1234", 0.90, simdi=0.0)
+    t.guncelle("34 AB 1234", 0.85, simdi=0.1)  # ortaya bir harf eklenmiş, SONA değil
+
+    bitmis = t.bitmis_oturumlari_al(simdi=2.0)
+    assert len(bitmis) == 1
+    assert bitmis[0]["uzun_varyant_tercih_edildi"] is False
+    assert bitmis[0]["plaka"] == "34 A 1234"  # doğal (en çok oylu) kazanan değişmedi
+
+
+def test_kazanan_guveni_azinlikta_kalan_farkli_bir_varyantin_guveninden_etkilenmez():
+    """KÖK NEDEN regresyonu: azınlıkta kalan (oylamayı kaybeden) bir okumanın
+    rastgele yüksek güvenli olması, panelde KAZANAN okumanın güvenmiş gibi
+    GÖSTERİLMESİNE yol açmamalı -- 'guven' her zaman gerçekten kaydedilen
+    metne (kazanana) ait olmalı, oturumdaki global en yükseğe değil."""
+    t = camera_reader.PlakaOturumTakipcisi(oturum_kapanma_sn=1.0, benzerlik_esigi=2)
+    t.guncelle("34 XYZ 111", 0.70, simdi=0.0)
+    t.guncelle("34 XYZ 111", 0.75, simdi=0.1)
+    t.guncelle("34 XYZ 119", 1.0, simdi=0.2)  # tek kare, çok yüksek güvenli ama AZINLIKTA (aynı uzunlukta, tek karakter farklı)
+
+    bitmis = t.bitmis_oturumlari_al(simdi=2.0)
+    assert len(bitmis) == 1
+    kazanan = bitmis[0]
+    assert kazanan["plaka"] == "34 XYZ 111"
+    assert kazanan["guven"] == 0.75, "guven, kazanmayan '34 XYZ 119' okumasının güveninden (1.0) sızıntı yapmamalı"
+
+
 def test_dusuk_guvenli_okuma_pipeline_isleyisinde_oya_hic_girmez(sahte_engine):
     """min_guven_skoru eşiğinin altındaki bir okuma oy birikimine hiç
     girmemeli — pipeline seviyesinde entegrasyon testi."""
@@ -318,6 +400,71 @@ def test_kayit_api_istegine_dogrulama_kare_sayisi_eklenir(monkeypatch, sahte_eng
 
     assert gonderilenler == ["34 ABC 123"]
     assert yakalanan["data"]["dogrulama_kare_sayisi"] == 1
+
+
+class _CogulPlakaEngine:
+    """Ardışık `tahmin_et()` çağrılarında FARKLI plaka varyantları döndüren
+    sahte motor -- gerçek bir kameranın aynı aracı birkaç karede biraz farklı
+    okumasını simüle eder. farkli_okuma_sayisi'nin API isteğine kadar uçtan
+    uca doğru taşındığını test etmek için (bkz. 2026-09-18 notu)."""
+
+    def __init__(self, *a, **kw):
+        self._sonuclar = iter([
+            _SahteSonuc("02 AFP 55", 1.0),
+            _SahteSonuc("02 AFP 55", 1.0),
+            _SahteSonuc("02 AFP 552", 0.97),
+        ])
+        self.detektor_esigi_etkin = 0.4
+        self.detektor_esigi_kaynagi = "test"
+        self.dedektor_modeli_etkin = "test-model"
+        self.dedektor_modeli_kaynagi = "test"
+
+    def tahmin_et(self, frame):
+        try:
+            return [next(self._sonuclar)]
+        except StopIteration:
+            return []
+
+
+def test_kayit_api_istegine_farkli_okuma_sayisi_eklenir(monkeypatch):
+    """KÖK NEDEN regresyonu: kullanıcının bildirdiği "02 AFP 552" plakasının
+    "02 AFP 55" olarak %100 güvenle, 6/6 karenin 'oydaşmasıyla' kaydedilmesi
+    vakası -- panel önceden bu oturumda birden fazla FARKLI okuma olduğunu
+    (yani kazananın azınlıkta kalan bir okumaya rağmen seçildiğini) hiçbir
+    şekilde göremiyordu, bu bilgi API isteğine hiç eklenmiyordu. Artık
+    farkli_okuma_sayisi de dogrulama_kare_sayisi gibi istekle birlikte
+    gönderiliyor."""
+    import numpy as np
+
+    monkeypatch.setattr(camera_reader, "ANPREngine", _CogulPlakaEngine)
+    monkeypatch.setattr(camera_reader, "_paylasilan_motor", None)
+
+    yakalanan = {}
+
+    def sahte_post(url, data=None, files=None, headers=None, timeout=None):
+        yakalanan["data"] = data
+
+        class _Yanit:
+            status_code = 200
+
+        return _Yanit()
+
+    monkeypatch.setattr(camera_reader.requests, "post", sahte_post)
+
+    pipeline = camera_reader.KameraPipeline(
+        video_kaynagi="kullanilmiyor.mp4", kamera_id="TEST-FARKLI-OKUMA",
+    )
+    kare = np.full((100, 100, 3), 128, dtype=np.uint8)
+    pipeline._kareyi_isle(kare)
+    pipeline._kareyi_isle(kare)
+    gonderilenler = pipeline._kareyi_isle(kare, oturumu_hemen_kapat=True)
+
+    # Sonda karakter eksik düzeltmesi burada da devreye girer (2 kare "02 AFP
+    # 55" oyu=2.0, 1 kare "02 AFP 552" oyu=0.97 -- oran ~0.49 >= 0.34 eşiğini
+    # geçiyor), bu yüzden doğru/uzun varyant kazanır.
+    assert gonderilenler == ["02 AFP 552"]
+    assert yakalanan["data"]["farkli_okuma_sayisi"] == 2
+    assert yakalanan["data"]["dogrulama_kare_sayisi"] == 3
 
 
 class _BosSonucDondurenEngine:

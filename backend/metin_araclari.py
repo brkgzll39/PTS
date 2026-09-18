@@ -73,3 +73,23 @@ def en_yakin_bilinen_plakayi_bul(hedef: str, bilinen_plakalar) -> Optional[str]:
             belirsiz = True  # birden fazla bilinen plaka eşit derecede yakın — riskli, düzeltme
 
     return en_yakin if (en_yakin is not None and not belirsiz) else None
+
+
+def sondan_bir_karakter_eksik_mi(kisa: str, uzun: str) -> bool:
+    """`uzun`, `kisa`'nın SONUNA tam olarak bir karakter eklenmiş hali mi?
+
+    Kullanım bağlamı (bkz. camera_reader.py::PlakaOyBirikimi.kazanan): fast_alpr
+    kütüphanesi (ve genel olarak çoğu ANPR dedektörü) tespit kutusunu HİÇBİR
+    kenar boşluğu (padding) bırakmadan tam sınırlarından kırpıyor -- kutunun
+    sağ kenarı son karaktere birkaç piksel yakın kalırsa o karakter OCR'a hiç
+    ulaşmadan kırpılabiliyor. Bu, OCR'ın SONDAN bir karakter EKSİK ama yine de
+    yüksek güvenle okuduğu bir sonuç üretmesine yol açar (gördüğü karakterlerin
+    hepsi gerçekten doğrudur, sadece biri hiç görülmemiştir) -- düşük güven
+    eşiği bunu YAKALAYAMAZ.
+
+    Yalnızca SONDAN (dizginin en sağından) bir karakterin eksik/fazla olduğu
+    durumu hedefler -- ortadan bir karakter eksikse (örn. bir harf grubundan
+    bir harf düşmüşse) bu farklı bir hata sınıfıdır ve burada ele alınmaz
+    (dizge uzunluğu aynı kalmadığı için `_sondan_bir_karakter_farkli_mi` gibi
+    kullanan çağıran kodun kendisi zaten ayrı bir kontrolle bunu eler)."""
+    return len(uzun) == len(kisa) + 1 and uzun.startswith(kisa)

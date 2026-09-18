@@ -281,12 +281,21 @@ function tipRozeti(tip) {
 // HİÇBİR karede doğrulanmadan tek başına kesinleşmiş -- yanlış okuma riski
 // daha yüksek, operatör dikkat etsin diye ayrıca işaretlenir. >=2: birden
 // fazla karenin oydaşmasıyla kesinleşmiş, daha güvenilir.
-function dogrulamaRozeti(kareSayisi) {
+function dogrulamaRozeti(kareSayisi, farkliOkumaSayisi) {
   if (kareSayisi === null || kareSayisi === undefined) return '<span class="text-muted small">-</span>';
   if (kareSayisi <= 1) {
     return `<span class="badge badge-dogrulama-zayif" title="Bu okuma yalnızca TEK bir karede yapıldı, başka hiçbir karede doğrulanmadı -- yanlış okuma ihtimali daha yüksektir.">⚠ 1 kare</span>`;
   }
-  return `<span class="badge badge-dogrulama-guclu" title="Bu okuma ${kareSayisi} farklı karenin oydaşmasıyla kesinleşti.">✓ ${kareSayisi} kare</span>`;
+  // 2026-09-18: "N kare" oydaşması TEK BAŞINA garanti değildir -- kazanan,
+  // azınlıkta kalan farklı bir okumaya rağmen seçilmiş olabilir (örn. kamera
+  // kutuyu kenar boşluksuz kırptığı için bazı karelerde son karakter hiç
+  // görülmemiş olabilir). farkli_okuma_sayisi > 1 ise bunu operatöre ayrıca
+  // (yeşil değil, uyarı rengiyle) işaretliyoruz -- bkz. README.md'deki ilgili
+  // not ve backend/camera_reader.py::PlakaOyBirikimi.kazanan.
+  if (farkliOkumaSayisi && farkliOkumaSayisi > 1) {
+    return `<span class="badge badge-dogrulama-zayif" title="Bu ${kareSayisi} karede OCR ${farkliOkumaSayisi} FARKLI metin önerdi; gösterilen yalnızca en çok oyu alan okumadır. Özellikle plakanın son karakterini elle kontrol edin (kamera kutuyu dar kırpınca son karakter OCR'a hiç ulaşmayabilir).">⚠ ${kareSayisi} kare (çelişkili)</span>`;
+  }
+  return `<span class="badge badge-dogrulama-guclu" title="Bu okuma ${kareSayisi} farklı karenin TAMAMEN AYNI metni üreterek oydaşmasıyla kesinleşti.">✓ ${kareSayisi} kare</span>`;
 }
 
 function saatiGuncelle() {
@@ -1186,7 +1195,7 @@ async function kayitlariYukle(sifirla = true) {
       <td>${durumRozeti(k.yetki_durumu)}</td>
       <td>${tipRozeti(k.kisi_tip_anlik)}</td>
       <td>${k.guven_skoru ? (k.guven_skoru * 100).toFixed(0) + "%" : "-"}</td>
-      <td>${dogrulamaRozeti(k.dogrulama_kare_sayisi)}</td>
+      <td>${dogrulamaRozeti(k.dogrulama_kare_sayisi, k.farkli_okuma_sayisi)}</td>
       <td class="text-nowrap">
         <button class="btn btn-sm btn-outline-danger" onclick="kayitPdfIndir(${k.id})" title="PDF indir" aria-label="PDF indir"><i class="bi bi-file-earmark-pdf"></i></button>
         ${rolYeterli("operatör") ? `<button class="btn btn-sm btn-outline-primary ms-1" onclick="kayitDuzenleAc(${k.id})" title="Kaydı düzenle" aria-label="Kaydı düzenle"><i class="bi bi-pencil"></i></button>` : ""}
@@ -1772,7 +1781,7 @@ async function plakaAnalizAc(plaka) {
         <td>${escapeHtml(k.kamera_id)}</td>
         <td>${durumRozeti(k.yetki_durumu)}</td>
         <td>${k.guven_skoru ? (k.guven_skoru * 100).toFixed(0) + "%" : "-"}</td>
-        <td>${dogrulamaRozeti(k.dogrulama_kare_sayisi)}</td>
+        <td>${dogrulamaRozeti(k.dogrulama_kare_sayisi, k.farkli_okuma_sayisi)}</td>
         <td class="small">${k.manuel_giris ? '<span class="badge bg-secondary d-block mb-1">Manuel</span>' : ""}${k.not_metni ? escapeHtml(k.not_metni) : (k.manuel_giris ? "" : '<span class="text-muted">-</span>')}</td>
         <td class="text-nowrap">
           ${rolYeterli("operatör") ? `<button class="btn btn-sm btn-outline-primary" onclick="kayitDuzenleAc(${k.id})" title="Kaydı düzenle" aria-label="Kaydı düzenle"><i class="bi bi-pencil"></i></button>` : ""}

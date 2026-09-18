@@ -1217,12 +1217,85 @@ yanı sıra, gelecekte kenar çubuğuna/ikinci sekme çubuğuna bu testin bilmed
 YENİ bir sekme eklenirse testin başarısız olup hatırlatacağı iki
 "tamlık koruması" (completeness guard) testi de içeriyor.
 
+## "Net Görünen Plaka Yanlış/Eksik Kaydediliyor" -- Sondan Karakter Eksik Düzeltmesi (2026-09-18)
+
+Kullanıcı bildirimi (ekran görüntüsüyle): kamerada gayet net, tam karşıdan
+görünen bir plaka ("02 AFP 552"), panelde "02 AFP 55" (SONDAKİ rakam eksik)
+olarak, **%100 güvenle** ve **6/6 karenin "oydaşmasıyla"** kaydedildi --
+yani panel bu okumayı en yüksek güven rozetiyle "kesinleşmiş" gösteriyordu,
+oysa yanlıştı.
+
+**Kök neden araştırması:** fast_alpr kütüphanesinin (PTS'nin kullandığı ANPR
+motoru) kaynak koduna bakıldığında, dedektörün önerdiği kutunun HİÇBİR kenar
+boşluğu (padding) eklenmeden tam sınırlarından kırpılıp OCR'a öyle verildiği
+görüldü (`cropped_plate = img[y1:y2, x1:x2]` -- kütüphane bunun için
+yapılandırılabilir bir padding/margin parametresi de sunmuyor). Yani
+dedektörün önerdiği kutunun sağ kenarı son karaktere birkaç piksel yakın
+kalırsa, o karakter OCR'a HİÇ ULAŞMADAN kırpılabiliyor. Bu durumda OCR
+gördüğü (eksik) karakterlerin HEPSİNİ yine de yüksek güvenle okuyor --
+düşük güven eşiği bunu YAKALAYAMAZ, çünkü ortada zayıf okunan bir karakter
+yok, sadece hiç görülmemiş bir karakter var. Bu, kutu geometrisi aynı
+kaldığı için (aynı araç, aynı açı) bir oturumdaki TÜM karelerde tutarlı
+biçimde tekrarlanabiliyor -- "6/6 kare oydaştı" bunun için yanıltıcı bir
+güvence, çünkü tüm kareler AYNI (eksik) şekilde kırpılmış olabilir.
+
+**Yapılan düzeltmeler (`backend/camera_reader.py::PlakaOyBirikimi`):**
+
+1. **"Sondan karakter eksik" düzeltmesi:** karakter kırpılması (sondan
+   eksik okuma), OCR'ın var olmayan bir karakteri UYDURMASINDAN çok daha
+   yaygın bir hata sınıfıdır. Artık aynı oturumda hem kısa hem de TAM
+   OLARAK sonuna bir karakter eklenmiş uzun bir varyant görüldüyse VE kısa
+   varyant EZİCİ bir çoğunlukla kazanmıyorsa (uzun varyant, kısa varyantın
+   en az %34'ü kadar oy aldıysa -- bkz. `SONDAN_EKSIK_KARAKTER_TERCIH_ORANI`),
+   daha uzun varyant tercih edilir. Kısa varyant ezici çoğunluktaysa (örn.
+   10 karede 9 kez kısa, 1 kez uzun) bu YİNE DE geçersiz kılınmaz --
+   gerçekten daha kısa bir plaka olma ihtimaline karşı çoğunluk oyu korunur.
+   Fark SONDA değilse (örn. harf grubunun ORTASINA bir harf eklenmiş/
+   çıkmışsa) bu düzeltme hiç uygulanmaz -- farklı bir hata sınıfı olduğu
+   için yanlış pozitif riskini artırmamak adına kasıtlı olarak dışarıda
+   bırakıldı (bkz. `backend/metin_araclari.py::sondan_bir_karakter_eksik_mi`
+   ve testleri).
+2. **Güven artık KAZANAN metne ait:** ÖNCEDEN panelde gösterilen "güven"
+   değeri, oturumdaki TÜM varyantlar arasındaki (kazanan metinle hiç ilgisi
+   olmayabilecek) global en yüksek değerdi -- azınlıkta kalan, oylamayı
+   kaybeden hatalı bir okumanın rastgele yüksek güvenli olması, panelde
+   KAZANAN okumanın da o kadar güvenilir olduğu YANLIŞ izlenimini
+   veriyordu. Artık her zaman gerçekten kaydedilen metnin kendi okumaları
+   arasındaki en yüksek güvendir.
+3. **Çelişki artık panelde görünüyor:** oturumda kaç FARKLI metin
+   varyantının önerildiği (`farkli_okuma_sayisi`) ÖNCEDEN yalnızca log
+   satırına yazılıp atılıyordu -- artık kayıtla birlikte API'ye gönderilir,
+   veritabanına kalıcı olarak yazılır (`plaka_kayitlari.farkli_okuma_sayisi`)
+   ve panelde "Doğrulama" sütununda görünür: 1'den büyükse "✓ N kare" yeşil
+   rozeti yerine **"⚠ N kare (çelişkili)"** turuncu/kırmızı rozeti gösterilir
+   (fare ile üzerine gelince kaç farklı okuma olduğu ve son karakteri elle
+   kontrol etme uyarısı çıkar). Kamera pipeline'ından gelmeyen kayıtlarda
+   (manuel giriş, eski kayıtlar) bu alan `None` kalır.
+
+**Bunun ÇÖZMEDİĞİ durum (dürüstçe belirtilmeli):** eğer bir oturumdaki
+TÜM kareler aynı (eksik) şekilde kırpıldıysa -- yani doğru/uzun varyant bir
+kez bile OCR'a hiç önerilmediyse -- yukarıdaki oylama düzeltmesi bunu telafi
+edemez, çünkü doğru metin ortada hiç yoktur. Bu durumda gerçek çözüm yazılım
+tarafında değil, kamera/dedektör tarafındadır: kamera açısını/zoom'unu
+plakanın etrafında biraz boşluk kalacak şekilde ayarlamak, veya
+`PTS_ANPR_DETECTOR_MODEL`'i daha yüksek çözünürlüklü bir modele
+(`yolo-v9-s-608-license-plate-end2end` gibi -- bkz. `anpr_engine.py`)
+yükseltmek, kutunun daha isabetli (ve genelde biraz daha toleranslı)
+hesaplanmasına yardımcı olabilir. Panelde artık en azından bu tür kayıtlar
+"⚠ çelişkili" olarak İŞARETLENDİĞİ için (madde 3), tamamen sessiz kalmıyor.
+
+**Testler:** `tests/test_metin_araclari.py` (5 yeni, `sondan_bir_karakter_
+eksik_mi` için) ve `tests/test_camera_reader.py` (5 yeni -- kullanıcının
+bildirdiği tam senaryonun regresyon testi dahil, ayrıca "ezici çoğunluk
+geçersiz kılınmaz", "ortadan farklıysa uygulanmaz" ve "güven azınlıktan
+sızıntı yapmaz" güvenlik/doğruluk sınırlarının her biri ayrı test edildi).
+
 ## Kalıcı Test Altyapısı
 
 `tests/` klasöründe pytest tabanlı bir test paketi var:
 
 - `test_plaka_dogrula.py`, `test_lisans.py`, `test_schemas.py`, `test_camera_reader.py`,
-  `test_pdf_export.py`, `test_excel_export.py`, `test_frontend_rbac.py`:
+  `test_metin_araclari.py`, `test_pdf_export.py`, `test_excel_export.py`, `test_frontend_rbac.py`:
   bağımlılığı hafif (fastapi/sqlalchemy gerektirmez), yalnızca pydantic/opencv/requests/
   reportlab/pdfplumber/openpyxl/BeautifulSoup gibi hedefe özel kütüphaneler yeterlidir.
 - `test_api.py`: FastAPI `TestClient` + geçici bir SQLite veritabanı kullanarak

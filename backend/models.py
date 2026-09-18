@@ -124,6 +124,15 @@ class Kayit(Base):
     # kesinleşmiş demektir (yanlış okuma riski daha yüksek); panelde bu
     # kayıtlar ayrıca işaretlenir (bkz. README.md'deki 2026-09-17 notu).
     dogrulama_kare_sayisi = Column(Integer, nullable=True)
+    # Bu oturumda (bkz. camera_reader.py::PlakaOyBirikimi) OCR'ın kaç FARKLI
+    # METİN VARYANTI önerdiği (2026-09-18). 1 ise tüm kareler AYNI metinde
+    # birleşti (gerçek oydaşma); 1'den büyükse kazanan, azınlıkta kalan en az
+    # bir farklı okumaya rağmen seçildi demektir -- örn. dedektörün kutuyu
+    # kenar boşluksuz kırpması yüzünden bazı karelerde son karakter hiç
+    # görülmeyip erken bitmiş bir metin üretilmiş olabilir (bkz. README.md'deki
+    # ilgili not). Kamera pipeline'ından gelmeyen kayıtlarda (manuel giriş,
+    # eski kayıtlar) None kalır.
+    farkli_okuma_sayisi = Column(Integer, nullable=True)
     # Tek seferlik, bu kayda özel not (örn. "görevli tarafından elle içeri
     # alındı, sebep: teslimat"). Kişinin KENDİ profilindeki kalıcı notlar
     # (bkz. Kisi.aciklama) ile KARIŞTIRILMAMALI -- bu SADECE bu tekil geçişe

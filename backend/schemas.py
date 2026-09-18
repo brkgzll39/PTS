@@ -268,6 +268,7 @@ class KayitCevap(BaseModel):
     kisi_id: Optional[int] = None
     kisi_tip_anlik: Optional[str] = None
     dogrulama_kare_sayisi: Optional[int] = None
+    farkli_okuma_sayisi: Optional[int] = None
     not_metni: Optional[str] = None
     manuel_giris: bool = False
     duzenleyen: Optional[str] = None

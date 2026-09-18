@@ -935,6 +935,7 @@ def test_plaka_analiz_yeni_alanlari_dondurur(client, operator_header):
     assert r2.status_code == 200, r2.text
     kayit = r2.json()["son_kayitlar"][0]
     for alan in ("id", "plaka_no", "goruntu_yolu", "guven_skoru", "dogrulama_kare_sayisi",
+                 "farkli_okuma_sayisi",
                  "not_metni", "manuel_giris", "kisi_id", "duzenleyen", "duzenleme_tarihi"):
         assert alan in kayit, f"'{alan}' alanı /kayitlar/analiz yanıtında eksik"
     assert kayit["not_metni"] == "analiz ekranı testi"
@@ -1431,6 +1432,42 @@ def test_kayit_ekle_otomatik_esik_ve_uzeri_kayda_dusurulur(client, yetkili_heade
 
     r2 = client.get("/kayitlar", params={"plaka": "34 YGV 02"}, headers=yetkili_header)
     assert len(r2.json()) == 1
+
+
+def test_kayit_ekle_otomatik_farkli_okuma_sayisi_kaydedilir_ve_dondurulur(client, yetkili_header):
+    """2026-09-18: kamera pipeline'ının bu oturumda kaç FARKLI OCR metin
+    varyantı gördüğü (bkz. camera_reader.py::PlakaOyBirikimi.kazanan) artık
+    kayıtla birlikte gönderiliyor ve DB'ye kalıcı olarak yazılıyor -- panelin
+    "6 kare, ama içlerinde çelişki vardı" durumunu "6 kare, tam oydaşma"
+    durumundan ayırt edebilmesi için. Kamera pipeline'ından gelmeyen
+    kayıtlarda (bu testte olmayan durum) None kalmalı; burada değeri
+    doğrudan kontrol ediyoruz."""
+    esik = _mevcut_otomatik_kayit_esigi(client, yetkili_header)
+    r = client.post("/kayitlar/otomatik", data={
+        "plaka_no": "02 AFP 552", "kamera_id": "TEST-CELISKILI-OKUMA", "yon": "giris",
+        "guven_skoru": esik, "dogrulama_kare_sayisi": 6, "farkli_okuma_sayisi": 2,
+    })
+    assert r.status_code == 200, r.text
+    veri = r.json()
+    assert veri["dogrulama_kare_sayisi"] == 6
+    assert veri["farkli_okuma_sayisi"] == 2
+
+    r2 = client.get("/kayitlar", params={"plaka": "02 AFP 552"}, headers=yetkili_header)
+    assert r2.status_code == 200, r2.text
+    kayitlar = r2.json()
+    assert len(kayitlar) == 1
+    assert kayitlar[0]["farkli_okuma_sayisi"] == 2
+
+
+def test_kayit_ekle_manuel_farkli_okuma_sayisi_none_kalir(client, operator_header):
+    """Manuel/elle eklenen kayıtlar (bkz. kayit_ekle_manuel) kamera
+    pipeline'ından gelmediği için bu alan HİÇ gönderilmez -- None kalmalı,
+    0 veya başka bir varsayılana sessizce düşmemeli."""
+    r = client.post("/kayitlar", json={
+        "plaka_no": "34 MNL 07", "kamera_id": "PANEL-MANUEL", "yon": "giris",
+    }, headers=operator_header)
+    assert r.status_code == 200, r.text
+    assert r.json()["farkli_okuma_sayisi"] is None
 
 
 def test_kayit_ekle_otomatik_guven_skoru_gonderilmezse_filtrelenmez(client, yetkili_header):

@@ -57,9 +57,9 @@ except ImportError:
     from anpr_engine import ANPREngine  # backend/ içinden doğrudan çalıştırılınca
 
 try:
-    from backend.metin_araclari import levenshtein_mesafesi
+    from backend.metin_araclari import levenshtein_mesafesi, sondan_bir_karakter_eksik_mi
 except ImportError:
-    from metin_araclari import levenshtein_mesafesi
+    from metin_araclari import levenshtein_mesafesi, sondan_bir_karakter_eksik_mi
 
 try:
     import cv2
@@ -187,6 +187,30 @@ OTURUM_BENZERLIK_ESIGI = 2   # aynı oturuma dahil edilecek okumalar arası azam
 OTURUM_MAX_SURE_SN = 8.0     # bir oturum en fazla bu kadar açık kalır (çok yavaş/duran araç için emniyet)
 VARSAYILAN_MIN_GUVEN_SKORU = 0.4  # bu eşiğin altındaki OCR sonuçları oylamaya hiç girmez
 
+# ------------------------------------------------------------------
+# "SONDAN KARAKTER EKSİK" DÜZELTMESİ (2026-09-18)
+# ------------------------------------------------------------------
+# Kullanıcı bildirimi: kamerada gayet net/tam karşıdan görünen bir plaka
+# ("02 AFP 552"), panelde "02 AFP 55" (son rakam eksik) olarak, %100 güvenle
+# ve TÜM karelerin (6/6) "oydaşmasıyla" kaydedildi. Araştırma: fast_alpr
+# kütüphanesinin kaynağı incelendiğinde (bkz. README.md'deki bu tarihli not),
+# dedektörün önerdiği kutu HİÇBİR kenar boşluğu (padding) eklenmeden, tam
+# sınırlarından kırpılıp OCR'a öyle veriliyor -- kutunun sağ kenarı son
+# karaktere birkaç piksel yakınsa o karakter OCR'a hiç ulaşmadan kırpılabilir.
+# Bu durumda OCR gördüğü (eksik) karakterlerin hepsini yine de yüksek güvenle
+# okur -- düşük güven eşiği bunu YAKALAYAMAZ, çünkü ortada "zayıf okunan" bir
+# karakter yok, sadece hiç GÖRÜLMEMİŞ bir karakter var.
+#
+# Karakter kırpılması (SONDAN eksik okuma), OCR'ın var olmayan bir karakteri
+# UYDURMASINDAN çok daha yaygın bir hata sınıfıdır -- bu yüzden aynı oturumda
+# hem kısa hem de TAM OLARAK sonuna bir karakter eklenmiş uzun bir varyant
+# görüldüyse ve kısa varyant EZİCİ bir çoğunlukla kazanmıyorsa (yani uzun
+# varyant da göz ardı edilemeyecek kadar oy aldıysa), daha uzun varyant
+# tercih edilir. Kısa varyant ezici çoğunluktaysa (örn. 10 karede 9 kez kısa,
+# 1 kez uzun) bu YİNE DE geçersiz kılınmaz -- gerçekten farklı (daha kısa) bir
+# plaka olma ihtimaline karşı çoğunluk oyu korunur.
+SONDAN_EKSIK_KARAKTER_TERCIH_ORANI = 0.34  # uzun varyant, kısa varyantın en az bu oranı kadar oy aldıysa "yakın çağrı" sayılır
+
 # Dedektör ardı ardına hiçbir plaka adayı bulamazsa (bkz. _kareyi_isle), bunu en
 # fazla bu sıklıkta (saniye) özetleyen TEK bir log satırı yazılır. Amaç spam
 # değil, "pipeline canlı ve kare işliyor ama dedektör gerçekten hiçbir şey mi
@@ -227,37 +251,81 @@ class PlakaOyBirikimi:
     `ekle()` çağrıldığının (+ ilk okuma) TOPLAMIDIR, metin farklı olsa da olsun.
     Panelde "tek bir karede görülüp hiç doğrulanmamış" okumaları (bkz.
     camera_reader.py::_kareyi_isle'deki kullanım ve README.md'deki ilgili not)
-    ayırt etmek için eklendi."""
+    ayırt etmek için eklendi.
 
-    __slots__ = ("oylar", "ilk_gorulme", "son_gorulme", "en_yuksek_guven", "en_iyi_jpeg", "toplam_kare_sayisi")
+    NOT (2026-09-18, düzeltme): `kazanan()`'ın döndürdüğü "guven" DEĞERİ artık
+    KAZANAN metin varyantının KENDİ okumaları arasındaki en yüksek güvendir --
+    ÖNCEDEN bu oturumda görülen TÜM varyantlar arasındaki (kazanan metinle
+    hiç ilgisi olmayabilecek) global en yüksek güvendi. Bu, ciddi bir yanlış
+    izlenim kaynağıydı: azınlıkta kalan (ve oylamayı kaybeden) hatalı bir
+    okumanın rastgele yüksek güvenli olması, panelde KAZANAN (doğru olabilecek)
+    okumanın güvenmiş gibi GÖSTERİLMESİNE yol açabiliyordu -- güven artık
+    her zaman gerçekten kaydedilen metne aittir."""
+
+    __slots__ = (
+        "oylar", "_varyant_maks_guven", "ilk_gorulme", "son_gorulme",
+        "en_iyi_jpeg", "_en_iyi_jpeg_guveni", "toplam_kare_sayisi",
+    )
 
     def __init__(self, plaka: str, guven: float, simdi: float, jpeg: Optional[bytes] = None):
         self.oylar: "Counter[str]" = Counter({plaka: guven})
+        self._varyant_maks_guven: dict[str, float] = {plaka: guven}
         self.ilk_gorulme = simdi
         self.son_gorulme = simdi
-        self.en_yuksek_guven = guven
         self.en_iyi_jpeg = jpeg
+        self._en_iyi_jpeg_guveni = guven
         self.toplam_kare_sayisi = 1
 
     def ekle(self, plaka: str, guven: float, simdi: float, jpeg: Optional[bytes] = None) -> None:
         self.oylar[plaka] += guven
+        if guven > self._varyant_maks_guven.get(plaka, -1.0):
+            self._varyant_maks_guven[plaka] = guven
         self.son_gorulme = simdi
         self.toplam_kare_sayisi += 1
-        if jpeg is not None and guven >= self.en_yuksek_guven:
-            self.en_yuksek_guven = guven
+        if jpeg is not None and guven >= self._en_iyi_jpeg_guveni:
+            self._en_iyi_jpeg_guveni = guven
             self.en_iyi_jpeg = jpeg
-        elif guven > self.en_yuksek_guven:
-            self.en_yuksek_guven = guven
+        elif guven > self._en_iyi_jpeg_guveni:
+            self._en_iyi_jpeg_guveni = guven
 
     def kazanan(self) -> dict:
-        plaka, _agirlik = self.oylar.most_common(1)[0]
+        sirali = self.oylar.most_common()
+        secilen_plaka, _agirlik = sirali[0]
+        uzun_varyant_tercih_edildi = False
+
+        # SONDAN KARAKTER EKSİK düzeltmesi: yalnızca en yüksek oylu İKİ varyant
+        # karşılaştırılır (üçüncü/dördüncü sıradaki varyantlar zaten oydaşmayı
+        # anlamlı biçimde etkileyemeyecek kadar azınlıktadır).
+        if len(sirali) > 1:
+            ilk_plaka, ilk_agirlik = sirali[0]
+            ikinci_plaka, ikinci_agirlik = sirali[1]
+            uzun, kisa = (
+                (ikinci_plaka, ilk_plaka) if len(ikinci_plaka) > len(ilk_plaka) else (ilk_plaka, ikinci_plaka)
+            )
+            if (
+                uzun != kisa
+                and sondan_bir_karakter_eksik_mi(kisa, uzun)
+                and ilk_plaka == kisa  # kısa (muhtemelen kırpılmış) varyant şu an "kazanıyor"
+                and ikinci_agirlik >= ilk_agirlik * SONDAN_EKSIK_KARAKTER_TERCIH_ORANI
+            ):
+                secilen_plaka = uzun
+                uzun_varyant_tercih_edildi = True
+                logger.info(
+                    "Oturum kazananı 'sondan karakter eksik' düzeltmesiyle değişti: "
+                    "'%s' (oy=%.2f) yerine '%s' (oy=%.2f) seçildi -- fast_alpr'ın "
+                    "kutuyu kenar boşluksuz kırpması OCR'ın son karakteri hiç "
+                    "görmemesine yol açabilir (bkz. README.md'deki 2026-09-18 notu).",
+                    kisa, ilk_agirlik, uzun, ikinci_agirlik,
+                )
+
         return {
-            "plaka": plaka,
-            "guven": self.en_yuksek_guven,
+            "plaka": secilen_plaka,
+            "guven": self._varyant_maks_guven[secilen_plaka],
             "farkli_okuma_sayisi": len(self.oylar),
             "toplam_oy": round(sum(self.oylar.values()), 3),
             "toplam_kare_sayisi": self.toplam_kare_sayisi,
             "jpeg": self.en_iyi_jpeg,
+            "uzun_varyant_tercih_edildi": uzun_varyant_tercih_edildi,
         }
 
 
@@ -757,7 +825,17 @@ class KameraPipeline:
                               # kayda özellikle dikkat edebilir (ör. "39 SU 877"nin
                               # tek bir karede "04 SD 377" olarak yanlış okunup
                               # başka hiçbir karede doğrulanmadan kaydolduğu vaka).
-                              "dogrulama_kare_sayisi": oturum.get("toplam_kare_sayisi")},
+                              "dogrulama_kare_sayisi": oturum.get("toplam_kare_sayisi"),
+                              # ŞEFFAFLIK (2026-09-18): bu oturumda kaç FARKLI metin
+                              # varyantı önerildiği de kayıtla birlikte gönderilir --
+                              # 1 ise tüm kareler AYNI metinde birleşti (gerçek
+                              # oydaşma); 1'den büyükse kazanan, azınlıkta kalan en
+                              # az bir farklı okumaya rağmen seçildi demektir. Panel
+                              # artık bunu "✓ N kare" yerine "⚠ N kare (çelişkili)"
+                              # olarak ayrıca işaretler (bkz. README.md'deki ilgili
+                              # not) -- önceden bu bilgi yalnızca log satırına
+                              # yazılıp kayıtla birlikte SAKLANMIYORDU.
+                              "farkli_okuma_sayisi": oturum.get("farkli_okuma_sayisi")},
                         files={"gorsel": f},
                         headers=_istek_basliklari,
                         timeout=5,
