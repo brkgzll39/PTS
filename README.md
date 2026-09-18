@@ -1412,13 +1412,122 @@ plaka değerini attribute'a gömmediğini, `olayDetayAc()`'ın yeni yardımcıy�
 çağırdığını, yardımcının doğru iki modalı (kapat/aç) yönettiğini, ve panel
 satırlarının hâlâ `olayDetayAc` çağırdığını.
 
+## Güvenlik Personeli Vardiya Filtresi (2026-09-18)
+
+Kullanıcı talebi (özetle): sistemi kullanacak güvenlik personeli için
+"Kullanıcılar" sekmesinden yeni kullanıcı oluşturma ekranı istendi. Bu
+personel yalnızca Canlı İzleme/Ana Sayfa/Kayıtlar/Kişiler/Kara Liste
+alanlarını görebilmeli (zaten "operatör" rolüyle aynı 5 alan). Asıl fark:
+"Eser Akar'ın kaydetmiş olduğu plakalar Eser Akar tarafından giriş
+yapıldığında listelenecek kayıtlar da buna göre filtrelenecek" ve "İlyas
+Çotuk kendi kullanıcısıyla oturum açarsa o gün vardiyası bitene kadarki tüm
+geçişler günlük olarak onun kayıtlar listesinde gözükecek" -- yani her
+güvenlik personeli, Kayıtlar listesinde/raporlarda YALNIZCA KENDİ
+VARDİYASINDA geçen araçları görmeli; yönetici panelinden ise her zaman TÜM
+kayıtlar görünmeye devam etmeli. Takip eden netleştirmede kullanıcı şunu
+ekledi: personel "4 vardiya / 4 vardiya amiri" 24 saat esaslı bir rotasyonla
+çalışıyor, yani AYNI KİŞİ günden güne farklı saatlerde çalışabiliyor (ör.
+bugün 15:00-23:00, yarın 07:00-15:00) -- sabit haftalık bir program yeterli
+değil. Ayrıca: aynı anda birden fazla güvenlik personelinin vardiyası
+çakışıyorsa bir kayıt dışlayıcı biçimde tek kişiye değil, o an vardiyası
+olan HERKESİN listesinde ayrı ayrı görünmeli.
+
+### Tasarım
+
+- **Yeni rol: `güvenlik`** (bkz. `backend/schemas.py::GECERLI_ROLLER`,
+  `backend/main.py::ROL_GUVENLIK`). Yetki/görünürlük açısından `operatör`
+  ile **BİREBİR AYNI** kademede -- `_rol_dogrula`, çağıranın rolünü kontrol
+  etmeden ÖNCE `güvenlik`'i `operatör`'e eşler, böylece dosyadaki onlarca
+  mevcut `_rol_dogrula(kullanici, ROL_YONETICI, ROL_OPERATOR)` çağrısının
+  HİÇBİRİNE dokunmadan güvenlik rolü de aynı işlemlere otomatik izinli olur.
+  Frontend'de de aynı eşdeğerlik `ROL_SEVIYE = {..., "operatör": 1,
+  "güvenlik": 1, ...}` ile sağlanıyor -- bu sayede "Yönetim" sekmelerini
+  gizleyen mevcut `data-rol-min="yonetici" data-rol-davranis="gizle"`
+  mekanizması ekstra bir değişiklik gerektirmeden güvenlik rolünü de aynı 5
+  alanla sınırlıyor (bkz. 2026-09-18 tarihli "Operatör Panelinden Yönetim
+  Görünürlüğünün Kaldırılması" notu -- aynı mekanizma, yeni role otomatik
+  uygulanıyor).
+- **Yeni tablo: `models.VardiyaAtamasi`** -- bir güvenlik personeline TEK BİR
+  GÜN için vardiya ataması (`kullanici_id`, `tarih`, `baslangic_saat`,
+  `bitis_saat`). Sabit bir "haftalık program" yerine GÜN BAZLI satırlar
+  tutuluyor, çünkü aynı kişi günden güne farklı saatlerde çalışabiliyor.
+  `bitis_saat <= baslangic_saat` ise (ör. 23:00 -> 07:00) gece yarısını geçen
+  bir vardiya sayılır ve bitiş bir sonraki takvim gününe kayar (bkz.
+  `main.py::_vardiya_penceresi`).
+- **Filtre mantığı** (`main.py::_guvenlik_kayit_filtresi_uygula`): bir kayıt,
+  kullanıcının vardiya pencerelerinden HERHANGİ BİRİNE denk düşüyorsa
+  görünür. Çakışan pencerelerde birden fazla kullanıcıya AYNI ANDA ait
+  olabilir -- dışlayıcı bir atama yok (kullanıcının ikinci netleştirmesiyle
+  birebir uyumlu). Hiç vardiya ataması yoksa (henüz planlanmamışsa) GÜVENLİ
+  TARAF seçildi: varsayılan olarak HER ŞEYİ göstermek yerine HİÇBİR kayıt
+  döndürülmüyor.
+- **Yeni uç noktalar** (yalnızca yönetici): `GET/POST /vardiyalar`,
+  `DELETE /vardiyalar/{id}`. `POST`, hedef kullanıcının rolü `güvenlik`
+  değilse 400 döner (başka bir role vardiya atamak sessizce hiçbir işe
+  yaramayan kafa karıştırıcı veri üretirdi).
+- **Yeni arayüz** (Kullanıcılar sekmesi, yalnızca yönetici): "Yeni Kullanıcı"
+  formuna "Güvenlik Personeli" rol seçeneği; altına yeni bir "Vardiya
+  Planlama" kartı (güvenlik personeli seç + tarih + başlangıç/bitiş saati +
+  "Vardiyayı Ata", ve atanmış vardiyaların listesi/silme). Kayıtlar
+  sekmesinde, yalnızca `güvenlik` rolünde girişte görünen bir bilgi
+  banner'ı ("Bu liste yalnızca SİZİN vardiyanıza denk gelen kayıtları
+  gösterir") eklendi -- backend filtresinin SESSİZCE liste kısaltması yerine
+  kullanıcıya açıkça bildirilmesi için ("sıfır sessiz hata" ilkesi).
+
+### Filtrenin uygulandığı yerler (kapsam)
+
+Bu bir GÖRÜNÜRLÜK filtresidir; aşağıdaki TÜM uç noktalara uygulandı: kayıtlar
+listesi (`GET /kayitlar`, `/kayitlar/sayfa-bilgisi`, eski `/olaylar` uç
+noktası), plaka analizi geçmişi (`GET /kayitlar/analiz/{plaka}` -- yalnızca
+geçmiş listesi ve "Toplam/Son Geçiş" istatistikleri; kişi/kara liste bilgisi
+PLAKAYA ait sabit veri olduğu için filtreye TABİ DEĞİL), panel
+istatistiklerinin KAYIT bazlı alanları (`bugunku_kayit`,
+`yetkisiz_giris_denemesi`, `kara_liste_gecis` -- `toplam_kayit` ve
+`aktif_kisi_sayisi`/`kara_liste_kayit_sayisi` birer geçiş KAYDI olmadığı
+için bilinçli olarak filtre DIŞI bırakıldı), dashboard grafiği
+(`GET /kayitlar/grafik`), dışa aktarma raporları (`/disa-aktar/excel/kayitlar`,
+`/disa-aktar/pdf/kayitlar`, ve tekil `/disa-aktar/pdf/kayit/{id}` -- bu
+sonuncusu, kayıt vardiya dışındaysa 403 döner), ve canlı SSE akışı
+(`/olaylar/sse` -- bağlı istemcinin rolü/kimliği artık kuyrukla birlikte
+tutuluyor, bkz. `_sse_yayinla`, ki güvenlik personeli "Son Geçişler"
+panelinde kendi vardiyası dışındaki bir plakanın anlık belirmesini
+GÖRMESİN -- aksi halde liste filtresiyle tutarsız, sessiz bir bilgi
+sızıntısı olurdu).
+
+**Bilinçli sınır** (kaydı DÜZENLEME/SİLME yetkisi vardiya dışı kayıtlar için
+AYRICA kısıtlanmadı -- tıpkı 2026-09-18 tarihli "Operatör Panelinden Yönetim
+Görünürlüğü" notunda olduğu gibi bu da bir GÖRÜNÜRLÜK kısıtlamasıdır, kaydın
+ID'sini zaten bilen bir istemciye karşı ekstra bir yetkilendirme katmanı
+DEĞİLDİR) ve canlı SSE filtresi entegrasyon testiyle DEĞİL yalnızca kod
+incelemesiyle doğrulandı (TestClient ile bir SSE akışını uçtan uca test
+etmek bu değişikliğin kapsamı için orantısız bir karmaşıklık getirirdi).
+
+### Testler
+
+`tests/test_guvenlik_vardiya_frontend.py` (gerçekten çalıştırılıp
+doğrulandı): "güvenlik" rol seçeneğinin ve Vardiya Planlama arayüzünün
+varlığını, `ROL_SEVIYE`'de `güvenlik`/`operatör` eşdeğerliğini doğrular.
+`tests/test_api.py`ye eklenen testler (fastapi/sqlalchemy gerektirdiği için
+bu sandbox'ta çalıştırılamadı, yalnızca `py_compile` ile doğrulandı):
+güvenlik kullanıcısının operatör yetkilerine sahip ama yönetici işlemi
+yapamadığını; vardiya atamanın yalnızca yönetici tarafından yapılabildiğini
+ve yalnızca `güvenlik` rolüne atanabildiğini; vardiyası olmayan bir güvenlik
+kullanıcısının HİÇBİR kayıt göremediğini (fail-closed); kendi vardiyasındaki
+kaydı gördüğünü (hem listede hem istatistiklerde); vardiyası dışındaki
+(25 saat önceki) kaydı göremediğini; gece yarısını geçen vardiya penceresinin
+doğru hesaplandığını (mutlak takvim tarihleriyle, testin çalıştığı saatten
+BAĞIMSIZ); çakışan vardiyalarda aynı kaydın İKİ güvenlik kullanıcısında da
+göründüğünü; ve dışa aktarma uçlarının (`kullanici` parametresinin FastAPI
+DI'ı olmadan doğrudan çağrıldığı için AÇIKÇA geçirilmesi gerektiği --
+aksi halde sessizce filtresiz kalırdı) güvenlik kullanıcısıyla çalıştığını.
+
 ## Kalıcı Test Altyapısı
 
 `tests/` klasöründe pytest tabanlı bir test paketi var:
 
 - `test_plaka_dogrula.py`, `test_lisans.py`, `test_schemas.py`, `test_camera_reader.py`,
   `test_metin_araclari.py`, `test_pdf_export.py`, `test_excel_export.py`, `test_frontend_rbac.py`,
-  `test_olay_detay_plaka_analiz.py`:
+  `test_olay_detay_plaka_analiz.py`, `test_guvenlik_vardiya_frontend.py`:
   bağımlılığı hafif (fastapi/sqlalchemy gerektirmez), yalnızca pydantic/opencv/requests/
   reportlab/pdfplumber/openpyxl/BeautifulSoup gibi hedefe özel kütüphaneler yeterlidir.
 - `test_api.py`: FastAPI `TestClient` + geçici bir SQLite veritabanı kullanarak

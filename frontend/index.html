@@ -454,6 +454,13 @@
 
     <!-- ================= KAYITLAR ================= -->
     <div class="tab-pane fade" id="kayitlar-sekme">
+      <!-- Yalnızca rol="güvenlik" girişinde görünür (bkz. app.js::uygulamaVerileriniYukle
+           içindeki mevcutRol kontrolü) -- "Güvenlik Personeli Vardiya Filtresi"nin
+           SESSİZCE liste kısaltması yerine kullanıcıya AÇIKÇA bildirilmesi için
+           (bkz. 2026-09-18 notu, README). -->
+      <div class="alert alert-info d-none py-2 mb-3" id="guvenlikVardiyaBilgisi">
+        <i class="bi bi-info-circle-fill me-1"></i>Bu liste yalnızca SİZİN vardiyanıza denk gelen kayıtları gösterir.
+      </div>
       <div class="card mb-3">
         <div class="card-body">
           <div class="row g-2 align-items-end">
@@ -900,9 +907,14 @@
                   <select class="form-select" id="yeniRol" onchange="yeniKullaniciRolDegisti()">
                     <option value="izleyici">İzleyici (salt okunur)</option>
                     <option value="operatör">Operatör</option>
+                    <option value="güvenlik">Güvenlik Personeli (vardiya bazlı)</option>
                     <option value="yonetici">Yönetici (tam yetki)</option>
                     <option value="sakin">Sakin (öz-hizmet portalı)</option>
                   </select>
+                  <div class="form-text">Güvenlik Personeli, Operatör ile AYNI ekranlara erişir (Canlı İzleme,
+                    Ana Sayfa, Kayıtlar, Kişiler, Kara Liste) ama Kayıtlar listesinde/raporlarda yalnızca
+                    KENDİ vardiyasında geçen araçları görür -- vardiya saatleri aşağıdaki "Vardiya
+                    Planlama" bölümünden atanır.</div>
                 </div>
                 <!-- Yalnızca rol="sakin" seçilince görünür: bkz. app.js::yeniKullaniciRolDegisti,
                      main.py::_sakin_kisi_id_dogrula. Bir sakin hesabı MUTLAKA bir Kişi kaydına
@@ -928,6 +940,52 @@
               <table class="table table-hover mb-0 align-middle">
                 <thead class="table-light"><tr><th>Kullanıcı Adı</th><th>Rol</th><th>Bağlı Kişi</th><th>Son Giriş</th><th>Durum</th><th></th></tr></thead>
                 <tbody id="kullanicilarTablo"></tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ================= VARDİYA PLANLAMA (2026-09-18) =================
+           Güvenlik Personeli hesaplarının GÜN BAZLI vardiya saatlerini atar
+           (bkz. backend/main.py::/vardiyalar, models.VardiyaAtamasi). Aynı
+           kişi günden güne farklı saatlerde çalışabildiği için (4 vardiya /
+           vardiya amiri rotasyonu) her satır TEK BİR GÜNE aittir. -->
+      <div class="row g-3 mt-1">
+        <div class="col-lg-4">
+          <div class="card">
+            <div class="card-header"><i class="bi bi-calendar-plus-fill me-1"></i>Vardiya Ata</div>
+            <div class="card-body">
+              <form id="vardiyaForm" data-rol-min="yonetici">
+                <div class="mb-2"><label class="form-label small" for="vardiyaKullanici">Güvenlik Personeli</label>
+                  <select class="form-select" id="vardiyaKullanici" required><option value="">Seçiniz...</option></select>
+                </div>
+                <div class="mb-2"><label class="form-label small" for="vardiyaTarih">Tarih</label>
+                  <input type="date" class="form-control" id="vardiyaTarih" required></div>
+                <div class="row g-2">
+                  <div class="col-6"><label class="form-label small" for="vardiyaBaslangic">Başlangıç Saati</label>
+                    <input type="time" class="form-control" id="vardiyaBaslangic" required></div>
+                  <div class="col-6"><label class="form-label small" for="vardiyaBitis">Bitiş Saati</label>
+                    <input type="time" class="form-control" id="vardiyaBitis" required></div>
+                </div>
+                <div class="form-text">Bitiş saati başlangıçtan küçük/eşitse (ör. 23:00 → 07:00), gece yarısını
+                  geçen bir vardiya olarak yorumlanır.</div>
+                <button type="submit" class="btn btn-primary w-100 mt-2"><i class="bi bi-calendar-check"></i> Vardiyayı Ata</button>
+              </form>
+              <div id="vardiyaSonuc" class="small mt-2"></div>
+            </div>
+          </div>
+        </div>
+        <div class="col-lg-8">
+          <div class="card">
+            <div class="card-header d-flex justify-content-between">
+              <span><i class="bi bi-calendar-week-fill me-1"></i>Atanmış Vardiyalar</span>
+              <button class="btn btn-sm btn-outline-secondary" onclick="vardiyalariYukle()" title="Yenile" aria-label="Yenile"><i class="bi bi-arrow-clockwise"></i></button>
+            </div>
+            <div class="card-body p-0">
+              <table class="table table-hover mb-0 align-middle">
+                <thead class="table-light"><tr><th>Güvenlik Personeli</th><th>Tarih</th><th>Saat Aralığı</th><th>Ekleyen</th><th></th></tr></thead>
+                <tbody id="vardiyalarTablo"></tbody>
               </table>
             </div>
           </div>

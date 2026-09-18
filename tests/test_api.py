@@ -2158,3 +2158,257 @@ def test_gecmis_kayitlari_guncelle_izleyici_yetkisiz_403_doner(client, izleyici_
 def test_gecmis_kayitlari_guncelle_olmayan_kisi_404_doner(client, yetkili_header):
     r = client.post("/kisiler/999999/gecmis-kayitlari-guncelle", headers=yetkili_header)
     assert r.status_code == 404, r.text
+
+
+# ------------------------------------------------------------------
+# Güvenlik Personeli Vardiya Filtresi (2026-09-18)
+# ------------------------------------------------------------------
+# Kullanıcı talebi (özetle): güvenlik personeli "operatör" ile AYNI ekranlara
+# erişebilmeli ama Kayıtlar listesi/raporları yalnızca KENDİ vardiyasında
+# geçen araçları göstermeli; vardiya saatleri günden güne değişebildiği için
+# (4 vardiya/vardiya amiri rotasyonu) GÜN BAZLI atanır; çakışan vardiyalarda
+# bir kayıt İKİ kullanıcının da listesinde ayrı ayrı görünebilir (dışlayıcı
+# değil). Aşağıdaki testler bu üç kararı doğrudan doğrular.
+#
+# Zamanlamayla ilgili testler (özellikle gece yarısını geçen vardiya testi),
+# testin çalıştığı GERÇEK saatten bağımsız olarak HER ZAMAN doğru sonucu
+# üretecek şekilde (ör. "00:00 -> 00:00" tam gün penceresi, ya da "-25 saat"
+# geri tarihleme) bilinçli olarak kurgulandı -- bkz. her testin kendi notu.
+
+def _rbac_guvenlik_kullanici_olustur(client, yetkili_header) -> tuple:
+    """Yeni, benzersiz adlı bir 'güvenlik' rolünde kullanıcı oluşturur, giriş
+    yapar ve (kullanici_id, header) döner. Fonksiyon-scope'lu bir fixture
+    yerine yardımcı fonksiyon olarak tanımlandı ki her çağrı BAĞIMSIZ,
+    sıfır-vardiyalı bir kullanıcı versin (testler birbirinin vardiya
+    atamalarından etkilenmesin)."""
+    import uuid
+    kullanici_adi = f"rbac-guvenlik-{uuid.uuid4().hex[:10]}"
+    r = client.post("/kullanicilar", json={
+        "kullanici_adi": kullanici_adi, "parola": "GucluParola123!", "rol": "güvenlik",
+    }, headers=yetkili_header)
+    assert r.status_code == 200, r.text
+    kullanici_id = r.json()["id"]
+    r2 = client.post("/auth/giris", json={"kullanici_adi": kullanici_adi, "parola": "GucluParola123!"})
+    assert r2.status_code == 200, r2.text
+    return kullanici_id, {"Authorization": f"Bearer {r2.json()['token']}"}
+
+
+def test_guvenlik_kullanicisi_operator_yetkilerine_sahip_ama_yonetici_islemi_yapamaz(client, yetkili_header):
+    _, guvenlik_header = _rbac_guvenlik_kullanici_olustur(client, yetkili_header)
+    # operatör-eşdeğeri: manuel kayıt ekleyebilmeli (_rol_dogrula(YONETICI, OPERATOR) gerektirir).
+    r1 = client.post("/kayitlar", json={
+        "plaka_no": "34 GVN 01", "kamera_id": "PANEL-MANUEL", "yon": "giris",
+    }, headers=guvenlik_header)
+    assert r1.status_code == 200, r1.text
+    # yönetici-only bir işlemi YAPAMAMALI (kullanıcı oluşturma).
+    r2 = client.post("/kullanicilar", json={
+        "kullanici_adi": "guvenlik-baskasini-olusturamaz", "parola": "GucluParola123!", "rol": "izleyici",
+    }, headers=guvenlik_header)
+    assert r2.status_code == 403, r2.text
+
+
+def test_vardiya_olustur_sadece_yonetici_yapabilir(client, yetkili_header, operator_header):
+    guvenlik_id, _ = _rbac_guvenlik_kullanici_olustur(client, yetkili_header)
+    r = client.post("/vardiyalar", json={
+        "kullanici_id": guvenlik_id, "tarih": "2026-01-01",
+        "baslangic_saat": "08:00", "bitis_saat": "16:00",
+    }, headers=operator_header)
+    assert r.status_code == 403, r.text
+
+
+def test_vardiya_guvenlik_disinda_bir_role_atanamaz(client, yetkili_header):
+    r0 = client.post("/kullanicilar", json={
+        "kullanici_adi": "rbac-vardiya-hedef-operator", "parola": "GucluParola123!", "rol": "operatör",
+    }, headers=yetkili_header)
+    assert r0.status_code == 200, r0.text
+    hedef_id = r0.json()["id"]
+    r = client.post("/vardiyalar", json={
+        "kullanici_id": hedef_id, "tarih": "2026-01-01",
+        "baslangic_saat": "08:00", "bitis_saat": "16:00",
+    }, headers=yetkili_header)
+    assert r.status_code == 400, r.text
+
+
+def test_vardiya_listele_ve_sil_sadece_yonetici(client, yetkili_header, operator_header):
+    guvenlik_id, _ = _rbac_guvenlik_kullanici_olustur(client, yetkili_header)
+    r0 = client.post("/vardiyalar", json={
+        "kullanici_id": guvenlik_id, "tarih": "2026-01-02",
+        "baslangic_saat": "08:00", "bitis_saat": "16:00",
+    }, headers=yetkili_header)
+    assert r0.status_code == 200, r0.text
+    vardiya_id = r0.json()["id"]
+
+    assert client.get("/vardiyalar", headers=operator_header).status_code == 403
+    assert client.delete(f"/vardiyalar/{vardiya_id}", headers=operator_header).status_code == 403
+
+    r1 = client.get("/vardiyalar", params={"kullanici_id": guvenlik_id}, headers=yetkili_header)
+    assert r1.status_code == 200 and any(v["id"] == vardiya_id for v in r1.json())
+
+    r2 = client.delete(f"/vardiyalar/{vardiya_id}", headers=yetkili_header)
+    assert r2.status_code == 200, r2.text
+
+
+def test_guvenlik_vardiyasiz_kullanici_hicbir_kayit_goremez(client, yetkili_header):
+    """Fail-closed varsayılan: henüz vardiyası planlanmamış bir güvenlik
+    hesabı, TÜM kayıtları görmek yerine HİÇBİR kayıt görmemeli."""
+    _, guvenlik_header = _rbac_guvenlik_kullanici_olustur(client, yetkili_header)
+    r1 = client.post("/kayitlar/otomatik", data={
+        "plaka_no": "34 GVN 02", "kamera_id": "GIRIS-KAM", "yon": "giris", "guven_skoru": 0.99,
+    })
+    assert r1.status_code == 200, r1.text
+
+    r2 = client.get("/kayitlar", params={"plaka": "34 GVN 02"}, headers=guvenlik_header)
+    assert r2.status_code == 200, r2.text
+    assert r2.json() == []
+
+    # Aynı kayıt, yönetici için (filtresiz) normal şekilde görünmeye devam etmeli.
+    r3 = client.get("/kayitlar", params={"plaka": "34 GVN 02"}, headers=yetkili_header)
+    assert len(r3.json()) == 1
+
+
+def test_guvenlik_kendi_vardiyasindaki_kaydi_gorur_ve_istatistiklere_de_yansir(client, yetkili_header):
+    """Vardiya penceresi olarak "00:00 -> 00:00" (bitis<=baslangic olduğu
+    için gece yarısını geçen bir pencere sayılır ve TAM OLARAK bugünün
+    tamamını, yani [bugün 00:00, yarın 00:00) aralığını kapsar) bilinçli
+    olarak seçildi -- bu sayede test, GERÇEK saatten (testin hangi saatte
+    çalıştığından) TAMAMEN bağımsız olarak her zaman doğru sonuç üretir."""
+    guvenlik_id, guvenlik_header = _rbac_guvenlik_kullanici_olustur(client, yetkili_header)
+    bugun = datetime.now().strftime("%Y-%m-%d")
+    r0 = client.post("/vardiyalar", json={
+        "kullanici_id": guvenlik_id, "tarih": bugun,
+        "baslangic_saat": "00:00", "bitis_saat": "00:00",
+    }, headers=yetkili_header)
+    assert r0.status_code == 200, r0.text
+
+    r1 = client.post("/kayitlar/otomatik", data={
+        "plaka_no": "34 GVN 03", "kamera_id": "GIRIS-KAM", "yon": "giris",
+        "guven_skoru": 0.99,
+    })
+    assert r1.status_code == 200, r1.text
+
+    r2 = client.get("/kayitlar", params={"plaka": "34 GVN 03"}, headers=guvenlik_header)
+    assert r2.status_code == 200 and len(r2.json()) == 1, r2.text
+
+    # /kayitlar/istatistik'in kayıt-bazlı alanları (bugünkü_kayit) da aynı
+    # şekilde vardiyayla filtrelenmeli -- bkz. istatistikler()'deki not.
+    r3 = client.get("/kayitlar/istatistik", headers=guvenlik_header)
+    assert r3.status_code == 200, r3.text
+    assert r3.json()["bugunku_kayit"] >= 1
+
+
+def test_guvenlik_vardiyasi_disindaki_25_saat_onceki_kaydi_gormez(client, yetkili_header):
+    """Aynı "tam gün" vardiyasına sahip bir güvenlik kullanıcısı, 25 saat
+    önceki (yani MUTLAKA dünden, bugünün başlangıcından önceki) bir kaydı
+    göremez -- bkz. yukarıdaki testin "00:00 -> 00:00" notu: 25 saat, testin
+    çalıştığı saatten BAĞIMSIZ olarak her zaman "bugün 00:00"dan önceye
+    düşer (now - 25s < now'un günbaşı - 1s < günbaşı)."""
+    from backend.database import engine
+    from sqlalchemy import text as sqltext
+
+    guvenlik_id, guvenlik_header = _rbac_guvenlik_kullanici_olustur(client, yetkili_header)
+    bugun = datetime.now().strftime("%Y-%m-%d")
+    r0 = client.post("/vardiyalar", json={
+        "kullanici_id": guvenlik_id, "tarih": bugun,
+        "baslangic_saat": "00:00", "bitis_saat": "00:00",
+    }, headers=yetkili_header)
+    assert r0.status_code == 200, r0.text
+
+    with engine.connect() as conn:
+        conn.execute(sqltext(
+            "INSERT INTO plaka_kayitlari (plaka_no, kamera_id, yon, yetki_durumu, tarih_saat, manuel_giris) "
+            "VALUES ('34 GVN 04', 'GIRIS-KAM', 'giris', 'yetkisiz', datetime('now', '-25 hours'), 0)"
+        ))
+        conn.commit()
+
+    r1 = client.get("/kayitlar", params={"plaka": "34 GVN 04"}, headers=guvenlik_header)
+    assert r1.status_code == 200 and r1.json() == [], r1.text
+    r2 = client.get("/kayitlar", params={"plaka": "34 GVN 04"}, headers=yetkili_header)
+    assert len(r2.json()) == 1
+
+
+def test_vardiya_gece_yarisini_gecen_pencere_dogru_hesaplanir(client, yetkili_header):
+    """`bitis_saat <= baslangic_saat` (ör. 23:00 -> 07:00) gece yarısını
+    geçen bir vardiya olarak yorumlanmalı: pencere [dün 23:00, bugün 07:00)
+    olmalı. Bu, testin çalıştığı GERÇEK saatten bağımsız kalması için
+    kayıtlar `datetime('now', ...)` yerine dünün/bugünün TAKVİM tarihine
+    göre MUTLAK zaman damgalarıyla ekleniyor."""
+    from backend.database import engine
+    from sqlalchemy import text as sqltext
+
+    guvenlik_id, guvenlik_header = _rbac_guvenlik_kullanici_olustur(client, yetkili_header)
+    dun = datetime.now().date() - timedelta(days=1)
+    icerde_ts = f"{dun.isoformat()} 23:30:00"
+    disarda_ts = f"{dun.isoformat()} 12:00:00"
+
+    with engine.connect() as conn:
+        conn.execute(sqltext(
+            "INSERT INTO plaka_kayitlari (plaka_no, kamera_id, yon, yetki_durumu, tarih_saat, manuel_giris) "
+            "VALUES ('34 GVN 05', 'GIRIS-KAM', 'giris', 'yetkisiz', :ts, 0)"
+        ), {"ts": icerde_ts})
+        conn.execute(sqltext(
+            "INSERT INTO plaka_kayitlari (plaka_no, kamera_id, yon, yetki_durumu, tarih_saat, manuel_giris) "
+            "VALUES ('34 GVN 05', 'GIRIS-KAM', 'giris', 'yetkisiz', :ts, 0)"
+        ), {"ts": disarda_ts})
+        conn.commit()
+
+    r0 = client.post("/vardiyalar", json={
+        "kullanici_id": guvenlik_id, "tarih": dun.isoformat(),
+        "baslangic_saat": "23:00", "bitis_saat": "07:00",
+    }, headers=yetkili_header)
+    assert r0.status_code == 200, r0.text
+
+    r1 = client.get("/kayitlar", params={"plaka": "34 GVN 05"}, headers=guvenlik_header)
+    assert r1.status_code == 200, r1.text
+    kayitlar = r1.json()
+    assert len(kayitlar) == 1, "gece yarısını geçen vardiya penceresi yanlış hesaplandı"
+    assert "23:30" in kayitlar[0]["tarih_saat"], (
+        f"beklenen 'içerde' kayıt (dün 23:30) yerine farklı bir kayıt döndü: {kayitlar[0]['tarih_saat']}"
+    )
+
+
+def test_cakisan_vardiyalarda_ayni_kayit_iki_guvenlik_kullanicisinda_da_gorunur(client, yetkili_header):
+    """Kullanıcı talebi: aynı anda birden fazla güvenlik personelinin
+    vardiyası çakışıyorsa, bir kayıt DIŞLAYICI bir şekilde tek bir kullanıcıya
+    atanmaz -- ikisinin de listesinde ayrı ayrı görünür."""
+    guvenlik1_id, guvenlik1_header = _rbac_guvenlik_kullanici_olustur(client, yetkili_header)
+    guvenlik2_id, guvenlik2_header = _rbac_guvenlik_kullanici_olustur(client, yetkili_header)
+    bugun = datetime.now().strftime("%Y-%m-%d")
+    for kid in (guvenlik1_id, guvenlik2_id):
+        r0 = client.post("/vardiyalar", json={
+            "kullanici_id": kid, "tarih": bugun, "baslangic_saat": "00:00", "bitis_saat": "00:00",
+        }, headers=yetkili_header)
+        assert r0.status_code == 200, r0.text
+
+    r1 = client.post("/kayitlar/otomatik", data={
+        "plaka_no": "34 GVN 06", "kamera_id": "GIRIS-KAM", "yon": "giris", "guven_skoru": 0.99,
+    })
+    assert r1.status_code == 200, r1.text
+
+    for header in (guvenlik1_header, guvenlik2_header):
+        r2 = client.get("/kayitlar", params={"plaka": "34 GVN 06"}, headers=header)
+        assert r2.status_code == 200 and len(r2.json()) == 1, r2.text
+
+
+def test_disa_aktar_uc_noktalari_guvenlik_kullanicisiyla_calisir(client, yetkili_header):
+    """kayitlari_listele() /disa-aktar/... uçlarından FastAPI DI'ı olmadan
+    doğrudan çağrıldığı için (bkz. kayitlari_excel_indir/kayitlari_pdf_indir
+    içindeki not), `kullanici` parametresinin açıkça geçirilmemesi bir
+    TypeError'a (ve dolayısıyla 500'e) yol açardı -- bu test asıl olarak bu
+    kablolamanın doğru yapıldığını doğrular."""
+    _, guvenlik_header = _rbac_guvenlik_kullanici_olustur(client, yetkili_header)
+    assert client.get("/disa-aktar/excel/kayitlar", headers=guvenlik_header).status_code == 200
+    assert client.get("/disa-aktar/pdf/kayitlar", headers=guvenlik_header).status_code == 200
+
+
+def test_disa_aktar_pdf_kayit_detay_vardiya_disinda_403_doner(client, yetkili_header):
+    _, guvenlik_header = _rbac_guvenlik_kullanici_olustur(client, yetkili_header)
+    r1 = client.post("/kayitlar/otomatik", data={
+        "plaka_no": "34 GVN 07", "kamera_id": "GIRIS-KAM", "yon": "giris", "guven_skoru": 0.99,
+    })
+    assert r1.status_code == 200, r1.text
+    r2 = client.get("/kayitlar", params={"plaka": "34 GVN 07"}, headers=yetkili_header)
+    kayit_id = r2.json()[0]["id"]
+
+    # Bu güvenlik kullanıcısının HİÇ vardiyası yok -> kayıt vardiyasına ait değil.
+    r3 = client.get(f"/disa-aktar/pdf/kayit/{kayit_id}", headers=guvenlik_header)
+    assert r3.status_code == 403, r3.text

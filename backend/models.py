@@ -25,7 +25,7 @@ class Kullanici(Base):
     id = Column(Integer, primary_key=True, index=True)
     kullanici_adi = Column(String(80), nullable=False, unique=True, index=True)
     parola_hash = Column(String(255), nullable=False)
-    rol = Column(String(30), nullable=False, default="izleyici")  # yonetici | operatör | izleyici | sakin
+    rol = Column(String(30), nullable=False, default="izleyici")  # yonetici | operatör | güvenlik | izleyici | sakin
     aktif = Column(Boolean, default=True)
     son_giris = Column(DateTime, nullable=True)
     # Yalnızca rol="sakin" hesaplarında dolu: bu giriş hesabının hangi Kişi
@@ -37,6 +37,44 @@ class Kullanici(Base):
     # -- noktalar.bariyer_id ile aynı desen); kisi silinirse main.py::kisi_sil
     # bu alanı NULL'a çeker.
     kisi_id = Column(Integer, ForeignKey("kisiler.id"), nullable=True)
+    olusturma_tarihi = Column(DateTime, default=datetime.now)
+
+
+class VardiyaAtamasi(Base):
+    """rol="güvenlik" (Güvenlik Personeli) hesapları için GÜN BAZLI vardiya
+    ataması (bkz. 2026-09-18 "Güvenlik Personeli Vardiya Filtresi" notu,
+    README). Kullanıcı talebi: 4 vardiya/vardiya amiri döngüsünde çalışan
+    personelin aynı kişi için GÜNDEN GÜNE FARKLI saatlerde çalışması (ör.
+    Eser bugün 15:00-23:00, yarın 07:00-15:00) -- bu yüzden sabit bir
+    "haftalık program" yerine HER GÜN İÇİN AYRI bir satır tutulur; yönetici
+    panelinden serbestçe eklenip silinebilir (bkz. main.py::/vardiyalar).
+
+    Bu tablo, hangi otomatik geçiş kaydının hangi güvenlik personelinin
+    "kayıtlar listesi"nde görüneceğini belirler (bkz.
+    main.py::_guvenlik_kayit_filtresi_uygula) -- kaydın KENDİSİ hangi
+    kullanıcı tarafından oluşturulduğunu TUTMAZ (otomatik ANPR tespitleri
+    zaten hiçbir kullanıcıya ait değildir), bunun yerine kaydın tarih/saati
+    bu tablodaki pencerelerden BİRİNE denk düşüyorsa o kullanıcıya "ait"
+    sayılır. Aynı anda birden fazla güvenlik personelinin vardiyası
+    çakışıyorsa (ör. devir teslim saatinde), kayıt HER İKİSİNİN de
+    listesinde ayrı ayrı görünür -- bilinçli tasarım kararı (bkz. README).
+
+    bitis_saat, baslangic_saat'e eşit veya ondan KÜÇÜKSE gece yarısını geçen
+    bir vardiya olarak yorumlanır (ör. 23:00 -> 07:00): bu durumda vardiya,
+    `tarih` gününün baslangic_saat'inde başlar ve BİR SONRAKİ günün
+    bitis_saat'inde biter (bkz. main.py::_vardiya_penceresi).
+    """
+    __tablename__ = "vardiya_atamalari"
+
+    id = Column(Integer, primary_key=True, index=True)
+    kullanici_id = Column(Integer, ForeignKey("kullanicilar.id"), nullable=False, index=True)
+    # Yalnızca takvim günü olarak kullanılır (saat kısmı her zaman 00:00) --
+    # gerçek başlangıç/bitiş saatleri ayrı `baslangic_saat`/`bitis_saat`
+    # metin alanlarından ("HH:MM") hesaplanır.
+    tarih = Column(DateTime, nullable=False, index=True)
+    baslangic_saat = Column(String(5), nullable=False)  # "HH:MM"
+    bitis_saat = Column(String(5), nullable=False)  # "HH:MM"
+    olusturan = Column(String(80), nullable=True)
     olusturma_tarihi = Column(DateTime, default=datetime.now)
 
 

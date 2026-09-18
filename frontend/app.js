@@ -9,7 +9,12 @@ let sonKayitlarCache = [];
 // (en düşüğü "izleyici"=0 dahil) hiç sağlamamalı -- normalde sakin girişinde
 // zaten authBasarili() erken dönüp rolBazliArayuzuUygula()'yı hiç
 // çağırmıyor (bkz. sakinModunuBaslat), ama bu satır ek bir güvenlik katmanı.
-const ROL_SEVIYE = { sakin: -1, izleyici: 0, "operatör": 1, yonetici: 2 };
+// "güvenlik" (Güvenlik Personeli) bilinçli olarak "operatör" ile AYNI
+// seviyede (1): görünürlük/yetki açısından ikisi birebir aynıdır (bkz.
+// backend/main.py::_rol_dogrula'daki eşdeğerlik notu) -- TEK farkı kayıtlar
+// listesinin kendi vardiya saatleriyle filtrelenmesi olup bu FİLTRE backend
+// tarafından uygulanır, frontend'de ayrı bir rol seviyesi gerektirmez.
+const ROL_SEVIYE = { sakin: -1, izleyici: 0, "operatör": 1, "güvenlik": 1, yonetici: 2 };
 let mevcutRol = null;
 
 function rolYeterli(minRol) {
@@ -29,6 +34,14 @@ function rolBazliArayuzuUygula() {
       el.disabled = !izinli;
     }
   });
+  // "Güvenlik Personeli Vardiya Filtresi" (bkz. README, 2026-09-18): kayıtlar
+  // listesinin backend tarafından SESSİZCE kısaltılması yerine, güvenlik
+  // rolündeki kullanıcıya bunun neden olduğu Kayıtlar sekmesinde açıkça
+  // belirtilir -- data-rol-min mekanizması yalnızca "en az X rolü" gizleyip/
+  // kilitleyebildiği için (tam tersi: "SADECE X rolünde göster" değil) bu
+  // banner ayrıca burada, doğrudan mevcutRol karşılaştırmasıyla yönetiliyor.
+  const guvenlikBanner = document.getElementById("guvenlikVardiyaBilgisi");
+  if (guvenlikBanner) guvenlikBanner.classList.toggle("d-none", mevcutRol !== "güvenlik");
 }
 
 function sekmeAc(target) {
@@ -384,7 +397,7 @@ function authBasarili(kullanici) {
 async function uygulamaVerileriniYukle() {
   panelYenile(); kayitlariYukle(); kisileriYukle(); ledAyarlariYukle(); lisansYukle(); kameralariYukle();
   grafikYukle(); karaListesiYukle(); bariyerleriYukle(); kullanicilariYukle(); sistemSagliginiYukle();
-  bildirimleriYukle();
+  bildirimleriYukle(); vardiyalariYukle();
   await siteleriYukle(); noktalariYukle();
   sseBaslat();
 }
@@ -2115,7 +2128,7 @@ async function kullanicilariYukle() {
     ]);
     const el = document.getElementById("kullanicilarTablo");
     if (!el) return;
-    const roller = { yonetici: "bg-danger", "operatör": "bg-warning text-dark", izleyici: "bg-secondary", sakin: "bg-info text-dark" };
+    const roller = { yonetici: "bg-danger", "operatör": "bg-warning text-dark", "güvenlik": "bg-primary", izleyici: "bg-secondary", sakin: "bg-info text-dark" };
     el.innerHTML = kullanicilar.map(k => {
       const bagliKisi = k.kisi_id ? kisiler.find(ki => ki.id === k.kisi_id) : null;
       return `<tr>
@@ -2191,6 +2204,69 @@ async function kullaniciSil(id) {
   try {
     await apiCagir(`/kullanicilar/${id}`, { method: "DELETE" });
     kullanicilariYukle();
+  } catch (e) { toastGoster(e.message, "hata"); }
+}
+
+// ================================================================
+// VARDİYA PLANLAMA (2026-09-18) -- Güvenlik Personeli hesaplarının gün
+// bazlı vardiya saatlerini atar (bkz. backend/main.py::/vardiyalar,
+// README'deki "Güvenlik Personeli Vardiya Filtresi" notu).
+// ================================================================
+
+async function vardiyalariYukle() {
+  const secimEl = document.getElementById("vardiyaKullanici");
+  const tabloEl = document.getElementById("vardiyalarTablo");
+  if (!secimEl || !tabloEl) return;
+  try {
+    const [vardiyalar, kullanicilar] = await Promise.all([
+      apiCagir("/vardiyalar"),
+      apiCagir("/kullanicilar"),
+    ]);
+    const guvenlikKullanicilari = kullanicilar.filter(k => k.rol === "güvenlik");
+    const seciliDeger = secimEl.value;
+    secimEl.innerHTML = '<option value="">Seçiniz...</option>' + guvenlikKullanicilari.map(k =>
+      `<option value="${k.id}">${escapeHtml(k.kullanici_adi)}</option>`
+    ).join("");
+    if (seciliDeger) secimEl.value = seciliDeger;
+    const kullaniciAdi = Object.fromEntries(kullanicilar.map(k => [k.id, k.kullanici_adi]));
+    tabloEl.innerHTML = vardiyalar.map(v => `
+      <tr>
+        <td>${escapeHtml(kullaniciAdi[v.kullanici_id] || `#${v.kullanici_id} (silinmiş)`)}</td>
+        <td>${new Date(v.tarih).toLocaleDateString("tr-TR")}</td>
+        <td>${escapeHtml(v.baslangic_saat)} - ${escapeHtml(v.bitis_saat)}${v.bitis_saat <= v.baslangic_saat ? ' <span class="badge bg-secondary">ertesi gün</span>' : ""}</td>
+        <td class="small text-muted">${v.olusturan ? escapeHtml(v.olusturan) : "-"}</td>
+        <td><button class="btn btn-sm btn-outline-danger" onclick="vardiyaSil(${v.id})" title="Sil"><i class="bi bi-trash"></i></button></td>
+      </tr>
+    `).join("") || `<tr><td colspan="5" class="text-center text-muted py-3">Henüz vardiya ataması yok</td></tr>`;
+  } catch (e) {
+    tabloEl.innerHTML = `<tr><td colspan="5" class="text-center text-muted py-3">Bu bölümü sadece yönetici görebilir</td></tr>`;
+  }
+}
+
+document.getElementById("vardiyaForm")?.addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const sonuc = document.getElementById("vardiyaSonuc");
+  try {
+    const govde = {
+      kullanici_id: Number(document.getElementById("vardiyaKullanici").value),
+      tarih: document.getElementById("vardiyaTarih").value,
+      baslangic_saat: document.getElementById("vardiyaBaslangic").value,
+      bitis_saat: document.getElementById("vardiyaBitis").value,
+    };
+    await apiCagir("/vardiyalar", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(govde) });
+    sonuc.className = "small mt-2 text-success"; sonuc.textContent = "Vardiya atandı.";
+    document.getElementById("vardiyaTarih").value = "";
+    document.getElementById("vardiyaBaslangic").value = "";
+    document.getElementById("vardiyaBitis").value = "";
+    vardiyalariYukle();
+  } catch (err) { sonuc.className = "small mt-2 text-danger"; sonuc.textContent = err.message; }
+});
+
+async function vardiyaSil(id) {
+  if (!confirm("Bu vardiya atamasını silmek istediğinize emin misiniz?")) return;
+  try {
+    await apiCagir(`/vardiyalar/${id}`, { method: "DELETE" });
+    vardiyalariYukle();
   } catch (e) { toastGoster(e.message, "hata"); }
 }
 

@@ -29,7 +29,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import text
 from sqlalchemy.orm import Session
-from sqlalchemy import desc, func
+from sqlalchemy import desc, func, or_, and_, false
 
 from backend import models
 from backend import schemas
@@ -533,20 +533,41 @@ async def _son_not_onbellek_temizlik_dongu() -> None:
 # ================================================================
 # SSE (Server-Sent Events) YAYINCISI — gerçek zamanlı istemci bildirimi
 # ================================================================
+# Her eleman bir dict: {"kuyruk": asyncio.Queue, "kullanici_id": int, "rol": str}.
+# Önceden yalnızca çıplak bir Queue tutuluyordu; güvenlik personeli için
+# CANLI akışın da vardiya penceresine göre filtrelenebilmesi (bkz.
+# "GÜVENLİK PERSONELİ VARDİYA FİLTRESİ" notu) için bağlı istemcinin kimliği
+# de gerekiyor -- aksi halde bir güvenlik personeli, kayıtlar listesinde
+# hiç göremeyeceği bir plakanın "Son Geçişler" panelinde anlık olarak
+# belirdiğini görebilirdi (tutarsız/sessiz bir bilgi sızıntısı olurdu).
 _sse_istemcileri: list = []
 
 
-async def _sse_yayinla(olay_turu: str, veri: dict) -> None:
+async def _sse_yayinla(olay_turu: str, veri: dict, db: Optional[Session] = None) -> None:
     payload = f"event: {olay_turu}\ndata: {json.dumps(veri, ensure_ascii=False, default=str)}\n\n"
+    kayit_tarihi = None
+    if olay_turu == "kayit" and veri.get("tarih_saat"):
+        try:
+            kayit_tarihi = datetime.fromisoformat(veri["tarih_saat"])
+        except ValueError:
+            kayit_tarihi = None
     olum = []
-    for q in list(_sse_istemcileri):
+    for istemci in list(_sse_istemcileri):
+        if istemci["rol"] == ROL_GUVENLIK:
+            # GÜVENLİ TARAF: pencere doğrulanamıyorsa (db/tarih eksikse) ya da
+            # kayıt hiçbir pencereye denk düşmüyorsa bu istemciye YOLLANMAZ.
+            if db is None or kayit_tarihi is None:
+                continue
+            pencereler = _kullanicinin_vardiya_pencereleri(db, istemci["kullanici_id"])
+            if not any(b <= kayit_tarihi < e for b, e in pencereler):
+                continue
         try:
-            await q.put(payload)
+            await istemci["kuyruk"].put(payload)
         except Exception:
-            olum.append(q)
-    for q in olum:
+            olum.append(istemci)
+    for istemci in olum:
         try:
-            _sse_istemcileri.remove(q)
+            _sse_istemcileri.remove(istemci)
         except ValueError:
             pass
 
@@ -861,6 +882,14 @@ def _giris_gerekli(
 # yerde "operator" olarak yazılıp sessizce YETKİSİZ erişime izin verebilirdi).
 ROL_YONETICI = "yonetici"
 ROL_OPERATOR = "operatör"
+# "güvenlik" (Güvenlik Personeli): bkz. 2026-09-18 "Güvenlik Personeli Vardiya
+# Filtresi" notu, README. Yetki/görünürlük açısından "operatör" ile BİREBİR
+# AYNI kademede -- _rol_dogrula bu iki rolü eşdeğer sayar (aşağıya bakınız),
+# frontend/app.js::ROL_SEVIYE de aynı sıralamayı kullanır. TEK gerçek farkı:
+# kayıtlar listesi/raporları kendi vardiya saatleriyle filtrelenir (bkz.
+# _guvenlik_kayit_filtresi_uygula) -- "operatör"ün göremediği hiçbir şeyi
+# görmez, yalnızca operatörün gördüğü kayıtların bir ALT KÜMESİNİ görür.
+ROL_GUVENLIK = "güvenlik"
 ROL_IZLEYICI = "izleyici"
 # "sakin": panel PERSONELİ değil, bir Kişi (abone/sakin) kaydına bağlı öz-hizmet
 # giriş hesabı (bkz. 2026-09-17 notu, README). Diğer üç rolden temelde
@@ -914,15 +943,123 @@ def _rol_dogrula(kullanici: models.Kullanici, *izinli_roller: str) -> None:
       - izleyici: HİÇBİR yazma işlemi yapamaz, sadece görüntüler.
       - operatör: günlük operasyon (kişi/kara liste/kamera/bariyer açma/LED/
         manuel kayıt/toplu içe aktarma/görüntü temizleme).
+      - güvenlik: operatör ile YETKİ açısından BİREBİR AYNI (bkz. aşağıdaki
+        eşdeğerlik notu) -- tek farkı kayıtlar listesinin kendi vardiyasıyla
+        filtrelenmesi (bkz. _guvenlik_kayit_filtresi_uygula), bu fonksiyon
+        seviyesinde HİÇBİR ayrım yapılmaz.
       - yonetici: operatörün yapabildiği HER ŞEY + kullanıcı yönetimi, lisans,
         sistem ayarları, site/erişim noktası/webhook yapılandırması, kayıt
         silme, veritabanı yedeği.
+
+    GÜVENLİK PERSONELİ EŞDEĞERLİĞİ (2026-09-18): `ROL_GUVENLIK`, çağıranın
+    rolü kontrol edilmeden ÖNCE burada `ROL_OPERATOR`'a eşlenir -- böylece bu
+    dosyadaki `_rol_dogrula(kullanici, ROL_YONETICI, ROL_OPERATOR)` şeklindeki
+    ONLARCA mevcut çağrı satırının HİÇBİRİNE dokunmadan "güvenlik" rolü de
+    aynı işlemlere otomatik olarak izinli hale gelir (ve yeni eklenecek
+    çağrılar da otomatik kapsanır). Bu, dosyanın başındaki "aynı mantığın
+    birden fazla bağımsız kopyası" hata sınıfından kaçınma ilkesiyle
+    birebir aynı gerekçeye dayanır: eşdeğerliği her çağrı satırında ayrı ayrı
+    (`ROL_YONETICI, ROL_OPERATOR, ROL_GUVENLIK`) tekrar etmek yerine TEK bir
+    yerde tanımlanır.
     """
-    if kullanici.rol not in izinli_roller:
+    etkin_rol = ROL_OPERATOR if kullanici.rol == ROL_GUVENLIK else kullanici.rol
+    if etkin_rol not in izinli_roller:
         raise HTTPException(
             403,
             f"Bu işlem için yetkiniz yok (gereken rol: {' veya '.join(izinli_roller)})",
         )
+
+
+# ================================================================
+# GÜVENLİK PERSONELİ VARDİYA FİLTRESİ (2026-09-18)
+# ================================================================
+# Kullanıcı talebi (birebir): "Yönetici panelinden tüm kayıtlar gözükecek
+# güvenlik panellerinde sadece kendi vardiyalarında geçen araçların
+# raporları ve kayıtları gözükecek." + "4 vardiya 4 vardiya amiri 24 saat
+# esaslı çalıştığı için [personel] bir gün 15:00-23:00 aralığında çalışıyor
+# diğer gün 07:00-15:00 gibi çalışıyor" (yani vardiya saatleri GÜNDEN GÜNE
+# değişebiliyor, sabit bir haftalık program yeterli değil) + "Aynı anda
+# birden fazla güvenlik personeli giriş yapmışsa kayıt HERKESTE ayrı ayrı
+# gösterilir" (çakışma durumunda dışlama değil, çoğullama).
+#
+# Bu üç karar, tasarımı doğrudan belirliyor: her güvenlik kullanıcısı için
+# GÜN BAZLI, birbirinden bağımsız vardiya pencereleri tutulur (bkz.
+# models.VardiyaAtamasi); bir kayıt, bu pencerelerden HERHANGİ BİRİNE denk
+# düşüyorsa o kullanıcıya "ait" sayılır (çakışan pencerelerde birden fazla
+# kullanıcıya aynı anda ait olabilir -- dışlayıcı bir atama YOKTUR).
+#
+# KAPSAM (bilinçli sınır -- README'de de belgelenmiştir): bu filtre
+# GÖRÜNÜRLÜĞE uygulanır (kayıtlar listesi, dışa aktarma raporları, plaka
+# analizi geçmişi, canlı SSE akışı, panel istatistiklerinin kayıt bazlı
+# alanları). Kaydı DÜZENLEME/SİLME yetkisi (zaten operatör-eşdeğerliği
+# üzerinden var olan) vardiya dışı kayıtlar için AYRICA kısıtlanmaz --
+# tıpkı 2026-09-18 tarihli "Operatör Panelinden Yönetim Görünürlüğü" notunda
+# olduğu gibi bu da bilinçli olarak bir GÖRÜNÜRLÜK kısıtlamasıdır, API'yi
+# doğrudan çağıran (kaydın ID'sini zaten bilen) bir istemciye karşı ekstra
+# bir yetkilendirme katmanı değildir.
+
+
+def _vardiya_penceresi(tarih: datetime, baslangic_saat: str, bitis_saat: str) -> tuple[datetime, datetime]:
+    """Bir VardiyaAtamasi satırının GERÇEK başlangıç/bitiş datetime'ını
+    hesaplar. `bitis_saat`, `baslangic_saat`'e eşit veya ondan KÜÇÜKSE gece
+    yarısını geçen bir vardiya (ör. 23:00 -> 07:00) olarak yorumlanır ve
+    bitiş BİR SONRAKİ takvim gününe kayar."""
+    gun = tarih.replace(hour=0, minute=0, second=0, microsecond=0)
+    b_saat, b_dakika = (int(p) for p in baslangic_saat.split(":"))
+    bt_saat, bt_dakika = (int(p) for p in bitis_saat.split(":"))
+    baslangic = gun.replace(hour=b_saat, minute=b_dakika)
+    bitis = gun.replace(hour=bt_saat, minute=bt_dakika)
+    if bitis <= baslangic:
+        bitis += timedelta(days=1)
+    return baslangic, bitis
+
+
+def _kullanicinin_vardiya_pencereleri(db: Session, kullanici_id: int) -> list:
+    """Bir güvenlik personelinin TÜM vardiya atamalarının gerçek datetime
+    pencerelerini (başlangıç, bitiş) çiftleri olarak döner. Bu tablo küçük
+    ölçekli olduğu için (kullanıcı başına yılda genelde birkaç yüz satır)
+    tüm satırlar belleğe alınıp pencereleri hesaplanır; ayrı bir SQL tarih
+    aralığı ön-filtresi bu ölçekte gerekmiyor."""
+    atamalar = (
+        db.query(models.VardiyaAtamasi)
+        .filter(models.VardiyaAtamasi.kullanici_id == kullanici_id)
+        .all()
+    )
+    return [_vardiya_penceresi(a.tarih, a.baslangic_saat, a.bitis_saat) for a in atamalar]
+
+
+def _guvenlik_kayit_filtresi_uygula(sorgu, kullanici: models.Kullanici, db: Session):
+    """`kullanici.rol == ROL_GUVENLIK` ise verilen SQLAlchemy sorgusuna, bu
+    kullanıcının vardiya pencerelerinden HİÇBİRİNE denk düşmeyen kayıtları
+    eleyen bir OR filtresi ekler; diğer roller için sorgu değişmeden döner.
+
+    Hiç vardiya ataması yoksa (henüz planlanmamışsa) GÜVENLİ TARAF seçilir:
+    varsayılan olarak her şeyi göstermek yerine HİÇBİR kayıt döndürülmez --
+    henüz vardiyası tanımlanmamış bir güvenlik hesabının kayıtlar listesinin
+    boş görünmesi, yanlışlıkla TÜM kayıtları göstermesinden çok daha güvenli
+    bir varsayılan davranıştır.
+    """
+    if kullanici.rol != ROL_GUVENLIK:
+        return sorgu
+    pencereler = _kullanicinin_vardiya_pencereleri(db, kullanici.id)
+    if not pencereler:
+        return sorgu.filter(false())
+    kosullar = [
+        and_(models.Kayit.tarih_saat >= baslangic, models.Kayit.tarih_saat < bitis)
+        for baslangic, bitis in pencereler
+    ]
+    return sorgu.filter(or_(*kosullar))
+
+
+def _guvenlik_kayit_gorunur_mu(kayit: "models.Kayit", kullanici: models.Kullanici, db: Session) -> bool:
+    """Tek bir Kayit'in (ör. `/disa-aktar/pdf/kayit/{id}` gibi tekil dışa
+    aktarma uçlarında) güvenlik personeli için görünür olup olmadığını
+    kontrol eder -- `_guvenlik_kayit_filtresi_uygula` ile aynı pencere
+    mantığını tek bir kayda uygular."""
+    if kullanici.rol != ROL_GUVENLIK:
+        return True
+    pencereler = _kullanicinin_vardiya_pencereleri(db, kullanici.id)
+    return any(baslangic <= kayit.tarih_saat < bitis for baslangic, bitis in pencereler)
 
 
 # Basit bellek-içi bruteforce koruması: kullanıcı adı -> (başarısız deneme sayısı, kilit bitiş zamanı)
@@ -2193,7 +2330,7 @@ def _kayit_olustur_ve_bildir(db: Session, plaka_no: str, kamera_id: str, yon: st
     try:
         loop = asyncio.get_event_loop()
         if loop.is_running():
-            asyncio.ensure_future(_sse_yayinla("kayit", sse_veri))
+            asyncio.ensure_future(_sse_yayinla("kayit", sse_veri, db))
             asyncio.ensure_future(_webhook_bildir(db, yetki, sse_veri))
     except RuntimeError:
         pass
@@ -2370,7 +2507,7 @@ def kayitlari_listele(
     limit: int = 50,
     offset: int = 0,
     db: Session = Depends(get_db),
-    _: models.Kullanici = Depends(_personel_girisi_gerekli),
+    kullanici: models.Kullanici = Depends(_personel_girisi_gerekli),
 ):
     sorgu = db.query(models.Kayit)
     if plaka:
@@ -2385,6 +2522,9 @@ def kayitlari_listele(
         sorgu = sorgu.filter(
             models.Kayit.tarih_saat <= datetime.fromisoformat(bitis) + timedelta(days=1)
         )
+    # bkz. "GÜVENLİK PERSONELİ VARDİYA FİLTRESİ" notu: güvenlik rolü dışındaki
+    # kullanıcılar için bu çağrı sorguyu DEĞİŞTİRMEDEN döner.
+    sorgu = _guvenlik_kayit_filtresi_uygula(sorgu, kullanici, db)
     toplam = sorgu.count()
     kayitlar = sorgu.order_by(desc(models.Kayit.tarih_saat)).offset(max(0, offset)).limit(min(limit, 500)).all()
     return kayitlar
@@ -2399,7 +2539,7 @@ def kayitlar_sayfa_bilgisi(
     kamera_id: Optional[str] = None,
     limit: int = 50,
     db: Session = Depends(get_db),
-    _: models.Kullanici = Depends(_personel_girisi_gerekli),
+    kullanici: models.Kullanici = Depends(_personel_girisi_gerekli),
 ):
     """Sayfalama için toplam kayıt sayısını döndürür."""
     sorgu = db.query(models.Kayit)
@@ -2413,15 +2553,17 @@ def kayitlar_sayfa_bilgisi(
         sorgu = sorgu.filter(models.Kayit.tarih_saat >= datetime.fromisoformat(baslangic))
     if bitis:
         sorgu = sorgu.filter(models.Kayit.tarih_saat <= datetime.fromisoformat(bitis) + timedelta(days=1))
+    sorgu = _guvenlik_kayit_filtresi_uygula(sorgu, kullanici, db)
     toplam = sorgu.count()
     sayfa_sayisi = max(1, -(-toplam // max(1, limit)))
     return {"toplam": toplam, "sayfa_sayisi": sayfa_sayisi, "limit": limit}
 
 
 @app.get("/olaylar", response_model=List[schemas.KayitCevap])
-def olaylari_getir(since_id: int = 0, limit: int = 100, db: Session = Depends(get_db), _: models.Kullanici = Depends(_personel_girisi_gerekli)):
+def olaylari_getir(since_id: int = 0, limit: int = 100, db: Session = Depends(get_db), kullanici: models.Kullanici = Depends(_personel_girisi_gerekli)):
     """Canlı ekran için son olayları veya verilen ID'den sonrasını döndürür."""
     sorgu = db.query(models.Kayit).filter(models.Kayit.id > since_id)
+    sorgu = _guvenlik_kayit_filtresi_uygula(sorgu, kullanici, db)
     return sorgu.order_by(desc(models.Kayit.id)).limit(min(limit, 500)).all()
 
 
@@ -2566,12 +2708,25 @@ def kayit_duzenle(
 
 
 @app.get("/kayitlar/istatistik")
-def istatistikler(db: Session = Depends(get_db), _: models.Kullanici = Depends(_personel_girisi_gerekli)):
+def istatistikler(db: Session = Depends(get_db), kullanici: models.Kullanici = Depends(_personel_girisi_gerekli)):
     bugun = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+    # "toplam_kayit" (tüm zamanların toplamı) ve "aktif_kisi_sayisi"/
+    # "kara_liste_kayit_sayisi" (Kişi/KaraListesi TANIMLARININ sayısı, birer
+    # GEÇİŞ KAYDI değil) bilinçli olarak vardiya filtresinin DIŞINDA
+    # tutuluyor -- bkz. modülün üstündeki "GÜVENLİK PERSONELİ VARDİYA
+    # FİLTRESİ" notundaki kapsam açıklaması. Yalnızca gerçekten birer geçiş
+    # KAYDI sayısı olan alanlar (bugünkü kayıt/yetkisiz deneme/kara liste
+    # geçişi) güvenlik rolü için vardiyayla filtrelenir.
     toplam = db.query(models.Kayit).count()
-    bugunku = db.query(models.Kayit).filter(models.Kayit.tarih_saat >= bugun).count()
-    yetkisiz = db.query(models.Kayit).filter(models.Kayit.yetki_durumu == "yetkisiz").count()
-    kara_liste_gecis = db.query(models.Kayit).filter(models.Kayit.yetki_durumu == "kara_liste").count()
+    bugunku = _guvenlik_kayit_filtresi_uygula(
+        db.query(models.Kayit).filter(models.Kayit.tarih_saat >= bugun), kullanici, db
+    ).count()
+    yetkisiz = _guvenlik_kayit_filtresi_uygula(
+        db.query(models.Kayit).filter(models.Kayit.yetki_durumu == "yetkisiz"), kullanici, db
+    ).count()
+    kara_liste_gecis = _guvenlik_kayit_filtresi_uygula(
+        db.query(models.Kayit).filter(models.Kayit.yetki_durumu == "kara_liste"), kullanici, db
+    ).count()
     toplam_kisi = db.query(models.Kisi).filter(models.Kisi.aktif == True).count()  # noqa: E712
     kara_liste_sayisi = db.query(models.KaraListesi).filter(models.KaraListesi.aktif == True).count()  # noqa: E712
     return {
@@ -2585,10 +2740,13 @@ def istatistikler(db: Session = Depends(get_db), _: models.Kullanici = Depends(_
 
 
 @app.get("/kayitlar/grafik")
-def grafik_verisi(gun: int = 7, db: Session = Depends(get_db), _: models.Kullanici = Depends(_personel_girisi_gerekli)):
+def grafik_verisi(gun: int = 7, db: Session = Depends(get_db), kullanici: models.Kullanici = Depends(_personel_girisi_gerekli)):
     """Son N günlük istatistik — dashboard grafikleri için."""
     baslangic = datetime.now() - timedelta(days=max(1, min(gun, 90)))
-    kayitlar = db.query(models.Kayit).filter(models.Kayit.tarih_saat >= baslangic).all()
+    sorgu = _guvenlik_kayit_filtresi_uygula(
+        db.query(models.Kayit).filter(models.Kayit.tarih_saat >= baslangic), kullanici, db
+    )
+    kayitlar = sorgu.all()
 
     gunluk: dict = {}
     for k in kayitlar:
@@ -2622,7 +2780,7 @@ def son_not_getir(plaka: str, _: models.Kullanici = Depends(_personel_girisi_ger
 
 
 @app.get("/kayitlar/analiz/{plaka_no}")
-def plaka_analiz(plaka_no: str, db: Session = Depends(get_db), _: models.Kullanici = Depends(_personel_girisi_gerekli)):
+def plaka_analiz(plaka_no: str, db: Session = Depends(get_db), kullanici: models.Kullanici = Depends(_personel_girisi_gerekli)):
     """Bir plaka için geçiş geçmişi, kişi bilgisi ve kara liste durumu."""
     hedef = _plaka_normalize(plaka_no)
     # GÜVENLİK/DOĞRULUK KÖK NEDEN DÜZELTMESİ (2026-09-17): bkz.
@@ -2635,8 +2793,16 @@ def plaka_analiz(plaka_no: str, db: Session = Depends(get_db), _: models.Kullani
     # kayıtlarla AYNI (boşluklu) biçime sahip `goruntu_plaka` ile dönüyor
     # (ör. "Kara Listeye Ekle" düğmesi artık doğru biçimde plaka gönderir).
     goruntu_plaka = re.sub(r"[^A-Za-z0-9 ]", "", plaka_no).strip().upper() or hedef
-    kayitlar = (db.query(models.Kayit)
-                .filter(_plaka_normalize_sql(models.Kayit.plaka_no) == hedef)
+    # bkz. "GÜVENLİK PERSONELİ VARDİYA FİLTRESİ" notu: bu ekrandaki geçmiş
+    # listesi ve "Toplam Geçiş"/"Son Geçiş" istatistikleri de birer KAYIT
+    # görünürlüğü olduğu için güvenlik rolü için aynı vardiya filtresinden
+    # geçirilir (kişi/kara liste bilgisi PLAKAYA ait sabit veridir, filtreye
+    # tabi değildir).
+    kayitlar_sorgu = _guvenlik_kayit_filtresi_uygula(
+        db.query(models.Kayit).filter(_plaka_normalize_sql(models.Kayit.plaka_no) == hedef),
+        kullanici, db,
+    )
+    kayitlar = (kayitlar_sorgu
                 .order_by(desc(models.Kayit.tarih_saat))
                 .limit(50).all())
     kisi = None
@@ -2690,10 +2856,16 @@ async def sse_baglantisi(request: Request, authorization: Optional[str] = Header
     """Server-Sent Events — yeni plaka geçişlerini anlık olarak istemciye iletir."""
     if not authorization or not authorization.lower().startswith("bearer "):
         raise HTTPException(401, "Bearer token gerekli")
-    _token_coz(authorization[7:].strip())  # token geçerliliği kontrol edilir
+    kullanici_id = _token_coz(authorization[7:].strip())
+    # Güvenlik personeli için canlı akışın da vardiya penceresine göre
+    # filtrelenebilmesi (bkz. _sse_yayinla) için bağlı istemcinin rolü de
+    # tutulur -- token yalnızca ID doğrular, rolü vermez.
+    baglanan = db.query(models.Kullanici).filter(models.Kullanici.id == kullanici_id).first()
+    rol = baglanan.rol if baglanan else ROL_IZLEYICI
 
     q: asyncio.Queue = asyncio.Queue(maxsize=100)
-    _sse_istemcileri.append(q)
+    istemci = {"kuyruk": q, "kullanici_id": kullanici_id, "rol": rol}
+    _sse_istemcileri.append(istemci)
 
     async def _akis():
         try:
@@ -2708,7 +2880,7 @@ async def sse_baglantisi(request: Request, authorization: Optional[str] = Header
                     yield ": kalp-atisi\n\n"
         finally:
             try:
-                _sse_istemcileri.remove(q)
+                _sse_istemcileri.remove(istemci)
             except ValueError:
                 pass
 
@@ -2824,10 +2996,16 @@ def _kayitlari_rapor_satirlari(kayitlar: list, db: Session) -> list:
 def kayitlari_excel_indir(
     plaka: Optional[str] = None, baslangic: Optional[str] = None,
     bitis: Optional[str] = None, db: Session = Depends(get_db),
-    _: models.Kullanici = Depends(_personel_girisi_gerekli),
+    kullanici: models.Kullanici = Depends(_personel_girisi_gerekli),
 ):
+    # NOT: kayitlari_listele() burada FastAPI'nin DI mekanizması ÜZERİNDEN
+    # DEĞİL, doğrudan bir Python fonksiyonu olarak çağrılıyor -- bu yüzden
+    # `kullanici` parametresi burada AÇIKÇA geçirilmezse (Depends() varsayılan
+    # değeri hiç ÇÖZÜLMEZ) vardiya filtresi sessizce uygulanmaz ve bir güvenlik
+    # personeli dışa aktarma raporunda TÜM kayıtları görebilirdi.
     kayitlar = kayitlari_listele(
-        plaka=plaka, baslangic=baslangic, bitis=bitis, yetki_durumu=None, limit=5000, db=db
+        plaka=plaka, baslangic=baslangic, bitis=bitis, yetki_durumu=None, limit=5000,
+        db=db, kullanici=kullanici,
     )
     satirlar = _kayitlari_rapor_satirlari(kayitlar, db)
     dosya_yolu = os.path.join(DISA_AKTAR_KLASORU, f"pts_kayitlar_{int(datetime.now().timestamp())}.xlsx")
@@ -2842,10 +3020,13 @@ def kayitlari_excel_indir(
 def kayitlari_pdf_indir(
     plaka: Optional[str] = None, baslangic: Optional[str] = None,
     bitis: Optional[str] = None, db: Session = Depends(get_db),
-    _: models.Kullanici = Depends(_personel_girisi_gerekli),
+    kullanici: models.Kullanici = Depends(_personel_girisi_gerekli),
 ):
+    # bkz. kayitlari_excel_indir'deki AYNI başlıklı not: `kullanici` burada da
+    # AÇIKÇA geçirilmeli.
     kayitlar = kayitlari_listele(
-        plaka=plaka, baslangic=baslangic, bitis=bitis, yetki_durumu=None, limit=2000, db=db
+        plaka=plaka, baslangic=baslangic, bitis=bitis, yetki_durumu=None, limit=2000,
+        db=db, kullanici=kullanici,
     )
     satirlar = _kayitlari_rapor_satirlari(kayitlar, db)
     tarih_araligi_metni = _rapor_tarih_araligi_metni(baslangic, bitis, kayitlar)
@@ -2857,12 +3038,14 @@ def kayitlari_pdf_indir(
 @app.get("/disa-aktar/pdf/kayit/{kayit_id}")
 def kayit_detay_pdf_indir(
     kayit_id: int, db: Session = Depends(get_db),
-    _: models.Kullanici = Depends(_personel_girisi_gerekli),
+    kullanici: models.Kullanici = Depends(_personel_girisi_gerekli),
 ):
     """Tek bir kaydı, araç görseliyle birlikte PDF olarak indirir."""
     kayit = db.query(models.Kayit).filter(models.Kayit.id == kayit_id).first()
     if not kayit:
         raise HTTPException(404, "Kayıt bulunamadı")
+    if not _guvenlik_kayit_gorunur_mu(kayit, kullanici, db):
+        raise HTTPException(403, "Bu kayıt vardiyanıza ait değil")
     dosya_yolu = os.path.join(DISA_AKTAR_KLASORU, f"kayit_{kayit_id}.pdf")
     pdf_export.kayit_detay_pdf_olustur(kayit, dosya_yolu)
     return FileResponse(dosya_yolu, filename=f"kayit_{kayit_id}.pdf", media_type="application/pdf")
@@ -2989,6 +3172,78 @@ def kullanici_sil(kullanici_id: int, db: Session = Depends(get_db), kullanici: m
     db.delete(hedef)
     db.commit()
     return {"mesaj": "Kullanıcı silindi"}
+
+
+# ==================================================================
+# VARDİYA PLANLAMASI (2026-09-18) -- bkz. "GÜVENLİK PERSONELİ VARDİYA
+# FİLTRESİ" notu (modülün üst kısmı) ve models.VardiyaAtamasi.
+# ==================================================================
+# Yalnızca yönetici oluşturabilir/silebilir/listeleyebilir -- güvenlik
+# personelinin KENDİ vardiya programını görebileceği ayrı bir "benim
+# vardiyalarım" uç noktası bilinçli olarak bu sürümün KAPSAMI DIŞINDA
+# bırakıldı (bu ekrana yalnızca Kullanıcılar/Yönetim sekmesinden erişiliyor
+# ve zaten yalnızca yönetici bu sekmeyi görebiliyor) -- ileride ihtiyaç
+# duyulursa küçük bir eklemeyle genişletilebilir.
+
+@app.get("/vardiyalar", response_model=List[schemas.VardiyaCevap])
+def vardiyalari_listele(
+    kullanici_id: Optional[int] = None,
+    db: Session = Depends(get_db),
+    kullanici: models.Kullanici = Depends(_personel_girisi_gerekli),
+):
+    _rol_dogrula(kullanici, ROL_YONETICI)
+    sorgu = db.query(models.VardiyaAtamasi)
+    if kullanici_id is not None:
+        sorgu = sorgu.filter(models.VardiyaAtamasi.kullanici_id == kullanici_id)
+    return sorgu.order_by(desc(models.VardiyaAtamasi.tarih)).limit(500).all()
+
+
+@app.post("/vardiyalar", response_model=schemas.VardiyaCevap)
+def vardiya_ekle(
+    istek: schemas.VardiyaOlustur,
+    db: Session = Depends(get_db),
+    kullanici: models.Kullanici = Depends(_personel_girisi_gerekli),
+):
+    _rol_dogrula(kullanici, ROL_YONETICI)
+    hedef = db.query(models.Kullanici).filter(models.Kullanici.id == istek.kullanici_id).first()
+    if not hedef:
+        raise HTTPException(404, "Kullanıcı bulunamadı")
+    if hedef.rol != ROL_GUVENLIK:
+        # Vardiya ataması yalnızca "güvenlik" rolündeki hesaplar için
+        # ANLAMLIDIR (bkz. _guvenlik_kayit_filtresi_uygula -- yalnızca bu rol
+        # için filtre uygulanıyor); başka bir role atama eklemek sessizce
+        # hiçbir işe yaramayan, kafa karıştırıcı bir veri üretirdi.
+        raise HTTPException(400, "Vardiya yalnızca 'güvenlik' rolündeki kullanıcılara atanabilir")
+    yeni = models.VardiyaAtamasi(
+        kullanici_id=istek.kullanici_id,
+        tarih=datetime.strptime(istek.tarih, "%Y-%m-%d"),
+        baslangic_saat=istek.baslangic_saat,
+        bitis_saat=istek.bitis_saat,
+        olusturan=kullanici.kullanici_adi,
+    )
+    db.add(yeni)
+    db.commit()
+    db.refresh(yeni)
+    logger.info(
+        "Vardiya ataması oluşturuldu: kullanıcı=%s tarih=%s %s-%s (ekleyen: %s)",
+        hedef.kullanici_adi, istek.tarih, istek.baslangic_saat, istek.bitis_saat, kullanici.kullanici_adi,
+    )
+    return yeni
+
+
+@app.delete("/vardiyalar/{vardiya_id}")
+def vardiya_sil(
+    vardiya_id: int,
+    db: Session = Depends(get_db),
+    kullanici: models.Kullanici = Depends(_personel_girisi_gerekli),
+):
+    _rol_dogrula(kullanici, ROL_YONETICI)
+    hedef = db.query(models.VardiyaAtamasi).filter(models.VardiyaAtamasi.id == vardiya_id).first()
+    if not hedef:
+        raise HTTPException(404, "Vardiya ataması bulunamadı")
+    db.delete(hedef)
+    db.commit()
+    return {"mesaj": "Vardiya ataması silindi"}
 
 
 # ==================================================================

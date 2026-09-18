@@ -8,7 +8,12 @@ GECERLI_TIPLER = ("abone", "personel", "ziyaretci")
 # "sakin": bir Kişi kaydına bağlı, yalnızca kendi araç/geçmiş bilgisine
 # erişebilen öz-hizmet giriş hesabı (bkz. main.py::_personel_girisi_gerekli
 # ve /sakin/... uç noktaları, 2026-09-17 notu).
-GECERLI_ROLLER = ("yonetici", "operatör", "izleyici", "sakin")
+# "güvenlik": güvenlik personeli hesabı (bkz. 2026-09-18 "Güvenlik Personeli
+# Vardiya Filtresi" notu, README) -- yetki/görünürlük açısından "operatör"
+# ile BİREBİR AYNI (bkz. main.py::_rol_dogrula ve frontend/app.js::ROL_SEVIYE),
+# TEK farkı kayıtlar listesinin/raporların kendi vardiya saatleriyle
+# filtrelenmesidir (bkz. main.py::_guvenlik_kayit_filtresi_uygula).
+GECERLI_ROLLER = ("yonetici", "operatör", "güvenlik", "izleyici", "sakin")
 
 
 def plaka_normalize(v: str) -> str:
@@ -130,6 +135,48 @@ class KullaniciGuncelle(BaseModel):
         if v is not None and v not in GECERLI_ROLLER:
             raise ValueError(f"Geçerli roller: {GECERLI_ROLLER}")
         return v
+
+
+_SAAT_DESENI = re.compile(r"^([01]\d|2[0-3]):[0-5]\d$")
+
+
+class VardiyaOlustur(BaseModel):
+    """Bir güvenlik personeline TEK BİR GÜN için vardiya ataması (bkz.
+    models.VardiyaAtamasi, main.py::/vardiyalar). `bitis_saat`,
+    `baslangic_saat`'e eşit veya ondan küçükse gece yarısını geçen bir
+    vardiya (ör. 23:00 -> 07:00) olarak yorumlanır."""
+    kullanici_id: int
+    tarih: str = Field(description="YYYY-MM-DD")
+    baslangic_saat: str
+    bitis_saat: str
+
+    @field_validator("tarih")
+    @classmethod
+    def tarih_kontrol(cls, v):
+        try:
+            datetime.strptime(v, "%Y-%m-%d")
+        except ValueError:
+            raise ValueError("tarih 'YYYY-MM-DD' biçiminde olmalıdır")
+        return v
+
+    @field_validator("baslangic_saat", "bitis_saat")
+    @classmethod
+    def saat_kontrol(cls, v):
+        if not _SAAT_DESENI.match(v or ""):
+            raise ValueError("saat 'HH:MM' biçiminde olmalıdır (00:00-23:59)")
+        return v
+
+
+class VardiyaCevap(BaseModel):
+    id: int
+    kullanici_id: int
+    tarih: datetime
+    baslangic_saat: str
+    bitis_saat: str
+    olusturan: Optional[str] = None
+    olusturma_tarihi: Optional[datetime] = None
+
+    model_config = ConfigDict(from_attributes=True)
 
 
 class KisiPlakaOlustur(BaseModel):
