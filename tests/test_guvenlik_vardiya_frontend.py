@@ -97,3 +97,45 @@ def test_vardiyalari_yukle_baslangic_veri_yuklemesine_baglandi():
     eslesme = re.search(r"async function uygulamaVerileriniYukle\(\) \{(.*?)\n\}", js, re.DOTALL)
     assert eslesme is not None
     assert "vardiyalariYukle()" in eslesme.group(1)
+
+
+def test_guvenlik_banner_teshis_alt_alani_var():
+    """2026-09-18 kullanıcı geri bildirimi ("vardiya atadım ama canlı geçişler
+    Kayıtlar sekmesinde gözükmüyor") sonrası eklenen teşhis alanı: banner artık
+    yalnızca statik uyarı metni değil, sunucunun kendi "şu an" bilgisini ve
+    kullanıcının vardiya pencerelerini de gösteren bir alt bölüm içermeli."""
+    corba = _corba()
+    banner = corba.find(id="guvenlikVardiyaBilgisi")
+    assert banner is not None
+    durum_alani = banner.find(id="guvenlikVardiyaDurumu")
+    assert durum_alani is not None, "#guvenlikVardiyaDurumu teşhis alanı banner içinde bulunamadı"
+
+
+def test_guvenlik_vardiya_durumunu_guncelle_fonksiyonu_dogru_uca_bagli():
+    js = _js_metni()
+    assert (
+        "async function guvenlikVardiyaDurumunuGuncelle" in js
+    ), "guvenlikVardiyaDurumunuGuncelle fonksiyonu bulunamadı"
+    eslesme = re.search(
+        r"async function guvenlikVardiyaDurumunuGuncelle\(\) \{(.*?)\n\}", js, re.DOTALL
+    )
+    assert eslesme is not None
+    govde = eslesme.group(1)
+    assert '"/vardiyalar/durumum"' in govde
+    assert "guvenlikVardiyaDurumu" in govde
+    # Sunucu/istemci saat karşılaştırması: teşhisin asıl amacı bu.
+    assert "sunucu_simdiki_zaman" in govde
+    assert "su_an_aktif_vardiya_var_mi" in govde
+
+
+def test_guvenlik_vardiya_durumunu_guncelle_cagrilariyla_baglanti():
+    js = _js_metni()
+    # Girişte hemen (rolBazliArayuzuUygula içinde) ve periyodik panel
+    # yenilemesinde (panelYenile içinde) tetiklenmeli -- kullanıcı girişten
+    # hemen sonra teşhisi görebilsin, ayrıca zaman geçtikçe güncellensin.
+    rol_fonk = re.search(r"function rolBazliArayuzuUygula\(\) \{(.*?)\n\}", js, re.DOTALL)
+    assert rol_fonk is not None
+    assert "guvenlikVardiyaDurumunuGuncelle()" in rol_fonk.group(1)
+    panel_fonk = re.search(r"async function panelYenile\(\) \{(.*?)\n\}", js, re.DOTALL)
+    assert panel_fonk is not None
+    assert "guvenlikVardiyaDurumunuGuncelle()" in panel_fonk.group(1)

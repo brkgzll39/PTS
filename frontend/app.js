@@ -42,6 +42,7 @@ function rolBazliArayuzuUygula() {
   // banner ayrıca burada, doğrudan mevcutRol karşılaştırmasıyla yönetiliyor.
   const guvenlikBanner = document.getElementById("guvenlikVardiyaBilgisi");
   if (guvenlikBanner) guvenlikBanner.classList.toggle("d-none", mevcutRol !== "güvenlik");
+  if (mevcutRol === "güvenlik") guvenlikVardiyaDurumunuGuncelle();
 }
 
 function sekmeAc(target) {
@@ -550,8 +551,42 @@ async function panelYenile() {
       </tr>
     `).join("") || `<tr><td colspan="6" class="text-center text-muted py-3">Henüz kayıt yok</td></tr>`;
     korumaliGorselleriYukle(tbody);
+    if (mevcutRol === "güvenlik") guvenlikVardiyaDurumunuGuncelle();
   } catch (e) {
     console.error(e);
+  }
+}
+
+// Güvenlik personeli için teşhis: sunucunun "şu an" bilgisi + kullanıcının
+// kendi vardiya pencereleri (2026-09-18 kullanıcı geri bildirimi: vardiyası
+// atanmış olmasına rağmen canlı geçişlerin Kayıtlar sekmesinde görünmediği
+// bildirildi -- bu, filtrenin NEDEN boş kaldığını sunucu/istemci saat
+// karşılaştırmasıyla teşhis etmeye yarar; bkz. backend/main.py::vardiya_durumum).
+async function guvenlikVardiyaDurumunuGuncelle() {
+  const el = document.getElementById("guvenlikVardiyaDurumu");
+  if (!el || mevcutRol !== "güvenlik") return;
+  try {
+    const d = await apiCagir("/vardiyalar/durumum");
+    if (!d.rol_guvenlik_mi) { el.innerHTML = ""; return; }
+    const sunucuSaati = tarihFormatla(d.sunucu_simdiki_zaman);
+    const istemciSaati = tarihFormatla(new Date().toISOString());
+    const aktifDurum = d.su_an_aktif_vardiya_var_mi
+      ? '<span class="text-success fw-bold"><i class="bi bi-check-circle-fill"></i> Şu an aktif bir vardiyanız var</span>'
+      : '<span class="text-danger fw-bold"><i class="bi bi-x-circle-fill"></i> Şu an aktif bir vardiyanız YOK</span>';
+    let vardiyaListesi = "";
+    if (!d.toplam_vardiya_sayisi) {
+      vardiyaListesi = '<div class="text-warning">Hiç vardiya atamanız yok -- bu yüzden hiçbir kayıt görünmüyor (varsayılan: atama yoksa hiçbir şey gösterilmez).</div>';
+    } else {
+      const satirlar = (d.vardiyalar || []).map(v => {
+        const rozet = v.su_an_aktif_mi ? '<span class="badge bg-success">aktif</span>' : '<span class="badge bg-secondary">pasif</span>';
+        return `<div>${escapeHtml(v.tarih)} ${escapeHtml(v.baslangic_saat)}–${escapeHtml(v.bitis_saat)} <span class="text-muted">(${tarihFormatla(v.pencere_baslangic)} → ${tarihFormatla(v.pencere_bitis)})</span> ${rozet}</div>`;
+      }).join("");
+      vardiyaListesi = `<div class="mt-1">Toplam ${d.toplam_vardiya_sayisi} vardiya ataması:</div>${satirlar}`;
+    }
+    el.innerHTML = `<div>Sunucu saati: <strong>${sunucuSaati}</strong> · Tarayıcınızın saati: <strong>${istemciSaati}</strong></div><div>${aktifDurum}</div>${vardiyaListesi}` +
+      (sunucuSaati !== istemciSaati ? '<div class="text-warning mt-1"><i class="bi bi-exclamation-triangle-fill"></i> Sunucu ile tarayıcınızın saati farklı görünüyor -- kayıt görünürlüğü SUNUCU saatine göre belirlenir.</div>' : "");
+  } catch (e) {
+    el.textContent = "Vardiya durumu alınamadı: " + e.message;
   }
 }
 

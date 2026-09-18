@@ -1521,6 +1521,55 @@ göründüğünü; ve dışa aktarma uçlarının (`kullanici` parametresinin Fa
 DI'ı olmadan doğrudan çağrıldığı için AÇIKÇA geçirilmesi gerektiği --
 aksi halde sessizce filtresiz kalırdı) güvenlik kullanıcısıyla çalıştığını.
 
+## Vardiya Filtresi Teşhis Aracı (2026-09-18)
+
+**Neden gerekli:** yukarıdaki filtre canlıya alındıktan sonra bir kullanıcı,
+kendi vardiyasını atadığı halde o pencere içinde gerçekleşen YENİ/canlı bir
+geçişin Kayıtlar sekmesinde (ve Canlı İzleme'de) hâlâ görünmediğini bildirdi.
+Filtre tamamen SUNUCU tarafında, `datetime.now()` ile hesaplanan pencerelere
+göre çalıştığı için (bkz. yukarıdaki `_guvenlik_kayit_filtresi_uygula` notu),
+en olası kök nedenlerden biri sunucunun sistem saatinin (üretimde bir Windows
+makinesi) yönetici panelini kullanan kişinin bildiği saatten FARKLI olması
+(saat dilimi/senkronizasyon sorunu) ya da vardiya formuna yanlış bir tarih/
+saat girilmiş olmasıdır -- ama bu sandbox'tan kullanıcının gerçek üretim
+ortamına doğrudan erişim YOK, bu yüzden kör tahminle bir "düzeltme" göndermek
+yerine, sorunu kullanıcının KENDİSİNİN teşhis edebileceği bir araç eklendi
+("sıfır sessiz hata" ilkesi: bir filtrenin neden boş sonuç ürettiği asla
+belirsiz kalmamalı).
+
+**Ne eklendi:**
+- `GET /vardiyalar/durumum`: rol kontrolü yapmaz (yalnızca çağıranın KENDİ
+  verisini döner), ama `güvenlik` rolü dışındaki kullanıcılar için de zararsız
+  bir yanıt verir (`{"rol_guvenlik_mi": false, "sunucu_simdiki_zaman": ...}`).
+  `güvenlik` rolü için ayrıca: o an aktif bir vardiyası olup olmadığını
+  (`su_an_aktif_vardiya_var_mi`), toplam vardiya sayısını ve her atamanın
+  hesaplanmış mutlak pencere sınırlarını (`pencere_baslangic`/`pencere_bitis`)
+  ve her birinin şu an aktif olup olmadığını (`su_an_aktif_mi`) döner.
+- Kayıtlar sekmesindeki `#guvenlikVardiyaBilgisi` banner'ı artık yalnızca
+  statik bir uyarı değil; içine eklenen `#guvenlikVardiyaDurumu` alt alanı bu
+  uç noktayı çağırıp SUNUCU saatini kullanıcının TARAYICI saatiyle yan yana
+  gösterir, aktif/pasif durumu ve tüm vardiya atamalarını listeler, ve iki
+  saat birbirinden FARKLIYSA ayrı bir uyarı satırı ekler
+  (`guvenlikVardiyaDurumunuGuncelle()`, `frontend/app.js`). Bu fonksiyon hem
+  girişten hemen sonra (`rolBazliArayuzuUygula()` içinde) hem de periyodik
+  panel yenilemesinde (`panelYenile()` içinde) tetiklenir.
+
+**Sonraki adım:** bu teşhis bilgisi, kullanıcının etkilenen güvenlik hesabıyla
+giriş yapıp Kayıtlar sekmesini açtığında bildireceği gerçek verilerle (sunucu
+saati beklenenle uyuşuyor mu, vardiya pencereleri doğru mu hesaplanmış)
+birlikte, asıl kök nedeni netleştirip kalıcı bir düzeltme yapmak için
+kullanılacak.
+
+**Testler:** `tests/test_guvenlik_vardiya_frontend.py`ye eklenen (gerçekten
+çalıştırılıp doğrulandı) testler banner'ın yeni alt alanını, JS fonksiyonunun
+doğru uca (`/vardiyalar/durumum`) bağlandığını ve hem giriş hem periyodik
+yenileme noktalarından çağrıldığını doğrular. `tests/test_api.py`ye eklenen
+(yalnızca `py_compile` ile doğrulanan) testler uç noktanın güvenlik-dışı
+roller için zararsız yanıt döndüğünü, vardiyasız bir güvenlik kullanıcısı
+için `su_an_aktif_vardiya_var_mi: false` ve boş liste döndüğünü, ve "00:00 ->
+00:00" (gerçek saatten bağımsız, her zaman "şu anı" kapsayan) bir vardiya
+atandığında bunun aktif olarak doğru bildirildiğini doğrular.
+
 ## Kalıcı Test Altyapısı
 
 `tests/` klasöründe pytest tabanlı bir test paketi var:

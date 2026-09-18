@@ -2412,3 +2412,60 @@ def test_disa_aktar_pdf_kayit_detay_vardiya_disinda_403_doner(client, yetkili_he
     # Bu güvenlik kullanıcısının HİÇ vardiyası yok -> kayıt vardiyasına ait değil.
     r3 = client.get(f"/disa-aktar/pdf/kayit/{kayit_id}", headers=guvenlik_header)
     assert r3.status_code == 403, r3.text
+
+
+def test_vardiya_durumum_guvenlik_disi_rol_icin_zararsiz_yanit_doner(client, yetkili_header):
+    """/vardiyalar/durumum rol kontrolü YAPMAZ (bkz. uç noktanın docstring'i)
+    -- yönetici/operatör gibi güvenlik-dışı roller için de 200 döner, ama
+    yalnızca rol_guvenlik_mi: false ve sunucu saatini içerir."""
+    r = client.get("/vardiyalar/durumum", headers=yetkili_header)
+    assert r.status_code == 200, r.text
+    gövde = r.json()
+    assert gövde["rol_guvenlik_mi"] is False
+    assert "sunucu_simdiki_zaman" in gövde
+    assert "vardiyalar" not in gövde
+
+
+def test_vardiya_durumum_vardiyasiz_guvenlik_kullanicisi_icin_aktif_degil_ve_bos_liste(
+    client, yetkili_header
+):
+    _, guvenlik_header = _rbac_guvenlik_kullanici_olustur(client, yetkili_header)
+    r = client.get("/vardiyalar/durumum", headers=guvenlik_header)
+    assert r.status_code == 200, r.text
+    gövde = r.json()
+    assert gövde["rol_guvenlik_mi"] is True
+    assert gövde["su_an_aktif_vardiya_var_mi"] is False
+    assert gövde["toplam_vardiya_sayisi"] == 0
+    assert gövde["vardiyalar"] == []
+
+
+def test_vardiya_durumum_aktif_vardiyayi_dogru_bildirir(client, yetkili_header):
+    """2026-09-18 kullanıcı geri bildirimi ("vardiya atadım ama canlı geçiş
+    Kayıtlar sekmesinde gözükmüyor") için eklenen teşhis uç noktası: "00:00 ->
+    00:00" (bugünün tamamını kapsayan, gece yarısını geçen) bir vardiya
+    atandığında `su_an_aktif_vardiya_var_mi` TRUE ve dönen `vardiyalar`
+    listesindeki tek öğenin `su_an_aktif_mi` alanı da TRUE olmalı -- bu,
+    gerçek saatten bağımsız, deterministik bir doğrulamadır (bkz. yukarıdaki
+    aynı desenin kullanıldığı diğer testler)."""
+    guvenlik_id, guvenlik_header = _rbac_guvenlik_kullanici_olustur(client, yetkili_header)
+    bugun = datetime.now().strftime("%Y-%m-%d")
+    r0 = client.post(
+        "/vardiyalar",
+        json={
+            "kullanici_id": guvenlik_id,
+            "tarih": bugun,
+            "baslangic_saat": "00:00",
+            "bitis_saat": "00:00",
+        },
+        headers=yetkili_header,
+    )
+    assert r0.status_code == 200, r0.text
+
+    r = client.get("/vardiyalar/durumum", headers=guvenlik_header)
+    assert r.status_code == 200, r.text
+    gövde = r.json()
+    assert gövde["su_an_aktif_vardiya_var_mi"] is True
+    assert gövde["toplam_vardiya_sayisi"] == 1
+    assert len(gövde["vardiyalar"]) == 1
+    assert gövde["vardiyalar"][0]["su_an_aktif_mi"] is True
+    assert gövde["vardiyalar"][0]["tarih"] == bugun

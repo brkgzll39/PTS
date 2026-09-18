@@ -3246,6 +3246,66 @@ def vardiya_sil(
     return {"mesaj": "Vardiya ataması silindi"}
 
 
+@app.get("/vardiyalar/durumum")
+def vardiya_durumum(db: Session = Depends(get_db), kullanici: models.Kullanici = Depends(_personel_girisi_gerekli)):
+    """Çağıran kullanıcının KENDİ vardiya atamalarını ve şu anki (SUNUCUNUN
+    kendi saatine göre -- `datetime.now()`) aktif/pasif durumunu döner.
+
+    NEDEN GEREKLİ (2026-09-18 kullanıcı geri bildirimi): bir güvenlik
+    personeli vardiya atadıktan SONRA bile, o vardiya penceresi içinde
+    gerçekleşen YENİ/canlı bir geçişi Kayıtlar sekmesinde göremediğini
+    bildirdi. `_guvenlik_kayit_filtresi_uygula` tamamen SUNUCU TARAFINDA,
+    `datetime.now()` ile hesaplanan pencerelere göre çalıştığı için (bkz. o
+    fonksiyonun notu), en olası kök nedenlerden biri sunucunun sistem
+    saatinin (Windows makinesi) yönetici panelini kullanan tarayıcının/
+    kişinin bildiği saatten FARKLI olması (saat dilimi/saat senkronizasyon
+    sorunu) -- bu uç nokta olmadan bunu TEŞHİS ETMENİN bir yolu yoktu.
+    Bu uç nokta, `sunucu_simdiki_zaman` alanıyla tam olarak bunu ortaya
+    çıkarır: kullanıcı bunu kendi saatiyle karşılaştırarak sorunun sunucu
+    saati mi yoksa yanlış girilmiş bir vardiya mı olduğunu hemen görebilir.
+    Frontend'de Kayıtlar sekmesindeki teşhis banner'ı (bkz. app.js) bu
+    veriyi kullanıcıya gösterir -- "sıfır sessiz hata" ilkesiyle, filtrenin
+    NEDEN boş bir liste ürettiği asla belirsiz kalmamalı.
+
+    Güvenlik dışı roller için de zararsız/anlamsız olmayan bir yanıt döner
+    (yalnızca `rol_guvenlik_mi: false`) -- bu uç nokta rol kontrolü yapmaz,
+    çünkü yalnızca ÇAĞIRANIN KENDİ verisini döner, başka bir yetkilendirme
+    katmanı gerektirmez.
+    """
+    simdi = datetime.now()
+    if kullanici.rol != ROL_GUVENLIK:
+        return {"rol_guvenlik_mi": False, "sunucu_simdiki_zaman": simdi.isoformat()}
+    atamalar = (
+        db.query(models.VardiyaAtamasi)
+        .filter(models.VardiyaAtamasi.kullanici_id == kullanici.id)
+        .order_by(desc(models.VardiyaAtamasi.tarih))
+        .limit(30)
+        .all()
+    )
+    vardiyalar = []
+    su_an_aktif = False
+    for a in atamalar:
+        baslangic, bitis = _vardiya_penceresi(a.tarih, a.baslangic_saat, a.bitis_saat)
+        aktif_mi = baslangic <= simdi < bitis
+        su_an_aktif = su_an_aktif or aktif_mi
+        vardiyalar.append({
+            "id": a.id,
+            "tarih": a.tarih.strftime("%Y-%m-%d"),
+            "baslangic_saat": a.baslangic_saat,
+            "bitis_saat": a.bitis_saat,
+            "pencere_baslangic": baslangic.isoformat(),
+            "pencere_bitis": bitis.isoformat(),
+            "su_an_aktif_mi": aktif_mi,
+        })
+    return {
+        "rol_guvenlik_mi": True,
+        "sunucu_simdiki_zaman": simdi.isoformat(),
+        "su_an_aktif_vardiya_var_mi": su_an_aktif,
+        "toplam_vardiya_sayisi": len(atamalar),
+        "vardiyalar": vardiyalar,
+    }
+
+
 # ==================================================================
 # SAKİN ÖZ-HİZMET PORTALI (2026-09-17)
 # ==================================================================

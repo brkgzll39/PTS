@@ -459,7 +459,11 @@
            SESSİZCE liste kısaltması yerine kullanıcıya AÇIKÇA bildirilmesi için
            (bkz. 2026-09-18 notu, README). -->
       <div class="alert alert-info d-none py-2 mb-3" id="guvenlikVardiyaBilgisi">
-        <i class="bi bi-info-circle-fill me-1"></i>Bu liste yalnızca SİZİN vardiyanıza denk gelen kayıtları gösterir.
+        <div><i class="bi bi-info-circle-fill me-1"></i>Bu liste yalnızca SİZİN vardiyanıza denk gelen kayıtları gösterir.</div>
+        <!-- Teşhis alanı: GET /vardiyalar/durumum sonucuna göre app.js::guvenlikVardiyaDurumunuGuncelle
+             tarafından doldurulur -- "neden boş görünüyor" sorusunu sessiz bırakmamak için
+             (bkz. 2026-09-18 kullanıcı geri bildirimi notu, README). -->
+        <div id="guvenlikVardiyaDurumu" class="small mt-1"></div>
       </div>
       <div class="card mb-3">
         <div class="card-body">
