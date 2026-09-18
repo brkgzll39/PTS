@@ -2370,6 +2370,8 @@ async function sistemAyarlariYukle() {
       { key: "min_tanima_guveni", label: "Min. OCR okuma güveni — oy birikimine giriş eşiği (0-1)", tip: "number", step: "0.05" },
       { key: "otomatik_kayit_min_guven_skoru", label: "Min. kayıt güven skoru — kayda düşme eşiği (0-1)", tip: "number", step: "0.01" },
       { key: "otomatik_kayit_min_guven_skoru_bilinen_arac", label: "Min. kayıt güven skoru — BİLİNEN araç istisnası (0-1)", tip: "number", step: "0.01" },
+      { key: "tekrar_gecikme_sn", label: "Aynı kameranın kendi tekrarını bastırma gecikmesi (sn)", tip: "number" },
+      { key: "capraz_kamera_tekrar_penceresi_sn", label: "Farklı kameralar arası kısa süreli tekrar penceresi (sn, 0 = kapalı)", tip: "number" },
     ];
     el.innerHTML = `<form id="sistemAyarlariForm" data-rol-min="yonetici">${satirlar.map(s =>
       `<div class="mb-2"><label class="form-label small">${escapeHtml(s.label)}</label>
@@ -2382,7 +2384,13 @@ async function sistemAyarlariYukle() {
         (varsayılan %80), sahada zaten kayıtlı (abone/personel) bir plakayla tam/çok yakın eşleşen bir
         tespitin, genel eşiğin altında kalsa bile bu daha düşük eşiği geçtiği sürece yine de kaydedilmesini
         sağlar — kayıtlı bir aracın düşük ışık/açı yüzünden düşük OCR güveniyle okunup girişte hiç
-        kaydedilmemesi (ama çıkışta kaydedilmesi gibi tutarsızlıklar) buradan kaynaklanır.</p>
+        kaydedilmemesi (ama çıkışta kaydedilmesi gibi tutarsızlıklar) buradan kaynaklanır.
+        "Aynı kameranın kendi tekrarı", TEK bir kameranın (örn. bariyer önünde bekleyen bir aracı)
+        art arda birden fazla kez "yeni bir geçiş" olarak kaydetmesini engeller. "Farklı kameralar
+        arası kısa süreli tekrar" ise FARKLI bir sorunu çözer: giriş ve çıkış kameraları aynı fiziksel
+        geçidi/yolu paylaşıyorsa, bir aracın TEK geçişi her iki kameranın da görüş alanına girip iki
+        AYRI (ve çelişkili yönde) kayıt oluşturabilir -- bu pencere içinde farklı bir kameradan gelen
+        aynı plaka, yeni bir kayıt olarak SAYILMAZ.</p>
       <div class="form-check mb-2">
         <input type="checkbox" class="form-check-input" id="ayar_bilinen_plaka_duzeltme_aktif" ${ayarlar.bilinen_plaka_duzeltme_aktif ? "checked" : ""}>
         <label class="form-check-label small" for="ayar_bilinen_plaka_duzeltme_aktif">Bilinen plakaya göre OCR düzeltmesi (tek karakter hataları)</label>

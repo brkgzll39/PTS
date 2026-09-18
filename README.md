@@ -1290,6 +1290,74 @@ bildirdiği tam senaryonun regresyon testi dahil, ayrıca "ezici çoğunluk
 geçersiz kılınmaz", "ortadan farklıysa uygulanmaz" ve "güven azınlıktan
 sızıntı yapmaz" güvenlik/doğruluk sınırlarının her biri ayrı test edildi).
 
+## Çapraz Kamera Kısa Süreli Tekrarı (2026-09-18)
+
+Kullanıcı talebi: "Giriş kamerasına bir araç plakası geldi ve sistem bunu
+kayıt etti. Bu araç geçişine devam ederken çıkış kamerasının da açısına
+giriyor -- yani ilk görüntü bir kameradan alındıysa diğer kameranın çekmesi
+halinde bile 3 dakika içerisindeki görüntü farklı kameradan çıkış veya
+giriş olarak gözükmesin." Yani: giriş ve çıkış kameraları fiziksel olarak
+aynı geçidi/yolu paylaşıyorsa, bir aracın TEK geçişi her iki kameranın da
+görüş alanına girip iki AYRI (ve çelişkili yönde) kayıt oluşturabiliyordu.
+
+**Neden `camera_reader.py`'deki mevcut mekanizma bunu çözmüyordu:**
+`KameraPipeline.son_plaka_zamani`/`tekrar_gecikme_sn` (varsayılan 30 sn)
+zaten "aynı plakayı kısa sürede tekrar bildirme" diye bir şey yapıyordu --
+ama bu, TEK bir `KameraPipeline` NESNESİNİN kendi belleğinde (Python
+sözlüğünde) tutuluyor. Farklı kameralar (ayrı `KameraPipeline` nesneleri,
+hatta ayrı süreçler/makineler) birbirinin tespitlerinden tamamen habersiz --
+giriş kamerasının belleği, çıkış kamerasının 10 saniye önce ne kaydettiğini
+asla bilemez. Bu yüzden çözüm, TÜM kameraların ortak gerçek kaynağı olan
+**veritabanı** seviyesinde uygulandı (`backend/main.py::
+_capraz_kamera_kisa_sureli_tekrar_mi`, `_kayit_olustur_ve_bildir` içinden
+çağrılır): yeni bir otomatik kayıt oluşturulmadan hemen önce, aynı
+(normalize edilmiş) plakanın, FARKLI bir `kamera_id`'den, yapılandırılmış
+pencere içinde (varsayılan **180 sn = 3 dakika**, yeni sistem ayarı
+`capraz_kamera_tekrar_penceresi_sn`) zaten kaydedilip kaydedilmediği
+kontrol edilir. Varsa, yeni kayıt oluşturulmaz -- önceki (ilk kaydeden)
+kameranın kaydı geçerli kalır, yüklenen görsel silinir ve istek
+`{"atlandi": true, "sebep": "capraz_kamera_kisa_sureli_tekrar", ...}` ile
+yanıtlanır (düşük güven skoru yüzünden atlanan tespitlerle AYNI, zaten var
+olan "atlandi" deseni kullanıldı).
+
+**Kapsam/güvenlik sınırları (kasıtlı):**
+
+- Yalnızca OTOMATİK (kamera pipeline'ı / harici ANPR sistemi) tespitlere
+  uygulanır. Elle girilen kayıtlar (`POST /kayitlar`, "Manuel Kayıt Ekle")
+  bu kontrolden HİÇ geçirilmez -- görevlinin bilinçli girdiği bir kaydın
+  sessizce atlanması yanlış olurdu.
+- Kontrol yalnızca FARKLI bir `kamera_id` için geçerlidir -- AYNI kameranın
+  kendi tekrarını bastırmak hâlâ `camera_reader.py`'nin (in-process,
+  `tekrar_gecikme_sn`) işidir; bu yeni kontrol onun YERİNE değil, YANINA
+  eklendi.
+- Pencere `0` (veya negatif) yapılırsa özellik tamamen KAPANIR -- "Sistem
+  Ayarları" panelinden yönetici tarafından değiştirilebilir.
+- Yön (`yon`) bilgisine BAKILMAZ, yalnızca `kamera_id` farkına bakılır --
+  kullanıcının talebi zaten yönden bağımsızdı ("çıkış veya giriş olarak
+  gözükmesin").
+
+**Dürüstçe belirtilmeli (kullanıcının kabul ettiği bir ödünleşim):** eğer
+bir araç GERÇEKTEN 3 dakikadan kısa bir sürede girip çıkarsa (örn. çok hızlı
+bir teslimat/indirme-bindirme), bu da aynı fiziksel geçiş gibi
+değerlendirilip YALNIZCA ilk kayıt tutulur -- ikinci (gerçek) geçiş
+kaydedilmez. Kullanıcı bu pencereyi bilinçli olarak 3 dakika istedi; site
+ihtiyacına göre panelden daha kısa/uzun bir değere çekilebilir.
+
+**Ayrıca düzeltilen, ilişkili bir hata (bu araştırma sırasında bulundu):**
+`tekrar_gecikme_sn` sistem ayarı ÖNCEDEN tanımlıydı ama `_pipeline_baslat`
+tarafından hiçbir zaman okunup `KameraPipeline`'a GEÇİRİLMİYORDU -- panelden
+değiştirilse bile (üstelik panelde bir form alanı bile YOKTU) hiçbir etkisi
+olmuyordu, tamamen sessiz/etkisiz bir ayardı. Artık hem gerçekten
+`KameraPipeline`'a geçiriliyor hem de "Sistem Ayarları" panelinde bir form
+alanı olarak görünüyor.
+
+**Testler:** `tests/test_api.py`'ye 5 yeni test eklendi (çapraz kamera
+tekrarının atlandığını, AYNI kameradan gelenin etkilenmediğini, pencere
+dışındaki eski kaydın engellemediğini, pencere 0 iken özelliğin tamamen
+kapandığını ve manuel kayıtların HİÇ etkilenmediğini doğrulayan) -- bu dosya
+fastapi/sqlalchemy'ye ihtiyaç duyduğu için bu sandbox'ta çalıştırılamadı,
+yalnızca `py_compile` ile sözdizimi doğrulandı (bkz. depodaki genel not).
+
 ## Kalıcı Test Altyapısı
 
 `tests/` klasöründe pytest tabanlı bir test paketi var:

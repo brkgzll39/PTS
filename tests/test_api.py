@@ -1470,6 +1470,119 @@ def test_kayit_ekle_manuel_farkli_okuma_sayisi_none_kalir(client, operator_heade
     assert r.json()["farkli_okuma_sayisi"] is None
 
 
+# ------------------------------------------------------------------
+# Çapraz kamera kısa süreli tekrarı (2026-09-18)
+# ------------------------------------------------------------------
+# Kullanıcı bildirimi: giriş kamerası bir aracı kaydettikten sonra, araç
+# geçişine devam ederken çıkış kamerasının da görüş açısına girebiliyor --
+# bu TEK bir fiziksel geçiş olmasına rağmen ikinci kamera bunu AYRI (yanlış
+# yönde) bir kayıt olarak düşürmemeli. Bkz. main.py::
+# _capraz_kamera_kisa_sureli_tekrar_mi.
+
+def test_capraz_kamera_kisa_surede_farkli_kameradan_ayni_plaka_atlanir(client, yetkili_header):
+    r1 = client.post("/kayitlar/otomatik", data={
+        "plaka_no": "34 CKT 01", "kamera_id": "GIRIS-KAM", "yon": "giris", "guven_skoru": 0.99,
+    })
+    assert r1.status_code == 200, r1.text
+    assert "atlandi" not in r1.json()
+
+    r2 = client.post("/kayitlar/otomatik", data={
+        "plaka_no": "34 CKT 01", "kamera_id": "CIKIS-KAM", "yon": "cikis", "guven_skoru": 0.99,
+    })
+    assert r2.status_code == 200, r2.text
+    veri2 = r2.json()
+    assert veri2["atlandi"] is True
+    assert veri2["sebep"] == "capraz_kamera_kisa_sureli_tekrar"
+    assert veri2["onceki_kamera_id"] == "GIRIS-KAM"
+
+    r3 = client.get("/kayitlar", params={"plaka": "34 CKT 01"}, headers=yetkili_header)
+    assert r3.status_code == 200, r3.text
+    assert len(r3.json()) == 1, "Çapraz kamera tekrarı yine de İKİNCİ bir kayıt oluşturdu"
+
+
+def test_capraz_kamera_ayni_kameradan_tekrar_engellenmez(client, yetkili_header):
+    """Bu kontrol yalnızca FARKLI bir kamera_id için geçerlidir -- AYNI
+    kameranın kendi tekrarını bastırmak camera_reader.py'nin (in-process,
+    tekrar_gecikme_sn) işidir, backend bunu engellemez/engellememeli (aksi
+    halde tek bir kameradan gelen MEŞRU art arda geçişler -- örn. giriş
+    kamerasının kendisi -- de yanlışlıkla atlanırdı)."""
+    r1 = client.post("/kayitlar/otomatik", data={
+        "plaka_no": "34 CKT 02", "kamera_id": "GIRIS-KAM", "yon": "giris", "guven_skoru": 0.99,
+    })
+    assert r1.status_code == 200 and "atlandi" not in r1.json()
+
+    r2 = client.post("/kayitlar/otomatik", data={
+        "plaka_no": "34 CKT 02", "kamera_id": "GIRIS-KAM", "yon": "giris", "guven_skoru": 0.99,
+    })
+    assert r2.status_code == 200, r2.text
+    assert "atlandi" not in r2.json(), "Aynı kameradan gelen kayıt yanlışlıkla çapraz-kamera tekrarı sayıldı"
+
+    r3 = client.get("/kayitlar", params={"plaka": "34 CKT 02"}, headers=yetkili_header)
+    assert len(r3.json()) == 2
+
+
+def test_capraz_kamera_pencere_disindaki_eski_kayit_engellemez(client, yetkili_header):
+    """Önceki kayıt yapılandırılmış pencereden (varsayılan 180 sn) daha
+    ESKİYSE, bu artık aynı fiziksel geçiş sayılamayacak kadar uzun bir süre
+    demektir -- yeni kayıt normal şekilde oluşturulmalı."""
+    from backend.database import engine
+    from sqlalchemy import text as sqltext
+
+    with engine.connect() as conn:
+        conn.execute(sqltext(
+            "INSERT INTO plaka_kayitlari (plaka_no, kamera_id, yon, yetki_durumu, tarih_saat, manuel_giris) "
+            "VALUES ('34 CKT 03', 'GIRIS-KAM', 'giris', 'yetkisiz', datetime('now', '-10 minutes'), 0)"
+        ))
+        conn.commit()
+
+    r = client.post("/kayitlar/otomatik", data={
+        "plaka_no": "34 CKT 03", "kamera_id": "CIKIS-KAM", "yon": "cikis", "guven_skoru": 0.99,
+    })
+    assert r.status_code == 200, r.text
+    assert "atlandi" not in r.json(), "10 dakika önceki kayıt yanlışlıkla hâlâ 'yakın zamanlı' sayıldı"
+
+    r2 = client.get("/kayitlar", params={"plaka": "34 CKT 03"}, headers=yetkili_header)
+    assert len(r2.json()) == 2
+
+
+def test_capraz_kamera_penceresi_sifirlanirsa_ozellik_kapanir(client, yetkili_header):
+    """capraz_kamera_tekrar_penceresi_sn 0'a çekilirse özellik tamamen
+    devre dışı kalmalı -- kullanıcı bunu istemezse tamamen kapatabilmeli."""
+    r0 = client.put("/sistem/ayarlar", json={"capraz_kamera_tekrar_penceresi_sn": 0}, headers=yetkili_header)
+    assert r0.status_code == 200, r0.text
+    try:
+        r1 = client.post("/kayitlar/otomatik", data={
+            "plaka_no": "34 CKT 04", "kamera_id": "GIRIS-KAM", "yon": "giris", "guven_skoru": 0.99,
+        })
+        assert r1.status_code == 200 and "atlandi" not in r1.json()
+
+        r2 = client.post("/kayitlar/otomatik", data={
+            "plaka_no": "34 CKT 04", "kamera_id": "CIKIS-KAM", "yon": "cikis", "guven_skoru": 0.99,
+        })
+        assert r2.status_code == 200, r2.text
+        assert "atlandi" not in r2.json(), "Pencere 0 iken özellik yine de devrede kaldı"
+    finally:
+        client.put("/sistem/ayarlar", json={"capraz_kamera_tekrar_penceresi_sn": 180}, headers=yetkili_header)
+
+
+def test_capraz_kamera_manuel_kayitlari_hic_etkilemez(client, operator_header):
+    """Görevlinin bilinçli olarak elle girdiği bir kayıt (kayit_ekle_manuel),
+    çok yakın zamanda farklı bir kameradan aynı plaka otomatik kaydedilmiş
+    olsa bile ASLA sessizce atlanmamalı -- operatör iradesi her zaman
+    geçerli olmalı."""
+    r1 = client.post("/kayitlar/otomatik", data={
+        "plaka_no": "34 CKT 05", "kamera_id": "GIRIS-KAM", "yon": "giris", "guven_skoru": 0.99,
+    })
+    assert r1.status_code == 200 and "atlandi" not in r1.json()
+
+    r2 = client.post("/kayitlar", json={
+        "plaka_no": "34 CKT 05", "kamera_id": "CIKIS-KAM", "yon": "cikis",
+    }, headers=operator_header)
+    assert r2.status_code == 200, r2.text
+    assert r2.json()["plaka_no"] == "34 CKT 05"
+    assert r2.json()["manuel_giris"] is True
+
+
 def test_kayit_ekle_otomatik_guven_skoru_gonderilmezse_filtrelenmez(client, yetkili_header):
     """Harici/eski entegrasyonlar güven skoru göndermeyebilir -- bu durumda
     filtre hiç uygulanmaz (geriye dönük uyumluluk), kayıt normal şekilde

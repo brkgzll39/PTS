@@ -176,7 +176,26 @@ SISTEM_AYARLARI_DOSYASI = os.getenv("PTS_SISTEM_AYARLARI_FILE") or os.path.join(
 _VARSAYILAN_AYARLAR = {
     "supheli_esik": 3,           # saatte kaç red → şüpheli alarm
     "goruntu_saklama_gun": 30,   # görüntü saklama süresi (gün)
-    "tekrar_gecikme_sn": 30,     # aynı plakayı tekrar bildirme gecikmesi
+    # AYNI KAMERANIN kendi tekrarını bastırma gecikmesi (sn) -- örn. bir araç
+    # bariyer önünde birkaç saniye beklerse, aynı pipeline aynı plakayı tekrar
+    # tekrar "yeni bir geçiş" olarak bildirmesin diye (bkz.
+    # camera_reader.py::KameraPipeline.son_plaka_zamani/tekrar_gecikme_sn).
+    # DÜZELTME (2026-09-18): bu ayar ÖNCEDEN burada tanımlıydı ama HİÇBİR
+    # yerde okunmuyordu -- _pipeline_baslat her zaman KameraPipeline'ın kendi
+    # sabit varsayılanını (30) kullanıyordu, panelden değiştirilse bile hiçbir
+    # etkisi olmuyordu (sessiz/etkisiz ayar). Artık gerçekten uygulanıyor.
+    "tekrar_gecikme_sn": 30,
+    # FARKLI KAMERALAR ARASI kısa süreli tekrar penceresi (sn) -- 2026-09-18,
+    # kullanıcı talebi: giriş kamerası bir aracı kaydettikten sonra araç
+    # geçişine devam ederken çıkış kamerasının görüş açısına da girebiliyor
+    # (iki kamera fiziksel olarak aynı geçidi/yolu paylaşıyor) -- bu TEK bir
+    # fiziksel geçiş olmasına rağmen ikinci kamera bunu AYRI (yanlış yönde)
+    # bir kayıt olarak düşürmemeli. tekrar_gecikme_sn'den FARKLIDIR: o AYNI
+    # kameranın kendi belleğinde çalışır (camera_reader.py), bu ise TÜM
+    # kameraların ortak gerçek kaynağı olan veritabanı seviyesinde, FARKLI
+    # kamera_id'ler arasında çalışır (bkz. main.py::
+    # _capraz_kamera_kisa_sureli_tekrar_mi). 0 veya negatif = özellik kapalı.
+    "capraz_kamera_tekrar_penceresi_sn": 180,
     "auto_bariyer_giris": False, # yetkili girişte otomatik bariyer
     "panel_yenileme_sn": 15,     # frontend polling aralığı
     "min_tanima_guveni": 0.4,    # bu eşiğin altındaki OCR okumaları hiç DEĞERLENDİRMEYE (oy
@@ -248,14 +267,24 @@ def _pipeline_baslat(kamera: dict) -> bool:
         if kid in _aktif_pipelineler and _aktif_pipelineler[kid].calisiyor and _aktif_pipelineler[kid].thread_canli_mi():
             return True
         try:
-            min_guven = float(_sistem_ayarlari_oku().get("min_tanima_guveni", 0.4) or 0.0)
+            ayarlar = _sistem_ayarlari_oku()
+            min_guven = float(ayarlar.get("min_tanima_guveni", 0.4) or 0.0)
             min_guven = max(0.0, min(1.0, min_guven))  # ayar dosyasından gelen değeri emniyete al
+            # DÜZELTME (2026-09-18): bu ayar ÖNCEDEN _pipeline_baslat'a hiç
+            # geçirilmiyordu -- panelden değiştirilse bile KameraPipeline
+            # her zaman kendi sabit varsayılanını (30 sn) kullanıyordu (bkz.
+            # _VARSAYILAN_AYARLAR'daki "tekrar_gecikme_sn" notu).
+            try:
+                tekrar_gecikme_sn = int(ayarlar.get("tekrar_gecikme_sn", 30))
+            except (TypeError, ValueError):
+                tekrar_gecikme_sn = 30
             p = _KameraPipeline(
                 video_kaynagi=kamera["rtsp_url"],
                 kamera_id=kamera["ad"],
                 yon=kamera.get("yon", "giris"),
                 min_guven_skoru=min_guven,
                 roi=kamera.get("roi"),
+                tekrar_gecikme_sn=max(0, tekrar_gecikme_sn),
             )
             p.baslat()
             _aktif_pipelineler[kid] = p
@@ -1955,6 +1984,62 @@ def _bilinen_plakaya_yakinlik_duzelt(db: Session, ham_plaka: str, guven_skoru: O
     return ham_plaka, None
 
 
+# ------------------------------------------------------------------
+# ÇAPRAZ KAMERA KISA SÜRELİ TEKRARI (2026-09-18)
+# ------------------------------------------------------------------
+# Kullanıcı talebi: giriş kamerası bir aracı kaydettikten sonra, araç geçişine
+# devam ederken çıkış kamerasının açısına da girebiliyor (fiziksel olarak iki
+# kameranın görüş alanı aynı geçidi/yolu paylaşıyor) -- bu TEK bir fiziksel
+# geçiş olmasına rağmen, ikinci kameranın bunu AYRI bir kayıt (yanlış yönde
+# bir "giriş" ya da "çıkış") olarak kaydetmesi isteniyordu. Bu,
+# camera_reader.py::KameraPipeline.son_plaka_zamani/tekrar_gecikme_sn
+# mekanizmasıyla ÇÖZÜLEMEZ -- o mekanizma yalnızca TEK bir kameranın kendi
+# tekrarlarını (aynı pipeline nesnesinin belleğinde) bastırır; farklı
+# kameralar (ayrı KameraPipeline nesneleri, hatta ayrı süreçler) birbirinin
+# tespitlerinden habersizdir. Bu yüzden çapraz kamera kontrolü, TÜM
+# kameraların ortak gerçek kaynağı olan VERİTABANI seviyesinde yapılır.
+def _capraz_kamera_kisa_sureli_tekrar_mi(db: Session, plaka_no: str, kamera_id: str) -> Optional[models.Kayit]:
+    """Aynı (normalize edilmiş) plaka, FARKLI bir kameradan, yapılandırılmış
+    pencere içinde (varsayılan 180 sn = 3 dakika, bkz.
+    `capraz_kamera_tekrar_penceresi_sn` sistem ayarı) zaten kaydedildiyse, o
+    önceki Kayit satırını döner (yoksa None). Yalnızca OTOMATİK (kamera
+    pipeline/harici ANPR) tespitlere uygulanır -- elle girilen kayıtlar
+    (manuel_giris=True) bu kontrolden HİÇ geçirilmez, çünkü görevlinin
+    bilinçli girdiği bir kaydın sessizce atlanması yanlış olur (bkz.
+    _kayit_olustur_ve_bildir'deki çağrı).
+
+    Pencere 0 veya negatifse özellik tamamen KAPALIDIR (geriye dönük
+    uyumluluk / kullanıcı devre dışı bırakmak isteyebilir)."""
+    # Kayit.plaka_no VERİTABANINA HER ZAMAN büyük harf/kırpılmış yazılır (bkz.
+    # _kayit_olustur_ve_bildir'in sonundaki models.Kayit(...) çağrısı) --
+    # ama bu fonksiyona gelen `plaka_no` argümanı, bilinen-plaka OCR
+    # düzeltmesinden (bkz. _bilinen_plakaya_yakinlik_duzelt) doğrudan
+    # gelmiş olabilir ve o, admin'in Kişi kaydına GİRDİĞİ ham biçimi (farklı
+    # harf büyüklüğünde olabilir) döner. Burada da normalize etmezsek,
+    # karşılaştırma sessizce eşleşmeyip gerçek bir çapraz kamera tekrarını
+    # KAÇIRABİLİRDİ -- bu yüzden savunmacı olarak burada da normalize edilir.
+    plaka_no = plaka_no.upper().strip()
+    pencere_ham = _sistem_ayarlari_oku().get("capraz_kamera_tekrar_penceresi_sn", 180)
+    try:
+        pencere_sn = int(pencere_ham)
+    except (TypeError, ValueError):
+        pencere_sn = 180
+    if pencere_sn <= 0:
+        return None
+
+    esik_zaman = datetime.now() - timedelta(seconds=pencere_sn)
+    return (
+        db.query(models.Kayit)
+        .filter(
+            models.Kayit.plaka_no == plaka_no,
+            models.Kayit.kamera_id != kamera_id,
+            models.Kayit.tarih_saat >= esik_zaman,
+        )
+        .order_by(desc(models.Kayit.tarih_saat))
+        .first()
+    )
+
+
 def _kayit_olustur_ve_bildir(db: Session, plaka_no: str, kamera_id: str, yon: str,
                               guven_skoru: Optional[float], goruntu_yolu: Optional[str],
                               dogrulama_kare_sayisi: Optional[int] = None,
@@ -1970,6 +2055,34 @@ def _kayit_olustur_ve_bildir(db: Session, plaka_no: str, kamera_id: str, yon: st
             logger.info("OCR düzeltmesi uygulandı: '%s' -> bilinen plaka '%s'", ham, duzeltilmis)
             ham_plaka_metni = ham
             plaka_no = duzeltilmis
+
+    if not manuel_giris:
+        onceki = _capraz_kamera_kisa_sureli_tekrar_mi(db, plaka_no, kamera_id)
+        if onceki is not None:
+            # AYNI aracın tek bir fiziksel geçişi iki farklı kameranın görüş
+            # alanına da girmiş olabilir (bkz. yukarıdaki modül notu) -- bunu
+            # AYRI bir giriş/çıkış kaydı olarak SAYMIYORUZ; önceki (ilk
+            # kaydeden) kameranın kaydı zaten geçerli kalır.
+            if goruntu_yolu and os.path.isfile(goruntu_yolu):
+                try:
+                    os.remove(goruntu_yolu)
+                except OSError:
+                    pass
+            logger.info(
+                "[%s] Çapraz kamera kısa süreli tekrarı atlandı: plaka=%s, %.0f sn önce "
+                "kamera '%s' tarafından zaten kaydedilmiş (kayıt id=%d) -- aynı fiziksel "
+                "geçiş olarak değerlendirildi, yeni kayıt oluşturulmadı.",
+                kamera_id, plaka_no, (datetime.now() - onceki.tarih_saat).total_seconds(),
+                onceki.kamera_id, onceki.id,
+            )
+            return JSONResponse(status_code=200, content={
+                "atlandi": True,
+                "sebep": "capraz_kamera_kisa_sureli_tekrar",
+                "plaka_no": plaka_no,
+                "onceki_kamera_id": onceki.kamera_id,
+                "onceki_kayit_id": onceki.id,
+                "onceki_tarih_saat": onceki.tarih_saat.isoformat(),
+            })
 
     yetki, kisi_id, kisi_tip = _plaka_yetki_kontrol(db, plaka_no)
 
