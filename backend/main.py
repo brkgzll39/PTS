@@ -601,6 +601,36 @@ app.add_middleware(
 )
 
 
+@app.middleware("http")
+async def _guvenlik_basliklarini_ekle(request: Request, call_next):
+    """Her yanıta, tarayıcı tarafında ek bir savunma katmanı (defense in
+    depth) sağlayan birkaç standart güvenlik başlığı ekler.
+
+    KÖK NEDEN (2026-09-20, geniş kapsamlı denetim): bu başlıklar hiç
+    ayarlanmıyordu -- eksiklikleri kendi başına açık bir güvenlik AÇIĞI
+    oluşturmaz (asıl yetkilendirme zaten backend'de yapılıyor), ama panel
+    başka bir sayfaya (örn. kimlik avı amaçlı sahte bir sayfaya) gömülüp
+    tıklama kaçırma (clickjacking) denenirse, ya da bir tarayıcı bir JSON/
+    metin yanıtını hatalı biçimde HTML/JS olarak yorumlamaya çalışırsa
+    (MIME sniffing) hiçbir ek koruma yoktu. `X-Content-Type-Options` ve
+    `X-Frame-Options` her zaman güvenlidir (panel hiçbir yerde başka bir
+    origin'den iframe içine gömülmüyor -- kod tabanında hiç `<iframe>`
+    kullanılmıyor). `Strict-Transport-Security`, tarayıcılar tarafından
+    yalnızca YANIT gerçekten HTTPS üzerinden geldiyse dikkate alınır (düz
+    HTTP üzerinden gönderilirse tarayıcı onu sessizce yok sayar), bu yüzden
+    ters vekil (reverse proxy) TLS sonlandırması olmayan kurulumlarda da
+    zararsızdır. Kapsamlı bir Content-Security-Policy BİLİNÇLİ OLARAK
+    eklenmedi -- panelin envanterini (inline script/style kullanımı dahil)
+    çıkarmadan eklenen bir CSP, test edilmeden üretimde paneli sessizce
+    bozabilir; bu, ayrı ve daha dikkatli bir çalışma gerektirir."""
+    yanit = await call_next(request)
+    yanit.headers["X-Content-Type-Options"] = "nosniff"
+    yanit.headers["X-Frame-Options"] = "SAMEORIGIN"
+    yanit.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    yanit.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+    return yanit
+
+
 # ================================================================
 # KÜRESEL (GLOBAL) HATA YAKALAYICILAR
 # ================================================================
@@ -1333,11 +1363,42 @@ def _lisans_durumunu_yaz(durum: dict) -> None:
         json.dump(durum, dosya, ensure_ascii=False, indent=2)
 
 
+_LISANS_UYARI_ESIK_GUN = 14  # bitişe bu kadar veya daha az gün kalınca "yakında dolacak" uyarısı gösterilir
+
+
+def _lisans_kalan_gun_ekle(durum: dict) -> dict:
+    """`durum` sözlüğüne `kalan_gun` (bitişe kaç gün kaldığı, tam sayı) ve
+    `yakinda_doluyor` (eşik altına düştü mü) alanlarını ekler.
+
+    KÖK NEDEN (2026-09-20, geniş kapsamlı denetim): lisans süresi kontrolü
+    tamamen İKİLİ idi (aktif/pasif) -- süre dolmadan önce HİÇBİR uyarı
+    yoktu. Bekçi döngüsü (`_kamera_bekcisi`), lisans süresi dolduğu ANDA
+    (önceden hiçbir belirti olmadan) TÜM kamera pipeline'larını durdurup
+    bariyer/ANPR'ı komple karartıyor -- sahada bu, müşteriye önceden
+    haber verilmeden aniden "sistem çalışmıyor" şikayetine dönüşecek bir
+    senaryo. Bu fonksiyon yalnızca PASİF görünürlük ekler (lisans üretme/
+    doğrulama mekanizmasının kendisine HİÇ dokunmuyor) -- panel artık
+    süre dolmadan `_LISANS_UYARI_ESIK_GUN` gün önceden turuncu bir uyarı
+    gösterebiliyor."""
+    durum["kalan_gun"] = None
+    durum["yakinda_doluyor"] = False
+    bitis_metni = durum.get("bitis_tarihi")
+    if durum.get("aktif") and bitis_metni:
+        try:
+            bitis = datetime.fromisoformat(bitis_metni).date()
+        except ValueError:
+            return durum
+        kalan = (bitis - datetime.now().date()).days
+        durum["kalan_gun"] = kalan
+        durum["yakinda_doluyor"] = 0 <= kalan <= _LISANS_UYARI_ESIK_GUN
+    return durum
+
+
 @app.get("/lisans")
 def lisans_durumunu_getir(_: models.Kullanici = Depends(_personel_girisi_gerekli)):
     durum = _lisans_durumunu_oku()
     durum["aktif"] = _lisans_aktif_mi()
-    return durum
+    return _lisans_kalan_gun_ekle(durum)
 
 
 @app.post("/lisans/aktive-et")
@@ -1360,7 +1421,11 @@ def lisans_aktive_et(istek: schemas.LisansAktivasyonIstegi, kullanici: models.Ku
     })
     _lisans_durumunu_yaz(durum)
     durum["aktif"] = _lisans_aktif_mi()
-    return durum
+    logger.info(
+        "Lisans aktive edildi: müşteri=%s, lisans_id=%s, bitiş=%s (aktive eden: %s)",
+        payload["musteri"], payload["lisans_id"], payload["bitis_tarihi"], kullanici.kullanici_adi,
+    )
+    return _lisans_kalan_gun_ekle(durum)
 
 
 def _kameralari_oku() -> list:
@@ -1702,11 +1767,19 @@ def kamera_ekle(kamera: dict = Body(...), kullanici: models.Kullanici = Depends(
 def kamera_sil(kamera_id: str, kullanici: models.Kullanici = Depends(_personel_girisi_gerekli)):
     _rol_dogrula(kullanici, ROL_YONETICI, ROL_OPERATOR)
     kameralar = _kameralari_oku()
+    silinen = next((kamera for kamera in kameralar if kamera["id"] == kamera_id), None)
     yeni_kameralar = [kamera for kamera in kameralar if kamera["id"] != kamera_id]
     if len(yeni_kameralar) == len(kameralar):
         raise HTTPException(404, "Kamera bulunamadı")
     _kameralari_yaz(yeni_kameralar)
     _pipeline_durdur(kamera_id)
+    # 2026-09-20: hangi yöneticinin/operatörün hangi kamerayı kaldırdığı
+    # önceden hiçbir yere loglanmıyordu -- bir güvenlik kamerasının
+    # kaldırılması (kazayla ya da kötü niyetle) sessiz kalıyordu.
+    logger.info(
+        "Kamera silindi: %s (ad: %s) (silen: %s)",
+        kamera_id, (silinen or {}).get("ad", "?"), kullanici.kullanici_adi,
+    )
     return {"mesaj": "Kamera silindi"}
 
 
@@ -3312,6 +3385,8 @@ def kullanici_guncelle(kullanici_id: int, istek: schemas.KullaniciGuncelle, db: 
     hedef = db.query(models.Kullanici).filter(models.Kullanici.id == kullanici_id).first()
     if not hedef:
         raise HTTPException(404, "Kullanıcı bulunamadı")
+    onceki_rol, onceki_aktif = hedef.rol, hedef.aktif
+    degisiklikler = []
     if istek.rol is not None:
         # Rol "sakin"e değişiyorsa (ya da zaten "sakin" olup kisi_id
         # gönderilmişse) bağlantı yeniden doğrulanır; "sakin"den başka bir
@@ -3321,16 +3396,31 @@ def kullanici_guncelle(kullanici_id: int, istek: schemas.KullaniciGuncelle, db: 
         )
         hedef.rol = istek.rol
         hedef.kisi_id = yeni_kisi_id
+        if istek.rol != onceki_rol:
+            degisiklikler.append(f"rol: {onceki_rol} -> {istek.rol}")
     elif istek.kisi_id is not None and hedef.rol == ROL_SAKIN:
         hedef.kisi_id = _sakin_kisi_id_dogrula(db, ROL_SAKIN, istek.kisi_id)
     if istek.aktif is not None:
         if hedef.id == kullanici.id:
             raise HTTPException(400, "Kendinizi pasif yapamazsınız")
         hedef.aktif = istek.aktif
+        if istek.aktif != onceki_aktif:
+            degisiklikler.append(f"aktif: {onceki_aktif} -> {istek.aktif}")
     if istek.parola:
         hedef.parola_hash = _parola_hashle(istek.parola)
+        degisiklikler.append("parola sıfırlandı")  # asla parolanın kendisini loglama
     db.commit()
     db.refresh(hedef)
+    # 2026-09-20: bu uç nokta (rol değişikliği, hesap aktif/pasif yapma,
+    # parola sıfırlama gibi HASSAS işlemler) önceden HİÇBİR YERE
+    # loglanmıyordu -- "kim ne zaman kimin rolünü değiştirdi" sorusunun
+    # cevabı yoktu. Değişiklik yoksa (boş bir PUT) log spam'i olmasın diye
+    # yalnızca gerçek bir değişiklik olduğunda yazılıyor.
+    if degisiklikler:
+        logger.info(
+            "Kullanıcı güncellendi: %s (%s) (güncelleyen: %s)",
+            hedef.kullanici_adi, ", ".join(degisiklikler), kullanici.kullanici_adi,
+        )
     return hedef
 
 
@@ -3342,8 +3432,15 @@ def kullanici_sil(kullanici_id: int, db: Session = Depends(get_db), kullanici: m
         raise HTTPException(404, "Kullanıcı bulunamadı")
     if hedef.id == kullanici.id:
         raise HTTPException(400, "Kendi hesabınızı silemezsiniz")
+    silinen_kullanici_adi, silinen_rol = hedef.kullanici_adi, hedef.rol
     db.delete(hedef)
     db.commit()
+    # 2026-09-20: bir hesabın silinmesi önceden hiçbir yere loglanmıyordu --
+    # kim, hangi hesabı, ne zaman sildi sorusu tamamen cevapsızdı.
+    logger.info(
+        "Kullanıcı silindi: %s (rol: %s) (silen: %s)",
+        silinen_kullanici_adi, silinen_rol, kullanici.kullanici_adi,
+    )
     return {"mesaj": "Kullanıcı silindi"}
 
 
@@ -4092,10 +4189,22 @@ def sistem_ayarlarini_getir(_: models.Kullanici = Depends(_personel_girisi_gerek
 def sistem_ayarlarini_guncelle(yeni: dict = Body(...), kullanici: models.Kullanici = Depends(_personel_girisi_gerekli)):
     _rol_dogrula(kullanici, ROL_YONETICI)
     mevcut = _sistem_ayarlari_oku()
+    degisiklikler = []
     for k, v in yeni.items():
-        if k in _VARSAYILAN_AYARLAR:
+        if k in _VARSAYILAN_AYARLAR and mevcut.get(k) != v:
+            degisiklikler.append(f"{k}: {mevcut.get(k)!r} -> {v!r}")
             mevcut[k] = v
     _sistem_ayarlari_yaz(mevcut)
+    # 2026-09-20: sistem ayarları (ör. min_guven_skoru gibi güvenlik/doğruluk
+    # açısından kritik bir eşik) değiştirildiğinde önceden HİÇBİR log satırı
+    # yazılmıyordu -- "bu eşik ne zaman, kim tarafından değiştirildi" sorusu
+    # cevapsızdı. Gerçek bir değişiklik yoksa (aynı değerler tekrar
+    # gönderildiyse) log spam'i olmasın diye yalnızca fark varsa yazılıyor.
+    if degisiklikler:
+        logger.info(
+            "Sistem ayarları güncellendi: %s (güncelleyen: %s)",
+            "; ".join(degisiklikler), kullanici.kullanici_adi,
+        )
     return mevcut
 
 

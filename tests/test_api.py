@@ -302,6 +302,59 @@ def test_lisans_aktivasyonu_ve_kamera_limiti(client, yetkili_header):
     assert r3.status_code == 403
 
 
+def test_kamera_silme_loglanir(client, caplog, yetkili_header):
+    """2026-09-20: bir kameranın kaldırılması (kazayla ya da kötü niyetle)
+    önceden hiçbir yere loglanmıyordu (bkz. main.py::kamera_sil)."""
+    anahtar = lisans.uret("Kamera Silme Test Site", kamera_limiti=5, gun=30)
+    client.post("/lisans/aktive-et", json={"anahtar": anahtar}, headers=yetkili_header)
+    r = client.post("/kameralar", json={
+        "ad": "Silinecek Denetim Kamerası", "rtsp_url": "rtsp://127.0.0.1/silinecek", "yon": "giris",
+    }, headers=yetkili_header)
+    assert r.status_code == 200, r.text
+    kamera_id = r.json()["id"]
+    with caplog.at_level("INFO", logger="pts"):
+        r2 = client.delete(f"/kameralar/{kamera_id}", headers=yetkili_header)
+    assert r2.status_code == 200, r2.text
+    assert kamera_id in caplog.text
+    assert "Silinecek Denetim Kamerası" in caplog.text
+
+
+def test_lisans_aktivasyonu_loglanir(client, caplog, yetkili_header):
+    """2026-09-20: bir lisansın aktive edilmesi (hangi müşteri, hangi lisans
+    id'si, ne zamana kadar) önceden hiçbir yere loglanmıyordu."""
+    anahtar = lisans.uret("Loglama Test Müşterisi", kamera_limiti=2, gun=30)
+    with caplog.at_level("INFO", logger="pts"):
+        r = client.post("/lisans/aktive-et", json={"anahtar": anahtar}, headers=yetkili_header)
+    assert r.status_code == 200, r.text
+    assert "Loglama Test Müşterisi" in caplog.text
+    assert r.json()["lisans_id"] in caplog.text
+
+
+def test_lisans_kalan_gun_ve_yakinda_doluyor_bayragi(client, yetkili_header):
+    """2026-09-20: lisans süresi dolmadan ÖNCE panelin uyarı gösterebilmesi
+    için /lisans yanıtına eklenen kalan_gun/yakinda_doluyor alanlarını
+    doğrular (bkz. main.py::_lisans_kalan_gun_ekle). ÖNCEKİ davranış tamamen
+    ikiliydi (aktif/pasif) -- süre dolmadan hiçbir erken uyarı yoktu."""
+    anahtar = lisans.uret("Kısa Süreli Müşteri", kamera_limiti=5, gun=5)
+    r = client.post("/lisans/aktive-et", json={"anahtar": anahtar}, headers=yetkili_header)
+    assert r.status_code == 200, r.text
+    assert r.json()["kalan_gun"] == 5
+    assert r.json()["yakinda_doluyor"] is True
+
+    r2 = client.get("/lisans", headers=yetkili_header)
+    assert r2.status_code == 200, r2.text
+    assert r2.json()["kalan_gun"] == 5
+    assert r2.json()["yakinda_doluyor"] is True
+
+
+def test_lisans_uzun_surede_yakinda_doluyor_false_doner(client, yetkili_header):
+    anahtar = lisans.uret("Uzun Süreli Müşteri", kamera_limiti=5, gun=365)
+    r = client.post("/lisans/aktive-et", json={"anahtar": anahtar}, headers=yetkili_header)
+    assert r.status_code == 200, r.text
+    assert r.json()["kalan_gun"] == 365
+    assert r.json()["yakinda_doluyor"] is False
+
+
 def test_gecersiz_imzali_lisans_reddedilir(client, yetkili_header):
     sahte = "PTS1.eW9rLWJvenVsbXVzLXZlcmk.eW9rLWltemE"
     r = client.post("/lisans/aktive-et", json={"anahtar": sahte}, headers=yetkili_header)
@@ -886,6 +939,19 @@ def test_gecerli_tarih_filtresi_normal_calisir(client, izleyici_header):
     reddetmediğinden emin olmak için (regresyona karşı)."""
     r = client.get("/kayitlar", params={"baslangic": "2026-01-01", "bitis": "2026-12-31"}, headers=izleyici_header)
     assert r.status_code == 200, r.text
+
+
+def test_guvenlik_baslikları_her_yanitta_var(client):
+    """2026-09-20: her yanıta clickjacking/MIME-sniffing'e karşı ek bir
+    savunma katmanı ekleyen standart güvenlik başlıkları eklendi (bkz.
+    main.py::_guvenlik_basliklarini_ekle). Kimlik doğrulaması gerektirmeyen
+    bir uç noktada bile (health-check benzeri) bu başlıkların var olduğunu
+    doğruluyoruz -- middleware TÜM yanıtları kapsamalı."""
+    r = client.get("/")
+    assert r.headers["X-Content-Type-Options"] == "nosniff"
+    assert r.headers["X-Frame-Options"] == "SAMEORIGIN"
+    assert r.headers["Referrer-Policy"] == "strict-origin-when-cross-origin"
+    assert "max-age=31536000" in r.headers["Strict-Transport-Security"]
 
 
 # ------------------------------------------------------------------
@@ -1599,6 +1665,56 @@ def test_kullanici_guncelle_sakinden_baska_role_kisi_id_temizlenir(client, yetki
     assert r2.json()["kisi_id"] is None
 
 
+def test_kullanici_guncelle_rol_degisikligi_loglanir(client, caplog, yetkili_header):
+    """2026-09-20: rol değişikliği, hesap aktif/pasif yapma ve parola
+    sıfırlama gibi hassas kullanıcı-yönetimi işlemleri önceden HİÇBİR YERE
+    loglanmıyordu -- "kim, kimin rolünü ne zaman değiştirdi" sorusu
+    cevapsızdı (bkz. main.py::kullanici_guncelle). Parolanın KENDİSİNİN
+    asla loglanmadığını da doğruluyoruz."""
+    r = client.post("/kullanicilar", json={
+        "kullanici_adi": "denetim-log-testi", "parola": "GucluParola123!", "rol": "izleyici",
+    }, headers=yetkili_header)
+    kid = r.json()["id"]
+    with caplog.at_level("INFO", logger="pts"):
+        r2 = client.put(
+            f"/kullanicilar/{kid}",
+            json={"rol": "operatör", "aktif": False, "parola": "YeniGucluParola456!"},
+            headers=yetkili_header,
+        )
+    assert r2.status_code == 200, r2.text
+    assert "denetim-log-testi" in caplog.text
+    assert "rol: izleyici -> operatör" in caplog.text
+    assert "aktif: True -> False" in caplog.text
+    assert "parola sıfırlandı" in caplog.text
+    assert "YeniGucluParola456!" not in caplog.text  # parolanın kendisi ASLA loglanmamalı
+
+
+def test_kullanici_guncelle_degisiklik_yoksa_loglanmiyor(client, caplog, yetkili_header):
+    """Boş/etkisiz bir PUT (mevcut değerlerin aynısı gönderilmesi) log
+    spam'ine yol açmamalı (bkz. main.py::kullanici_guncelle)."""
+    r = client.post("/kullanicilar", json={
+        "kullanici_adi": "degisiklik-yok-testi", "parola": "GucluParola123!", "rol": "izleyici",
+    }, headers=yetkili_header)
+    kid = r.json()["id"]
+    with caplog.at_level("INFO", logger="pts"):
+        r2 = client.put(f"/kullanicilar/{kid}", json={}, headers=yetkili_header)
+    assert r2.status_code == 200, r2.text
+    assert "degisiklik-yok-testi" not in caplog.text
+
+
+def test_kullanici_silme_loglanir(client, caplog, yetkili_header):
+    """2026-09-20: bir kullanıcı hesabının silinmesi önceden hiçbir yere
+    loglanmıyordu (bkz. main.py::kullanici_sil)."""
+    r = client.post("/kullanicilar", json={
+        "kullanici_adi": "silinecek-denetim-testi", "parola": "GucluParola123!", "rol": "izleyici",
+    }, headers=yetkili_header)
+    kid = r.json()["id"]
+    with caplog.at_level("INFO", logger="pts"):
+        r2 = client.delete(f"/kullanicilar/{kid}", headers=yetkili_header)
+    assert r2.status_code == 200, r2.text
+    assert "silinecek-denetim-testi" in caplog.text
+
+
 def test_kisi_silinince_bagli_sakin_hesabinin_kisi_id_temizlenir(client, yetkili_header):
     rk = client.post("/kisiler", json={
         "ad_soyad": "Silinecek Sakin Kişisi", "plaka_no": "34 SLN 02", "tip": "abone",
@@ -1914,6 +2030,29 @@ def test_capraz_kamera_penceresi_sifirlanirsa_ozellik_kapanir(client, yetkili_he
         assert "atlandi" not in r2.json(), "Pencere 0 iken özellik yine de devrede kaldı"
     finally:
         client.put("/sistem/ayarlar", json={"capraz_kamera_tekrar_penceresi_sn": 180}, headers=yetkili_header)
+
+
+def test_sistem_ayarlari_degisikligi_loglanir(client, caplog, yetkili_header):
+    """2026-09-20: sistem ayarları (ör. şüpheli-alarm eşiği gibi güvenlik
+    açısından anlamlı bir değer) değiştirildiğinde önceden hiçbir log satırı
+    yazılmıyordu -- "bu ayar ne zaman, kim tarafından değiştirildi" sorusu
+    cevapsızdı (bkz. main.py::sistem_ayarlarini_guncelle). Ayrıca aynı
+    değerin tekrar gönderilmesinin (gerçek bir değişiklik olmadığı için)
+    log spam'i yaratmadığını da doğruluyoruz."""
+    onceki = client.get("/sistem/ayarlar", headers=yetkili_header).json()["supheli_esik"]
+    try:
+        with caplog.at_level("INFO", logger="pts"):
+            r = client.put("/sistem/ayarlar", json={"supheli_esik": onceki + 5}, headers=yetkili_header)
+        assert r.status_code == 200, r.text
+        assert f"supheli_esik: {onceki!r} -> {onceki + 5!r}" in caplog.text
+
+        caplog.clear()
+        with caplog.at_level("INFO", logger="pts"):
+            r2 = client.put("/sistem/ayarlar", json={"supheli_esik": onceki + 5}, headers=yetkili_header)
+        assert r2.status_code == 200, r2.text
+        assert "Sistem ayarları güncellendi" not in caplog.text
+    finally:
+        client.put("/sistem/ayarlar", json={"supheli_esik": onceki}, headers=yetkili_header)
 
 
 def test_capraz_kamera_manuel_kayitlari_hic_etkilemez(client, operator_header):

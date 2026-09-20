@@ -46,6 +46,12 @@ body {
 .live-dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; background: #26a269; margin-right: 8px; box-shadow: 0 0 0 3px #d9f1e4; }
 .license-pill { background: #fff4d6; color: #976b00; border: 1px solid #efd68c; border-radius: 3px; padding: .3rem .55rem; }
 .license-pill.active { background: #e3f5e9; color: #167343; border-color: #acdcbc; }
+/* Lisans AKTİF ama yakında (ör. 14 gün içinde) dolacak -- "aktivasyon bekliyor"
+   (sarı/amber) durumuyla karıştırılmasın diye bilinçli olarak daha turuncu/
+   kırmızıya yakın bir ton (2026-09-20, bkz. README "Lisans Süresi Dolmadan
+   Önce Uyarı"). */
+.license-pill.warning { background: #ffe4d2; color: #a13f00; border-color: #f2b48c; }
+.license-icon.warning { color: #a13f00; background: #ffe4d2; }
 .camera-wall { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 5px; background: #2e3740; padding: 5px; min-height: 390px; }
 .camera-tile { min-height: 380px; position: relative; background: #d8e0e4; overflow: hidden; }
 .camera-simulated { background: radial-gradient(circle at 35% 28%, #aebfc3, #64767c 72%); }

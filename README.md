@@ -2045,6 +2045,59 @@ geliştirilmesi gereken neler varsa yapar mısın") sonrası düzeltilenler:**
   doğrulandı) frontend'deki iki iyileştirmeyi (küresel hata yakalayıcı,
   güvenlik uyarıları banner'ı) kapsıyor.
 
+**2026-09-20 (devam) — kullanıcının "başka neler geliştirilebilir?" sorusu
+üzerine ikinci bir denetim turunda eklenenler:**
+
+- **Lisans süresi dolmadan önce uyarı:** Lisans kontrolü tamamen İKİLİYDİ
+  (aktif/pasif) -- bekçi döngüsü (`_kamera_bekcisi`), lisans süresi dolduğu
+  ANDA (önceden hiçbir belirti olmadan) TÜM kamera pipeline'larını durdurup
+  bariyer/ANPR'ı komple karartıyordu. Sahada bu, müşteriye önceden haber
+  verilmeden aniden "sistem çalışmıyor" şikayetine dönüşecek bir senaryoydu.
+  `/lisans` yanıtına eklenen `kalan_gun`/`yakinda_doluyor` alanları (bkz.
+  `_lisans_kalan_gun_ekle`), bitişe 14 gün veya daha az kaldığında panelin
+  üst çubuğundaki lisans göstergesini VE Lisans Yönetimi kartını turuncu bir
+  "N gün içinde dolacak" uyarısına çeviriyor -- lisans üretme/doğrulama
+  mekanizmasının kendisine hiç dokunulmadı, yalnızca pasif bir görünürlük
+  katmanı eklendi.
+- **Standart güvenlik yanıt başlıkları:** Her API yanıtına artık
+  `X-Content-Type-Options: nosniff`, `X-Frame-Options: SAMEORIGIN`,
+  `Referrer-Policy: strict-origin-when-cross-origin` ve
+  `Strict-Transport-Security` başlıkları ekleniyor (bkz.
+  `_guvenlik_basliklarini_ekle`) -- clickjacking ve MIME-sniffing'e karşı ek
+  bir savunma katmanı (defense in depth). Kapsamlı bir Content-Security-
+  Policy BİLİNÇLİ OLARAK eklenmedi: panelin envanteri (inline script/style
+  kullanımı dahil) çıkarılıp test edilmeden eklenen bir CSP, üretimde paneli
+  sessizce bozabilir -- bu, ayrı ve daha dikkatli bir çalışma gerektiriyor.
+- **"Kim ne yaptı" denetim (audit) izi eksikliği:** Kullanıcı rolü/aktiflik
+  değiştirme, parola sıfırlama, kullanıcı silme, kamera silme, lisans
+  aktivasyonu ve sistem ayarları değiştirme gibi HASSAS yönetici işlemleri
+  önceden `loglar/pts.log`'a hiçbir iz bırakmıyordu -- bir hesabın kim
+  tarafından ne zaman silindiği ya da bir güvenlik eşiğinin kim tarafından
+  değiştirildiği sorusu tamamen cevapsızdı. Artık bu altı işlemin tümü,
+  ilgili kullanıcı adı ve neyin değiştiği (parolanın KENDİSİ hariç) ile
+  loglanıyor; gerçek bir değişiklik yoksa (ör. aynı değerlerle boş bir PUT)
+  log spam'i olmasın diye hiçbir şey yazılmıyor. Bu, kalıcı bir veritabanı
+  tablosu + panel ekranı olan tam bir denetim sistemi DEĞİL (bu, daha büyük
+  ve ayrı bir çalışma gerektirir) -- şimdilik yalnızca mevcut `/sistem/
+  loglar` ekranından görülebilen bir metin izi.
+- Yeni `tests/test_lisans_suresi_uyarisi.py` dosyası (gerçekten çalıştırılıp
+  doğrulandı) frontend'deki lisans uyarısı görselleştirmesini kapsıyor;
+  `tests/test_api.py`'ye (yalnızca `py_compile` ile doğrulandı) yukarıdaki
+  backend değişikliklerinin tümü için testler eklendi.
+
+**Bilinçli olarak ERTELENEN/atlanan bulgular (gerekçesiyle):** Toplu kişi
+içe aktarmadaki (`/kisiler/toplu-import`) her kişi için ayrı bir geçmiş-
+kayıt-bağlama sorgusu çalıştıran N+1 deseni tespit edildi ama düzeltilmedi
+-- pratikte çoğu yeni kişi için eşleşen geçmiş kayıt olmadığından sorgular
+genelde ucuzdur, ve bu delikçe hassas yetkilendirme mantığını (`_plaka_
+yetki_kontrol`) toplu bir sorguya dönüştürmek, kazanılacak performanstan
+daha yüksek bir ince-hata riski taşır. SQLite kurulumlarında (SQL Server
+Agent bakım planı olmayan, genelde daha küçük/deneme kurulumları) periyodik
+otomatik yedekleme yok, yalnızca manuel `/sistem/yedek` indirmesi var --
+SQL Server kurulumlarında zaten Agent bakım planı + gecikme izleme (yukarı
+bakınız, "SQL Server Yedeği İzleme") olduğu için bu yalnızca küçük/opsiyonel
+bir iyileştirme olarak not edildi.
+
 ## Toplu Doğruluk Testi (Canlı Sisteme Dokunmadan Eşik/Model Karşılaştırma)
 
 Farklı `PTS_ANPR_DETECTOR_ESIGI` / `PTS_ANPR_DETECTOR_MODEL` / kontrast

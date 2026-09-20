@@ -812,11 +812,25 @@ function _olayModalBariyerButonunuAyarla(nokta) {
 async function lisansYukle() {
   try {
     const lisans = await apiCagir("/lisans");
-    const durumMetni = lisans.aktif ? "Aktif" : "Aktivasyon bekliyor";
+    // Lisans AKTİF olsa bile bitişe _LISANS_UYARI_ESIK_GUN (14) gün veya daha
+    // az kaldıysa "yakinda_doluyor" true döner (2026-09-20 -- bkz. backend
+    // _lisans_kalan_gun_ekle): süre dolup kameralar aniden durmadan ÖNCE
+    // turuncu bir uyarı gösteriyoruz, "aktif"/"pasif" ikili durumunun
+    // dışında üçüncü bir görsel durum olarak.
+    const yakindaDoluyor = lisans.aktif && lisans.yakinda_doluyor;
+    const durumMetni = !lisans.aktif ? "Aktivasyon bekliyor" : yakindaDoluyor ? "Süresi yakında doluyor" : "Aktif";
+    const ikonSinifi = !lisans.aktif ? "bi-shield-exclamation" : yakindaDoluyor ? "bi-shield-exclamation" : "bi-shield-check";
+    const kartSinifi = !lisans.aktif ? "pending" : yakindaDoluyor ? "warning" : "active";
     const durumEl = document.getElementById("lisansDurum");
-    if (durumEl) durumEl.innerHTML = `<div class="license-icon ${lisans.aktif ? "active" : "pending"}"><i class="bi ${lisans.aktif ? "bi-shield-check" : "bi-shield-exclamation"}"></i></div><div><strong>${durumMetni}</strong><span>${lisans.aktif ? "Kamera bağlantıları kullanılabilir" : "Kamera kullanımını etkinleştirmek için anahtar girin"}</span></div>`;
-    document.getElementById("lisansMiniDurum").innerHTML = `<i class="bi ${lisans.aktif ? "bi-shield-check" : "bi-shield-exclamation"}"></i> Lisans ${lisans.aktif ? "aktif" : "pasif"}`;
-    document.getElementById("lisansMiniDurum").classList.toggle("active", lisans.aktif);
+    const altMetin = !lisans.aktif
+      ? "Kamera kullanımını etkinleştirmek için anahtar girin"
+      : yakindaDoluyor
+        ? `Lisans ${lisans.kalan_gun} gün içinde dolacak — süresi dolmadan yeni bir anahtar girin, aksi halde kameralar otomatik olarak durur`
+        : "Kamera bağlantıları kullanılabilir";
+    if (durumEl) durumEl.innerHTML = `<div class="license-icon ${kartSinifi}"><i class="bi ${ikonSinifi}"></i></div><div><strong>${durumMetni}</strong><span>${escapeHtml(altMetin)}</span></div>`;
+    document.getElementById("lisansMiniDurum").innerHTML = `<i class="bi ${ikonSinifi}"></i> Lisans ${!lisans.aktif ? "pasif" : yakindaDoluyor ? `${lisans.kalan_gun} gün kaldı` : "aktif"}`;
+    document.getElementById("lisansMiniDurum").classList.toggle("active", lisans.aktif && !yakindaDoluyor);
+    document.getElementById("lisansMiniDurum").classList.toggle("warning", yakindaDoluyor);
     document.getElementById("cihazKodu").textContent = lisans.cihaz_kodu;
     document.getElementById("kameraLimiti").textContent = lisans.aktif ? `${lisans.kamera_limiti} kamera` : "0 kamera";
     document.getElementById("lisansBitisi").textContent = lisans.bitis_tarihi || "Aktif değil";
