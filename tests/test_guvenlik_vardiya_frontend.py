@@ -73,6 +73,25 @@ def test_vardiya_planlama_karti_ve_formu_var():
     assert corba.find(id="vardiyalarTablo") is not None
 
 
+def test_bolunmus_vardiya_ipucu_metni_formda_var():
+    """2026-09-20 kullanıcı sorusu ("Eser sürekli 15:00-23:00'de değil, başka
+    vardiyalar da olabiliyor -- aynı gün içinde birden fazla vardiya nasıl
+    girilir?"): sistem bunu zaten destekliyor (aynı kullanıcı+tarih için
+    ikinci bir satır eklemek yeterli -- backend'de tekillik kısıtlaması yok,
+    bkz. models.VardiyaAtamasi ve _guvenlik_kayit_filtresi_uygula'nın OR
+    filtresi), ama bu formda hiçbir açıklama olmadığı için kullanıcı bunu
+    bilmiyordu. Bu test, eklenen açıklayıcı metnin form içinde kaldığını
+    doğrular."""
+    corba = _corba()
+    form = corba.find(id="vardiyaForm")
+    assert form is not None
+    metin = form.get_text(" ", strip=True)
+    assert "bölünmüş" in metin.lower() or "iki ayrı" in metin.lower(), (
+        "Aynı gün için ikinci bir vardiya (bölünmüş vardiya) eklenebileceğini "
+        "açıklayan bir ipucu metni #vardiyaForm içinde bulunamadı"
+    )
+
+
 def test_guvenlik_banner_kayitlar_sekmesinde_var_ve_varsayilan_gizli():
     corba = _corba()
     kayitlar_sekme = corba.find(id="kayitlar-sekme")

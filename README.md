@@ -1570,6 +1570,35 @@ için `su_an_aktif_vardiya_var_mi: false` ve boş liste döndüğünü, ve "00:0
 00:00" (gerçek saatten bağımsız, her zaman "şu anı" kapsayan) bir vardiya
 atandığında bunun aktif olarak doğru bildirildiğini doğrular.
 
+## Bölünmüş Vardiya (Aynı Gün İçinde Birden Fazla Zaman Aralığı) (2026-09-20)
+
+**Kullanıcı sorusu:** "Eser Akar sürekli 15:00-23:00 vardiyasında değil,
+başka vardiyalar da olabiliyor" -- yani aynı personelin aynı takvim günü
+içinde BİRDEN FAZLA, bitişik olmayan zaman aralığında çalışması (ör.
+07:00-11:00 ve ayrıca 19:00-23:00) mümkün olmalı.
+
+**Sonuç:** bu senaryo, `models.VardiyaAtamasi`'nde `(kullanici_id, tarih)`
+üzerinde bir TEKİLLİK KISITLAMASI olmadığı ve `_kullanicinin_vardiya_pencereleri`/
+`_guvenlik_kayit_filtresi_uygula` kullanıcının TÜM atama satırlarını (aynı
+tarihte kaç tane olursa olsun, tarihe göre gruplamadan) bir OR filtresiyle
+birleştirdiği için HİÇBİR backend değişikliği gerektirmeden zaten çalışıyordu
+-- eksik olan tek şey, yönetici panelindeki "Vardiya Ata" formunda bunun
+mümkün olduğunu belirten bir açıklamaydı (aynı kişi + aynı tarih için formu
+farklı saatlerle İKİNCİ kez doldurup göndermek yeterli; her ikisi de ayrı
+satır olarak eklenir ve listede ayrı ayrı görünür). Bu form açıklaması
+eklendi ve davranış, iki pencere arasındaki BOŞLUKTA kalan bir kaydın
+görünmediğini de içeren uçtan uca bir API testiyle doğrulandı.
+
+**Testler:** `tests/test_guvenlik_vardiya_frontend.py`ye eklenen (gerçekten
+çalıştırılıp doğrulandı) test formdaki açıklayıcı ipucu metninin varlığını
+doğrular. `tests/test_api.py`ye eklenen (yalnızca `py_compile` ile
+doğrulanan, mutlak takvim tarihleriyle -- gerçek saatten bağımsız --
+oluşturulan) test, aynı kullanıcı+tarih için iki ayrı vardiya ataması
+yapıldığında `/vardiyalar` listesinin iki ayrı satır döndürdüğünü, her iki
+pencere içindeki kayıtların da güvenlik kullanıcısının listesinde
+göründüğünü, ve iki pencere ARASINDAKİ boşlukta kalan bir kaydın
+görünmediğini doğrular.
+
 ## Kalıcı Test Altyapısı
 
 `tests/` klasöründe pytest tabanlı bir test paketi var:

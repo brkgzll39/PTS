@@ -2469,3 +2469,55 @@ def test_vardiya_durumum_aktif_vardiyayi_dogru_bildirir(client, yetkili_header):
     assert len(gövde["vardiyalar"]) == 1
     assert gövde["vardiyalar"][0]["su_an_aktif_mi"] is True
     assert gövde["vardiyalar"][0]["tarih"] == bugun
+
+
+def test_ayni_gun_icinde_bolunmus_vardiya_iki_pencere_de_dogru_filtrelenir(client, yetkili_header):
+    """2026-09-20 kullanıcı sorusu: "Eser sürekli 15:00-23:00'de değil, başka
+    vardiyalar da olabiliyor" -- bunun bir uzantısı olarak, aynı kişinin AYNI
+    GÜN İÇİNDE İKİ AYRI (bitişik olmayan) zaman aralığında çalıştığı
+    "bölünmüş vardiya" senaryosu doğrulanıyor. `models.VardiyaAtamasi`'nde
+    (kullanici_id, tarih) üzerinde bir TEKİLLİK KISITLAMASI olmadığından ve
+    `_guvenlik_kayit_filtresi_uygula`/`_kullanicinin_vardiya_pencereleri`
+    kullanıcının TÜM atama satırlarını (aynı tarihte kaç tane olursa olsun)
+    OR ile birleştirdiğinden, bu senaryo HİÇBİR kod değişikliği olmadan zaten
+    çalışıyor -- bu test bunu API üzerinden kanıtlar. Testin çalıştığı GERÇEK
+    saatten bağımsız kalması için kayıtlar dünün MUTLAK takvim tarihiyle
+    ekleniyor (bkz. yukarıdaki gece-yarısı testiyle aynı desen)."""
+    from backend.database import engine
+    from sqlalchemy import text as sqltext
+
+    guvenlik_id, guvenlik_header = _rbac_guvenlik_kullanici_olustur(client, yetkili_header)
+    dun = datetime.now().date() - timedelta(days=1)
+    pencere1_ici_ts = f"{dun.isoformat()} 09:00:00"   # 07:00-11:00 penceresi içinde
+    bosluk_ts = f"{dun.isoformat()} 15:00:00"          # iki pencere ARASINDAKİ boşlukta
+    pencere2_ici_ts = f"{dun.isoformat()} 21:00:00"   # 19:00-23:00 penceresi içinde
+
+    with engine.connect() as conn:
+        for ts in (pencere1_ici_ts, bosluk_ts, pencere2_ici_ts):
+            conn.execute(sqltext(
+                "INSERT INTO plaka_kayitlari (plaka_no, kamera_id, yon, yetki_durumu, tarih_saat, manuel_giris) "
+                "VALUES ('34 GVN 08', 'GIRIS-KAM', 'giris', 'yetkisiz', :ts, 0)"
+            ), {"ts": ts})
+        conn.commit()
+
+    # Aynı kullanıcı, aynı tarih için İKİ AYRI vardiya ataması (bölünmüş vardiya).
+    for baslangic, bitis in (("07:00", "11:00"), ("19:00", "23:00")):
+        r0 = client.post("/vardiyalar", json={
+            "kullanici_id": guvenlik_id, "tarih": dun.isoformat(),
+            "baslangic_saat": baslangic, "bitis_saat": bitis,
+        }, headers=yetkili_header)
+        assert r0.status_code == 200, r0.text
+
+    # /vardiyalar listesi bu kullanıcı için AYNI TARİHTE iki ayrı satır göstermeli.
+    r_liste = client.get("/vardiyalar", params={"kullanici_id": guvenlik_id}, headers=yetkili_header)
+    assert r_liste.status_code == 200 and len(r_liste.json()) == 2, r_liste.text
+
+    r1 = client.get("/kayitlar", params={"plaka": "34 GVN 08"}, headers=guvenlik_header)
+    assert r1.status_code == 200, r1.text
+    saatler = sorted(k["tarih_saat"] for k in r1.json())
+    assert len(saatler) == 2, (
+        f"bölünmüş vardiyanın İKİ penceresindeki kayıtlar da görünmeli, boşluktaki görünmemeli: {saatler}"
+    )
+    assert any("09:00" in s for s in saatler), "1. pencere (07:00-11:00) içindeki kayıt kayıp"
+    assert any("21:00" in s for s in saatler), "2. pencere (19:00-23:00) içindeki kayıt kayıp"
+    assert not any("15:00" in s for s in saatler), "iki pencere arasındaki boşluktaki kayıt YANLIŞLIKLA görünüyor"
