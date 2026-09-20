@@ -1987,6 +1987,64 @@ bir bağlantı varsa, artık geçerli bir oturum token'ı olmadan çalışmayaca
 panel üzerinden yeniden indirin ya da otomasyonunuzu geçerli bir `token`
 sorgu parametresi eklemek üzere güncelleyin.
 
+**2026-09-20 — geniş kapsamlı kod denetimi ("eksik gördüğün eklenmesi ve
+geliştirilmesi gereken neler varsa yapar mısın") sonrası düzeltilenler:**
+
+- **Negatif `limit`/`offset` ile 500 kaydı üst sınırını atlatma:** `/kayitlar`,
+  `/kayitlar/sayfa-bilgisi`, `/olaylar`, `/alarmlar` ve `/sakin/gecmisim` uç
+  noktaları, `limit`/`offset` sorgu parametrelerini `min(limit, 500)` ile
+  "kırpıyordu" — ama SQLite'ta (ve SQL Server'da) `LIMIT -1` (veya negatif bir
+  değer) "sınırsız" anlamına gelir, yani `?limit=-1` göndermek bu kırpmayı
+  TAMAMEN atlatıp veritabanındaki TÜM kayıtları (plaka/kişi gibi KVKK
+  kapsamındaki verileri) tek istekte döndürüyordu — hem bir veri sızıntısı
+  riski hem de büyük tablolarda bir DoS vektörü. Artık bu beş uç noktanın
+  tümünde `limit`/`offset` FastAPI'nin `Query(..., ge=..., le=...)` doğrulaması
+  ile sınırlanıyor: sınır dışı bir değer artık sessizce kırpılmıyor, açık bir
+  422 ile reddediliyor.
+- **Geçersiz tarih filtresi artık 500 yerine 400 döndürüyor:** `/kayitlar` ve
+  `/kayitlar/sayfa-bilgisi`'ndeki `baslangic`/`bitis` parametreleri
+  `datetime.fromisoformat()` ile ayrıştırılıyordu; geçersiz bir değer
+  (`?baslangic=abc`) yakalanmamış bir `ValueError` fırlatıp isteği düz bir
+  500'e düşürüyordu (istemciye hangi alanın sorunlu olduğunu hiç söylemeden).
+  Yeni `_iso_tarih_parametresini_coz()` yardımcı fonksiyonu artık bunu hangi
+  alanın ve hangi değerin geçersiz olduğunu açıkça belirten bir 400 ile
+  karşılıyor.
+- **`/sistem/saglik` artık kimlik doğrulaması gerektiriyor:** Bu uç nokta
+  (dedektör eşiği/modeli, SQL Server yedek durumu, disk/CPU/RAM gibi teşhis
+  bilgileri döndürür) hiçbir `Depends(...)` olmadan tanımlanmıştı — ağdaki
+  HERKES giriş yapmadan bu bilgilere erişebiliyordu. Artık diğer teşhis uç
+  noktalarıyla (`/sistem/loglar` vb.) tutarlı şekilde en az personel girişi
+  gerektiriyor.
+- **"Güvenlik uyarıları" artık panelde de görünür, yalnızca log dosyasında
+  değil:** `PTS_LICENSE_SECRET`/`PTS_KAMERA_ANAHTARI` ayarlanmamışsa veya
+  `PTS_CORS_ORIGINS='*'` ise sistem gayet normal çalışır, hiçbir hata vermez —
+  ama gerçek bir güvenlik açığı sessizce açık kalır; bu üç durum önceden
+  yalnızca (kimsenin günlük olarak açıp okumadığı) `loglar/pts.log`'a bir kez
+  yazılıyordu. `/sistem/saglik` yanıtına eklenen yeni `guvenlik_uyarilari`
+  alanı, bu üç durumdan hangisi etkinse Sistem sekmesinde (yalnızca ortam
+  değişkenlerini değiştirebilecek tek rol olan **yönetici** için) sarı bir
+  uyarı banner'ı olarak gösteriyor.
+- **Frontend'e küresel bir hata yakalayıcı eklendi:** Backend'in "sıfır sessiz
+  hata" ilkesi (küresel exception handler'lar, geniş try/except + loglama
+  kapsamı) frontend'de karşılıksızdı — yakalanmamış bir JS hatası veya
+  promise reddi yalnızca tarayıcı geliştirici konsoluna düşüp güvenlik
+  masasındaki kullanıcıya HİÇ görünmeden kayboluyordu (kimse devtools'u açık
+  tutmaz). Artık `window.onerror` ve `unhandledrejection` dinleyicileri her
+  yakalanmamış hatayı en azından bir toast bildirimiyle kullanıcıya
+  bildiriyor (art arda patlayan bir döngüde kullanıcıyı boğmamak için 10
+  saniyede bir sınırlanarak); kırık bir `<img>`/`<script>` yüklemesi gibi
+  gerçek bir JS hatası olmayan "error" olayları bu bildirimi tetiklemiyor.
+- **Test kapsamı genişletildi:** Daha önce hiç test edilmeyen `/sistem/yedek`
+  (rol bazlı erişim) ve `/sakin/goruntu/{kayit_id}` (bir sitede oturan
+  kişinin yalnızca KENDİ kaydının görüntüsünü görebildiğini, başkasının
+  kaydına erişmeye çalışırsa 404 aldığını doğrulayan IDOR testleri) uç
+  noktalarına, `/olaylar` ve `/alarmlar`'a temel işlevsel testler eklendi;
+  yukarıdaki limit/offset/tarih doğrulamaları için de kapsamlı parametrize
+  testler eklendi. Yeni `tests/test_guvenlik_denetimi_iyilestirmeleri.py`
+  dosyası (fastapi/sqlalchemy gerektirmediği için gerçekten çalıştırılıp
+  doğrulandı) frontend'deki iki iyileştirmeyi (küresel hata yakalayıcı,
+  güvenlik uyarıları banner'ı) kapsıyor.
+
 ## Toplu Doğruluk Testi (Canlı Sisteme Dokunmadan Eşik/Model Karşılaştırma)
 
 Farklı `PTS_ANPR_DETECTOR_ESIGI` / `PTS_ANPR_DETECTOR_MODEL` / kontrast

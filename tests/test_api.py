@@ -370,6 +370,133 @@ def test_eski_goruntulu_kayit_temizlenir_yeni_olan_korunur(client, yetkili_heade
 
 
 # ------------------------------------------------------------------
+# GET /sistem/yedek — veritabanı yedeği indirme (RBAC), 2026-09-20
+# ------------------------------------------------------------------
+# Geniş kapsamlı bir kod denetiminde bu uç noktanın hiç test kapsamında
+# olmadığı tespit edildi -- tam da "sessiz yetki sızıntısı" riski taşıyan
+# türden bir uç nokta (tüm veritabanının HAM bir kopyasını indirir).
+
+def test_sistem_yedek_yonetici_indirebilir(client, yetkili_header):
+    r = client.get("/sistem/yedek", headers=yetkili_header)
+    assert r.status_code == 200, r.text
+    assert r.headers["content-type"] == "application/octet-stream"
+    assert len(r.content) > 0
+
+
+def test_sistem_yedek_operator_yetkisiz_403_doner(client, operator_header):
+    r = client.get("/sistem/yedek", headers=operator_header)
+    assert r.status_code == 403, r.text
+
+
+def test_sistem_yedek_izleyici_yetkisiz_403_doner(client, izleyici_header):
+    r = client.get("/sistem/yedek", headers=izleyici_header)
+    assert r.status_code == 403, r.text
+
+
+def test_sistem_yedek_girissiz_401_doner(client):
+    r = client.get("/sistem/yedek")
+    assert r.status_code == 401, r.text
+
+
+# ------------------------------------------------------------------
+# GET /sakin/goruntu/{kayit_id} — sakinin kendi kaydının fotoğrafı (IDOR), 2026-09-20
+# ------------------------------------------------------------------
+# Bu uç nokta da denetimde test kapsamı dışı bulundu -- tam da bir sakinin
+# BAŞKA bir sakinin fotoğrafını görüp göremediğini (IDOR) doğrulaması gereken,
+# güvenlik açısından hassas bir sınır.
+
+def _test_goruntulu_kayit_olustur(kisi_id, plaka_no: str, dosya_adi: str):
+    """`_test_goruntu_dosyasi_olustur`ın aksine, ORM'i atlamadan doğrudan
+    `kisi_id`ye bağlı gerçek bir dosyalı Kayit satırı oluşturur (normal
+    `/kayitlar` POST akışı `goruntu_yolu` alanını hiç doldurmaz -- bu yalnızca
+    `/kayitlar/otomatik`nın kamera yüklemesiyle dolar)."""
+    from backend.database import SessionLocal
+    from backend import models
+    from backend.main import GORUNTU_KLASORU
+
+    os.makedirs(GORUNTU_KLASORU, exist_ok=True)
+    tam_yol = os.path.join(GORUNTU_KLASORU, dosya_adi)
+    with open(tam_yol, "wb") as f:
+        f.write(b"sahte-sakin-goruntusu")
+
+    db = SessionLocal()
+    try:
+        kayit = models.Kayit(
+            plaka_no=plaka_no, kamera_id="TEST-SAKIN-GORUNTU", tarih_saat=datetime.now(),
+            kisi_id=kisi_id, goruntu_yolu=tam_yol,
+        )
+        db.add(kayit)
+        db.commit()
+        db.refresh(kayit)
+        return kayit.id, tam_yol
+    finally:
+        db.close()
+
+
+def test_sakin_kendi_kaydinin_goruntusunu_gorebilir(client, sakin_header, sakin_kisi_id):
+    kayit_id, tam_yol = _test_goruntulu_kayit_olustur(sakin_kisi_id, "34 SKG 01", "test-sakin-kendi-goruntusu.jpg")
+    try:
+        r = client.get(f"/sakin/goruntu/{kayit_id}", headers=sakin_header)
+        assert r.status_code == 200, r.text
+        assert r.content == b"sahte-sakin-goruntusu"
+    finally:
+        if os.path.exists(tam_yol):
+            os.remove(tam_yol)
+
+
+def test_sakin_baska_kisinin_goruntusunu_goremez_idor(client, sakin_header, yetkili_header):
+    """IDOR regresyonu: bir sakin, kendi kisi_id'sine ait OLMAYAN bir kayıt
+    id'sini tahmin ederek o kaydın fotoğrafını görememeli (404, dosyanın var
+    olup olmadığından bağımsız olarak -- bkz. main.py::sakin_goruntu)."""
+    rk = client.post("/kisiler", json={
+        "ad_soyad": "Başka Sakin Görüntü", "plaka_no": "34 BSG 02", "tip": "abone",
+    }, headers=yetkili_header)
+    baska_kisi_id = rk.json()["id"]
+    kayit_id, tam_yol = _test_goruntulu_kayit_olustur(baska_kisi_id, "34 BSG 02", "test-baska-sakinin-goruntusu.jpg")
+    try:
+        r = client.get(f"/sakin/goruntu/{kayit_id}", headers=sakin_header)
+        assert r.status_code == 404, r.text
+    finally:
+        if os.path.exists(tam_yol):
+            os.remove(tam_yol)
+
+
+def test_sakin_goruntu_dosyasi_diskte_yoksa_404_doner(client, sakin_header, sakin_kisi_id):
+    """Kayıt kendisine ait olsa bile, dosya diskten (örn. temizlik görevi
+    tarafından) silinmişse hâlâ 404 dönmeli, 500 değil."""
+    from backend.database import SessionLocal
+    from backend import models
+
+    db = SessionLocal()
+    try:
+        kayit = models.Kayit(
+            plaka_no="34 SKG 03", kamera_id="TEST-SAKIN-GORUNTU", tarih_saat=datetime.now(),
+            kisi_id=sakin_kisi_id, goruntu_yolu="/tmp/bu-dosya-hic-var-olmadi-pts-test.jpg",
+        )
+        db.add(kayit)
+        db.commit()
+        db.refresh(kayit)
+        kayit_id = kayit.id
+    finally:
+        db.close()
+
+    r = client.get(f"/sakin/goruntu/{kayit_id}", headers=sakin_header)
+    assert r.status_code == 404, r.text
+
+
+def test_sakin_goruntu_olmayan_kayit_id_404_doner(client, sakin_header):
+    r = client.get("/sakin/goruntu/999999999", headers=sakin_header)
+    assert r.status_code == 404, r.text
+
+
+def test_sakin_goruntu_personel_rolune_kapali_403_doner(client, izleyici_header):
+    """Bu uç nokta yalnızca 'sakin' rolüne açık -- personel (izleyici dahil)
+    kendi ayrı uçlarını (`/goruntuler/{dosya_adi}`) kullanmalı."""
+    r = client.get("/sakin/goruntu/1", headers=izleyici_header)
+    assert r.status_code == 403, r.text
+
+
+# ------------------------------------------------------------------
 # Bilinen plakaya göre OCR düzeltmesi (veritabanı çapraz kontrolü)
 # ------------------------------------------------------------------
 # Bu, doğruluğu artırmak için eklenen bir tekniktir: OCR tek bir karakteri
@@ -609,6 +736,50 @@ def test_site_silinince_bagli_nokta_da_silinir(client, yetkili_header):
 
 
 # ------------------------------------------------------------------
+# /sistem/saglik — kimlik doğrulama zorunluluğu ve "güvenlik uyarıları" (2026-09-20)
+# ------------------------------------------------------------------
+# Geniş kapsamlı bir kod denetiminde tespit edildi: bu uç nokta hiçbir kimlik
+# doğrulaması istemiyordu -- ağa erişimi olan HERKES (oturum açmadan) aktif
+# pipeline/SSE istemci sayısını, yedek durumunu vb. görebiliyordu. Ayrıca,
+# PTS_LICENSE_SECRET/PTS_KAMERA_ANAHTARI/PTS_CORS_ORIGINS gibi "varsayılana
+# sessizce düşülürse güvensiz" ayarlar yalnızca başlangıçta BİR KEZ log
+# dosyasına yazılıyordu -- kimse günlük olarak log dosyasını açıp okumadığı
+# için bu, fark edilmeyen bir güvenlik borcuydu. Artık hem kimlik doğrulaması
+# zorunlu hem de bu uyarılar panelin de kullandığı yanıtın bir parçası.
+
+def test_sistem_sagligi_girissiz_401_doner(client):
+    r = client.get("/sistem/saglik")
+    assert r.status_code == 401, r.text
+
+
+def test_sistem_sagligi_guvenlik_uyarilari_alani_var(client, izleyici_header):
+    r = client.get("/sistem/saglik", headers=izleyici_header)
+    assert r.status_code == 200, r.text
+    uyarilar = r.json()["guvenlik_uyarilari"]
+    # Test paketi PTS_LICENSE_SECRET'ı conftest.py'de ZATEN ayarlıyor (bkz.
+    # test_suiti_icin_sabit_lisans_secret) -- yani bu bayrak burada True olmalı;
+    # PTS_KAMERA_ANAHTARI ve PTS_CORS_ORIGINS ise test ortamında hiç ayarlı değil.
+    assert uyarilar == {
+        "lisans_secret_ayarli_mi": True,
+        "kamera_anahtari_ayarli_mi": False,
+        "cors_tum_originlere_acik": False,
+    }
+
+
+def test_sistem_sagligi_guvenlik_uyarilari_ortam_degiskenlerine_gore_degisir(client, izleyici_header, monkeypatch):
+    monkeypatch.delenv("PTS_LICENSE_SECRET", raising=False)
+    monkeypatch.setenv("PTS_KAMERA_ANAHTARI", "test-kamera-anahtari")
+    monkeypatch.setenv("PTS_CORS_ORIGINS", "*")
+    r = client.get("/sistem/saglik", headers=izleyici_header)
+    assert r.status_code == 200, r.text
+    assert r.json()["guvenlik_uyarilari"] == {
+        "lisans_secret_ayarli_mi": False,
+        "kamera_anahtari_ayarli_mi": True,
+        "cors_tum_originlere_acik": True,
+    }
+
+
+# ------------------------------------------------------------------
 # /sistem/saglik — SQL Server yedeğinin GERÇEKTEN alınıp alınmadığının izlenmesi
 # ------------------------------------------------------------------
 # Önceden sistem, SQL Server Agent bakım planının çalışıp çalışmadığını hiçbir
@@ -664,11 +835,121 @@ def test_gecersiz_istek_govdesi_tutarli_422_doner(client, yetkili_header):
     assert isinstance(govde["hatalar"], list)
 
 
-def test_beklenmeyen_hata_loglanir_ve_tutarli_500_doner(client, caplog):
+# ------------------------------------------------------------------
+# /kayitlar, /olaylar, /alarmlar, /sakin/gecmisim — limit/offset sınırları
+# ve geçersiz tarih filtresi doğrulaması (2026-09-20)
+# ------------------------------------------------------------------
+# KÖK NEDEN (geniş kapsamlı denetimde tespit edildi): `limit` parametreleri
+# `.limit(min(limit, 500))` deseniyle "üst sınıra kırpılıyordu" -- ama SQLite
+# (ve bazı motorlar) NEGATİF bir LIMIT'i "sınırsız" sayıyor: `min(-1, 500)`
+# hâlâ `-1`. Yani `?limit=-1` göndererek 500 satırlık üst sınır TAMAMEN
+# atlatılabiliyordu (en düşük yetkili "izleyici" rolü dahil) -- KVKK
+# kapsamındaki plaka/kişi verilerinin toplu dökümü anlamına gelirdi. Artık
+# `Query(ge=1, le=500)` bu değeri isteğin FastAPI'ye ulaştığı anda (422 ile)
+# reddediyor. Ayrıca `baslangic`/`bitis` için geçersiz bir tarih artık düz bir
+# 500 yerine açık bir 400 döndürüyor.
+
+@pytest.mark.parametrize("uc,parametre", [
+    ("/kayitlar", "limit"), ("/kayitlar", "offset"),
+    ("/kayitlar/sayfa-bilgisi", "limit"),
+    ("/olaylar", "limit"), ("/olaylar", "since_id"),
+    ("/alarmlar", "limit"),
+])
+def test_negatif_limit_offset_artik_422_ile_reddedilir(client, izleyici_header, uc, parametre):
+    r = client.get(uc, params={parametre: -1}, headers=izleyici_header)
+    assert r.status_code == 422, r.text
+
+
+def test_asiri_buyuk_limit_500e_kirpilmiyor_422_doner(client, izleyici_header):
+    """Önceden `min(limit, 500)` ile sessizce 500'e kırpılıyordu; artık
+    açıkça reddediliyor -- istemci gerçek üst sınırı görüp buna göre
+    sayfalama yapabilsin diye (sessizce farklı bir sonuç dönmek yerine)."""
+    r = client.get("/kayitlar", params={"limit": 100000}, headers=izleyici_header)
+    assert r.status_code == 422, r.text
+
+
+def test_sakin_gecmisim_negatif_limit_422_doner(client, sakin_header):
+    r = client.get("/sakin/gecmisim", params={"limit": -5}, headers=sakin_header)
+    assert r.status_code == 422, r.text
+
+
+@pytest.mark.parametrize("uc", ["/kayitlar", "/kayitlar/sayfa-bilgisi"])
+@pytest.mark.parametrize("alan", ["baslangic", "bitis"])
+def test_gecersiz_tarih_filtresi_500_yerine_400_doner(client, izleyici_header, uc, alan):
+    r = client.get(uc, params={alan: "bu-bir-tarih-degil"}, headers=izleyici_header)
+    assert r.status_code == 400, r.text
+    assert alan in r.json()["detail"]
+
+
+def test_gecerli_tarih_filtresi_normal_calisir(client, izleyici_header):
+    """Yukarıdaki 400 doğrulamasının, GEÇERLİ bir ISO tarihini yanlışlıkla
+    reddetmediğinden emin olmak için (regresyona karşı)."""
+    r = client.get("/kayitlar", params={"baslangic": "2026-01-01", "bitis": "2026-12-31"}, headers=izleyici_header)
+    assert r.status_code == 200, r.text
+
+
+# ------------------------------------------------------------------
+# GET /olaylar, GET /alarmlar — temel işlevsellik (2026-09-20)
+# ------------------------------------------------------------------
+# Denetimde bu iki uç noktanın HİÇ test kapsamında olmadığı tespit edildi
+# (yalnızca yukarıdaki negatif-limit doğrulaması dolaylı olarak dokunuyordu).
+
+def test_olaylar_girissiz_401_doner(client):
+    r = client.get("/olaylar")
+    assert r.status_code == 401, r.text
+
+
+def test_olaylar_since_id_ile_sonraki_kayitlari_getirir(client, yetkili_header):
+    r1 = client.post("/kayitlar", json={"plaka_no": "34 OLY 01", "kamera_id": "TEST", "yon": "giris"}, headers=yetkili_header)
+    ilk_id = r1.json()["id"]
+    r2 = client.post("/kayitlar", json={"plaka_no": "34 OLY 02", "kamera_id": "TEST", "yon": "giris"}, headers=yetkili_header)
+    ikinci_id = r2.json()["id"]
+
+    r = client.get("/olaylar", params={"since_id": ilk_id}, headers=yetkili_header)
+    assert r.status_code == 200, r.text
+    idler = {k["id"] for k in r.json()}
+    assert ikinci_id in idler
+    assert ilk_id not in idler
+
+
+def test_alarmlar_girissiz_401_doner(client):
+    r = client.get("/alarmlar")
+    assert r.status_code == 401, r.text
+
+
+def test_alarmlar_kara_liste_gecisinde_olusur_ve_sadece_acik_filtresi_calisir(client, yetkili_header):
+    plaka = "34 ALM 01"
+    r0 = client.post("/kara-listesi", json={"plaka_no": plaka, "sebep": "test"}, headers=yetkili_header)
+    assert r0.status_code == 200, r0.text
+    r1 = client.post("/kayitlar", json={"plaka_no": plaka, "kamera_id": "TEST", "yon": "giris"}, headers=yetkili_header)
+    assert r1.status_code == 200, r1.text
+    assert r1.json()["yetki_durumu"] == "kara_liste"
+
+    r2 = client.get("/alarmlar", headers=yetkili_header)
+    assert r2.status_code == 200, r2.text
+    alarmlar = [a for a in r2.json() if a["plaka_no"] == plaka]
+    assert len(alarmlar) >= 1
+    assert alarmlar[0]["alarm_tipi"] == "kara_liste"
+    assert alarmlar[0]["okundu"] is False
+
+    r3 = client.patch(f"/alarmlar/{alarmlar[0]['id']}/okundu", headers=yetkili_header)
+    assert r3.status_code == 200, r3.text
+
+    r4 = client.get("/alarmlar", params={"sadece_acik": True}, headers=yetkili_header)
+    kalan_idler = {a["id"] for a in r4.json()}
+    assert alarmlar[0]["id"] not in kalan_idler, "okundu=True işaretlenen alarm 'sadece_acik' filtresinde hâlâ görünüyor"
+
+
+def test_beklenmeyen_hata_loglanir_ve_tutarli_500_doner(client, caplog, izleyici_header):
     """Bilerek fırlatılmamış (HTTPException olmayan) bir hata; istemciye
     traceback sızdırmadan tutarlı bir JSON gövdesiyle dönmeli VE sunucu
     tarafında tam iz düşümüyle loglanmalı (bkz. main.py::_beklenmeyen_hata_yakalayici) —
-    aksi halde bu sınıftaki hatalar `/sistem/loglar` üzerinden hiç görülemez."""
+    aksi halde bu sınıftaki hatalar `/sistem/loglar` üzerinden hiç görülemez.
+
+    NOT (2026-09-20): `/sistem/saglik` artık personel girişi istiyor (bkz.
+    test_sistem_sagligi_girissiz_401_doner), bu yüzden burada da
+    `izleyici_header` gönderiliyor -- aksi halde bu test kendi patch'lediği
+    fonksiyona hiç ulaşmadan 401'e düşerdi."""
 
     def _patlayan_fonksiyon():
         raise RuntimeError("kaçınılmaz test hatası")
@@ -676,7 +957,7 @@ def test_beklenmeyen_hata_loglanir_ve_tutarli_500_doner(client, caplog):
     with caplog.at_level("ERROR", logger="pts"):
         with pytest.MonkeyPatch.context() as mp:
             mp.setattr(pts_main, "_son_yedek_bilgisini_al", _patlayan_fonksiyon)
-            r = client.get("/sistem/saglik")
+            r = client.get("/sistem/saglik", headers=izleyici_header)
 
     assert r.status_code == 500, r.text
     govde = r.json()

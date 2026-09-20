@@ -1,6 +1,52 @@
 const API = "";  // aynı sunucudan servis edildiği için boş bırakıldı
 let sonKayitlarCache = [];
 
+// ---------------------- KÜRESEL HATA YAKALAYICI (2026-09-20) ----------------------
+// Backend'in "sıfır sessiz hata" ilkesi (küresel exception handler'lar,
+// hemen hemen her uçta try/except + loglama) frontend'de KARŞILIKSIZDI: bir
+// render/olay-işleyici fonksiyonundaki yakalanmamış bir hata, yalnızca
+// tarayıcı konsoluna (geliştiricinin açıp baktığı yere) düşüp kullanıcıya
+// HİÇ görünmeden kayboluyordu. Güvenlik masasındaki bir kullanıcı devtools
+// konsolunu asla açmaz, bu yüzden "ekranda bir şey güncellenmiyor ama neden
+// bilmiyorum" türü şikayetlerin kök nedeni hiç görünür olmuyordu -- bu, geniş
+// kapsamlı bir kod denetiminde tespit edilen en büyük "sessiz hata"
+// asimetrisiydi. Artık yakalanmamış HER hata en azından bir toast ile
+// bildiriliyor; art arda patlayan bir döngü toast'u spam'lemesin diye
+// 10 saniyede bir ile sınırlanıyor. `toastGoster` bu dosyada daha aşağıda
+// tanımlı ama fonksiyon bildirimleri JS'te hoisted olduğu için burada
+// (dosyanın en başında) çağrılması güvenlidir.
+let _sonKuresekHataToastZamani = 0;
+
+function _kuresekHataBildir(mesaj) {
+  console.error(mesaj);
+  const simdi = Date.now();
+  if (simdi - _sonKuresekHataToastZamani < 10000) return;  // spam koruması
+  _sonKuresekHataToastZamani = simdi;
+  try {
+    toastGoster(
+      "Beklenmeyen bir arayüz hatası oluştu. Sorun sürerse sayfayı yenileyin veya sistem yöneticisine bildirin.",
+      "hata",
+    );
+  } catch {
+    // toastGoster'ın kendisi (örn. DOM/Bootstrap henüz hazır değilse)
+    // çağrılamıyorsa sessizce vazgeç -- konsola zaten yukarıda yazıldı.
+  }
+}
+
+window.addEventListener("error", (olay) => {
+  // Kaynak yükleme hataları (örn. başarısız bir <img>) da bu olayı tetikler
+  // ama bunlarda `error` alanı hep null'dur -- yalnızca GERÇEK JS
+  // hatalarını (script çalışırken fırlatılan) ele alıyoruz.
+  if (!olay.error) return;
+  _kuresekHataBildir(`Yakalanmamış hata: ${olay.message}`);
+});
+
+window.addEventListener("unhandledrejection", (olay) => {
+  const sebep = olay.reason;
+  const mesaj = sebep instanceof Error ? sebep.message : String(sebep);
+  _kuresekHataBildir(`Yakalanmamış promise reddi: ${mesaj}`);
+});
+
 // ---------------------- ROL BAZLI ARAYÜZ (RBAC) ----------------------
 // Backend'deki _rol_dogrula() politikasıyla birebir eşleşir (backend/main.py).
 // izleyici: salt okunur | operatör: günlük işlemler | yonetici: tam yetki
@@ -2471,6 +2517,7 @@ async function sistemSagliginiYukle() {
     const dedektorModeliSatiri = s.anpr_dedektor_esigi?.model
       ? `<div class="info-row"><i class="bi bi-aspect-ratio text-primary"></i> <span>Dedektör Modeli</span><strong title="${escapeHtml(s.anpr_dedektor_esigi.model_kaynagi || "")}">${escapeHtml(s.anpr_dedektor_esigi.model)}</strong></div>`
       : "";
+    _guvenlikUyarilariniGoster(s.guvenlik_uyarilari);
     el.innerHTML = `
       <div class="info-row">${ikon(s.durum === "cevrimici")} <span>Uygulama</span><strong>${s.durum}</strong></div>
       <div class="info-row">${ikon(s.veritabani === "ok")} <span>Veritabanı</span><strong>${s.veritabani}</strong></div>
@@ -2484,6 +2531,35 @@ async function sistemSagliginiYukle() {
       <div class="info-row"><i class="bi bi-code text-muted"></i> <span>Sürüm</span><strong>PTS v${s.surum}</strong></div>
       <div class="text-muted small mt-2">${new Date(s.zaman).toLocaleString("tr-TR")}</div>`;
   } catch (e) { console.error(e); }
+}
+
+// "Güvenlik uyarıları" banner'ı (2026-09-20): yalnızca yönetici görür --
+// bu ortam değişkenlerini değiştirebilecek TEK rol odur; operatör/izleyici
+// için gösterilmesi eyleme geçemeyecekleri bir bilgi kirliliği olurdu.
+function _guvenlikUyarilariniGoster(uyarilar) {
+  const alan = document.getElementById("guvenlikUyarilariAlani");
+  const liste = document.getElementById("guvenlikUyarilariListesi");
+  if (!alan || !liste) return;
+  if (mevcutRol !== "yonetici" || !uyarilar) {
+    alan.classList.add("d-none");
+    return;
+  }
+  const maddeler = [];
+  if (!uyarilar.lisans_secret_ayarli_mi) {
+    maddeler.push("PTS_LICENSE_SECRET ayarlanmamış — lisanslar herkese açık, kaynak kodda sabit bir geliştirme anahtarıyla imzalanıyor. Kaynağa erişimi olan biri geçerli bir lisans üretebilir.");
+  }
+  if (!uyarilar.kamera_anahtari_ayarli_mi) {
+    maddeler.push("PTS_KAMERA_ANAHTARI ayarlanmamış — /kayitlar/otomatik uç noktası tamamen kimliksiz (yalnızca hız sınırlaması var). Kameralar güvenilmeyen bir ağdaysa bu değişkeni ayarlayın.");
+  }
+  if (uyarilar.cors_tum_originlere_acik) {
+    maddeler.push("PTS_CORS_ORIGINS='*' — tüm origin'lerden çapraz kaynak isteklerine izin veriliyor, üretimde önerilmez.");
+  }
+  if (maddeler.length === 0) {
+    alan.classList.add("d-none");
+    return;
+  }
+  liste.innerHTML = maddeler.map(m => `<li>${escapeHtml(m)}</li>`).join("");
+  alan.classList.remove("d-none");
 }
 
 async function loglariYukle() {

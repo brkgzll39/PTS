@@ -2585,6 +2585,30 @@ async def kayit_ekle_otomatik(
                                      dogrulama_kare_sayisi, farkli_okuma_sayisi=farkli_okuma_sayisi)
 
 
+def _iso_tarih_parametresini_coz(deger: Optional[str], alan_adi: str) -> Optional[datetime]:
+    """Bir tarih filtresi query parametresini (`baslangic`/`bitis`) ISO 8601
+    biçiminde ayrıştırır.
+
+    KÖK NEDEN (2026-09-20): öncesinde `datetime.fromisoformat()` bu
+    parametrelerin olduğu HER yerde doğrudan çağrılıyordu -- geçersiz bir
+    değer (örn. `?baslangic=abc`) yakalanmamış bir `ValueError` fırlatıp
+    isteği düz bir 500'e düşürüyordu. Bu, projenin kendi "sıfır sessiz hata"
+    ilkesine aykırıydı: istemciye ne yanlış yaptığı hiç söylenmiyordu (genel
+    500 mesajı "beklenmeyen bir hata" der, oysa bu tamamen beklenen ve
+    açıkça reddedilmesi gereken bir istemci hatasıdır). Artık geçersiz bir
+    değer, hangi alanın ve hangi değerin sorunlu olduğunu söyleyen açık bir
+    400 ile reddediliyor."""
+    if deger is None:
+        return None
+    try:
+        return datetime.fromisoformat(deger)
+    except ValueError:
+        raise HTTPException(
+            400,
+            f"'{alan_adi}' alanı geçerli bir ISO 8601 tarihi olmalı (örn. 2026-01-31): '{deger}'",
+        )
+
+
 @app.get("/kayitlar", response_model=List[schemas.KayitCevap])
 def kayitlari_listele(
     plaka: Optional[str] = None,
@@ -2592,8 +2616,8 @@ def kayitlari_listele(
     bitis: Optional[str] = None,
     yetki_durumu: Optional[str] = None,
     kamera_id: Optional[str] = None,
-    limit: int = 50,
-    offset: int = 0,
+    limit: int = Query(50, ge=1, le=500),
+    offset: int = Query(0, ge=0),
     db: Session = Depends(get_db),
     kullanici: models.Kullanici = Depends(_personel_girisi_gerekli),
 ):
@@ -2605,16 +2629,25 @@ def kayitlari_listele(
     if kamera_id:
         sorgu = sorgu.filter(models.Kayit.kamera_id.ilike(f"%{kamera_id}%"))
     if baslangic:
-        sorgu = sorgu.filter(models.Kayit.tarih_saat >= datetime.fromisoformat(baslangic))
+        sorgu = sorgu.filter(models.Kayit.tarih_saat >= _iso_tarih_parametresini_coz(baslangic, "baslangic"))
     if bitis:
         sorgu = sorgu.filter(
-            models.Kayit.tarih_saat <= datetime.fromisoformat(bitis) + timedelta(days=1)
+            models.Kayit.tarih_saat <= _iso_tarih_parametresini_coz(bitis, "bitis") + timedelta(days=1)
         )
     # bkz. "GÜVENLİK PERSONELİ VARDİYA FİLTRESİ" notu: güvenlik rolü dışındaki
     # kullanıcılar için bu çağrı sorguyu DEĞİŞTİRMEDEN döner.
     sorgu = _guvenlik_kayit_filtresi_uygula(sorgu, kullanici, db)
     toplam = sorgu.count()
-    kayitlar = sorgu.order_by(desc(models.Kayit.tarih_saat)).offset(max(0, offset)).limit(min(limit, 500)).all()
+    # NOT (2026-09-20): `limit`/`offset` artık yukarıdaki `Query(ge=..., le=...)`
+    # ile FastAPI/Pydantic seviyesinde doğrulanıyor -- önceden burada
+    # `min(limit, 500)` gibi bir "üst sınırı kırp" deseni vardı, ama SQLite
+    # (ve bazı motorlar) NEGATİF bir LIMIT değerini "sınırsız" olarak
+    # yorumluyor (`min(-1, 500) == -1`); yani `?limit=-1` göndererek 500
+    # satırlık üst sınırı tamamen ATLAYIP tüm tabloyu (KVKK kapsamındaki
+    # plaka/kişi verileriyle birlikte) tek istekte dökebiliyordunuz -- en
+    # düşük yetkili "izleyici" rolü dahil. `Query(ge=1, le=500)` bu değeri
+    # isteğin FastAPI'ye ulaştığı ANDA reddeder (422), sorgu hiç kurulmaz.
+    kayitlar = sorgu.order_by(desc(models.Kayit.tarih_saat)).offset(offset).limit(limit).all()
     return kayitlar
 
 
@@ -2625,7 +2658,7 @@ def kayitlar_sayfa_bilgisi(
     bitis: Optional[str] = None,
     yetki_durumu: Optional[str] = None,
     kamera_id: Optional[str] = None,
-    limit: int = 50,
+    limit: int = Query(50, ge=1, le=500),
     db: Session = Depends(get_db),
     kullanici: models.Kullanici = Depends(_personel_girisi_gerekli),
 ):
@@ -2638,9 +2671,11 @@ def kayitlar_sayfa_bilgisi(
     if kamera_id:
         sorgu = sorgu.filter(models.Kayit.kamera_id.ilike(f"%{kamera_id}%"))
     if baslangic:
-        sorgu = sorgu.filter(models.Kayit.tarih_saat >= datetime.fromisoformat(baslangic))
+        sorgu = sorgu.filter(models.Kayit.tarih_saat >= _iso_tarih_parametresini_coz(baslangic, "baslangic"))
     if bitis:
-        sorgu = sorgu.filter(models.Kayit.tarih_saat <= datetime.fromisoformat(bitis) + timedelta(days=1))
+        sorgu = sorgu.filter(
+            models.Kayit.tarih_saat <= _iso_tarih_parametresini_coz(bitis, "bitis") + timedelta(days=1)
+        )
     sorgu = _guvenlik_kayit_filtresi_uygula(sorgu, kullanici, db)
     toplam = sorgu.count()
     sayfa_sayisi = max(1, -(-toplam // max(1, limit)))
@@ -2648,18 +2683,23 @@ def kayitlar_sayfa_bilgisi(
 
 
 @app.get("/olaylar", response_model=List[schemas.KayitCevap])
-def olaylari_getir(since_id: int = 0, limit: int = 100, db: Session = Depends(get_db), kullanici: models.Kullanici = Depends(_personel_girisi_gerekli)):
+def olaylari_getir(
+    since_id: int = Query(0, ge=0),
+    limit: int = Query(100, ge=1, le=500),
+    db: Session = Depends(get_db),
+    kullanici: models.Kullanici = Depends(_personel_girisi_gerekli),
+):
     """Canlı ekran için son olayları veya verilen ID'den sonrasını döndürür."""
     sorgu = db.query(models.Kayit).filter(models.Kayit.id > since_id)
     sorgu = _guvenlik_kayit_filtresi_uygula(sorgu, kullanici, db)
-    return sorgu.order_by(desc(models.Kayit.id)).limit(min(limit, 500)).all()
+    return sorgu.order_by(desc(models.Kayit.id)).limit(limit).all()
 
 
 @app.get("/alarmlar", response_model=List[schemas.AlarmCevap])
 def alarmlari_listele(
     sadece_acik: bool = False,
     alarm_tipi: Optional[str] = None,
-    limit: int = 100,
+    limit: int = Query(100, ge=1, le=500),
     db: Session = Depends(get_db),
     _: models.Kullanici = Depends(_personel_girisi_gerekli),
 ):
@@ -2668,7 +2708,7 @@ def alarmlari_listele(
         sorgu = sorgu.filter(models.Alarm.okundu == False)  # noqa: E712
     if alarm_tipi:
         sorgu = sorgu.filter(models.Alarm.alarm_tipi == alarm_tipi)
-    return sorgu.order_by(desc(models.Alarm.tarih_saat)).limit(min(limit, 500)).all()
+    return sorgu.order_by(desc(models.Alarm.tarih_saat)).limit(limit).all()
 
 
 @app.patch("/alarmlar/{alarm_id}/okundu", response_model=schemas.AlarmCevap)
@@ -2989,10 +3029,19 @@ def _rapor_tarih_araligi_metni(baslangic: Optional[str], bitis: Optional[str], k
     arasındaki geçiş kayıtları listelenmektedir." metni). Kullanıcı bir
     tarih filtresi seçtiyse onu kullanır; seçmediyse dönen kayıtların
     GERÇEK en eski/en yeni tarihlerini gösterir (referanstaki gibi sabit
-    bir varsayım -- örn. "son 24 saat" -- UYDURMAZ)."""
+    bir varsayım -- örn. "son 24 saat" -- UYDURMAZ).
+
+    NOT: `baslangic`/`bitis` burada da `_iso_tarih_parametresini_coz` ile
+    ayrıştırılıyor -- pratikte bu fonksiyona ulaşan değerler zaten
+    `kayitlari_listele` tarafından (aynı parametrelerle, DAHA ÖNCE) doğrulanmış
+    oluyor (dışa aktarma uçları onu doğrudan çağırıyor), ama savunma amaçlı
+    bu fonksiyonun kendi başına da güvenli olması tercih edildi."""
     if baslangic or bitis:
-        b1 = datetime.fromisoformat(baslangic).strftime("%d.%m.%Y") if baslangic else "en eski kayıt"
-        b2 = (datetime.fromisoformat(bitis) + timedelta(days=1)).strftime("%d.%m.%Y") if bitis else "şimdi"
+        b1 = _iso_tarih_parametresini_coz(baslangic, "baslangic").strftime("%d.%m.%Y") if baslangic else "en eski kayıt"
+        b2 = (
+            (_iso_tarih_parametresini_coz(bitis, "bitis") + timedelta(days=1)).strftime("%d.%m.%Y")
+            if bitis else "şimdi"
+        )
         return f"Bu raporda {b1} - {b2} tarihleri arasındaki geçiş kayıtları listelenmektedir."
     if kayitlar:
         ilk = min(k.tarih_saat for k in kayitlar).strftime("%d.%m.%Y %H:%M")
@@ -3463,8 +3512,8 @@ def sakin_arac_sil(plaka_id: int, db: Session = Depends(get_db), kullanici: mode
 
 @app.get("/sakin/gecmisim", response_model=List[schemas.KayitCevap])
 def sakin_gecmisim(
-    limit: int = 50,
-    offset: int = 0,
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
     db: Session = Depends(get_db),
     kullanici: models.Kullanici = Depends(_sakin_girisi_gerekli),
 ):
@@ -3473,7 +3522,7 @@ def sakin_gecmisim(
     bu sınırı genişletemez (bkz. dosya başındaki güvenlik notu)."""
     kisi = _sakin_kisisini_al(db, kullanici)
     sorgu = db.query(models.Kayit).filter(models.Kayit.kisi_id == kisi.id)
-    return sorgu.order_by(desc(models.Kayit.tarih_saat)).offset(max(0, offset)).limit(min(limit, 200)).all()
+    return sorgu.order_by(desc(models.Kayit.tarih_saat)).offset(offset).limit(limit).all()
 
 
 @app.get("/sakin/goruntu/{kayit_id}")
@@ -3594,8 +3643,38 @@ def _son_yedek_bilgisini_al() -> dict:
         return {"izleniyor": True, "son_yedek_zamani": None, "yedek_gecikmis": None}
 
 
+def _guvenlik_uyarilarini_topla() -> dict:
+    """Yalnızca başlangıçta BİR KEZ log dosyasına yazılan (bkz.
+    `_kamera_anahtari_uyarisi`, `_cors_origin_listesi`, `lisans.secret_al`)
+    "varsayılan/güvensiz ayar kullanılıyor" uyarılarının aynısını, kimsenin
+    günlük olarak açıp okumadığı `loglar/pts.log`'un YANINDA panelde de
+    görünür kılar (2026-09-20 -- kullanıcı isteğiyle yapılan geniş kapsamlı
+    denetimde tespit edilen "sessiz güvenlik borcu" sınıfı: bu ayarlardan
+    biri eksikse sistem GAYET normal çalışır, hiçbir hata vermez, ama gerçek
+    bir güvenlik açığı sessizce açık kalır). Burada log YAZMIYORUZ (yalnızca
+    env değişkenlerini okuyoruz) -- bu uç nokta periyodik olarak (panel
+    yenilemesinde) çağrıldığı için, aksi halde her çağrıda log spam'ine yol
+    açardı."""
+    return {
+        "lisans_secret_ayarli_mi": bool(os.getenv("PTS_LICENSE_SECRET")),
+        "kamera_anahtari_ayarli_mi": bool(os.getenv("PTS_KAMERA_ANAHTARI")),
+        "cors_tum_originlere_acik": os.getenv("PTS_CORS_ORIGINS", "").strip() == "*",
+    }
+
+
 @app.get("/sistem/saglik")
-async def sistem_sagligi(db: Session = Depends(get_db)):
+async def sistem_sagligi(db: Session = Depends(get_db), _: models.Kullanici = Depends(_personel_girisi_gerekli)):
+    """Sistem durumunu (DB bağlantısı, aktif kamera pipeline sayısı, SSE
+    istemci sayısı, yedek/görsel-izleme durumu vb.) döner -- panelin Sistem
+    sekmesindeki "Sistem Durumu" kartının veri kaynağıdır.
+
+    GÜVENLİK (2026-09-20): önceden bu uç nokta HİÇBİR kimlik doğrulaması
+    istemiyordu -- ağa erişimi olan HERKES (oturum açmadan) aktif pipeline/
+    SSE istemci sayısını, yedek durumunu ve ANPR eşik yapılandırmasını
+    görebiliyordu. Diğer tüm teşhis/izleme uçları (`/sistem/loglar`,
+    `/sistem/disk-kullanimi` vb.) zaten personel girişi istiyordu; bu
+    tutarsızlık fark edilmemiş bir istisnaydı, düzeltildi. `tests/test_api.py`
+    içindeki testler artık personel token'ı gönderiyor."""
     db_ok = True
     try:
         db.execute(text("SELECT 1"))
@@ -3615,6 +3694,7 @@ async def sistem_sagligi(db: Session = Depends(get_db)):
             "klasor": _klasor_izleyici.kok_klasor if _klasor_izleyici else None,
         },
         "anpr_dedektor_esigi": _anpr_dedektor_esigi_bilgisi_al(),
+        "guvenlik_uyarilari": _guvenlik_uyarilarini_topla(),
     }
 
 

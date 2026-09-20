@@ -1052,6 +1052,20 @@
     <!-- ================= SİSTEM / LOG ================= -->
     <div class="tab-pane fade" id="sistem-sekme">
       <div class="row g-3">
+        <!-- "Güvenlik uyarıları" (2026-09-20): PTS_LICENSE_SECRET/PTS_KAMERA_ANAHTARI/
+             PTS_CORS_ORIGINS gibi ayarlar varsayılana sessizce düşerse önceden bu
+             yalnızca (kimsenin günlük okumadığı) loglar/pts.log'a bir kez yazılıyordu --
+             bkz. main.py::_guvenlik_uyarilarini_topla. Yalnızca yönetici görür (bu
+             ayarları değiştirebilecek TEK rol) ve hiçbir uyarı yoksa hiç gösterilmez. -->
+        <div class="col-12 d-none" id="guvenlikUyarilariAlani">
+          <div class="alert alert-warning d-flex align-items-start gap-2 mb-0" role="alert">
+            <i class="bi bi-shield-exclamation fs-4"></i>
+            <div>
+              <strong>Güvenlik uyarısı</strong>
+              <ul class="small mb-0 mt-1" id="guvenlikUyarilariListesi"></ul>
+            </div>
+          </div>
+        </div>
         <div class="col-lg-4">
           <div class="card mb-3">
             <div class="card-header"><i class="bi bi-activity me-1"></i>Sistem Durumu</div>
