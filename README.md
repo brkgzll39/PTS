@@ -1412,25 +1412,26 @@ plaka değerini attribute'a gömmediğini, `olayDetayAc()`'ın yeni yardımcıy�
 çağırdığını, yardımcının doğru iki modalı (kapat/aç) yönettiğini, ve panel
 satırlarının hâlâ `olayDetayAc` çağırdığını.
 
-## Güvenlik Personeli Vardiya Filtresi (2026-09-18)
+## Güvenlik Personeli Vardiya Filtresi (2026-09-18, 2026-09-20'de öz-hizmete geçirildi)
 
 Kullanıcı talebi (özetle): sistemi kullanacak güvenlik personeli için
 "Kullanıcılar" sekmesinden yeni kullanıcı oluşturma ekranı istendi. Bu
 personel yalnızca Canlı İzleme/Ana Sayfa/Kayıtlar/Kişiler/Kara Liste
 alanlarını görebilmeli (zaten "operatör" rolüyle aynı 5 alan). Asıl fark:
-"Eser Akar'ın kaydetmiş olduğu plakalar Eser Akar tarafından giriş
-yapıldığında listelenecek kayıtlar da buna göre filtrelenecek" ve "İlyas
-Çotuk kendi kullanıcısıyla oturum açarsa o gün vardiyası bitene kadarki tüm
-geçişler günlük olarak onun kayıtlar listesinde gözükecek" -- yani her
-güvenlik personeli, Kayıtlar listesinde/raporlarda YALNIZCA KENDİ
+her güvenlik personeli, Kayıtlar listesinde/raporlarda YALNIZCA KENDİ
 VARDİYASINDA geçen araçları görmeli; yönetici panelinden ise her zaman TÜM
-kayıtlar görünmeye devam etmeli. Takip eden netleştirmede kullanıcı şunu
-ekledi: personel "4 vardiya / 4 vardiya amiri" 24 saat esaslı bir rotasyonla
-çalışıyor, yani AYNI KİŞİ günden güne farklı saatlerde çalışabiliyor (ör.
-bugün 15:00-23:00, yarın 07:00-15:00) -- sabit haftalık bir program yeterli
-değil. Ayrıca: aynı anda birden fazla güvenlik personelinin vardiyası
-çakışıyorsa bir kayıt dışlayıcı biçimde tek kişiye değil, o an vardiyası
-olan HERKESİN listesinde ayrı ayrı görünmeli.
+kayıtlar görünmeye devam etmeli. Ayrıca: aynı anda birden fazla güvenlik
+personelinin vardiyası çakışıyorsa bir kayıt dışlayıcı biçimde tek kişiye
+değil, o an vardiyası olan HERKESİN listesinde ayrı ayrı görünmeli.
+
+**GÜNCELLEME (2026-09-20, birebir):** "bu sistemi kullanacak güvenlik
+personellerimiz olacak ... bunu sürekli ben yapamam vardiyaya gelen personel
+kendisi vardiya başlangıcını kendisi yapabilsin ... kullanıcı giriş yapınca
+çıkış yapana kadar onun vardiyası devam etsin" -- yöneticinin her personel
+için her günü ELLE vardiya olarak girmesi (eski "Vardiya Planlama" ekranı,
+`models.VardiyaAtamasi`) yerine, vardiya artık PERSONELİN KENDİ giriş/
+çıkışına bağlı: bir güvenlik hesabıyla giriş yapıldığı an vardiyası başlar,
+"Çıkış" yapılana (ya da unutulursa bir sonraki girişte otomatik) kadar sürer.
 
 ### Tasarım
 
@@ -1441,38 +1442,43 @@ olan HERKESİN listesinde ayrı ayrı görünmeli.
   mevcut `_rol_dogrula(kullanici, ROL_YONETICI, ROL_OPERATOR)` çağrısının
   HİÇBİRİNE dokunmadan güvenlik rolü de aynı işlemlere otomatik izinli olur.
   Frontend'de de aynı eşdeğerlik `ROL_SEVIYE = {..., "operatör": 1,
-  "güvenlik": 1, ...}` ile sağlanıyor -- bu sayede "Yönetim" sekmelerini
-  gizleyen mevcut `data-rol-min="yonetici" data-rol-davranis="gizle"`
-  mekanizması ekstra bir değişiklik gerektirmeden güvenlik rolünü de aynı 5
-  alanla sınırlıyor (bkz. 2026-09-18 tarihli "Operatör Panelinden Yönetim
-  Görünürlüğünün Kaldırılması" notu -- aynı mekanizma, yeni role otomatik
-  uygulanıyor).
-- **Yeni tablo: `models.VardiyaAtamasi`** -- bir güvenlik personeline TEK BİR
-  GÜN için vardiya ataması (`kullanici_id`, `tarih`, `baslangic_saat`,
-  `bitis_saat`). Sabit bir "haftalık program" yerine GÜN BAZLI satırlar
-  tutuluyor, çünkü aynı kişi günden güne farklı saatlerde çalışabiliyor.
-  `bitis_saat <= baslangic_saat` ise (ör. 23:00 -> 07:00) gece yarısını geçen
-  bir vardiya sayılır ve bitiş bir sonraki takvim gününe kayar (bkz.
-  `main.py::_vardiya_penceresi`).
-- **Filtre mantığı** (`main.py::_guvenlik_kayit_filtresi_uygula`): bir kayıt,
-  kullanıcının vardiya pencerelerinden HERHANGİ BİRİNE denk düşüyorsa
-  görünür. Çakışan pencerelerde birden fazla kullanıcıya AYNI ANDA ait
-  olabilir -- dışlayıcı bir atama yok (kullanıcının ikinci netleştirmesiyle
-  birebir uyumlu). Hiç vardiya ataması yoksa (henüz planlanmamışsa) GÜVENLİ
-  TARAF seçildi: varsayılan olarak HER ŞEYİ göstermek yerine HİÇBİR kayıt
-  döndürülmüyor.
-- **Yeni uç noktalar** (yalnızca yönetici): `GET/POST /vardiyalar`,
-  `DELETE /vardiyalar/{id}`. `POST`, hedef kullanıcının rolü `güvenlik`
-  değilse 400 döner (başka bir role vardiya atamak sessizce hiçbir işe
-  yaramayan kafa karıştırıcı veri üretirdi).
-- **Yeni arayüz** (Kullanıcılar sekmesi, yalnızca yönetici): "Yeni Kullanıcı"
-  formuna "Güvenlik Personeli" rol seçeneği; altına yeni bir "Vardiya
-  Planlama" kartı (güvenlik personeli seç + tarih + başlangıç/bitiş saati +
-  "Vardiyayı Ata", ve atanmış vardiyaların listesi/silme). Kayıtlar
-  sekmesinde, yalnızca `güvenlik` rolünde girişte görünen bir bilgi
+  "güvenlik": 1, ...}` ile sağlanıyor.
+- **Öz-hizmet vardiya oturumu: `models.VardiyaOturumu`** (eski, artık
+  KULLANILMAYAN `models.VardiyaAtamasi`'nin yerini alır -- o sınıf/tablo,
+  üretimdeki mevcut veriyi bozmamak için kodda bırakıldı ama hiçbir yerde
+  okunup yazılmıyor). Bir satır = TEK BİR oturum: `giris_zamani` başarılı bir
+  `/auth/giris` çağrısının, `cikis_zamani` de `/auth/cikis` çağrısının zaman
+  damgasıdır ve oturum kapanana kadar NULL kalır (bkz. `main.py::
+  _guvenlik_oturum_baslat`, `::cikis_yap`). "Unutulan çıkış" (tarayıcı,
+  `/auth/cikis` hiç çağrılmadan kapatılırsa) ZARARSIZDIR: aynı kullanıcı bir
+  dahaki sefer TEKRAR giriş yaptığında eski açık oturum o anda otomatik
+  kapatılır ve yeni bir oturum açılır -- unutulan bir çıkış asla bir sonraki
+  vardiyanın kayıtlarına karışmaz. HH:MM string'ler ve gece-yarısı-geçme
+  hesaplaması gibi eski karmaşıklık tamamen ORTADAN KALKTI: oturumlar zaten
+  gerçek datetime'lar olduğu için pencere ne kadar sürerse o kadar sürer.
+- **Filtre mantığı** (`main.py::_guvenlik_kayit_filtresi_uygula`,
+  `_pencere_icinde_mi`): bir kayıt, kullanıcının vardiya oturumlarından
+  HERHANGİ BİRİNE denk düşüyorsa görünür (`cikis_zamani` NULL olan bir oturum
+  için üst sınır YOKTUR -- giriş anından bu yana geçen HER ŞEY dahildir).
+  Çakışan oturumlarda birden fazla kullanıcıya AYNI ANDA ait olabilir --
+  dışlayıcı bir atama yok. Hiç vardiya oturumu yoksa GÜVENLİ TARAF seçildi:
+  varsayılan olarak HER ŞEYİ göstermek yerine HİÇBİR kayıt döndürülmüyor
+  (normal akışta bu durum oluşmaz -- her girişte otomatik bir oturum açılır
+  -- ama savunma amaçlı korunuyor).
+- **Yeni uç noktalar**: `POST /auth/cikis` (herkes çağırabilir, yalnızca
+  `güvenlik` rolü için anlamlıdır -- açık oturumu kapatır). Yalnızca
+  yönetici: `GET /vardiya-oturumlari` (izleme), `POST /vardiya-oturumlari/
+  {id}/sonlandir` (açık kalmış bir oturumu elle sonlandırma -- ELLE
+  OLUŞTURMA uç noktası YOK, oturumlar yalnızca giriş/çıkışla açılıp kapanır),
+  `GET /vardiya-oturumlari/durumum` (bkz. aşağıdaki "Teşhis Aracı" bölümü).
+- **Yeni arayüz**: "Yeni Kullanıcı" formunda "Güvenlik Personeli" rol
+  seçeneği (artık vardiyasının ELLE atanmadığını, giriş/çıkışa bağlı
+  olduğunu açıklıyor). Kullanıcılar sekmesindeki eski "Vardiya Planlama"
+  kartı (Vardiya Ata formu) TAMAMEN KALDIRILDI; yerine salt-okunur "Vardiya
+  Oturumları" izleme tablosu geldi (giriş/çıkış zamanı, durum, ve açık bir
+  oturum için "Sonlandır" butonu). Kayıtlar sekmesindeki `#guvenlikVardiyaBilgisi`
   banner'ı ("Bu liste yalnızca SİZİN vardiyanıza denk gelen kayıtları
-  gösterir") eklendi -- backend filtresinin SESSİZCE liste kısaltması yerine
-  kullanıcıya açıkça bildirilmesi için ("sıfır sessiz hata" ilkesi).
+  gösterir") aynen korundu.
 
 ### Filtrenin uygulandığı yerler (kapsam)
 
@@ -1495,109 +1501,95 @@ GÖRMESİN -- aksi halde liste filtresiyle tutarsız, sessiz bir bilgi
 sızıntısı olurdu).
 
 **Bilinçli sınır** (kaydı DÜZENLEME/SİLME yetkisi vardiya dışı kayıtlar için
-AYRICA kısıtlanmadı -- tıpkı 2026-09-18 tarihli "Operatör Panelinden Yönetim
-Görünürlüğü" notunda olduğu gibi bu da bir GÖRÜNÜRLÜK kısıtlamasıdır, kaydın
-ID'sini zaten bilen bir istemciye karşı ekstra bir yetkilendirme katmanı
-DEĞİLDİR) ve canlı SSE filtresi entegrasyon testiyle DEĞİL yalnızca kod
-incelemesiyle doğrulandı (TestClient ile bir SSE akışını uçtan uca test
-etmek bu değişikliğin kapsamı için orantısız bir karmaşıklık getirirdi).
+AYRICA kısıtlanmadı -- bu da bir GÖRÜNÜRLÜK kısıtlamasıdır, kaydın ID'sini
+zaten bilen bir istemciye karşı ekstra bir yetkilendirme katmanı DEĞİLDİR) ve
+canlı SSE filtresi entegrasyon testiyle DEĞİL yalnızca kod incelemesiyle
+doğrulandı (TestClient ile bir SSE akışını uçtan uca test etmek bu
+değişikliğin kapsamı için orantısız bir karmaşıklık getirirdi).
 
 ### Testler
 
 `tests/test_guvenlik_vardiya_frontend.py` (gerçekten çalıştırılıp
-doğrulandı): "güvenlik" rol seçeneğinin ve Vardiya Planlama arayüzünün
-varlığını, `ROL_SEVIYE`'de `güvenlik`/`operatör` eşdeğerliğini doğrular.
-`tests/test_api.py`ye eklenen testler (fastapi/sqlalchemy gerektirdiği için
-bu sandbox'ta çalıştırılamadı, yalnızca `py_compile` ile doğrulandı):
-güvenlik kullanıcısının operatör yetkilerine sahip ama yönetici işlemi
-yapamadığını; vardiya atamanın yalnızca yönetici tarafından yapılabildiğini
-ve yalnızca `güvenlik` rolüne atanabildiğini; vardiyası olmayan bir güvenlik
-kullanıcısının HİÇBİR kayıt göremediğini (fail-closed); kendi vardiyasındaki
-kaydı gördüğünü (hem listede hem istatistiklerde); vardiyası dışındaki
-(25 saat önceki) kaydı göremediğini; gece yarısını geçen vardiya penceresinin
-doğru hesaplandığını (mutlak takvim tarihleriyle, testin çalıştığı saatten
-BAĞIMSIZ); çakışan vardiyalarda aynı kaydın İKİ güvenlik kullanıcısında da
-göründüğünü; ve dışa aktarma uçlarının (`kullanici` parametresinin FastAPI
-DI'ı olmadan doğrudan çağrıldığı için AÇIKÇA geçirilmesi gerektiği --
-aksi halde sessizce filtresiz kalırdı) güvenlik kullanıcısıyla çalıştığını.
+doğrulandı): "güvenlik" rol seçeneğinin varlığını ve açıklama metnini, eski
+Vardiya Ata formunun KALDIRILDIĞINI, yeni "Vardiya Oturumları" izleme
+tablosunun varlığını, `ROL_SEVIYE`'de `güvenlik`/`operatör` eşdeğerliğini, ve
+`oturumKapat()`'ın token silinmeden ÖNCE `/auth/cikis`'i çağırdığını
+doğrular. `tests/test_api.py`ye eklenen testler (fastapi/sqlalchemy
+gerektirdiği için bu sandbox'ta çalıştırılamadı, yalnızca `py_compile` ile
+doğrulandı): güvenlik kullanıcısının operatör yetkilerine sahip ama yönetici
+işlemi yapamadığını; girişin otomatik olarak TAM OLARAK bir açık oturum
+açtığını ve bu oturumların yalnızca yönetici tarafından listelenip
+sonlandırılabildiğini; oturum açılmadan ÖNCEKİ bir kaydın görünmediğini;
+oturum kaydı elle silinmiş gibi bir durumda fail-closed davranışın hâlâ
+çalıştığını; girişin AÇTIĞI oturumun o andan itibaren gerçekleşen kayıtları
+hemen gösterdiğini (hem listede hem istatistiklerde); `/auth/cikis`
+sonrasında vardiyanın kapandığını ve sonraki kayıtların görünmediğini;
+çıkış yapılmadan tekrar giriş yapılırsa ÖNCEKİ (unutulmuş) oturumun otomatik
+kapatılıp YENİ birinin açıldığını; gece yarısını geçen bir oturumun doğru
+filtrelendiğini (mutlak takvim tarihleriyle, testin çalıştığı saatten
+BAĞIMSIZ); aynı gün içinde iki ayrı oturumla (bölünmüş vardiya) her iki
+pencerenin de doğru filtrelendiğini; çakışan açık oturumlarda aynı kaydın İKİ
+güvenlik kullanıcısında da göründüğünü; dışa aktarma uçlarının (`kullanici`
+parametresinin FastAPI DI'ı olmadan doğrudan çağrıldığı için AÇIKÇA
+geçirilmesi gerektiği) güvenlik kullanıcısıyla çalıştığını; ve raporlardaki
+"Vardiya" sütununun (aşağıya bkz.) doğru etiketlendiğini.
 
-## Vardiya Filtresi Teşhis Aracı (2026-09-18)
+## Vardiya Oturumu Teşhis Aracı (2026-09-18, 2026-09-20'de öz-hizmete uyarlandı)
 
-**Neden gerekli:** yukarıdaki filtre canlıya alındıktan sonra bir kullanıcı,
-kendi vardiyasını atadığı halde o pencere içinde gerçekleşen YENİ/canlı bir
+**Neden gerekli:** filtre canlıya alındıktan sonra bir kullanıcı, kendi
+vardiyasını atadığı halde o pencere içinde gerçekleşen YENİ/canlı bir
 geçişin Kayıtlar sekmesinde (ve Canlı İzleme'de) hâlâ görünmediğini bildirdi.
 Filtre tamamen SUNUCU tarafında, `datetime.now()` ile hesaplanan pencerelere
-göre çalıştığı için (bkz. yukarıdaki `_guvenlik_kayit_filtresi_uygula` notu),
-en olası kök nedenlerden biri sunucunun sistem saatinin (üretimde bir Windows
-makinesi) yönetici panelini kullanan kişinin bildiği saatten FARKLI olması
-(saat dilimi/senkronizasyon sorunu) ya da vardiya formuna yanlış bir tarih/
-saat girilmiş olmasıdır -- ama bu sandbox'tan kullanıcının gerçek üretim
-ortamına doğrudan erişim YOK, bu yüzden kör tahminle bir "düzeltme" göndermek
-yerine, sorunu kullanıcının KENDİSİNİN teşhis edebileceği bir araç eklendi
-("sıfır sessiz hata" ilkesi: bir filtrenin neden boş sonuç ürettiği asla
-belirsiz kalmamalı).
+göre çalıştığı için, en olası kök nedenlerden biri sunucunun sistem saatinin
+(üretimde bir Windows makinesi) yönetici panelini kullanan kişinin bildiği
+saatten FARKLI olmasıdır (saat dilimi/senkronizasyon sorunu) -- bu yüzden kör
+tahminle bir "düzeltme" göndermek yerine, sorunu kullanıcının KENDİSİNİN
+teşhis edebileceği bir araç eklendi ("sıfır sessiz hata" ilkesi).
 
-**Ne eklendi:**
-- `GET /vardiyalar/durumum`: rol kontrolü yapmaz (yalnızca çağıranın KENDİ
-  verisini döner), ama `güvenlik` rolü dışındaki kullanıcılar için de zararsız
-  bir yanıt verir (`{"rol_guvenlik_mi": false, "sunucu_simdiki_zaman": ...}`).
-  `güvenlik` rolü için ayrıca: o an aktif bir vardiyası olup olmadığını
-  (`su_an_aktif_vardiya_var_mi`), toplam vardiya sayısını ve her atamanın
-  hesaplanmış mutlak pencere sınırlarını (`pencere_baslangic`/`pencere_bitis`)
-  ve her birinin şu an aktif olup olmadığını (`su_an_aktif_mi`) döner.
-- Kayıtlar sekmesindeki `#guvenlikVardiyaBilgisi` banner'ı artık yalnızca
-  statik bir uyarı değil; içine eklenen `#guvenlikVardiyaDurumu` alt alanı bu
-  uç noktayı çağırıp SUNUCU saatini kullanıcının TARAYICI saatiyle yan yana
-  gösterir, aktif/pasif durumu ve tüm vardiya atamalarını listeler, ve iki
-  saat birbirinden FARKLIYSA ayrı bir uyarı satırı ekler
-  (`guvenlikVardiyaDurumunuGuncelle()`, `frontend/app.js`). Bu fonksiyon hem
-  girişten hemen sonra (`rolBazliArayuzuUygula()` içinde) hem de periyodik
-  panel yenilemesinde (`panelYenile()` içinde) tetiklenir.
+**Ne var:**
+- `GET /vardiya-oturumlari/durumum`: rol kontrolü yapmaz (yalnızca çağıranın
+  KENDİ verisini döner), ama `güvenlik` rolü dışındaki kullanıcılar için de
+  zararsız bir yanıt verir (`{"rol_guvenlik_mi": false, "sunucu_simdiki_
+  zaman": ...}`). `güvenlik` rolü için ayrıca: o an açık bir oturumu olup
+  olmadığını (`su_an_aktif_vardiya_var_mi`), toplam oturum sayısını ve her
+  oturumun giriş/çıkış zamanlarıyla `devam_ediyor` durumunu döner.
+- Kayıtlar sekmesindeki `#guvenlikVardiyaBilgisi` banner'ının içindeki
+  `#guvenlikVardiyaDurumu` alt alanı bu uç noktayı çağırıp SUNUCU saatini
+  kullanıcının TARAYICI saatiyle yan yana gösterir, açık/kapalı durumu ve
+  son oturumları listeler, ve iki saat birbirinden FARKLIYSA ayrı bir uyarı
+  satırı ekler (`guvenlikVardiyaDurumunuGuncelle()`, `frontend/app.js`). Bu
+  fonksiyon hem girişten hemen sonra (`rolBazliArayuzuUygula()` içinde) hem
+  de periyodik panel yenilemesinde (`panelYenile()` içinde) tetiklenir.
 
-**Sonraki adım:** bu teşhis bilgisi, kullanıcının etkilenen güvenlik hesabıyla
-giriş yapıp Kayıtlar sekmesini açtığında bildireceği gerçek verilerle (sunucu
-saati beklenenle uyuşuyor mu, vardiya pencereleri doğru mu hesaplanmış)
-birlikte, asıl kök nedeni netleştirip kalıcı bir düzeltme yapmak için
-kullanılacak.
+## Raporlarda "Vardiya" Sütunu (2026-09-20)
 
-**Testler:** `tests/test_guvenlik_vardiya_frontend.py`ye eklenen (gerçekten
-çalıştırılıp doğrulandı) testler banner'ın yeni alt alanını, JS fonksiyonunun
-doğru uca (`/vardiyalar/durumum`) bağlandığını ve hem giriş hem periyodik
-yenileme noktalarından çağrıldığını doğrular. `tests/test_api.py`ye eklenen
-(yalnızca `py_compile` ile doğrulanan) testler uç noktanın güvenlik-dışı
-roller için zararsız yanıt döndüğünü, vardiyasız bir güvenlik kullanıcısı
-için `su_an_aktif_vardiya_var_mi: false` ve boş liste döndüğünü, ve "00:00 ->
-00:00" (gerçek saatten bağımsız, her zaman "şu anı" kapsayan) bir vardiya
-atandığında bunun aktif olarak doğru bildirildiğini doğrular.
+**Kullanıcı talebi (birebir):** "bu arada her vardiya için kendi geçiş
+raporları olsun Eser Akar geçiş raporu alınca geçiş raporunda eser akar'ın
+vardiyası diye raporda bir sütun tanımlansın" -- personel aynı gün içinde
+birden fazla kez giriş/çıkış yapabildiği (bölünmüş vardiya) için, bir
+kaydın HANGİ oturuma ait olduğu raporda ayrıca görünmeli.
 
-## Bölünmüş Vardiya (Aynı Gün İçinde Birden Fazla Zaman Aralığı) (2026-09-20)
+**Ne eklendi:** dışa aktarma (Excel/PDF) satırlarını üreten `main.py::
+_kayitlari_rapor_satirlari`, her kayıt için `main.py::
+_vardiya_etiketleri_haritasi` ile o kaydın gerçekleştiği anda AÇIK olan
+TÜM güvenlik oturumlarını (kullanıcı adı + giriş saati, "devam ediyor" ya da
+bitiş saati) bulup `"Ad Soyad (HH:MM-HH:MM)"` biçiminde bir metne çevirir
+(aynı anda birden fazla personelin oturumu açıksa hepsi noktalı virgülle
+listelenir). Bu değer, hem `excel_export.kayitlar_excel_olustur` hem
+`pdf_export.kayitlar_pdf_olustur` çıktısına referans rapor biçimine EK
+olarak en sona eklenen "Vardiya" sütununa yazılır (tıpkı "ID" gibi, referans
+üründe olmayan ama sistemimize özgü bir sütun). N+1 sorgudan kaçınmak için
+TÜM güvenlik oturumları tek seferde çekilip bellekte eşleştirilir.
 
-**Kullanıcı sorusu:** "Eser Akar sürekli 15:00-23:00 vardiyasında değil,
-başka vardiyalar da olabiliyor" -- yani aynı personelin aynı takvim günü
-içinde BİRDEN FAZLA, bitişik olmayan zaman aralığında çalışması (ör.
-07:00-11:00 ve ayrıca 19:00-23:00) mümkün olmalı.
-
-**Sonuç:** bu senaryo, `models.VardiyaAtamasi`'nde `(kullanici_id, tarih)`
-üzerinde bir TEKİLLİK KISITLAMASI olmadığı ve `_kullanicinin_vardiya_pencereleri`/
-`_guvenlik_kayit_filtresi_uygula` kullanıcının TÜM atama satırlarını (aynı
-tarihte kaç tane olursa olsun, tarihe göre gruplamadan) bir OR filtresiyle
-birleştirdiği için HİÇBİR backend değişikliği gerektirmeden zaten çalışıyordu
--- eksik olan tek şey, yönetici panelindeki "Vardiya Ata" formunda bunun
-mümkün olduğunu belirten bir açıklamaydı (aynı kişi + aynı tarih için formu
-farklı saatlerle İKİNCİ kez doldurup göndermek yeterli; her ikisi de ayrı
-satır olarak eklenir ve listede ayrı ayrı görünür). Bu form açıklaması
-eklendi ve davranış, iki pencere arasındaki BOŞLUKTA kalan bir kaydın
-görünmediğini de içeren uçtan uca bir API testiyle doğrulandı.
-
-**Testler:** `tests/test_guvenlik_vardiya_frontend.py`ye eklenen (gerçekten
-çalıştırılıp doğrulandı) test formdaki açıklayıcı ipucu metninin varlığını
-doğrular. `tests/test_api.py`ye eklenen (yalnızca `py_compile` ile
-doğrulanan, mutlak takvim tarihleriyle -- gerçek saatten bağımsız --
-oluşturulan) test, aynı kullanıcı+tarih için iki ayrı vardiya ataması
-yapıldığında `/vardiyalar` listesinin iki ayrı satır döndürdüğünü, her iki
-pencere içindeki kayıtların da güvenlik kullanıcısının listesinde
-göründüğünü, ve iki pencere ARASINDAKİ boşlukta kalan bir kaydın
-görünmediğini doğrular.
+**Testler:** `tests/test_api.py::test_rapor_vardiya_sutunu_acik_oturumdaki_
+kaydi_dogru_etiketler` (yalnızca `py_compile` ile doğrulandı), bir güvenlik
+kullanıcısının oturumu açılmadan ÖNCEKİ bir kaydın "vardiya" alanının BOŞ,
+oturum AÇIKKEN oluşan bir kaydın ise o kullanıcının adıyla etiketlendiğini
+doğrular. `tests/test_excel_export.py` ve `tests/test_pdf_export.py`
+(gerçekten çalıştırılıp doğrulandı) güncellendi: yeni sütunun başlıkta ve
+veri satırında doğru yer aldığını, ve formül enjeksiyonuna karşı AYNI
+korumanın (bkz. `excel_export._guvenli_hucre`) bu sütun için de geçerli
+olduğunu doğrular.
 
 ## Kalıcı Test Altyapısı
 

@@ -29,6 +29,7 @@ def _ornek_satir(**gecersizler):
         "tarih_saat": datetime(2026, 9, 17, 8, 4, 7),
         "notlar": "test notu",
         "goruntu_yolu": None,
+        "vardiya": "",
     }
     satir.update(gecersizler)
     return satir

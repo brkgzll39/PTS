@@ -95,7 +95,9 @@ def kayitlar_pdf_olustur(satirlar: list, dosya_yolu: str, tarih_araligi_metni: s
     referans ürünün "GEÇİŞ RAPORU" PDF çıktısıyla eşleşecek şekilde
     tasarlandı -- tek fark, Excel'deki "Notlar" yerine burada "Resim"
     sütununun bulunması (referansın kendisi de aynı ayrımı yapıyor: Excel'de
-    notlar, PDF'de görsel)."""
+    notlar, PDF'de görsel). "Vardiya" (2026-09-20, bkz. excel_export.py'deki
+    aynı başlıklı not) burada da en sona, referansta olmayan sistemimize özgü
+    bir sütun olarak eklendi."""
     doc = SimpleDocTemplate(
         dosya_yolu, pagesize=landscape(A4), topMargin=1.2 * cm, bottomMargin=1.2 * cm,
         leftMargin=1 * cm, rightMargin=1 * cm,
@@ -116,11 +118,11 @@ def kayitlar_pdf_olustur(satirlar: list, dosya_yolu: str, tarih_araligi_metni: s
     elemanlar.append(Spacer(1, 0.4 * cm))
 
     basliklar = ["ID", "Plaka", "Adı", "Soyadı", "Site", "Blok", "Daire", "Otopark",
-                 "Nokta", "Geçiş Tipi", "Araç Tipi", "Tarih", "Resim"]
+                 "Nokta", "Geçiş Tipi", "Araç Tipi", "Tarih", "Resim", "Vardiya"]
     # Sütun genişlikleri elle belirlendi (reportlab'ın otomatik dağıtımı,
     # her zaman boş kalan Blok/Otopark'a da diğerleriyle eşit yer ayırıp
     # başlıkların kelime ortasından bölünmesine yol açardı).
-    genislikler_cm = [0.9, 2.1, 2.0, 2.0, 1.8, 1.1, 1.6, 1.1, 2.3, 1.6, 2.6, 2.7, 2.9]
+    genislikler_cm = [0.9, 2.1, 2.0, 2.0, 1.8, 1.1, 1.6, 1.1, 2.3, 1.6, 2.6, 2.7, 2.9, 2.6]
     veri = [basliklar]
     for s in satirlar:
         veri.append([
@@ -137,6 +139,7 @@ def kayitlar_pdf_olustur(satirlar: list, dosya_yolu: str, tarih_araligi_metni: s
             Paragraph(s["arac_tipi"], hucre_stili),
             Paragraph(s["tarih_saat"].strftime("%d.%m.%Y\n%H:%M:%S"), hucre_stili),
             _pdf_gorsel_hucresi(s.get("goruntu_yolu"), hucre_stili),
+            Paragraph(s.get("vardiya") or "-", hucre_stili),
         ])
 
     tablo = Table(veri, repeatRows=1, colWidths=[g * cm for g in genislikler_cm])

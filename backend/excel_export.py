@@ -33,14 +33,18 @@ def kayitlar_excel_olustur(satirlar: list, dosya_yolu: str) -> str:
     Tarih/Notlar. "ID" en başa, bizim sistemimize özgü ekstra bir sütun
     olarak eklendi (kayda geri dönüp bakabilmek için faydalı, referansta
     yok). "Blok" ve "Otopark" bu sistemde MODELLENMEDİĞİ için her zaman
-    boştur -- var olmayan bir veri asla uydurulmaz (bkz. main.py'deki not)."""
+    boştur -- var olmayan bir veri asla uydurulmaz (bkz. main.py'deki not).
+    "Vardiya" (2026-09-20 kullanıcı talebi, bkz. README) da AYNI şekilde,
+    referansta olmayan ama bizim sistemimize özgü bir sütun olarak en SONA
+    eklendi -- o kaydın gerçekleştiği anda hangi güvenlik personelinin
+    vardiyasının açık olduğunu (varsa) gösterir."""
     wb = Workbook()
     ws = wb.active
     ws.title = "Geçiş Raporu"
 
     basliklar = [
         "ID", "Plaka", "Adı", "Soyadı", "Site", "Blok", "Daire", "Otopark",
-        "Nokta", "Geçiş Tipi", "Araç Tipi", "Tarih", "Notlar",
+        "Nokta", "Geçiş Tipi", "Araç Tipi", "Tarih", "Notlar", "Vardiya",
     ]
     ws.append(basliklar)
     _baslik_satiri_bicimlendir(ws, len(basliklar))
@@ -60,11 +64,13 @@ def kayitlar_excel_olustur(satirlar: list, dosya_yolu: str) -> str:
             _guvenli_hucre(s["arac_tipi"]),
             s["tarih_saat"].strftime("%d.%m.%Y %H:%M:%S"),
             _guvenli_hucre(s["notlar"]),
+            _guvenli_hucre(s.get("vardiya", "")),
         ])
 
     for i, baslik in enumerate(basliklar, 1):
         ws.column_dimensions[get_column_letter(i)].width = max(10, len(baslik) + 4)
     ws.column_dimensions[get_column_letter(basliklar.index("Notlar") + 1)].width = 35
+    ws.column_dimensions[get_column_letter(basliklar.index("Vardiya") + 1)].width = 32
 
     ws.freeze_panes = "A2"
     wb.save(dosya_yolu)

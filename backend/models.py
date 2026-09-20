@@ -41,41 +41,64 @@ class Kullanici(Base):
 
 
 class VardiyaAtamasi(Base):
-    """rol="güvenlik" (Güvenlik Personeli) hesapları için GÜN BAZLI vardiya
-    ataması (bkz. 2026-09-18 "Güvenlik Personeli Vardiya Filtresi" notu,
-    README). Kullanıcı talebi: 4 vardiya/vardiya amiri döngüsünde çalışan
-    personelin aynı kişi için GÜNDEN GÜNE FARKLI saatlerde çalışması (ör.
-    Eser bugün 15:00-23:00, yarın 07:00-15:00) -- bu yüzden sabit bir
-    "haftalık program" yerine HER GÜN İÇİN AYRI bir satır tutulur; yönetici
-    panelinden serbestçe eklenip silinebilir (bkz. main.py::/vardiyalar).
-
-    Bu tablo, hangi otomatik geçiş kaydının hangi güvenlik personelinin
-    "kayıtlar listesi"nde görüneceğini belirler (bkz.
-    main.py::_guvenlik_kayit_filtresi_uygula) -- kaydın KENDİSİ hangi
-    kullanıcı tarafından oluşturulduğunu TUTMAZ (otomatik ANPR tespitleri
-    zaten hiçbir kullanıcıya ait değildir), bunun yerine kaydın tarih/saati
-    bu tablodaki pencerelerden BİRİNE denk düşüyorsa o kullanıcıya "ait"
-    sayılır. Aynı anda birden fazla güvenlik personelinin vardiyası
-    çakışıyorsa (ör. devir teslim saatinde), kayıt HER İKİSİNİN de
-    listesinde ayrı ayrı görünür -- bilinçli tasarım kararı (bkz. README).
-
-    bitis_saat, baslangic_saat'e eşit veya ondan KÜÇÜKSE gece yarısını geçen
-    bir vardiya olarak yorumlanır (ör. 23:00 -> 07:00): bu durumda vardiya,
-    `tarih` gününün baslangic_saat'inde başlar ve BİR SONRAKİ günün
-    bitis_saat'inde biter (bkz. main.py::_vardiya_penceresi).
-    """
+    """KULLANIMDAN KALDIRILDI (2026-09-20) -- bkz. VardiyaOturumu ve README'deki
+    "Öz-Hizmet Vardiya Oturumları" notu. Bu sınıf ve `vardiya_atamalari`
+    tablosu, yönetici panelinden ELLE, GÜN BAZLI vardiya ataması yapılan ESKİ
+    sistemden kalma; kullanıcı geri bildirimi ("her gün ben giremem, personel
+    kendi vardiyasını kendi başlatıp bitirsin") üzerine tamamen
+    VardiyaOturumu (giriş/çıkışa bağlı, ÖZ-HİZMET) sistemiyle DEĞİŞTİRİLDİ.
+    Sınıf, üretimdeki mevcut tabloyu/geçmiş verileri BOZMAMAK için burada
+    bırakıldı (SQLAlchemy `create_all` var olan bir tabloyu SİLMEZ), ama
+    main.py'de ARTIK HİÇBİR YERDE okunmuyor/yazılmıyor -- yalnızca geçiş
+    öncesi oluşturulmuş eski atamaların veritabanında durmaya devam etmesi
+    içindir. Yeni kod bu sınıfı KULLANMAMALI."""
     __tablename__ = "vardiya_atamalari"
 
     id = Column(Integer, primary_key=True, index=True)
     kullanici_id = Column(Integer, ForeignKey("kullanicilar.id"), nullable=False, index=True)
-    # Yalnızca takvim günü olarak kullanılır (saat kısmı her zaman 00:00) --
-    # gerçek başlangıç/bitiş saatleri ayrı `baslangic_saat`/`bitis_saat`
-    # metin alanlarından ("HH:MM") hesaplanır.
     tarih = Column(DateTime, nullable=False, index=True)
     baslangic_saat = Column(String(5), nullable=False)  # "HH:MM"
     bitis_saat = Column(String(5), nullable=False)  # "HH:MM"
     olusturan = Column(String(80), nullable=True)
     olusturma_tarihi = Column(DateTime, default=datetime.now)
+
+
+class VardiyaOturumu(Base):
+    """rol="güvenlik" (Güvenlik Personeli) hesapları için ÖZ-HİZMET
+    (self-service) vardiya oturumu (bkz. 2026-09-20 "Öz-Hizmet Vardiya
+    Oturumları" notu, README; önceki elle/gün-bazlı `VardiyaAtamasi`
+    sisteminin YERİNE geçer). Kullanıcı talebi: yöneticinin her personelin
+    vardiya saatlerini önceden elle girmesi yerine, PERSONEL KENDİSİ giriş
+    yapınca vardiyası başlasın, çıkış yapana kadar sürsün istedi.
+
+    Bir satır = TEK BİR oturum: `giris_zamani`, kullanıcının `/auth/giris`
+    çağrısının (bkz. main.py::giris_yap, ::_guvenlik_oturum_baslat) sunucu
+    zaman damgasıdır; `cikis_zamani`, `/auth/cikis` çağrısının (bkz.
+    main.py::cikis_yap) zaman damgasıdır ve oturum kapanana kadar NULL kalır.
+
+    `cikis_zamani` NULL olduğu sürece oturum AÇIK sayılır ve filtre mantığı
+    (bkz. main.py::_kullanicinin_vardiya_pencereleri) bu pencereyi ÜST SINIRI
+    OLMADAN yorumlar -- yani `giris_zamani`'ndan bu yana (ve oturum kapanana
+    kadar) gerçekleşen TÜM yeni/canlı geçişler o kullanıcıya görünür kalır.
+
+    "Unutulan çıkış" (tarayıcı/bilgisayar `/auth/cikis` hiç çağrılmadan
+    kapatılması) durumunda oturum süresiz AÇIK kalabilir -- ama bu
+    ZARARSIZDIR: aynı kullanıcı bir dahaki sefer TEKRAR giriş yaptığında, o
+    andaki zaman damgasıyla eski açık oturum OTOMATİK kapatılır ve yeni bir
+    oturum açılır (bkz. _guvenlik_oturum_baslat) -- bu sayede unutulan bir
+    çıkış, bir SONRAKİ gerçek vardiyanın kayıtlarına asla karışmaz. Yönetici
+    de "Vardiya Oturumları" panelinden açık kalmış bir oturumu elle
+    sonlandırabilir (bkz. /vardiya-oturumlari/{id}/sonlandir).
+
+    Aynı anda birden fazla güvenlik personelinin oturumu açıksa (ör. devir
+    teslim saatinde), bir kayıt HER İKİSİNİN de listesinde ayrı ayrı görünür
+    -- `VardiyaAtamasi`'ndaki ile AYNI, bilinçli tasarım kararı (bkz. README)."""
+    __tablename__ = "vardiya_oturumlari"
+
+    id = Column(Integer, primary_key=True, index=True)
+    kullanici_id = Column(Integer, ForeignKey("kullanicilar.id"), nullable=False, index=True)
+    giris_zamani = Column(DateTime, nullable=False, default=datetime.now, index=True)
+    cikis_zamani = Column(DateTime, nullable=True, index=True)
 
 
 class Nokta(Base):

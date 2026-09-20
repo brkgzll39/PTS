@@ -2178,9 +2178,16 @@ def test_gecmis_kayitlari_guncelle_olmayan_kisi_404_doner(client, yetkili_header
 def _rbac_guvenlik_kullanici_olustur(client, yetkili_header) -> tuple:
     """Yeni, benzersiz adlı bir 'güvenlik' rolünde kullanıcı oluşturur, giriş
     yapar ve (kullanici_id, header) döner. Fonksiyon-scope'lu bir fixture
-    yerine yardımcı fonksiyon olarak tanımlandı ki her çağrı BAĞIMSIZ,
-    sıfır-vardiyalı bir kullanıcı versin (testler birbirinin vardiya
-    atamalarından etkilenmesin)."""
+    yerine yardımcı fonksiyon olarak tanımlandı ki her çağrı BAĞIMSIZ bir
+    kullanıcı versin (testler birbirini etkilemesin).
+
+    NOT (2026-09-20, öz-hizmet vardiya sistemine geçiş): bu çağrı, `/auth/
+    giris`'in bir yan etkisi olarak ARTIK OTOMATİK olarak TAM OLARAK BİR açık
+    (cikis_zamani=None, giris_zamani=çağrı anı) VardiyaOturumu satırı da
+    oluşturur (bkz. main.py::_guvenlik_oturum_baslat) -- yani dönen kullanıcı
+    "sıfır vardiyalı" DEĞİLDİR, çağrı anından itibaren AÇIK bir vardiyası
+    vardır. Bu ANDAN ÖNCEKİ kayıtlar (bkz. test_guvenlik_oturum_acilmadan_
+    onceki_kaydi_gormez) hâlâ görünmez."""
     import uuid
     kullanici_adi = f"rbac-guvenlik-{uuid.uuid4().hex[:10]}"
     r = client.post("/kullanicilar", json={
@@ -2207,55 +2214,49 @@ def test_guvenlik_kullanicisi_operator_yetkilerine_sahip_ama_yonetici_islemi_yap
     assert r2.status_code == 403, r2.text
 
 
-def test_vardiya_olustur_sadece_yonetici_yapabilir(client, yetkili_header, operator_header):
+def test_vardiya_oturumu_giriste_otomatik_acilir_ve_yalnizca_yonetici_gorup_sonlandirabilir(
+    client, yetkili_header, operator_header
+):
+    """Öz-hizmet sistemde vardiya oturumu ELLE oluşturulmaz -- güvenlik
+    rolündeki bir kullanıcı `/auth/giris` ile giriş yapar yapmaz OTOMATİK
+    olarak AÇIK (cikis_zamani=None) bir VardiyaOturumu satırı oluşturulmalı
+    (bkz. main.py::_guvenlik_oturum_baslat). Bu oturumları yalnızca yönetici
+    listeleyebilir/sonlandırabilir (bkz. /vardiya-oturumlari)."""
     guvenlik_id, _ = _rbac_guvenlik_kullanici_olustur(client, yetkili_header)
-    r = client.post("/vardiyalar", json={
-        "kullanici_id": guvenlik_id, "tarih": "2026-01-01",
-        "baslangic_saat": "08:00", "bitis_saat": "16:00",
-    }, headers=operator_header)
-    assert r.status_code == 403, r.text
 
+    assert client.get("/vardiya-oturumlari", headers=operator_header).status_code == 403
 
-def test_vardiya_guvenlik_disinda_bir_role_atanamaz(client, yetkili_header):
-    r0 = client.post("/kullanicilar", json={
-        "kullanici_adi": "rbac-vardiya-hedef-operator", "parola": "GucluParola123!", "rol": "operatör",
-    }, headers=yetkili_header)
-    assert r0.status_code == 200, r0.text
-    hedef_id = r0.json()["id"]
-    r = client.post("/vardiyalar", json={
-        "kullanici_id": hedef_id, "tarih": "2026-01-01",
-        "baslangic_saat": "08:00", "bitis_saat": "16:00",
-    }, headers=yetkili_header)
-    assert r.status_code == 400, r.text
+    r1 = client.get("/vardiya-oturumlari", params={"kullanici_id": guvenlik_id}, headers=yetkili_header)
+    assert r1.status_code == 200, r1.text
+    oturumlar = r1.json()
+    assert len(oturumlar) == 1, "giriş otomatik olarak TAM OLARAK bir oturum açmalı"
+    assert oturumlar[0]["cikis_zamani"] is None, "yeni açılan oturum henüz kapalı olmamalı"
+    oturum_id = oturumlar[0]["id"]
 
+    assert client.post(f"/vardiya-oturumlari/{oturum_id}/sonlandir", headers=operator_header).status_code == 403
 
-def test_vardiya_listele_ve_sil_sadece_yonetici(client, yetkili_header, operator_header):
-    guvenlik_id, _ = _rbac_guvenlik_kullanici_olustur(client, yetkili_header)
-    r0 = client.post("/vardiyalar", json={
-        "kullanici_id": guvenlik_id, "tarih": "2026-01-02",
-        "baslangic_saat": "08:00", "bitis_saat": "16:00",
-    }, headers=yetkili_header)
-    assert r0.status_code == 200, r0.text
-    vardiya_id = r0.json()["id"]
-
-    assert client.get("/vardiyalar", headers=operator_header).status_code == 403
-    assert client.delete(f"/vardiyalar/{vardiya_id}", headers=operator_header).status_code == 403
-
-    r1 = client.get("/vardiyalar", params={"kullanici_id": guvenlik_id}, headers=yetkili_header)
-    assert r1.status_code == 200 and any(v["id"] == vardiya_id for v in r1.json())
-
-    r2 = client.delete(f"/vardiyalar/{vardiya_id}", headers=yetkili_header)
+    r2 = client.post(f"/vardiya-oturumlari/{oturum_id}/sonlandir", headers=yetkili_header)
     assert r2.status_code == 200, r2.text
+    r3 = client.get("/vardiya-oturumlari", params={"kullanici_id": guvenlik_id}, headers=yetkili_header)
+    assert r3.json()[0]["cikis_zamani"] is not None
+
+    # Zaten kapalı bir oturumu tekrar sonlandırmaya çalışmak 400 dönmeli.
+    r4 = client.post(f"/vardiya-oturumlari/{oturum_id}/sonlandir", headers=yetkili_header)
+    assert r4.status_code == 400, r4.text
 
 
-def test_guvenlik_vardiyasiz_kullanici_hicbir_kayit_goremez(client, yetkili_header):
-    """Fail-closed varsayılan: henüz vardiyası planlanmamış bir güvenlik
-    hesabı, TÜM kayıtları görmek yerine HİÇBİR kayıt görmemeli."""
-    _, guvenlik_header = _rbac_guvenlik_kullanici_olustur(client, yetkili_header)
+def test_guvenlik_oturum_acilmadan_onceki_kaydi_gormez(client, yetkili_header):
+    """Fail-closed'ın öz-hizmet sistemdeki karşılığı: vardiya penceresinin
+    ALT SINIRI giriş anıdır -- güvenlik kullanıcısının oturumu açılmadan
+    (giriş yapmadan) ÖNCE gerçekleşmiş bir kayıt, o oturumun penceresine
+    denk düşmediği için görünmemelidir."""
     r1 = client.post("/kayitlar/otomatik", data={
         "plaka_no": "34 GVN 02", "kamera_id": "GIRIS-KAM", "yon": "giris", "guven_skoru": 0.99,
     })
     assert r1.status_code == 200, r1.text
+    # Kayıt oluşturulduktan SONRA güvenlik kullanıcısı giriş yapıyor -- bu
+    # yüzden yeni açılan oturumun penceresi bu kayıttan SONRA başlar.
+    _, guvenlik_header = _rbac_guvenlik_kullanici_olustur(client, yetkili_header)
 
     r2 = client.get("/kayitlar", params={"plaka": "34 GVN 02"}, headers=guvenlik_header)
     assert r2.status_code == 200, r2.text
@@ -2266,118 +2267,201 @@ def test_guvenlik_vardiyasiz_kullanici_hicbir_kayit_goremez(client, yetkili_head
     assert len(r3.json()) == 1
 
 
-def test_guvenlik_kendi_vardiyasindaki_kaydi_gorur_ve_istatistiklere_de_yansir(client, yetkili_header):
-    """Vardiya penceresi olarak "00:00 -> 00:00" (bitis<=baslangic olduğu
-    için gece yarısını geçen bir pencere sayılır ve TAM OLARAK bugünün
-    tamamını, yani [bugün 00:00, yarın 00:00) aralığını kapsar) bilinçli
-    olarak seçildi -- bu sayede test, GERÇEK saatten (testin hangi saatte
-    çalıştığından) TAMAMEN bağımsız olarak her zaman doğru sonuç üretir."""
+def test_guvenlik_hic_oturumu_olmayan_kullanici_hicbir_kayit_goremez_fail_closed(client, yetkili_header):
+    """Normal akışta bir güvenlik kullanıcısının en az bir vardiya oturumu
+    HER ZAMAN vardır (giriş yaptığı an otomatik açılır) -- ama savunma
+    amaçlı "sıfır pencere -> sıfır kayıt" varsayılanının (bkz.
+    _guvenlik_kayit_filtresi_uygula) hâlâ doğru çalıştığını, oturum
+    kaydının veritabanından (ör. elle bir bakım işlemiyle) silinmiş olması
+    durumunu simüle ederek doğrular."""
+    from backend.database import SessionLocal
+    from backend import models as _models
+
     guvenlik_id, guvenlik_header = _rbac_guvenlik_kullanici_olustur(client, yetkili_header)
-    bugun = datetime.now().strftime("%Y-%m-%d")
-    r0 = client.post("/vardiyalar", json={
-        "kullanici_id": guvenlik_id, "tarih": bugun,
-        "baslangic_saat": "00:00", "bitis_saat": "00:00",
-    }, headers=yetkili_header)
-    assert r0.status_code == 200, r0.text
+    db = SessionLocal()
+    try:
+        db.query(_models.VardiyaOturumu).filter(_models.VardiyaOturumu.kullanici_id == guvenlik_id).delete()
+        db.commit()
+    finally:
+        db.close()
 
     r1 = client.post("/kayitlar/otomatik", data={
-        "plaka_no": "34 GVN 03", "kamera_id": "GIRIS-KAM", "yon": "giris",
-        "guven_skoru": 0.99,
+        "plaka_no": "34 GVN 02B", "kamera_id": "GIRIS-KAM", "yon": "giris", "guven_skoru": 0.99,
+    })
+    assert r1.status_code == 200, r1.text
+    r2 = client.get("/kayitlar", params={"plaka": "34 GVN 02B"}, headers=guvenlik_header)
+    assert r2.status_code == 200 and r2.json() == [], r2.text
+
+
+def test_guvenlik_giriste_acilan_oturum_su_anki_kaydi_gorur_ve_istatistiklere_yansir(client, yetkili_header):
+    """Giriş yapan bir güvenlik kullanıcısının otomatik açılan oturumu,
+    giriş ANINDAN itibaren gerçekleşen kayıtları hemen görünür kılmalı --
+    ayrıca panel istatistiklerinin kayıt-bazlı alanlarına da yansımalı
+    (bkz. istatistikler()'deki not)."""
+    _, guvenlik_header = _rbac_guvenlik_kullanici_olustur(client, yetkili_header)
+
+    r1 = client.post("/kayitlar/otomatik", data={
+        "plaka_no": "34 GVN 03", "kamera_id": "GIRIS-KAM", "yon": "giris", "guven_skoru": 0.99,
     })
     assert r1.status_code == 200, r1.text
 
     r2 = client.get("/kayitlar", params={"plaka": "34 GVN 03"}, headers=guvenlik_header)
     assert r2.status_code == 200 and len(r2.json()) == 1, r2.text
 
-    # /kayitlar/istatistik'in kayıt-bazlı alanları (bugünkü_kayit) da aynı
-    # şekilde vardiyayla filtrelenmeli -- bkz. istatistikler()'deki not.
     r3 = client.get("/kayitlar/istatistik", headers=guvenlik_header)
     assert r3.status_code == 200, r3.text
     assert r3.json()["bugunku_kayit"] >= 1
 
 
-def test_guvenlik_vardiyasi_disindaki_25_saat_onceki_kaydi_gormez(client, yetkili_header):
-    """Aynı "tam gün" vardiyasına sahip bir güvenlik kullanıcısı, 25 saat
-    önceki (yani MUTLAKA dünden, bugünün başlangıcından önceki) bir kaydı
-    göremez -- bkz. yukarıdaki testin "00:00 -> 00:00" notu: 25 saat, testin
-    çalıştığı saatten BAĞIMSIZ olarak her zaman "bugün 00:00"dan önceye
-    düşer (now - 25s < now'un günbaşı - 1s < günbaşı)."""
-    from backend.database import engine
-    from sqlalchemy import text as sqltext
-
+def test_cikis_yapinca_vardiya_kapanir_ve_sonraki_kayitlar_gorunmez(client, yetkili_header):
+    """`/auth/cikis` çağrısı (bkz. frontend/app.js::oturumKapat), o anki
+    açık VardiyaOturumu'nu kapatmalı -- kapandıktan SONRA gerçekleşen bir
+    kayıt artık bu kullanıcıya görünmemeli (vardiyası bitti). Token'ın
+    kendisi sunucu tarafında iptal edilmediği için (bkz. cikis_yap'ın
+    docstring'i) aynı header ile istek yapmaya devam edilebiliyor olması
+    kasıtlı -- yalnızca vardiya penceresi kapandığı için kayıt görünmüyor."""
     guvenlik_id, guvenlik_header = _rbac_guvenlik_kullanici_olustur(client, yetkili_header)
-    bugun = datetime.now().strftime("%Y-%m-%d")
-    r0 = client.post("/vardiyalar", json={
-        "kullanici_id": guvenlik_id, "tarih": bugun,
-        "baslangic_saat": "00:00", "bitis_saat": "00:00",
-    }, headers=yetkili_header)
+
+    r0 = client.post("/auth/cikis", headers=guvenlik_header)
     assert r0.status_code == 200, r0.text
 
-    with engine.connect() as conn:
-        conn.execute(sqltext(
-            "INSERT INTO plaka_kayitlari (plaka_no, kamera_id, yon, yetki_durumu, tarih_saat, manuel_giris) "
-            "VALUES ('34 GVN 04', 'GIRIS-KAM', 'giris', 'yetkisiz', datetime('now', '-25 hours'), 0)"
-        ))
-        conn.commit()
+    r1 = client.get("/vardiya-oturumlari", params={"kullanici_id": guvenlik_id}, headers=yetkili_header)
+    assert r1.json()[0]["cikis_zamani"] is not None, "çıkış sonrası oturum kapanmış olmalı"
 
-    r1 = client.get("/kayitlar", params={"plaka": "34 GVN 04"}, headers=guvenlik_header)
-    assert r1.status_code == 200 and r1.json() == [], r1.text
-    r2 = client.get("/kayitlar", params={"plaka": "34 GVN 04"}, headers=yetkili_header)
-    assert len(r2.json()) == 1
+    r2 = client.post("/kayitlar/otomatik", data={
+        "plaka_no": "34 GVN 03B", "kamera_id": "GIRIS-KAM", "yon": "giris", "guven_skoru": 0.99,
+    })
+    assert r2.status_code == 200, r2.text
+
+    r3 = client.get("/kayitlar", params={"plaka": "34 GVN 03B"}, headers=guvenlik_header)
+    assert r3.status_code == 200 and r3.json() == [], r3.text
 
 
-def test_vardiya_gece_yarisini_gecen_pencere_dogru_hesaplanir(client, yetkili_header):
-    """`bitis_saat <= baslangic_saat` (ör. 23:00 -> 07:00) gece yarısını
-    geçen bir vardiya olarak yorumlanmalı: pencere [dün 23:00, bugün 07:00)
-    olmalı. Bu, testin çalıştığı GERÇEK saatten bağımsız kalması için
-    kayıtlar `datetime('now', ...)` yerine dünün/bugünün TAKVİM tarihine
-    göre MUTLAK zaman damgalarıyla ekleniyor."""
+def test_tekrar_giris_unutulmus_acik_oturumu_kapatip_yenisini_acar(client, yetkili_header):
+    """Personel çıkış yapmadan (tarayıcıyı/bilgisayarı kapatıp) tekrar giriş
+    yaparsa, ÖNCEKİ açık oturum bu anda kapatılmalı ve YENİ bir oturum
+    açılmalı -- böylece unutulan bir çıkış, bir SONRAKİ vardiyanın
+    kayıtlarına asla karışmaz (bkz. main.py::_guvenlik_oturum_baslat)."""
+    import uuid
+    kullanici_adi = f"rbac-guvenlik-{uuid.uuid4().hex[:10]}"
+    r = client.post("/kullanicilar", json={
+        "kullanici_adi": kullanici_adi, "parola": "GucluParola123!", "rol": "güvenlik",
+    }, headers=yetkili_header)
+    assert r.status_code == 200, r.text
+    kullanici_id = r.json()["id"]
+
+    r1 = client.post("/auth/giris", json={"kullanici_adi": kullanici_adi, "parola": "GucluParola123!"})
+    assert r1.status_code == 200, r1.text
+
+    # ÇIKIŞ YAPMADAN tekrar giriş yapıyor (unutulmuş oturum senaryosu).
+    r2 = client.post("/auth/giris", json={"kullanici_adi": kullanici_adi, "parola": "GucluParola123!"})
+    assert r2.status_code == 200, r2.text
+
+    r3 = client.get("/vardiya-oturumlari", params={"kullanici_id": kullanici_id}, headers=yetkili_header)
+    assert r3.status_code == 200, r3.text
+    oturumlar = sorted(r3.json(), key=lambda o: o["id"])
+    assert len(oturumlar) == 2, "iki giriş, İKİ ayrı oturum satırı üretmeli"
+    assert oturumlar[0]["cikis_zamani"] is not None, "birinci (unutulmuş) oturum ikinci girişte otomatik kapanmalı"
+    assert oturumlar[1]["cikis_zamani"] is None, "ikinci (güncel) oturum hâlâ açık olmalı"
+
+
+def test_gece_yarisini_gecen_vardiya_oturumu_dogru_filtrelenir(client, yetkili_header):
+    """Öz-hizmet oturumları HH:MM string'ler yerine gerçek datetime'lar
+    kullandığı için (bkz. models.VardiyaOturumu) gece yarısını geçen bir
+    vardiya artık ÖZEL bir hesaplama gerektirmiyor -- oturum satırı ne kadar
+    sürerse pencere de o kadar sürer. Bu test, otomatik açılan oturumu
+    (giriş dün 23:00, çıkış bugün 07:00 gibi) DOĞRUDAN veritabanında
+    güncelleyip bunun doğru filtrelendiğini kanıtlar (mutlak takvim
+    tarihleriyle, testin çalıştığı GERÇEK saatten bağımsız)."""
     from backend.database import engine
     from sqlalchemy import text as sqltext
 
     guvenlik_id, guvenlik_header = _rbac_guvenlik_kullanici_olustur(client, yetkili_header)
     dun = datetime.now().date() - timedelta(days=1)
-    icerde_ts = f"{dun.isoformat()} 23:30:00"
-    disarda_ts = f"{dun.isoformat()} 12:00:00"
+    bugun = datetime.now().date()
+    giris_ts = f"{dun.isoformat()} 23:00:00"
+    cikis_ts = f"{bugun.isoformat()} 07:00:00"
+    icerde_ts = f"{bugun.isoformat()} 00:30:00"
+    disarda_ts = f"{bugun.isoformat()} 12:00:00"
 
     with engine.connect() as conn:
+        # Giriş sırasında otomatik açılan oturumu, testin ihtiyacı olan bilinen
+        # bir giriş/çıkışla GÜNCELLİYORUZ (silmek yerine -- ID sabit kalsın diye).
         conn.execute(sqltext(
-            "INSERT INTO plaka_kayitlari (plaka_no, kamera_id, yon, yetki_durumu, tarih_saat, manuel_giris) "
-            "VALUES ('34 GVN 05', 'GIRIS-KAM', 'giris', 'yetkisiz', :ts, 0)"
-        ), {"ts": icerde_ts})
-        conn.execute(sqltext(
-            "INSERT INTO plaka_kayitlari (plaka_no, kamera_id, yon, yetki_durumu, tarih_saat, manuel_giris) "
-            "VALUES ('34 GVN 05', 'GIRIS-KAM', 'giris', 'yetkisiz', :ts, 0)"
-        ), {"ts": disarda_ts})
+            "UPDATE vardiya_oturumlari SET giris_zamani=:g, cikis_zamani=:c WHERE kullanici_id=:kid"
+        ), {"g": giris_ts, "c": cikis_ts, "kid": guvenlik_id})
+        for ts in (icerde_ts, disarda_ts):
+            conn.execute(sqltext(
+                "INSERT INTO plaka_kayitlari (plaka_no, kamera_id, yon, yetki_durumu, tarih_saat, manuel_giris) "
+                "VALUES ('34 GVN 05', 'GIRIS-KAM', 'giris', 'yetkisiz', :ts, 0)"
+            ), {"ts": ts})
         conn.commit()
-
-    r0 = client.post("/vardiyalar", json={
-        "kullanici_id": guvenlik_id, "tarih": dun.isoformat(),
-        "baslangic_saat": "23:00", "bitis_saat": "07:00",
-    }, headers=yetkili_header)
-    assert r0.status_code == 200, r0.text
 
     r1 = client.get("/kayitlar", params={"plaka": "34 GVN 05"}, headers=guvenlik_header)
     assert r1.status_code == 200, r1.text
     kayitlar = r1.json()
-    assert len(kayitlar) == 1, "gece yarısını geçen vardiya penceresi yanlış hesaplandı"
-    assert "23:30" in kayitlar[0]["tarih_saat"], (
-        f"beklenen 'içerde' kayıt (dün 23:30) yerine farklı bir kayıt döndü: {kayitlar[0]['tarih_saat']}"
+    assert len(kayitlar) == 1, "gece yarısını geçen vardiya penceresi yanlış filtrelendi"
+    assert "00:30" in kayitlar[0]["tarih_saat"], (
+        f"beklenen 'içerde' kayıt (bugün 00:30) yerine farklı bir kayıt döndü: {kayitlar[0]['tarih_saat']}"
     )
 
 
-def test_cakisan_vardiyalarda_ayni_kayit_iki_guvenlik_kullanicisinda_da_gorunur(client, yetkili_header):
+def test_ayni_gun_icinde_iki_ayri_oturum_bolunmus_vardiya_dogru_filtrelenir(client, yetkili_header):
+    """2026-09-20 kullanıcı sorusu: "Eser sürekli 15:00-23:00'de değil, başka
+    vardiyalar da olabiliyor" -- bunun bir uzantısı olarak, aynı personelin
+    AYNI GÜN İÇİNDE İKİ AYRI (giriş->çıkış->giriş->çıkış) vardiya oturumu
+    olması ("bölünmüş vardiya") senaryosu doğrulanıyor. Öz-hizmet sistemde
+    bu, personelin gün içinde iki kez giriş/çıkış yapmasıyla DOĞAL olarak
+    elde edilir -- `VardiyaOturumu`'nda (kullanici_id, tarih) üzerinde bir
+    TEKİLLİK KISITLAMASI yoktur ve filtre TÜM oturum satırlarını OR ile
+    birleştirir (bkz. _guvenlik_kayit_filtresi_uygula). Testin çalıştığı
+    GERÇEK saatten bağımsız kalması için oturumlar dünün MUTLAK takvim
+    tarihiyle doğrudan veritabanına yazılıyor (gerçek login akışını
+    beklemek yerine)."""
+    from backend.database import engine
+    from sqlalchemy import text as sqltext
+
+    guvenlik_id, guvenlik_header = _rbac_guvenlik_kullanici_olustur(client, yetkili_header)
+    dun = datetime.now().date() - timedelta(days=1)
+    pencere1_ici_ts = f"{dun.isoformat()} 09:00:00"   # 07:00-11:00 penceresi içinde
+    bosluk_ts = f"{dun.isoformat()} 15:00:00"          # iki pencere ARASINDAKİ boşlukta
+    pencere2_ici_ts = f"{dun.isoformat()} 21:00:00"   # 19:00-23:00 penceresi içinde
+
+    with engine.connect() as conn:
+        for ts in (pencere1_ici_ts, bosluk_ts, pencere2_ici_ts):
+            conn.execute(sqltext(
+                "INSERT INTO plaka_kayitlari (plaka_no, kamera_id, yon, yetki_durumu, tarih_saat, manuel_giris) "
+                "VALUES ('34 GVN 08', 'GIRIS-KAM', 'giris', 'yetkisiz', :ts, 0)"
+            ), {"ts": ts})
+        # Giriş sırasında otomatik açılan oturumu BİRİNCİ pencereye taşı...
+        conn.execute(sqltext(
+            "UPDATE vardiya_oturumlari SET giris_zamani=:g, cikis_zamani=:c WHERE kullanici_id=:kid"
+        ), {"g": f"{dun.isoformat()} 07:00:00", "c": f"{dun.isoformat()} 11:00:00", "kid": guvenlik_id})
+        # ...ve İKİNCİ pencereyi ayrı bir oturum satırı olarak ekle (bölünmüş vardiya).
+        conn.execute(sqltext(
+            "INSERT INTO vardiya_oturumlari (kullanici_id, giris_zamani, cikis_zamani) VALUES (:kid, :g, :c)"
+        ), {"kid": guvenlik_id, "g": f"{dun.isoformat()} 19:00:00", "c": f"{dun.isoformat()} 23:00:00"})
+        conn.commit()
+
+    r1 = client.get("/kayitlar", params={"plaka": "34 GVN 08"}, headers=guvenlik_header)
+    assert r1.status_code == 200, r1.text
+    saatler = sorted(k["tarih_saat"] for k in r1.json())
+    assert len(saatler) == 2, (
+        f"bölünmüş vardiyanın İKİ oturumundaki kayıtlar da görünmeli, boşluktaki görünmemeli: {saatler}"
+    )
+    assert any("09:00" in s for s in saatler), "1. oturum (07:00-11:00) içindeki kayıt kayıp"
+    assert any("21:00" in s for s in saatler), "2. oturum (19:00-23:00) içindeki kayıt kayıp"
+    assert not any("15:00" in s for s in saatler), "iki oturum arasındaki boşluktaki kayıt YANLIŞLIKLA görünüyor"
+
+
+def test_cakisan_acik_oturumlarda_ayni_kayit_iki_guvenlik_kullanicisinda_da_gorunur(client, yetkili_header):
     """Kullanıcı talebi: aynı anda birden fazla güvenlik personelinin
-    vardiyası çakışıyorsa, bir kayıt DIŞLAYICI bir şekilde tek bir kullanıcıya
-    atanmaz -- ikisinin de listesinde ayrı ayrı görünür."""
-    guvenlik1_id, guvenlik1_header = _rbac_guvenlik_kullanici_olustur(client, yetkili_header)
-    guvenlik2_id, guvenlik2_header = _rbac_guvenlik_kullanici_olustur(client, yetkili_header)
-    bugun = datetime.now().strftime("%Y-%m-%d")
-    for kid in (guvenlik1_id, guvenlik2_id):
-        r0 = client.post("/vardiyalar", json={
-            "kullanici_id": kid, "tarih": bugun, "baslangic_saat": "00:00", "bitis_saat": "00:00",
-        }, headers=yetkili_header)
-        assert r0.status_code == 200, r0.text
+    vardiyası (öz-hizmet sistemde: açık oturumu) çakışıyorsa, bir kayıt
+    DIŞLAYICI bir şekilde tek bir kullanıcıya atanmaz -- ikisinin de
+    listesinde ayrı ayrı görünür. İki güvenlik kullanıcısının GİRİŞ yapması
+    zaten örtüşen açık oturumlar üretir, ayrıca bir işlem GEREKMEZ."""
+    _, guvenlik1_header = _rbac_guvenlik_kullanici_olustur(client, yetkili_header)
+    _, guvenlik2_header = _rbac_guvenlik_kullanici_olustur(client, yetkili_header)
 
     r1 = client.post("/kayitlar/otomatik", data={
         "plaka_no": "34 GVN 06", "kamera_id": "GIRIS-KAM", "yon": "giris", "guven_skoru": 0.99,
@@ -2401,7 +2485,6 @@ def test_disa_aktar_uc_noktalari_guvenlik_kullanicisiyla_calisir(client, yetkili
 
 
 def test_disa_aktar_pdf_kayit_detay_vardiya_disinda_403_doner(client, yetkili_header):
-    _, guvenlik_header = _rbac_guvenlik_kullanici_olustur(client, yetkili_header)
     r1 = client.post("/kayitlar/otomatik", data={
         "plaka_no": "34 GVN 07", "kamera_id": "GIRIS-KAM", "yon": "giris", "guven_skoru": 0.99,
     })
@@ -2409,115 +2492,93 @@ def test_disa_aktar_pdf_kayit_detay_vardiya_disinda_403_doner(client, yetkili_he
     r2 = client.get("/kayitlar", params={"plaka": "34 GVN 07"}, headers=yetkili_header)
     kayit_id = r2.json()[0]["id"]
 
-    # Bu güvenlik kullanıcısının HİÇ vardiyası yok -> kayıt vardiyasına ait değil.
+    # Güvenlik kullanıcısı KAYITTAN SONRA giriş yapıyor -> oturumu bu kayıttan
+    # SONRA başlıyor, kayıt onun vardiyasına ait DEĞİL.
+    _, guvenlik_header = _rbac_guvenlik_kullanici_olustur(client, yetkili_header)
+
     r3 = client.get(f"/disa-aktar/pdf/kayit/{kayit_id}", headers=guvenlik_header)
     assert r3.status_code == 403, r3.text
 
 
-def test_vardiya_durumum_guvenlik_disi_rol_icin_zararsiz_yanit_doner(client, yetkili_header):
-    """/vardiyalar/durumum rol kontrolü YAPMAZ (bkz. uç noktanın docstring'i)
-    -- yönetici/operatör gibi güvenlik-dışı roller için de 200 döner, ama
-    yalnızca rol_guvenlik_mi: false ve sunucu saatini içerir."""
-    r = client.get("/vardiyalar/durumum", headers=yetkili_header)
+def test_vardiya_oturumu_durumum_guvenlik_disi_rol_icin_zararsiz_yanit_doner(client, yetkili_header):
+    """/vardiya-oturumlari/durumum rol kontrolü YAPMAZ (bkz. uç noktanın
+    docstring'i) -- yönetici/operatör gibi güvenlik-dışı roller için de 200
+    döner, ama yalnızca rol_guvenlik_mi: false ve sunucu saatini içerir."""
+    r = client.get("/vardiya-oturumlari/durumum", headers=yetkili_header)
     assert r.status_code == 200, r.text
     gövde = r.json()
     assert gövde["rol_guvenlik_mi"] is False
     assert "sunucu_simdiki_zaman" in gövde
-    assert "vardiyalar" not in gövde
+    assert "oturumlar" not in gövde
 
 
-def test_vardiya_durumum_vardiyasiz_guvenlik_kullanicisi_icin_aktif_degil_ve_bos_liste(
-    client, yetkili_header
-):
+def test_vardiya_oturumu_durumum_yeni_girisin_acik_oturumunu_dogru_bildirir(client, yetkili_header):
+    """Yeni giriş yapmış bir güvenlik kullanıcısı için `su_an_aktif_vardiya_
+    var_mi` TRUE ve tek oturumun `devam_ediyor` alanı da TRUE olmalı."""
     _, guvenlik_header = _rbac_guvenlik_kullanici_olustur(client, yetkili_header)
-    r = client.get("/vardiyalar/durumum", headers=guvenlik_header)
+    r = client.get("/vardiya-oturumlari/durumum", headers=guvenlik_header)
     assert r.status_code == 200, r.text
     gövde = r.json()
     assert gövde["rol_guvenlik_mi"] is True
-    assert gövde["su_an_aktif_vardiya_var_mi"] is False
-    assert gövde["toplam_vardiya_sayisi"] == 0
-    assert gövde["vardiyalar"] == []
+    assert gövde["su_an_aktif_vardiya_var_mi"] is True
+    assert gövde["toplam_oturum_sayisi"] == 1
+    assert len(gövde["oturumlar"]) == 1
+    assert gövde["oturumlar"][0]["devam_ediyor"] is True
+    assert gövde["oturumlar"][0]["cikis_zamani"] is None
 
 
-def test_vardiya_durumum_aktif_vardiyayi_dogru_bildirir(client, yetkili_header):
-    """2026-09-18 kullanıcı geri bildirimi ("vardiya atadım ama canlı geçiş
-    Kayıtlar sekmesinde gözükmüyor") için eklenen teşhis uç noktası: "00:00 ->
-    00:00" (bugünün tamamını kapsayan, gece yarısını geçen) bir vardiya
-    atandığında `su_an_aktif_vardiya_var_mi` TRUE ve dönen `vardiyalar`
-    listesindeki tek öğenin `su_an_aktif_mi` alanı da TRUE olmalı -- bu,
-    gerçek saatten bağımsız, deterministik bir doğrulamadır (bkz. yukarıdaki
-    aynı desenin kullanıldığı diğer testler)."""
-    guvenlik_id, guvenlik_header = _rbac_guvenlik_kullanici_olustur(client, yetkili_header)
-    bugun = datetime.now().strftime("%Y-%m-%d")
-    r0 = client.post(
-        "/vardiyalar",
-        json={
-            "kullanici_id": guvenlik_id,
-            "tarih": bugun,
-            "baslangic_saat": "00:00",
-            "bitis_saat": "00:00",
-        },
-        headers=yetkili_header,
-    )
+def test_vardiya_oturumu_durumum_cikis_sonrasi_aktif_degil(client, yetkili_header):
+    _, guvenlik_header = _rbac_guvenlik_kullanici_olustur(client, yetkili_header)
+    r0 = client.post("/auth/cikis", headers=guvenlik_header)
     assert r0.status_code == 200, r0.text
-
-    r = client.get("/vardiyalar/durumum", headers=guvenlik_header)
+    r = client.get("/vardiya-oturumlari/durumum", headers=guvenlik_header)
     assert r.status_code == 200, r.text
     gövde = r.json()
-    assert gövde["su_an_aktif_vardiya_var_mi"] is True
-    assert gövde["toplam_vardiya_sayisi"] == 1
-    assert len(gövde["vardiyalar"]) == 1
-    assert gövde["vardiyalar"][0]["su_an_aktif_mi"] is True
-    assert gövde["vardiyalar"][0]["tarih"] == bugun
+    assert gövde["su_an_aktif_vardiya_var_mi"] is False
+    assert gövde["oturumlar"][0]["devam_ediyor"] is False
+    assert gövde["oturumlar"][0]["cikis_zamani"] is not None
 
 
-def test_ayni_gun_icinde_bolunmus_vardiya_iki_pencere_de_dogru_filtrelenir(client, yetkili_header):
-    """2026-09-20 kullanıcı sorusu: "Eser sürekli 15:00-23:00'de değil, başka
-    vardiyalar da olabiliyor" -- bunun bir uzantısı olarak, aynı kişinin AYNI
-    GÜN İÇİNDE İKİ AYRI (bitişik olmayan) zaman aralığında çalıştığı
-    "bölünmüş vardiya" senaryosu doğrulanıyor. `models.VardiyaAtamasi`'nde
-    (kullanici_id, tarih) üzerinde bir TEKİLLİK KISITLAMASI olmadığından ve
-    `_guvenlik_kayit_filtresi_uygula`/`_kullanicinin_vardiya_pencereleri`
-    kullanıcının TÜM atama satırlarını (aynı tarihte kaç tane olursa olsun)
-    OR ile birleştirdiğinden, bu senaryo HİÇBİR kod değişikliği olmadan zaten
-    çalışıyor -- bu test bunu API üzerinden kanıtlar. Testin çalıştığı GERÇEK
-    saatten bağımsız kalması için kayıtlar dünün MUTLAK takvim tarihiyle
-    ekleniyor (bkz. yukarıdaki gece-yarısı testiyle aynı desen)."""
-    from backend.database import engine
-    from sqlalchemy import text as sqltext
+def test_rapor_vardiya_sutunu_acik_oturumdaki_kaydi_dogru_etiketler(client, yetkili_header):
+    """2026-09-20 kullanıcı talebi: "her vardiya için kendi geçiş raporları
+    olsun ... raporda bir sütun tanımlansın" -- dışa aktarma (Excel/PDF)
+    satırlarına main.py::_kayitlari_rapor_satirlari tarafından eklenen
+    "vardiya" alanının, kaydın gerçekleştiği anda AÇIK olan güvenlik
+    oturumunu (kullanıcı adı + giriş saati) doğru etiketlediğini,
+    oturumdan ÖNCEKİ bir kaydı ise BOŞ bıraktığını doğrular."""
+    from backend.database import SessionLocal
+    from backend import models as _models
+
+    r0 = client.get("/auth/me", headers=yetkili_header)
+    assert r0.status_code == 200, r0.text
+
+    r_eski = client.post("/kayitlar/otomatik", data={
+        "plaka_no": "34 GVN 09A", "kamera_id": "GIRIS-KAM", "yon": "giris", "guven_skoru": 0.99,
+    })
+    assert r_eski.status_code == 200, r_eski.text
 
     guvenlik_id, guvenlik_header = _rbac_guvenlik_kullanici_olustur(client, yetkili_header)
-    dun = datetime.now().date() - timedelta(days=1)
-    pencere1_ici_ts = f"{dun.isoformat()} 09:00:00"   # 07:00-11:00 penceresi içinde
-    bosluk_ts = f"{dun.isoformat()} 15:00:00"          # iki pencere ARASINDAKİ boşlukta
-    pencere2_ici_ts = f"{dun.isoformat()} 21:00:00"   # 19:00-23:00 penceresi içinde
-
-    with engine.connect() as conn:
-        for ts in (pencere1_ici_ts, bosluk_ts, pencere2_ici_ts):
-            conn.execute(sqltext(
-                "INSERT INTO plaka_kayitlari (plaka_no, kamera_id, yon, yetki_durumu, tarih_saat, manuel_giris) "
-                "VALUES ('34 GVN 08', 'GIRIS-KAM', 'giris', 'yetkisiz', :ts, 0)"
-            ), {"ts": ts})
-        conn.commit()
-
-    # Aynı kullanıcı, aynı tarih için İKİ AYRI vardiya ataması (bölünmüş vardiya).
-    for baslangic, bitis in (("07:00", "11:00"), ("19:00", "23:00")):
-        r0 = client.post("/vardiyalar", json={
-            "kullanici_id": guvenlik_id, "tarih": dun.isoformat(),
-            "baslangic_saat": baslangic, "bitis_saat": bitis,
-        }, headers=yetkili_header)
-        assert r0.status_code == 200, r0.text
-
-    # /vardiyalar listesi bu kullanıcı için AYNI TARİHTE iki ayrı satır göstermeli.
-    r_liste = client.get("/vardiyalar", params={"kullanici_id": guvenlik_id}, headers=yetkili_header)
-    assert r_liste.status_code == 200 and len(r_liste.json()) == 2, r_liste.text
-
-    r1 = client.get("/kayitlar", params={"plaka": "34 GVN 08"}, headers=guvenlik_header)
+    r1 = client.get("/auth/me", headers=guvenlik_header)
     assert r1.status_code == 200, r1.text
-    saatler = sorted(k["tarih_saat"] for k in r1.json())
-    assert len(saatler) == 2, (
-        f"bölünmüş vardiyanın İKİ penceresindeki kayıtlar da görünmeli, boşluktaki görünmemeli: {saatler}"
+    guvenlik_adi = r1.json()["kullanici_adi"]
+
+    r_yeni = client.post("/kayitlar/otomatik", data={
+        "plaka_no": "34 GVN 09B", "kamera_id": "GIRIS-KAM", "yon": "giris", "guven_skoru": 0.99,
+    })
+    assert r_yeni.status_code == 200, r_yeni.text
+
+    db = SessionLocal()
+    try:
+        eski_kayit = db.query(_models.Kayit).filter(_models.Kayit.plaka_no == "34 GVN 09A").first()
+        yeni_kayit = db.query(_models.Kayit).filter(_models.Kayit.plaka_no == "34 GVN 09B").first()
+        satirlar = pts_main._kayitlari_rapor_satirlari([eski_kayit, yeni_kayit], db)
+    finally:
+        db.close()
+
+    satir_by_plaka = {s["plaka_no"]: s for s in satirlar}
+    assert satir_by_plaka["34 GVN 09A"]["vardiya"] == "", (
+        "güvenlik kullanıcısının oturumu açılmadan ÖNCEKİ kayıt hiçbir vardiyaya etiketlenmemeli"
     )
-    assert any("09:00" in s for s in saatler), "1. pencere (07:00-11:00) içindeki kayıt kayıp"
-    assert any("21:00" in s for s in saatler), "2. pencere (19:00-23:00) içindeki kayıt kayıp"
-    assert not any("15:00" in s for s in saatler), "iki pencere arasındaki boşluktaki kayıt YANLIŞLIKLA görünüyor"
+    assert guvenlik_adi in satir_by_plaka["34 GVN 09B"]["vardiya"], (
+        f"oturum AÇIKKEN oluşan kayıt, o oturumun sahibiyle etiketlenmeli: {satir_by_plaka['34 GVN 09B']['vardiya']}"
+    )

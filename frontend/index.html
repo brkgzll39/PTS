@@ -460,7 +460,7 @@
            (bkz. 2026-09-18 notu, README). -->
       <div class="alert alert-info d-none py-2 mb-3" id="guvenlikVardiyaBilgisi">
         <div><i class="bi bi-info-circle-fill me-1"></i>Bu liste yalnızca SİZİN vardiyanıza denk gelen kayıtları gösterir.</div>
-        <!-- Teşhis alanı: GET /vardiyalar/durumum sonucuna göre app.js::guvenlikVardiyaDurumunuGuncelle
+        <!-- Teşhis alanı: GET /vardiya-oturumlari/durumum sonucuna göre app.js::guvenlikVardiyaDurumunuGuncelle
              tarafından doldurulur -- "neden boş görünüyor" sorusunu sessiz bırakmamak için
              (bkz. 2026-09-18 kullanıcı geri bildirimi notu, README). -->
         <div id="guvenlikVardiyaDurumu" class="small mt-1"></div>
@@ -917,8 +917,9 @@
                   </select>
                   <div class="form-text">Güvenlik Personeli, Operatör ile AYNI ekranlara erişir (Canlı İzleme,
                     Ana Sayfa, Kayıtlar, Kişiler, Kara Liste) ama Kayıtlar listesinde/raporlarda yalnızca
-                    KENDİ vardiyasında geçen araçları görür -- vardiya saatleri aşağıdaki "Vardiya
-                    Planlama" bölümünden atanır.</div>
+                    KENDİ vardiyasında geçen araçları görür -- vardiyası ELLE ATANMAZ: bu kullanıcı ile
+                    giriş yapıldığı an vardiyası başlar, "Çıkış" yapılana kadar sürer (bkz. aşağıdaki
+                    "Vardiya Oturumları" bölümü).</div>
                 </div>
                 <!-- Yalnızca rol="sakin" seçilince görünür: bkz. app.js::yeniKullaniciRolDegisti,
                      main.py::_sakin_kisi_id_dogrula. Bir sakin hesabı MUTLAKA bir Kişi kaydına
@@ -950,50 +951,30 @@
         </div>
       </div>
 
-      <!-- ================= VARDİYA PLANLAMA (2026-09-18) =================
-           Güvenlik Personeli hesaplarının GÜN BAZLI vardiya saatlerini atar
-           (bkz. backend/main.py::/vardiyalar, models.VardiyaAtamasi). Aynı
-           kişi günden güne farklı saatlerde çalışabildiği için (4 vardiya /
-           vardiya amiri rotasyonu) her satır TEK BİR GÜNE aittir. -->
+      <!-- ================= VARDİYA OTURUMLARI (2026-09-20) =================
+           ÖZ-HİZMET vardiya sistemi (bkz. backend/main.py::/vardiya-oturumlari,
+           models.VardiyaOturumu; önceki elle/gün-bazlı "Vardiya Planlama"
+           ekranının YERİNE geçti). Güvenlik personeli KENDİ vardiyasını kendi
+           başlatıp bitirir (giriş yapınca başlar, "Çıkış" butonuna basınca
+           biter) -- yönetici burada yalnızca İZLER ve gerekirse açık kalmış
+           bir oturumu sonlandırır; elle vardiya OLUŞTURMA ekranı YOKTUR. -->
       <div class="row g-3 mt-1">
-        <div class="col-lg-4">
-          <div class="card">
-            <div class="card-header"><i class="bi bi-calendar-plus-fill me-1"></i>Vardiya Ata</div>
-            <div class="card-body">
-              <form id="vardiyaForm" data-rol-min="yonetici">
-                <div class="mb-2"><label class="form-label small" for="vardiyaKullanici">Güvenlik Personeli</label>
-                  <select class="form-select" id="vardiyaKullanici" required><option value="">Seçiniz...</option></select>
-                </div>
-                <div class="mb-2"><label class="form-label small" for="vardiyaTarih">Tarih</label>
-                  <input type="date" class="form-control" id="vardiyaTarih" required></div>
-                <div class="row g-2">
-                  <div class="col-6"><label class="form-label small" for="vardiyaBaslangic">Başlangıç Saati</label>
-                    <input type="time" class="form-control" id="vardiyaBaslangic" required></div>
-                  <div class="col-6"><label class="form-label small" for="vardiyaBitis">Bitiş Saati</label>
-                    <input type="time" class="form-control" id="vardiyaBitis" required></div>
-                </div>
-                <div class="form-text">Bitiş saati başlangıçtan küçük/eşitse (ör. 23:00 → 07:00), gece yarısını
-                  geçen bir vardiya olarak yorumlanır.</div>
-                <div class="form-text">Aynı kişi aynı gün içinde İKİ AYRI zaman aralığında çalışıyorsa (bölünmüş
-                  vardiya, ör. 07:00-11:00 ve 19:00-23:00), bu formu aynı kişi ve tarih için farklı saatlerle
-                  İKİNCİ kez doldurup gönderin -- her ikisi de ayrı satır olarak eklenir ve aşağıdaki listede
-                  ayrı ayrı görünür, ikisi de o kişinin kayıtlarında sayılır.</div>
-                <button type="submit" class="btn btn-primary w-100 mt-2"><i class="bi bi-calendar-check"></i> Vardiyayı Ata</button>
-              </form>
-              <div id="vardiyaSonuc" class="small mt-2"></div>
-            </div>
-          </div>
-        </div>
-        <div class="col-lg-8">
+        <div class="col-12">
           <div class="card">
             <div class="card-header d-flex justify-content-between">
-              <span><i class="bi bi-calendar-week-fill me-1"></i>Atanmış Vardiyalar</span>
-              <button class="btn btn-sm btn-outline-secondary" onclick="vardiyalariYukle()" title="Yenile" aria-label="Yenile"><i class="bi bi-arrow-clockwise"></i></button>
+              <span><i class="bi bi-calendar-week-fill me-1"></i>Vardiya Oturumları</span>
+              <button class="btn btn-sm btn-outline-secondary" onclick="vardiyaOturumlariniYukle()" title="Yenile" aria-label="Yenile"><i class="bi bi-arrow-clockwise"></i></button>
+            </div>
+            <div class="card-body">
+              <p class="text-muted small mb-2">Güvenlik personeli giriş yapınca vardiyası otomatik başlar, "Çıkış"
+                butonuna basınca biter -- burada elle vardiya oluşturmanız GEREKMEZ. Bir oturum, personel çıkış
+                yapmayı unutup uzaklaştıysa "Devam ediyor" olarak görünmeye devam eder; personel bir dahaki
+                girişinde bu ZATEN otomatik kapanır, ama isterseniz aşağıdan da elle sonlandırabilirsiniz.</p>
             </div>
             <div class="card-body p-0">
               <table class="table table-hover mb-0 align-middle">
-                <thead class="table-light"><tr><th>Güvenlik Personeli</th><th>Tarih</th><th>Saat Aralığı</th><th>Ekleyen</th><th></th></tr></thead>
-                <tbody id="vardiyalarTablo"></tbody>
+                <thead class="table-light"><tr><th>Güvenlik Personeli</th><th>Giriş</th><th>Çıkış</th><th>Durum</th><th></th></tr></thead>
+                <tbody id="vardiyaOturumlariTablo"></tbody>
               </table>
             </div>
           </div>

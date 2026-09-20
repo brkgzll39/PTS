@@ -137,44 +137,16 @@ class KullaniciGuncelle(BaseModel):
         return v
 
 
-_SAAT_DESENI = re.compile(r"^([01]\d|2[0-3]):[0-5]\d$")
-
-
-class VardiyaOlustur(BaseModel):
-    """Bir güvenlik personeline TEK BİR GÜN için vardiya ataması (bkz.
-    models.VardiyaAtamasi, main.py::/vardiyalar). `bitis_saat`,
-    `baslangic_saat`'e eşit veya ondan küçükse gece yarısını geçen bir
-    vardiya (ör. 23:00 -> 07:00) olarak yorumlanır."""
-    kullanici_id: int
-    tarih: str = Field(description="YYYY-MM-DD")
-    baslangic_saat: str
-    bitis_saat: str
-
-    @field_validator("tarih")
-    @classmethod
-    def tarih_kontrol(cls, v):
-        try:
-            datetime.strptime(v, "%Y-%m-%d")
-        except ValueError:
-            raise ValueError("tarih 'YYYY-MM-DD' biçiminde olmalıdır")
-        return v
-
-    @field_validator("baslangic_saat", "bitis_saat")
-    @classmethod
-    def saat_kontrol(cls, v):
-        if not _SAAT_DESENI.match(v or ""):
-            raise ValueError("saat 'HH:MM' biçiminde olmalıdır (00:00-23:59)")
-        return v
-
-
-class VardiyaCevap(BaseModel):
+class VardiyaOturumuCevap(BaseModel):
+    """Bir güvenlik personelinin ÖZ-HİZMET vardiya oturumu (bkz.
+    models.VardiyaOturumu, main.py::/vardiya-oturumlari). Elle oluşturma
+    şeması YOK -- oturumlar yalnızca giriş/çıkış (bkz. main.py::giris_yap,
+    ::cikis_yap) ile otomatik açılıp kapanır; yönetici yalnızca LİSTELEYEBİLİR
+    ve açık kalmış bir oturumu SONLANDIRABİLİR (bkz. /vardiya-oturumlari/{id}/sonlandir)."""
     id: int
     kullanici_id: int
-    tarih: datetime
-    baslangic_saat: str
-    bitis_saat: str
-    olusturan: Optional[str] = None
-    olusturma_tarihi: Optional[datetime] = None
+    giris_zamani: datetime
+    cikis_zamani: Optional[datetime] = None
 
     model_config = ConfigDict(from_attributes=True)
 

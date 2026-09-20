@@ -30,6 +30,7 @@ def _ornek_satir(**gecersizler):
         "tarih_saat": datetime(2026, 9, 17, 8, 4, 7),
         "notlar": "test notu",
         "goruntu_yolu": None,
+        "vardiya": "",
     }
     satir.update(gecersizler)
     return satir
@@ -44,7 +45,8 @@ def test_kayitlar_excel_basliklari_referans_rapor_ile_eslesir(tmp_path):
     """Kullanıcının paylaştığı referans "GEÇİŞ RAPORU" Excel çıktısının
     başlık satırı: Plaka, Adı, Soyadı, Site, Blok, Daire, Otopark, Nokta,
     Geçiş Tipi, Araç Tipi, Tarih, Notlar. Bizim raporumuz bunu birebir
-    içerir; başa yalnızca kendi sistemimize özgü "ID" sütunu eklenir."""
+    içerir; başa "ID", sona da (2026-09-20) "Vardiya" -- ikisi de kendi
+    sistemimize özgü ek sütunlar."""
     dosya = tmp_path / "kayitlar.xlsx"
     excel_export.kayitlar_excel_olustur([_ornek_satir()], str(dosya))
 
@@ -53,14 +55,16 @@ def test_kayitlar_excel_basliklari_referans_rapor_ile_eslesir(tmp_path):
     basliklar = [h.value for h in ws[1]]
     assert basliklar == [
         "ID", "Plaka", "Adı", "Soyadı", "Site", "Blok", "Daire", "Otopark",
-        "Nokta", "Geçiş Tipi", "Araç Tipi", "Tarih", "Notlar",
+        "Nokta", "Geçiş Tipi", "Araç Tipi", "Tarih", "Notlar", "Vardiya",
     ]
     assert ws.title == "Geçiş Raporu"
 
 
 def test_kayitlar_excel_veri_satiri_dogru_yazilir(tmp_path):
     dosya = tmp_path / "kayitlar.xlsx"
-    excel_export.kayitlar_excel_olustur([_ornek_satir()], str(dosya))
+    excel_export.kayitlar_excel_olustur(
+        [_ornek_satir(vardiya="Eser Akar (15:00-23:10)")], str(dosya)
+    )
 
     wb = openpyxl.load_workbook(str(dosya))
     ws = wb.active
@@ -68,22 +72,26 @@ def test_kayitlar_excel_veri_satiri_dogru_yazilir(tmp_path):
     assert satir == [
         1, "34 ABC 123", "Ahmet", "Yılmaz", "LOJMAN", None, "PERSONEL", None,
         "LOJMAN GİRİŞ", "Giriş", "GÜVENLİK ŞEFLİĞİ", "17.09.2026 08:04:07", "test notu",
+        "Eser Akar (15:00-23:10)",
     ]
 
 
 def test_kayitlar_excel_formul_enjeksiyonu_engellenir(tmp_path):
     """Kamera/OCR ya da kişi kaydından gelen bir metin '=', '+', '-' veya '@'
     ile başlıyorsa Excel'de formül olarak YORUMLANMAMALI (bkz.
-    excel_export._guvenli_hucre)."""
+    excel_export._guvenli_hucre) -- Vardiya sütunu için de aynı koruma
+    geçerli olmalı, çünkü içeriği (kullanıcı adı) da nihayetinde kullanıcı
+    girdisinden türetiliyor."""
     dosya = tmp_path / "kayitlar.xlsx"
     excel_export.kayitlar_excel_olustur(
-        [_ornek_satir(ad="=CMD('zararli')", notlar="+1+1")], str(dosya)
+        [_ornek_satir(ad="=CMD('zararli')", notlar="+1+1", vardiya="=ALSO_BAD()")], str(dosya)
     )
     wb = openpyxl.load_workbook(str(dosya))
     ws = wb.active
     satir = [h.value for h in ws[2]]
     assert satir[2] == "'=CMD('zararli')"
-    assert satir[-1] == "'+1+1"
+    assert satir[-2] == "'+1+1"
+    assert satir[-1] == "'=ALSO_BAD()"
 
 
 def test_kayitlar_excel_bos_liste_ile_de_calisir(tmp_path):

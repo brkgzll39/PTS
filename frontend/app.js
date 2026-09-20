@@ -398,12 +398,25 @@ function authBasarili(kullanici) {
 async function uygulamaVerileriniYukle() {
   panelYenile(); kayitlariYukle(); kisileriYukle(); ledAyarlariYukle(); lisansYukle(); kameralariYukle();
   grafikYukle(); karaListesiYukle(); bariyerleriYukle(); kullanicilariYukle(); sistemSagliginiYukle();
-  bildirimleriYukle(); vardiyalariYukle();
+  bildirimleriYukle(); vardiyaOturumlariniYukle();
   await siteleriYukle(); noktalariYukle();
   sseBaslat();
 }
 
-function oturumKapat() {
+async function oturumKapat() {
+  // ÖZ-HİZMET VARDİYA OTURUMU (2026-09-20): rol=="güvenlik" için sunucudaki
+  // açık VardiyaOturumu'nu burada, token silinmeden ÖNCE kapatmalıyız (bkz.
+  // backend/main.py::cikis_yap) -- aksi halde vardiya "kapanmamış" (yani hâlâ
+  // açıkmış) gibi kalır ve bu kullanıcının bir SONRAKİ girişine kadar tüm yeni
+  // geçişler kayıtlar listesinde görünmeye devam eder. Çağrı başarısız olsa
+  // bile (ağ hatası vb.) çıkışı ASLA engellemeyiz -- token zaten siliniyor,
+  // en kötü ihtimalle oturum sunucuda "açık" kalır (bu da bir sonraki girişte
+  // zaten otomatik kapanır, bkz. _guvenlik_oturum_baslat).
+  try {
+    await apiCagir("/auth/cikis", { method: "POST" });
+  } catch (e) {
+    console.error(e);
+  }
   sessionStorage.removeItem("pts_token");
   location.reload();
 }
@@ -558,32 +571,35 @@ async function panelYenile() {
 }
 
 // Güvenlik personeli için teşhis: sunucunun "şu an" bilgisi + kullanıcının
-// kendi vardiya pencereleri (2026-09-18 kullanıcı geri bildirimi: vardiyası
-// atanmış olmasına rağmen canlı geçişlerin Kayıtlar sekmesinde görünmediği
-// bildirildi -- bu, filtrenin NEDEN boş kaldığını sunucu/istemci saat
-// karşılaştırmasıyla teşhis etmeye yarar; bkz. backend/main.py::vardiya_durumum).
+// kendi vardiya OTURUMLARI (2026-09-20: öz-hizmet giriş/çıkış tabanlı sisteme
+// geçildi, bkz. backend/main.py::vardiya_oturumu_durumum ve README'deki aynı
+// tarihli not). 2026-09-18 kullanıcı geri bildirimi -- vardiyası olmasına
+// rağmen canlı geçişlerin Kayıtlar sekmesinde görünmediği bildirilmişti --
+// bu, filtrenin NEDEN boş kaldığını sunucu/istemci saat karşılaştırmasıyla
+// teşhis etmeye yarar; aynı gerekçe öz-hizmet sistemi için de geçerli.
 async function guvenlikVardiyaDurumunuGuncelle() {
   const el = document.getElementById("guvenlikVardiyaDurumu");
   if (!el || mevcutRol !== "güvenlik") return;
   try {
-    const d = await apiCagir("/vardiyalar/durumum");
+    const d = await apiCagir("/vardiya-oturumlari/durumum");
     if (!d.rol_guvenlik_mi) { el.innerHTML = ""; return; }
     const sunucuSaati = tarihFormatla(d.sunucu_simdiki_zaman);
     const istemciSaati = tarihFormatla(new Date().toISOString());
     const aktifDurum = d.su_an_aktif_vardiya_var_mi
-      ? '<span class="text-success fw-bold"><i class="bi bi-check-circle-fill"></i> Şu an aktif bir vardiyanız var</span>'
-      : '<span class="text-danger fw-bold"><i class="bi bi-x-circle-fill"></i> Şu an aktif bir vardiyanız YOK</span>';
-    let vardiyaListesi = "";
-    if (!d.toplam_vardiya_sayisi) {
-      vardiyaListesi = '<div class="text-warning">Hiç vardiya atamanız yok -- bu yüzden hiçbir kayıt görünmüyor (varsayılan: atama yoksa hiçbir şey gösterilmez).</div>';
+      ? '<span class="text-success fw-bold"><i class="bi bi-check-circle-fill"></i> Vardiyanız şu an AÇIK (giriş yaptığınızdan beri)</span>'
+      : '<span class="text-danger fw-bold"><i class="bi bi-x-circle-fill"></i> Şu an açık bir vardiyanız YOK -- çıkış yapmış görünüyorsunuz</span>';
+    let oturumListesi = "";
+    if (!d.toplam_oturum_sayisi) {
+      oturumListesi = '<div class="text-warning">Hiç vardiya oturumunuz yok -- bu normalde olmamalı (her girişte otomatik açılır), lütfen sayfayı yenileyin.</div>';
     } else {
-      const satirlar = (d.vardiyalar || []).map(v => {
-        const rozet = v.su_an_aktif_mi ? '<span class="badge bg-success">aktif</span>' : '<span class="badge bg-secondary">pasif</span>';
-        return `<div>${escapeHtml(v.tarih)} ${escapeHtml(v.baslangic_saat)}–${escapeHtml(v.bitis_saat)} <span class="text-muted">(${tarihFormatla(v.pencere_baslangic)} → ${tarihFormatla(v.pencere_bitis)})</span> ${rozet}</div>`;
+      const satirlar = (d.oturumlar || []).map(o => {
+        const rozet = o.devam_ediyor ? '<span class="badge bg-success">devam ediyor</span>' : '<span class="badge bg-secondary">kapandı</span>';
+        const cikisMetni = o.cikis_zamani ? tarihFormatla(o.cikis_zamani) : "devam ediyor";
+        return `<div>${tarihFormatla(o.giris_zamani)} → ${cikisMetni} ${rozet}</div>`;
       }).join("");
-      vardiyaListesi = `<div class="mt-1">Toplam ${d.toplam_vardiya_sayisi} vardiya ataması:</div>${satirlar}`;
+      oturumListesi = `<div class="mt-1">Son ${d.oturumlar.length} vardiya oturumunuz:</div>${satirlar}`;
     }
-    el.innerHTML = `<div>Sunucu saati: <strong>${sunucuSaati}</strong> · Tarayıcınızın saati: <strong>${istemciSaati}</strong></div><div>${aktifDurum}</div>${vardiyaListesi}` +
+    el.innerHTML = `<div>Sunucu saati: <strong>${sunucuSaati}</strong> · Tarayıcınızın saati: <strong>${istemciSaati}</strong></div><div>${aktifDurum}</div>${oturumListesi}` +
       (sunucuSaati !== istemciSaati ? '<div class="text-warning mt-1"><i class="bi bi-exclamation-triangle-fill"></i> Sunucu ile tarayıcınızın saati farklı görünüyor -- kayıt görünürlüğü SUNUCU saatine göre belirlenir.</div>' : "");
   } catch (e) {
     el.textContent = "Vardiya durumu alınamadı: " + e.message;
@@ -2243,65 +2259,43 @@ async function kullaniciSil(id) {
 }
 
 // ================================================================
-// VARDİYA PLANLAMA (2026-09-18) -- Güvenlik Personeli hesaplarının gün
-// bazlı vardiya saatlerini atar (bkz. backend/main.py::/vardiyalar,
-// README'deki "Güvenlik Personeli Vardiya Filtresi" notu).
+// VARDİYA OTURUMLARI (2026-09-20) -- ÖZ-HİZMET sistem: Güvenlik Personeli
+// hesapları KENDİ vardiyasını kendi başlatıp bitirir (giriş/çıkış tabanlı,
+// bkz. backend/main.py::/vardiya-oturumlari, ::giris_yap, ::cikis_yap,
+// README'deki "Öz-Hizmet Vardiya Oturumları" notu). Önceki elle/gün-bazlı
+// "Vardiya Planlama" (vardiyalariYukle/vardiyaSil, POST/DELETE /vardiyalar)
+// bununla DEĞİŞTİRİLDİ -- burada yalnızca İZLEME ve açık kalmış bir oturumu
+// SONLANDIRMA var, elle "oluştur" YOK.
 // ================================================================
 
-async function vardiyalariYukle() {
-  const secimEl = document.getElementById("vardiyaKullanici");
-  const tabloEl = document.getElementById("vardiyalarTablo");
-  if (!secimEl || !tabloEl) return;
+async function vardiyaOturumlariniYukle() {
+  const tabloEl = document.getElementById("vardiyaOturumlariTablo");
+  if (!tabloEl) return;
   try {
-    const [vardiyalar, kullanicilar] = await Promise.all([
-      apiCagir("/vardiyalar"),
+    const [oturumlar, kullanicilar] = await Promise.all([
+      apiCagir("/vardiya-oturumlari"),
       apiCagir("/kullanicilar"),
     ]);
-    const guvenlikKullanicilari = kullanicilar.filter(k => k.rol === "güvenlik");
-    const seciliDeger = secimEl.value;
-    secimEl.innerHTML = '<option value="">Seçiniz...</option>' + guvenlikKullanicilari.map(k =>
-      `<option value="${k.id}">${escapeHtml(k.kullanici_adi)}</option>`
-    ).join("");
-    if (seciliDeger) secimEl.value = seciliDeger;
     const kullaniciAdi = Object.fromEntries(kullanicilar.map(k => [k.id, k.kullanici_adi]));
-    tabloEl.innerHTML = vardiyalar.map(v => `
+    tabloEl.innerHTML = oturumlar.map(o => `
       <tr>
-        <td>${escapeHtml(kullaniciAdi[v.kullanici_id] || `#${v.kullanici_id} (silinmiş)`)}</td>
-        <td>${new Date(v.tarih).toLocaleDateString("tr-TR")}</td>
-        <td>${escapeHtml(v.baslangic_saat)} - ${escapeHtml(v.bitis_saat)}${v.bitis_saat <= v.baslangic_saat ? ' <span class="badge bg-secondary">ertesi gün</span>' : ""}</td>
-        <td class="small text-muted">${v.olusturan ? escapeHtml(v.olusturan) : "-"}</td>
-        <td><button class="btn btn-sm btn-outline-danger" onclick="vardiyaSil(${v.id})" title="Sil"><i class="bi bi-trash"></i></button></td>
+        <td>${escapeHtml(kullaniciAdi[o.kullanici_id] || `#${o.kullanici_id} (silinmiş)`)}</td>
+        <td>${tarihFormatla(o.giris_zamani)}</td>
+        <td>${o.cikis_zamani ? tarihFormatla(o.cikis_zamani) : "-"}</td>
+        <td>${o.cikis_zamani ? '<span class="badge bg-secondary">kapandı</span>' : '<span class="badge bg-success">devam ediyor</span>'}</td>
+        <td>${o.cikis_zamani ? "" : `<button class="btn btn-sm btn-outline-danger" onclick="vardiyaOturumunuSonlandir(${o.id})" title="Sonlandır"><i class="bi bi-stop-circle"></i> Sonlandır</button>`}</td>
       </tr>
-    `).join("") || `<tr><td colspan="5" class="text-center text-muted py-3">Henüz vardiya ataması yok</td></tr>`;
+    `).join("") || `<tr><td colspan="5" class="text-center text-muted py-3">Henüz vardiya oturumu yok</td></tr>`;
   } catch (e) {
     tabloEl.innerHTML = `<tr><td colspan="5" class="text-center text-muted py-3">Bu bölümü sadece yönetici görebilir</td></tr>`;
   }
 }
 
-document.getElementById("vardiyaForm")?.addEventListener("submit", async (e) => {
-  e.preventDefault();
-  const sonuc = document.getElementById("vardiyaSonuc");
+async function vardiyaOturumunuSonlandir(id) {
+  if (!confirm("Bu vardiya oturumunu şimdi sonlandırmak istediğinize emin misiniz?")) return;
   try {
-    const govde = {
-      kullanici_id: Number(document.getElementById("vardiyaKullanici").value),
-      tarih: document.getElementById("vardiyaTarih").value,
-      baslangic_saat: document.getElementById("vardiyaBaslangic").value,
-      bitis_saat: document.getElementById("vardiyaBitis").value,
-    };
-    await apiCagir("/vardiyalar", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(govde) });
-    sonuc.className = "small mt-2 text-success"; sonuc.textContent = "Vardiya atandı.";
-    document.getElementById("vardiyaTarih").value = "";
-    document.getElementById("vardiyaBaslangic").value = "";
-    document.getElementById("vardiyaBitis").value = "";
-    vardiyalariYukle();
-  } catch (err) { sonuc.className = "small mt-2 text-danger"; sonuc.textContent = err.message; }
-});
-
-async function vardiyaSil(id) {
-  if (!confirm("Bu vardiya atamasını silmek istediğinize emin misiniz?")) return;
-  try {
-    await apiCagir(`/vardiyalar/${id}`, { method: "DELETE" });
-    vardiyalariYukle();
+    await apiCagir(`/vardiya-oturumlari/${id}/sonlandir`, { method: "POST" });
+    vardiyaOturumlariniYukle();
   } catch (e) { toastGoster(e.message, "hata"); }
 }
 

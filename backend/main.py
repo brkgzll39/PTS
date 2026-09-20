@@ -559,7 +559,7 @@ async def _sse_yayinla(olay_turu: str, veri: dict, db: Optional[Session] = None)
             if db is None or kayit_tarihi is None:
                 continue
             pencereler = _kullanicinin_vardiya_pencereleri(db, istemci["kullanici_id"])
-            if not any(b <= kayit_tarihi < e for b, e in pencereler):
+            if not any(_pencere_icinde_mi(kayit_tarihi, b, e) for b, e in pencereler):
                 continue
         try:
             await istemci["kuyruk"].put(payload)
@@ -971,10 +971,11 @@ def _rol_dogrula(kullanici: models.Kullanici, *izinli_roller: str) -> None:
 
 
 # ================================================================
-# GÜVENLİK PERSONELİ VARDİYA FİLTRESİ (2026-09-18)
+# GÜVENLİK PERSONELİ VARDİYA FİLTRESİ (2026-09-18, 2026-09-20'de öz-hizmete
+# geçirildi -- bkz. aşağıdaki güncelleme notu)
 # ================================================================
-# Kullanıcı talebi (birebir): "Yönetici panelinden tüm kayıtlar gözükecek
-# güvenlik panellerinde sadece kendi vardiyalarında geçen araçların
+# Kullanıcı talebi (birebir, 2026-09-18): "Yönetici panelinden tüm kayıtlar
+# gözükecek güvenlik panellerinde sadece kendi vardiyalarında geçen araçların
 # raporları ve kayıtları gözükecek." + "4 vardiya 4 vardiya amiri 24 saat
 # esaslı çalıştığı için [personel] bir gün 15:00-23:00 aralığında çalışıyor
 # diğer gün 07:00-15:00 gibi çalışıyor" (yani vardiya saatleri GÜNDEN GÜNE
@@ -982,11 +983,16 @@ def _rol_dogrula(kullanici: models.Kullanici, *izinli_roller: str) -> None:
 # birden fazla güvenlik personeli giriş yapmışsa kayıt HERKESTE ayrı ayrı
 # gösterilir" (çakışma durumunda dışlama değil, çoğullama).
 #
-# Bu üç karar, tasarımı doğrudan belirliyor: her güvenlik kullanıcısı için
-# GÜN BAZLI, birbirinden bağımsız vardiya pencereleri tutulur (bkz.
-# models.VardiyaAtamasi); bir kayıt, bu pencerelerden HERHANGİ BİRİNE denk
-# düşüyorsa o kullanıcıya "ait" sayılır (çakışan pencerelerde birden fazla
-# kullanıcıya aynı anda ait olabilir -- dışlayıcı bir atama YOKTUR).
+# GÜNCELLEME (2026-09-20, birebir): "bunu sürekli ben yapamam vardiyaya gelen
+# personel kendisi vardiya başlangıcını kendisi yapabilsin ... kullanıcı giriş
+# yapınca çıkış yapana kadar onun vardiyası devam etsin" -- yöneticinin ELLE,
+# GÜN BAZLI vardiya ataması yapması yerine (eski models.VardiyaAtamasi), her
+# güvenlik kullanıcısının vardiya penceresi artık KENDİ GİRİŞ/ÇIKIŞINA bağlı
+# (bkz. models.VardiyaOturumu, giris_yap::_guvenlik_oturum_baslat, cikis_yap).
+# Aşağıdaki iki tasarım kararı DEĞİŞMEDİ, yalnızca pencerelerin KAYNAĞI
+# değişti: bir kayıt, bu pencerelerden HERHANGİ BİRİNE denk düşüyorsa o
+# kullanıcıya "ait" sayılır (çakışan pencerelerde birden fazla kullanıcıya
+# aynı anda ait olabilir -- dışlayıcı bir atama YOKTUR).
 #
 # KAPSAM (bilinçli sınır -- README'de de belgelenmiştir): bu filtre
 # GÖRÜNÜRLÜĞE uygulanır (kayıtlar listesi, dışa aktarma raporları, plaka
@@ -999,45 +1005,39 @@ def _rol_dogrula(kullanici: models.Kullanici, *izinli_roller: str) -> None:
 # bir yetkilendirme katmanı değildir.
 
 
-def _vardiya_penceresi(tarih: datetime, baslangic_saat: str, bitis_saat: str) -> tuple[datetime, datetime]:
-    """Bir VardiyaAtamasi satırının GERÇEK başlangıç/bitiş datetime'ını
-    hesaplar. `bitis_saat`, `baslangic_saat`'e eşit veya ondan KÜÇÜKSE gece
-    yarısını geçen bir vardiya (ör. 23:00 -> 07:00) olarak yorumlanır ve
-    bitiş BİR SONRAKİ takvim gününe kayar."""
-    gun = tarih.replace(hour=0, minute=0, second=0, microsecond=0)
-    b_saat, b_dakika = (int(p) for p in baslangic_saat.split(":"))
-    bt_saat, bt_dakika = (int(p) for p in bitis_saat.split(":"))
-    baslangic = gun.replace(hour=b_saat, minute=b_dakika)
-    bitis = gun.replace(hour=bt_saat, minute=bt_dakika)
-    if bitis <= baslangic:
-        bitis += timedelta(days=1)
-    return baslangic, bitis
+def _pencere_icinde_mi(zaman: datetime, baslangic: datetime, bitis: Optional[datetime]) -> bool:
+    """`zaman`, [baslangic, bitis) aralığında mı? `bitis` NULL ise ilgili
+    vardiya oturumu HÂLÂ AÇIK demektir (bkz. models.VardiyaOturumu) ve üst
+    sınır yok sayılır -- yani `baslangic`'tan bu yana geçen HER ŞEY dahildir."""
+    if zaman < baslangic:
+        return False
+    return bitis is None or zaman < bitis
 
 
 def _kullanicinin_vardiya_pencereleri(db: Session, kullanici_id: int) -> list:
-    """Bir güvenlik personelinin TÜM vardiya atamalarının gerçek datetime
-    pencerelerini (başlangıç, bitiş) çiftleri olarak döner. Bu tablo küçük
-    ölçekli olduğu için (kullanıcı başına yılda genelde birkaç yüz satır)
-    tüm satırlar belleğe alınıp pencereleri hesaplanır; ayrı bir SQL tarih
-    aralığı ön-filtresi bu ölçekte gerekmiyor."""
-    atamalar = (
-        db.query(models.VardiyaAtamasi)
-        .filter(models.VardiyaAtamasi.kullanici_id == kullanici_id)
+    """Bir güvenlik personelinin TÜM vardiya oturumlarını (giriş, çıkış)
+    çiftleri olarak döner -- çıkış NULL ise oturum hâlâ açıktır (bkz.
+    _pencere_icinde_mi). Bu tablo küçük ölçekli olduğu için (kullanıcı
+    başına yılda genelde birkaç yüz oturum) tüm satırlar belleğe alınır;
+    ayrı bir SQL tarih aralığı ön-filtresi bu ölçekte gerekmiyor."""
+    oturumlar = (
+        db.query(models.VardiyaOturumu)
+        .filter(models.VardiyaOturumu.kullanici_id == kullanici_id)
         .all()
     )
-    return [_vardiya_penceresi(a.tarih, a.baslangic_saat, a.bitis_saat) for a in atamalar]
+    return [(o.giris_zamani, o.cikis_zamani) for o in oturumlar]
 
 
 def _guvenlik_kayit_filtresi_uygula(sorgu, kullanici: models.Kullanici, db: Session):
     """`kullanici.rol == ROL_GUVENLIK` ise verilen SQLAlchemy sorgusuna, bu
-    kullanıcının vardiya pencerelerinden HİÇBİRİNE denk düşmeyen kayıtları
+    kullanıcının vardiya oturumlarından HİÇBİRİNE denk düşmeyen kayıtları
     eleyen bir OR filtresi ekler; diğer roller için sorgu değişmeden döner.
 
-    Hiç vardiya ataması yoksa (henüz planlanmamışsa) GÜVENLİ TARAF seçilir:
-    varsayılan olarak her şeyi göstermek yerine HİÇBİR kayıt döndürülmez --
-    henüz vardiyası tanımlanmamış bir güvenlik hesabının kayıtlar listesinin
-    boş görünmesi, yanlışlıkla TÜM kayıtları göstermesinden çok daha güvenli
-    bir varsayılan davranıştır.
+    Hiç vardiya oturumu yoksa (henüz hiç giriş yapmamışsa) GÜVENLİ TARAF
+    seçilir: varsayılan olarak her şeyi göstermek yerine HİÇBİR kayıt
+    döndürülmez -- henüz vardiyası olmayan bir güvenlik hesabının kayıtlar
+    listesinin boş görünmesi, yanlışlıkla TÜM kayıtları göstermesinden çok
+    daha güvenli bir varsayılan davranıştır.
     """
     if kullanici.rol != ROL_GUVENLIK:
         return sorgu
@@ -1045,7 +1045,9 @@ def _guvenlik_kayit_filtresi_uygula(sorgu, kullanici: models.Kullanici, db: Sess
     if not pencereler:
         return sorgu.filter(false())
     kosullar = [
-        and_(models.Kayit.tarih_saat >= baslangic, models.Kayit.tarih_saat < bitis)
+        # bitis None ise (oturum hâlâ açık) üst sınır YOK -- bkz. _pencere_icinde_mi.
+        models.Kayit.tarih_saat >= baslangic if bitis is None
+        else and_(models.Kayit.tarih_saat >= baslangic, models.Kayit.tarih_saat < bitis)
         for baslangic, bitis in pencereler
     ]
     return sorgu.filter(or_(*kosullar))
@@ -1059,7 +1061,29 @@ def _guvenlik_kayit_gorunur_mu(kayit: "models.Kayit", kullanici: models.Kullanic
     if kullanici.rol != ROL_GUVENLIK:
         return True
     pencereler = _kullanicinin_vardiya_pencereleri(db, kullanici.id)
-    return any(baslangic <= kayit.tarih_saat < bitis for baslangic, bitis in pencereler)
+    return any(_pencere_icinde_mi(kayit.tarih_saat, baslangic, bitis) for baslangic, bitis in pencereler)
+
+
+def _guvenlik_oturum_baslat(db: Session, kullanici: models.Kullanici) -> None:
+    """`kullanici.rol == ROL_GUVENLIK` ise başarılı bir `/auth/giris`
+    çağrısının hemen ardından çağrılır (bkz. giris_yap): bu kullanıcının
+    unutulmuş, hâlâ AÇIK kalmış önceki oturumu varsa (bkz. VardiyaOturumu
+    docstring'indeki "unutulan çıkış" notu) bu ANDA kapatır, ardından YENİ
+    bir oturum açar. Böylece unutulan bir çıkış, bir SONRAKİ gerçek vardiyanın
+    kayıtlarına asla karışmaz -- her giriş, en fazla BİR açık oturumla
+    sonuçlanır."""
+    if kullanici.rol != ROL_GUVENLIK:
+        return
+    simdi = datetime.now()
+    acik_onceki = (
+        db.query(models.VardiyaOturumu)
+        .filter(models.VardiyaOturumu.kullanici_id == kullanici.id, models.VardiyaOturumu.cikis_zamani.is_(None))
+        .all()
+    )
+    for onceki in acik_onceki:
+        onceki.cikis_zamani = simdi
+    db.add(models.VardiyaOturumu(kullanici_id=kullanici.id, giris_zamani=simdi))
+    db.commit()
 
 
 # Basit bellek-içi bruteforce koruması: kullanıcı adı -> (başarısız deneme sayısı, kilit bitiş zamanı)
@@ -1154,8 +1178,41 @@ def giris_yap(istek: schemas.GirisIstegi, db: Session = Depends(get_db)):
     _basarisiz_girisler.pop(kullanici_adi, None)
     kullanici.son_giris = datetime.now()
     db.commit()
+    # Öz-hizmet vardiya oturumu (bkz. 2026-09-20 "Öz-Hizmet Vardiya
+    # Oturumları" notu, README): rol=="güvenlik" için burada YENİ bir
+    # VardiyaOturumu açılır (ve varsa unutulmuş önceki açık oturum kapatılır).
+    _guvenlik_oturum_baslat(db, kullanici)
     logger.info("Başarılı giriş: %s", kullanici_adi)
     return {"token": _token_uret(kullanici.id), "kullanici": kullanici}
+
+
+@app.post("/auth/cikis")
+def cikis_yap(db: Session = Depends(get_db), kullanici: models.Kullanici = Depends(_giris_gerekli)):
+    """İstemcinin "Çıkış Yap" butonuna bastığında (bkz. frontend/app.js::
+    oturumKapat) token'ı silmeden HEMEN ÖNCE çağrılır. `kullanici.rol ==
+    ROL_GUVENLIK` için o anki AÇIK VardiyaOturumu'nu bu anda kapatır --
+    vardiya biter, o andan sonraki hiçbir geçiş artık bu kullanıcının
+    listesinde görünmez (bkz. _kullanicinin_vardiya_pencereleri).
+
+    Diğer roller için bu uç nokta zararsızdır (yalnızca 200 döner). Token'ın
+    kendisi için sunucu tarafında ayrı bir "iptal listesi" TUTULMUYOR (bkz.
+    _token_uret/_token_coz'daki önceden var olan tasarım) -- bu uç nokta
+    yalnızca vardiya oturumunu kapatmak içindir, JWT/oturum güvenliğiyle
+    ilgili DEĞİLDİR; istemci token'ı zaten kendi tarafında hemen siliyor.
+    """
+    if kullanici.rol == ROL_GUVENLIK:
+        simdi = datetime.now()
+        acik = (
+            db.query(models.VardiyaOturumu)
+            .filter(models.VardiyaOturumu.kullanici_id == kullanici.id, models.VardiyaOturumu.cikis_zamani.is_(None))
+            .all()
+        )
+        for oturum in acik:
+            oturum.cikis_zamani = simdi
+        if acik:
+            db.commit()
+            logger.info("Vardiya oturumu kapatıldı (çıkış): kullanıcı=%s", kullanici.kullanici_adi)
+    return {"mesaj": "Çıkış yapıldı"}
 
 
 @app.get("/auth/me", response_model=schemas.KullaniciCevap)
@@ -2913,13 +2970,47 @@ def _rapor_tarih_araligi_metni(baslangic: Optional[str], bitis: Optional[str], k
     return "Bu kriterlere uyan hiçbir geçiş kaydı bulunamadı."
 
 
+def _vardiya_etiketleri_haritasi(kayitlar: list, db: Session) -> dict:
+    """`kayitlar` listesindeki HER kayıt için, o kaydın gerçekleştiği anda
+    AÇIK olan (giriş <= kayıt VE (çıkış YOK ya da çıkış > kayıt)) TÜM
+    güvenlik personeli vardiya oturumlarını bulur ve `kayit.id ->
+    "Ad Soyad (HH:MM-HH:MM)[; Ad Soyad2 (...)]"` biçiminde bir metne çevirir
+    (aynı anda birden fazla personelin vardiyası açıksa hepsi listelenir --
+    bkz. models.VardiyaOturumu'ndaki "devir teslim" notu). Hiçbir oturum
+    denk düşmüyorsa değer boş string olur.
+
+    2026-09-20 kullanıcı talebi: "her vardiya için kendi geçiş raporları
+    olsun ... raporda bir sütun tanımlansın" -- bkz. README'deki aynı tarihli
+    not. TÜM oturumlar (bu tabloda ölçek küçük olduğu için, bkz.
+    _kullanicinin_vardiya_pencereleri'ndeki aynı gerekçe) TEK SEFERDE
+    çekilip bellekte eşleştirilir; her kayıt için ayrı bir SQL sorgusu
+    YAPILMAZ (N+1'den kaçınma, bkz. bu fonksiyonun çağrıldığı yerdeki not)."""
+    if not kayitlar:
+        return {}
+    oturumlar = (
+        db.query(models.VardiyaOturumu, models.Kullanici)
+        .join(models.Kullanici, models.VardiyaOturumu.kullanici_id == models.Kullanici.id)
+        .all()
+    )
+    harita = {}
+    for k in kayitlar:
+        etiketler = []
+        for oturum, kul in oturumlar:
+            if _pencere_icinde_mi(k.tarih_saat, oturum.giris_zamani, oturum.cikis_zamani):
+                bitis_metni = oturum.cikis_zamani.strftime("%H:%M") if oturum.cikis_zamani else "devam ediyor"
+                etiketler.append(f"{kul.kullanici_adi} ({oturum.giris_zamani.strftime('%H:%M')}-{bitis_metni})")
+        harita[k.id] = "; ".join(etiketler)
+    return harita
+
+
 def _kayitlari_rapor_satirlari(kayitlar: list, db: Session) -> list:
     """Kayıtlar dışa aktarma (Excel/PDF) raporunun her satırını, kişi (ad/
-    soyad/tip/daire-departman) ve erişim noktası/site bilgisiyle
-    ZENGİNLEŞTİRİR -- kullanıcının paylaştığı referans "GEÇİŞ RAPORU"
-    biçimine (Site/Blok/Daire/Otopark/Nokta/Geçiş Tipi/Araç Tipi sütunları)
-    yaklaştırma kararı, bkz. README'deki 2026-09-18 notu. N+1 sorgudan
-    kaçınmak için kişiler ve noktalar TOPLU olarak önceden yüklenir.
+    soyad/tip/daire-departman), erişim noktası/site bilgisiyle ve vardiya
+    etiketiyle ZENGİNLEŞTİRİR -- kullanıcının paylaştığı referans "GEÇİŞ
+    RAPORU" biçimine (Site/Blok/Daire/Otopark/Nokta/Geçiş Tipi/Araç Tipi
+    sütunları) yaklaştırma kararı, bkz. README'deki 2026-09-18 notu. N+1
+    sorgudan kaçınmak için kişiler, noktalar ve vardiya oturumları TOPLU
+    olarak önceden yüklenir.
 
     Not: "Blok" ve "Otopark" kavramları bu sistemin veri modelinde YOKTUR
     (Site > Blok > Daire hiyerarşisi ve otopark ataması, 2026-09-17'de
@@ -2937,6 +3028,7 @@ def _kayitlari_rapor_satirlari(kayitlar: list, db: Session) -> list:
         n.kamera_id: n for n in db.query(models.Nokta).filter(models.Nokta.kamera_id.isnot(None)).all()
     }
     site_adi_by_id = {s.id: s.ad for s in db.query(models.Site).all()}
+    vardiya_etiketi_by_kayit_id = _vardiya_etiketleri_haritasi(kayitlar, db)
 
     satirlar = []
     for k in kayitlar:
@@ -2988,6 +3080,7 @@ def _kayitlari_rapor_satirlari(kayitlar: list, db: Session) -> list:
             "tarih_saat": k.tarih_saat,
             "notlar": k.not_metni or "",
             "goruntu_yolu": k.goruntu_yolu,
+            "vardiya": vardiya_etiketi_by_kayit_id.get(k.id, ""),
         })
     return satirlar
 
@@ -3175,134 +3268,94 @@ def kullanici_sil(kullanici_id: int, db: Session = Depends(get_db), kullanici: m
 
 
 # ==================================================================
-# VARDİYA PLANLAMASI (2026-09-18) -- bkz. "GÜVENLİK PERSONELİ VARDİYA
-# FİLTRESİ" notu (modülün üst kısmı) ve models.VardiyaAtamasi.
+# ÖZ-HİZMET VARDİYA OTURUMLARI (2026-09-20) -- bkz. "GÜVENLİK PERSONELİ
+# VARDİYA FİLTRESİ" notu (modülün üst kısmı) ve models.VardiyaOturumu.
+# Önceki elle/gün-bazlı "Vardiya Planlaması" (models.VardiyaAtamasi, bu
+# bölümün eski hâli) bununla DEĞİŞTİRİLDİ -- kullanıcı geri bildirimi:
+# yönetici artık her personel için her günü elle girmek ZORUNDA kalmasın,
+# personel giriş yapınca vardiyası kendiliğinden başlasın, çıkış yapana
+# kadar sürsün (bkz. giris_yap::_guvenlik_oturum_baslat, cikis_yap).
 # ==================================================================
-# Yalnızca yönetici oluşturabilir/silebilir/listeleyebilir -- güvenlik
-# personelinin KENDİ vardiya programını görebileceği ayrı bir "benim
-# vardiyalarım" uç noktası bilinçli olarak bu sürümün KAPSAMI DIŞINDA
-# bırakıldı (bu ekrana yalnızca Kullanıcılar/Yönetim sekmesinden erişiliyor
-# ve zaten yalnızca yönetici bu sekmeyi görebiliyor) -- ileride ihtiyaç
-# duyulursa küçük bir eklemeyle genişletilebilir.
+# Oturumlar YALNIZCA giriş/çıkışla otomatik açılıp kapanır -- yönetici için
+# burada elle "oluştur" uç noktası YOK; yalnızca izleme (listele) ve, açık
+# kalmış bir oturumu (ör. personel çıkış yapmadan cihazını kaybetti/
+# değiştirdi) elle sonlandırma imkânı var.
 
-@app.get("/vardiyalar", response_model=List[schemas.VardiyaCevap])
-def vardiyalari_listele(
+@app.get("/vardiya-oturumlari", response_model=List[schemas.VardiyaOturumuCevap])
+def vardiya_oturumlarini_listele(
     kullanici_id: Optional[int] = None,
     db: Session = Depends(get_db),
     kullanici: models.Kullanici = Depends(_personel_girisi_gerekli),
 ):
     _rol_dogrula(kullanici, ROL_YONETICI)
-    sorgu = db.query(models.VardiyaAtamasi)
+    sorgu = db.query(models.VardiyaOturumu)
     if kullanici_id is not None:
-        sorgu = sorgu.filter(models.VardiyaAtamasi.kullanici_id == kullanici_id)
-    return sorgu.order_by(desc(models.VardiyaAtamasi.tarih)).limit(500).all()
+        sorgu = sorgu.filter(models.VardiyaOturumu.kullanici_id == kullanici_id)
+    return sorgu.order_by(desc(models.VardiyaOturumu.giris_zamani)).limit(500).all()
 
 
-@app.post("/vardiyalar", response_model=schemas.VardiyaCevap)
-def vardiya_ekle(
-    istek: schemas.VardiyaOlustur,
+@app.post("/vardiya-oturumlari/{oturum_id}/sonlandir")
+def vardiya_oturumunu_sonlandir(
+    oturum_id: int,
     db: Session = Depends(get_db),
     kullanici: models.Kullanici = Depends(_personel_girisi_gerekli),
 ):
+    """Yönetici, açık kalmış (ör. personel çıkış yapmayı unuttu) bir vardiya
+    oturumunu elle sonlandırabilir -- personelin bir dahaki girişinde ZATEN
+    otomatik kapanacağı için (bkz. _guvenlik_oturum_baslat) bu yalnızca "o
+    kişi bugün artık giriş yapmayacak ama kayıtlar listesinde şu ana kadarki
+    vardiyası kapalı görünsün" gibi durumlar için bir KOLAYLIKTIR."""
     _rol_dogrula(kullanici, ROL_YONETICI)
-    hedef = db.query(models.Kullanici).filter(models.Kullanici.id == istek.kullanici_id).first()
+    hedef = db.query(models.VardiyaOturumu).filter(models.VardiyaOturumu.id == oturum_id).first()
     if not hedef:
-        raise HTTPException(404, "Kullanıcı bulunamadı")
-    if hedef.rol != ROL_GUVENLIK:
-        # Vardiya ataması yalnızca "güvenlik" rolündeki hesaplar için
-        # ANLAMLIDIR (bkz. _guvenlik_kayit_filtresi_uygula -- yalnızca bu rol
-        # için filtre uygulanıyor); başka bir role atama eklemek sessizce
-        # hiçbir işe yaramayan, kafa karıştırıcı bir veri üretirdi.
-        raise HTTPException(400, "Vardiya yalnızca 'güvenlik' rolündeki kullanıcılara atanabilir")
-    yeni = models.VardiyaAtamasi(
-        kullanici_id=istek.kullanici_id,
-        tarih=datetime.strptime(istek.tarih, "%Y-%m-%d"),
-        baslangic_saat=istek.baslangic_saat,
-        bitis_saat=istek.bitis_saat,
-        olusturan=kullanici.kullanici_adi,
-    )
-    db.add(yeni)
+        raise HTTPException(404, "Vardiya oturumu bulunamadı")
+    if hedef.cikis_zamani is not None:
+        raise HTTPException(400, "Bu oturum zaten kapatılmış")
+    hedef.cikis_zamani = datetime.now()
     db.commit()
-    db.refresh(yeni)
-    logger.info(
-        "Vardiya ataması oluşturuldu: kullanıcı=%s tarih=%s %s-%s (ekleyen: %s)",
-        hedef.kullanici_adi, istek.tarih, istek.baslangic_saat, istek.bitis_saat, kullanici.kullanici_adi,
-    )
-    return yeni
+    return {"mesaj": "Vardiya oturumu sonlandırıldı"}
 
 
-@app.delete("/vardiyalar/{vardiya_id}")
-def vardiya_sil(
-    vardiya_id: int,
-    db: Session = Depends(get_db),
-    kullanici: models.Kullanici = Depends(_personel_girisi_gerekli),
-):
-    _rol_dogrula(kullanici, ROL_YONETICI)
-    hedef = db.query(models.VardiyaAtamasi).filter(models.VardiyaAtamasi.id == vardiya_id).first()
-    if not hedef:
-        raise HTTPException(404, "Vardiya ataması bulunamadı")
-    db.delete(hedef)
-    db.commit()
-    return {"mesaj": "Vardiya ataması silindi"}
+@app.get("/vardiya-oturumlari/durumum")
+def vardiya_oturumu_durumum(db: Session = Depends(get_db), kullanici: models.Kullanici = Depends(_personel_girisi_gerekli)):
+    """Çağıran kullanıcının KENDİ vardiya oturumlarını ve şu anki (SUNUCUNUN
+    kendi saatine göre -- `datetime.now()`) açık/kapalı durumunu döner.
 
+    NEDEN GEREKLİ (2026-09-18 kullanıcı geri bildirimi, önceki elle-atama
+    sistemi için yazılmıştı, aynı gerekçe öz-hizmet sistemi için de geçerli):
+    filtre tamamen SUNUCU TARAFINDA çalıştığı için, sunucunun sistem saatinin
+    (Windows makinesi) yönetici panelini kullanan kişinin bildiği saatten
+    FARKLI olması ihtimaline karşı, bunu TEŞHİS ETMENİN bir yolu olmalı.
+    `sunucu_simdiki_zaman` alanı tam olarak bunu sağlar. Frontend'de Kayıtlar
+    sekmesindeki banner (bkz. app.js) bu veriyi gösterir.
 
-@app.get("/vardiyalar/durumum")
-def vardiya_durumum(db: Session = Depends(get_db), kullanici: models.Kullanici = Depends(_personel_girisi_gerekli)):
-    """Çağıran kullanıcının KENDİ vardiya atamalarını ve şu anki (SUNUCUNUN
-    kendi saatine göre -- `datetime.now()`) aktif/pasif durumunu döner.
-
-    NEDEN GEREKLİ (2026-09-18 kullanıcı geri bildirimi): bir güvenlik
-    personeli vardiya atadıktan SONRA bile, o vardiya penceresi içinde
-    gerçekleşen YENİ/canlı bir geçişi Kayıtlar sekmesinde göremediğini
-    bildirdi. `_guvenlik_kayit_filtresi_uygula` tamamen SUNUCU TARAFINDA,
-    `datetime.now()` ile hesaplanan pencerelere göre çalıştığı için (bkz. o
-    fonksiyonun notu), en olası kök nedenlerden biri sunucunun sistem
-    saatinin (Windows makinesi) yönetici panelini kullanan tarayıcının/
-    kişinin bildiği saatten FARKLI olması (saat dilimi/saat senkronizasyon
-    sorunu) -- bu uç nokta olmadan bunu TEŞHİS ETMENİN bir yolu yoktu.
-    Bu uç nokta, `sunucu_simdiki_zaman` alanıyla tam olarak bunu ortaya
-    çıkarır: kullanıcı bunu kendi saatiyle karşılaştırarak sorunun sunucu
-    saati mi yoksa yanlış girilmiş bir vardiya mı olduğunu hemen görebilir.
-    Frontend'de Kayıtlar sekmesindeki teşhis banner'ı (bkz. app.js) bu
-    veriyi kullanıcıya gösterir -- "sıfır sessiz hata" ilkesiyle, filtrenin
-    NEDEN boş bir liste ürettiği asla belirsiz kalmamalı.
-
-    Güvenlik dışı roller için de zararsız/anlamsız olmayan bir yanıt döner
-    (yalnızca `rol_guvenlik_mi: false`) -- bu uç nokta rol kontrolü yapmaz,
-    çünkü yalnızca ÇAĞIRANIN KENDİ verisini döner, başka bir yetkilendirme
-    katmanı gerektirmez.
+    Güvenlik dışı roller için de zararsız bir yanıt döner (yalnızca
+    `rol_guvenlik_mi: false`) -- bu uç nokta rol kontrolü yapmaz, çünkü
+    yalnızca ÇAĞIRANIN KENDİ verisini döner.
     """
     simdi = datetime.now()
     if kullanici.rol != ROL_GUVENLIK:
         return {"rol_guvenlik_mi": False, "sunucu_simdiki_zaman": simdi.isoformat()}
-    atamalar = (
-        db.query(models.VardiyaAtamasi)
-        .filter(models.VardiyaAtamasi.kullanici_id == kullanici.id)
-        .order_by(desc(models.VardiyaAtamasi.tarih))
+    oturumlar = (
+        db.query(models.VardiyaOturumu)
+        .filter(models.VardiyaOturumu.kullanici_id == kullanici.id)
+        .order_by(desc(models.VardiyaOturumu.giris_zamani))
         .limit(30)
         .all()
     )
-    vardiyalar = []
-    su_an_aktif = False
-    for a in atamalar:
-        baslangic, bitis = _vardiya_penceresi(a.tarih, a.baslangic_saat, a.bitis_saat)
-        aktif_mi = baslangic <= simdi < bitis
-        su_an_aktif = su_an_aktif or aktif_mi
-        vardiyalar.append({
-            "id": a.id,
-            "tarih": a.tarih.strftime("%Y-%m-%d"),
-            "baslangic_saat": a.baslangic_saat,
-            "bitis_saat": a.bitis_saat,
-            "pencere_baslangic": baslangic.isoformat(),
-            "pencere_bitis": bitis.isoformat(),
-            "su_an_aktif_mi": aktif_mi,
-        })
+    su_an_aktif = any(o.cikis_zamani is None for o in oturumlar)
+    liste = [{
+        "id": o.id,
+        "giris_zamani": o.giris_zamani.isoformat(),
+        "cikis_zamani": o.cikis_zamani.isoformat() if o.cikis_zamani else None,
+        "devam_ediyor": o.cikis_zamani is None,
+    } for o in oturumlar]
     return {
         "rol_guvenlik_mi": True,
         "sunucu_simdiki_zaman": simdi.isoformat(),
         "su_an_aktif_vardiya_var_mi": su_an_aktif,
-        "toplam_vardiya_sayisi": len(atamalar),
-        "vardiyalar": vardiyalar,
+        "toplam_oturum_sayisi": len(oturumlar),
+        "oturumlar": liste,
     }
 
 

@@ -1,6 +1,7 @@
 """frontend/index.html + frontend/app.js için statik testler: "Güvenlik
-Personeli" rolü ve vardiya planlama arayüzü (bkz. 2026-09-18 "Güvenlik
-Personeli Vardiya Filtresi" notu, README).
+Personeli" rolü ve ÖZ-HİZMET vardiya oturumu arayüzü (bkz. 2026-09-18
+"Güvenlik Personeli Vardiya Filtresi" ve 2026-09-20 "Öz-Hizmet Vardiya
+Oturumları" notları, README).
 
 Bu dosya (main.py testlerinin aksine) fastapi/sqlalchemy'ye bağımlı DEĞİL --
 yalnızca ham HTML/JS metnini ayrıştırıyor, bu yüzden GERÇEKTEN çalıştırılıp
@@ -10,9 +11,15 @@ Kullanıcı talebi (2026-09-18, özetle): güvenlik personeli için "Kullanıcı
 sekmesinden yeni kullanıcı oluşturma ekranı; bu personel yalnızca Canlı
 İzleme/Ana Sayfa/Kayıtlar/Kişiler/Kara Liste alanlarını görebilmeli (zaten
 "operatör" rolüyle aynı 5 alan); ve kayıtlar listesi/raporları kendi
-vardiyasına göre filtrelenmeli. Vardiya saatleri günden güne değişebildiği
-(4 vardiya/vardiya amiri rotasyonu) için GÜN BAZLI bir vardiya atama ekranı
-gerekiyor.
+vardiyasına göre filtrelenmeli.
+
+GÜNCELLEME (2026-09-20, birebir): "bunu sürekli ben yapamam vardiyaya gelen
+personel kendisi vardiya başlangıcını kendisi yapabilsin ... kullanıcı giriş
+yapınca çıkış yapana kadar onun vardiyası devam etsin" -- yöneticinin elle
+gün-bazlı vardiya ataması yaptığı eski ekran (Vardiya Ata formu) tamamen
+kaldırıldı; vardiya artık giriş/çıkışa bağlı, otomatik açılıp kapanan bir
+"Vardiya Oturumu"dur. Yönetici yalnızca İZLER ve gerekirse açık kalmış bir
+oturumu sonlandırır.
 """
 import re
 from pathlib import Path
@@ -46,6 +53,11 @@ def test_yeni_kullanici_formunda_guvenlik_rolu_secenegi_var():
     # DEVRE DIŞI bırakır, gizlemez; bu #kullaniciForm'un ZATEN var olan
     # davranışı, yeni rol seçeneği eklenirken bozulmamış olmalı).
     assert form.get("data-rol-min") == "yonetici"
+    # 2026-09-20: bu açıklama artık ELLE atama YERİNE giriş/çıkışa bağlı
+    # öz-hizmet vardiyasını anlatmalı (eski "Vardiya Planlama" adı geçmemeli).
+    metin = form.get_text(" ", strip=True).lower()
+    assert "giriş yapıldığı an" in metin or "giriş yapıldığı" in metin
+    assert "vardiya planlama" not in metin
 
 
 def test_rol_seviye_guvenlik_operator_ile_ayni_kademede():
@@ -63,33 +75,25 @@ def test_rol_seviye_guvenlik_operator_ile_ayni_kademede():
     )
 
 
-def test_vardiya_planlama_karti_ve_formu_var():
+def test_eski_vardiya_ata_formu_kaldirildi():
+    """2026-09-20: elle/gün-bazlı "Vardiya Ata" formu (ve onun alanları),
+    öz-hizmet (giriş/çıkış tabanlı) sistemin YERİNE geçmesiyle kaldırıldı --
+    bu form artık DOM'da bulunmamalı."""
     corba = _corba()
-    form = corba.find(id="vardiyaForm")
-    assert form is not None, "#vardiyaForm (Vardiya Ata) bulunamadı"
-    assert form.get("data-rol-min") == "yonetici"
-    for alan_id in ("vardiyaKullanici", "vardiyaTarih", "vardiyaBaslangic", "vardiyaBitis"):
-        assert form.find(id=alan_id) is not None, f"#{alan_id} vardiya formunda bulunamadı"
-    assert corba.find(id="vardiyalarTablo") is not None
+    assert corba.find(id="vardiyaForm") is None
+    for eski_alan_id in ("vardiyaKullanici", "vardiyaTarih", "vardiyaBaslangic", "vardiyaBitis"):
+        assert corba.find(id=eski_alan_id) is None, f"#{eski_alan_id} hâlâ DOM'da -- kaldırılmış olmalıydı"
 
 
-def test_bolunmus_vardiya_ipucu_metni_formda_var():
-    """2026-09-20 kullanıcı sorusu ("Eser sürekli 15:00-23:00'de değil, başka
-    vardiyalar da olabiliyor -- aynı gün içinde birden fazla vardiya nasıl
-    girilir?"): sistem bunu zaten destekliyor (aynı kullanıcı+tarih için
-    ikinci bir satır eklemek yeterli -- backend'de tekillik kısıtlaması yok,
-    bkz. models.VardiyaAtamasi ve _guvenlik_kayit_filtresi_uygula'nın OR
-    filtresi), ama bu formda hiçbir açıklama olmadığı için kullanıcı bunu
-    bilmiyordu. Bu test, eklenen açıklayıcı metnin form içinde kaldığını
-    doğrular."""
+def test_vardiya_oturumlari_izleme_tablosu_var():
+    """Yönetici, artık vardiya OLUŞTURMAZ -- yalnızca güvenlik personelinin
+    giriş/çıkışıyla otomatik açılıp kapanan oturumları İZLER ve gerekirse
+    açık kalmış birini sonlandırır (bkz. /vardiya-oturumlari)."""
     corba = _corba()
-    form = corba.find(id="vardiyaForm")
-    assert form is not None
-    metin = form.get_text(" ", strip=True)
-    assert "bölünmüş" in metin.lower() or "iki ayrı" in metin.lower(), (
-        "Aynı gün için ikinci bir vardiya (bölünmüş vardiya) eklenebileceğini "
-        "açıklayan bir ipucu metni #vardiyaForm içinde bulunamadı"
-    )
+    tablo = corba.find(id="vardiyaOturumlariTablo")
+    assert tablo is not None, "#vardiyaOturumlariTablo bulunamadı"
+    # Yenileme butonu, yeni izleme fonksiyonunu çağırmalı.
+    assert corba.find(attrs={"onclick": "vardiyaOturumlariniYukle()"}) is not None
 
 
 def test_guvenlik_banner_kayitlar_sekmesinde_var_ve_varsayilan_gizli():
@@ -101,33 +105,36 @@ def test_guvenlik_banner_kayitlar_sekmesinde_var_ve_varsayilan_gizli():
     assert "d-none" in (banner.get("class") or [])
 
 
-def test_vardiya_fonksiyonlari_ve_banner_kontrolu_app_js_icinde():
-    js = _js_metni()
-    for fonksiyon in ("vardiyalariYukle", "vardiyaSil"):
-        assert f"function {fonksiyon}" in js or f"async function {fonksiyon}" in js
-    assert '"vardiyaForm"' in js
-    assert "guvenlikVardiyaBilgisi" in js
-    # Banner yalnızca mevcutRol tam olarak "güvenlik" iken gösterilmeli.
-    assert 'mevcutRol !== "güvenlik"' in js
-
-
-def test_vardiyalari_yukle_baslangic_veri_yuklemesine_baglandi():
-    js = _js_metni()
-    eslesme = re.search(r"async function uygulamaVerileriniYukle\(\) \{(.*?)\n\}", js, re.DOTALL)
-    assert eslesme is not None
-    assert "vardiyalariYukle()" in eslesme.group(1)
-
-
 def test_guvenlik_banner_teshis_alt_alani_var():
     """2026-09-18 kullanıcı geri bildirimi ("vardiya atadım ama canlı geçişler
     Kayıtlar sekmesinde gözükmüyor") sonrası eklenen teşhis alanı: banner artık
     yalnızca statik uyarı metni değil, sunucunun kendi "şu an" bilgisini ve
-    kullanıcının vardiya pencerelerini de gösteren bir alt bölüm içermeli."""
+    kullanıcının vardiya oturumlarını da gösteren bir alt bölüm içermeli."""
     corba = _corba()
     banner = corba.find(id="guvenlikVardiyaBilgisi")
     assert banner is not None
     durum_alani = banner.find(id="guvenlikVardiyaDurumu")
     assert durum_alani is not None, "#guvenlikVardiyaDurumu teşhis alanı banner içinde bulunamadı"
+
+
+def test_vardiya_oturumu_fonksiyonlari_ve_banner_kontrolu_app_js_icinde():
+    js = _js_metni()
+    for fonksiyon in ("vardiyaOturumlariniYukle", "vardiyaOturumunuSonlandir"):
+        assert f"function {fonksiyon}" in js or f"async function {fonksiyon}" in js
+    # Eski elle-atama fonksiyonları ve formu ARTIK olmamalı.
+    assert "function vardiyalariYukle" not in js
+    assert "function vardiyaSil" not in js
+    assert '"vardiyaForm"' not in js
+    assert "guvenlikVardiyaBilgisi" in js
+    # Banner yalnızca mevcutRol tam olarak "güvenlik" iken gösterilmeli.
+    assert 'mevcutRol !== "güvenlik"' in js
+
+
+def test_vardiya_oturumlarini_yukle_baslangic_veri_yuklemesine_baglandi():
+    js = _js_metni()
+    eslesme = re.search(r"async function uygulamaVerileriniYukle\(\) \{(.*?)\n\}", js, re.DOTALL)
+    assert eslesme is not None
+    assert "vardiyaOturumlariniYukle()" in eslesme.group(1)
 
 
 def test_guvenlik_vardiya_durumunu_guncelle_fonksiyonu_dogru_uca_bagli():
@@ -140,7 +147,7 @@ def test_guvenlik_vardiya_durumunu_guncelle_fonksiyonu_dogru_uca_bagli():
     )
     assert eslesme is not None
     govde = eslesme.group(1)
-    assert '"/vardiyalar/durumum"' in govde
+    assert '"/vardiya-oturumlari/durumum"' in govde
     assert "guvenlikVardiyaDurumu" in govde
     # Sunucu/istemci saat karşılaştırması: teşhisin asıl amacı bu.
     assert "sunucu_simdiki_zaman" in govde
@@ -158,3 +165,22 @@ def test_guvenlik_vardiya_durumunu_guncelle_cagrilariyla_baglanti():
     panel_fonk = re.search(r"async function panelYenile\(\) \{(.*?)\n\}", js, re.DOTALL)
     assert panel_fonk is not None
     assert "guvenlikVardiyaDurumunuGuncelle()" in panel_fonk.group(1)
+
+
+def test_oturum_kapat_cikis_ucunu_cagirir_token_silinmeden_once():
+    """2026-09-20: "kullanıcı giriş yapınca çıkış yapana kadar onun vardiyası
+    devam etsin" -- vardiyanın GERÇEKTEN bitmesi için "Çıkış" butonuna
+    basıldığında sunucudaki açık oturum kapatılmalı (bkz. backend/main.py::
+    cikis_yap). Bu, token sessionStorage'dan SİLİNMEDEN ÖNCE çağrılmalı
+    (aksi halde apiCagir() isteği kimliksiz gider ve sunucu hangi kullanıcının
+    çıkış yaptığını bilemez)."""
+    js = _js_metni()
+    eslesme = re.search(r"async function oturumKapat\(\) \{(.*?)\n\}", js, re.DOTALL)
+    assert eslesme is not None, "oturumKapat artık async olmalı (sunucuya istek atıyor)"
+    govde = eslesme.group(1)
+    assert '"/auth/cikis"' in govde
+    cikis_konumu = govde.index('"/auth/cikis"')
+    token_silme_konumu = govde.index('sessionStorage.removeItem("pts_token")')
+    assert cikis_konumu < token_silme_konumu, (
+        "/auth/cikis çağrısı, token silinmeden ÖNCE yapılmalı"
+    )
