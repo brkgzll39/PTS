@@ -1184,6 +1184,76 @@ def test_kamera_roi_guncelle_izleyici_yetkisiz_403_doner(client, izleyici_header
 
 
 # ------------------------------------------------------------------
+# Tespit alanı (ROI) — SERBEST ÇİZİM (polygon), 2026-09-20
+#
+# Kullanıcı geri bildirimi (birebir): "bir de alan sınırı eklemiştik bu alan
+# sınırına serbest çizim ekleme şansımız var mı kare seçimde bazen farklı
+# yönden geçen araçları da tespit ediyor bunu istemiyorum" -- dikdörtgenin
+# yanına, keyfi köşe sayılı bir çokgen tanımlanabilen `polygon` alanı eklendi
+# (bkz. schemas.KameraRoiGuncelle, main.py::_roi_polygon_gecerlilestir).
+# ------------------------------------------------------------------
+
+def test_kamera_roi_guncelle_polygon_ile_kaydeder(client, operator_header, roi_test_kamera_id):
+    noktalar = [{"x": 0, "y": 0}, {"x": 30, "y": 0}, {"x": 70, "y": 100}, {"x": 0, "y": 100}]
+    r = client.patch(f"/kameralar/{roi_test_kamera_id}/roi",
+                      json={"polygon": noktalar}, headers=operator_header)
+    assert r.status_code == 200, r.text
+    kamera = r.json()
+    assert kamera["roi"] == {"tip": "polygon", "noktalar": noktalar}
+
+    # Kalıcı mı diye /kameralar listesinden de doğrula.
+    r2 = client.get("/kameralar", headers=operator_header)
+    kaydedilen = next(k for k in r2.json() if k["id"] == roi_test_kamera_id)
+    assert kaydedilen["roi"] == {"tip": "polygon", "noktalar": noktalar}
+
+
+def test_kamera_roi_guncelle_polygon_temizlenebilir(client, operator_header, roi_test_kamera_id):
+    r0 = client.patch(f"/kameralar/{roi_test_kamera_id}/roi",
+                       json={"polygon": [{"x": 0, "y": 0}, {"x": 50, "y": 0}, {"x": 50, "y": 50}]},
+                       headers=operator_header)
+    assert r0.status_code == 200 and r0.json()["roi"] is not None
+
+    r = client.patch(f"/kameralar/{roi_test_kamera_id}/roi", json={"temizle": True}, headers=operator_header)
+    assert r.status_code == 200, r.text
+    assert r.json().get("roi") is None
+
+
+def test_kamera_roi_guncelle_polygon_2_nokta_ile_400_doner(client, operator_header, roi_test_kamera_id):
+    """Bir çokgen için en az 3 köşe gerekir -- 2 nokta (bir doğru parçası)
+    geçerli bir alan tanımlamaz."""
+    r = client.patch(f"/kameralar/{roi_test_kamera_id}/roi",
+                      json={"polygon": [{"x": 0, "y": 0}, {"x": 50, "y": 50}]}, headers=operator_header)
+    assert r.status_code == 400, r.text
+
+
+def test_kamera_roi_guncelle_polygon_asiri_nokta_ile_400_doner(client, operator_header, roi_test_kamera_id):
+    """Aşırı sayıda nokta (örn. bir sürükleme olayının yanlışlıkla yüzlerce
+    tıklama olarak işlenmesi) reddedilmeli -- bkz. main.py::
+    _ROI_POLIGON_MAX_NOKTA."""
+    noktalar = [{"x": i % 100, "y": (i * 3) % 100} for i in range(30)]
+    r = client.patch(f"/kameralar/{roi_test_kamera_id}/roi",
+                      json={"polygon": noktalar}, headers=operator_header)
+    assert r.status_code == 400, r.text
+
+
+@pytest.mark.parametrize("noktalar", [
+    [{"x": -5, "y": 0}, {"x": 50, "y": 0}, {"x": 50, "y": 50}],   # 0-100 dışı (x)
+    [{"x": 0, "y": 0}, {"x": 50, "y": 150}, {"x": 50, "y": 50}],  # 0-100 dışı (y)
+])
+def test_kamera_roi_guncelle_polygon_gecersiz_koordinat_400_doner(client, operator_header, roi_test_kamera_id, noktalar):
+    r = client.patch(f"/kameralar/{roi_test_kamera_id}/roi",
+                      json={"polygon": noktalar}, headers=operator_header)
+    assert r.status_code == 400, r.text
+
+
+def test_kamera_roi_guncelle_polygon_izleyici_yetkisiz_403_doner(client, izleyici_header, roi_test_kamera_id):
+    r = client.patch(f"/kameralar/{roi_test_kamera_id}/roi",
+                      json={"polygon": [{"x": 0, "y": 0}, {"x": 50, "y": 0}, {"x": 50, "y": 50}]},
+                      headers=izleyici_header)
+    assert r.status_code == 403
+
+
+# ------------------------------------------------------------------
 # "sakin" (site sakini öz-hizmet portalı) rolü — 2026-09-17
 # ------------------------------------------------------------------
 # Kök neden: kullanıcı, ekran görüntüleriyle bir referans ürünün "Abone

@@ -63,6 +63,7 @@ except ImportError:
 
 try:
     import cv2
+    import numpy as np
     import requests
     KUTUPHANELER_MEVCUT = True
 except ImportError:
@@ -412,16 +413,95 @@ def _kutu_roi_icinde_mi(kutu, roi_piksel: tuple) -> bool:
     return rx1 <= merkez_x <= rx2 and ry1 <= merkez_y <= ry2
 
 
-def _kare_uzerine_ciz(frame, tespitler: list, roi_piksel: Optional[tuple] = None) -> None:
+def _roi_polygon_pixel_noktalarini_hesapla(roi: dict, genislik: int, yukseklik: int) -> list:
+    """Yüzde cinsinden tanımlı SERBEST ÇİZİM (polygon) ROI noktalarını
+    VERİLEN karenin piksel boyutlarına göre piksel noktalarına çevirir.
+
+    NEDEN GEREKLİ (2026-09-20): dikdörtgen ROI (bkz. yukarıdaki
+    `_roi_pixel_sinirlarini_hesapla`) her zaman yeterli değil -- kullanıcının
+    kendi ifadesiyle "kare seçimde bazen farklı yönden geçen araçları da
+    tespit ediyor". Bir şerit çapraz/eğik açıdan görüntüleniyorsa dikdörtgen
+    komşu şeridi de kapsayabilir; serbest çizilmiş (3+ köşeli) bir çokgen,
+    şeridin gerçek hattını takip ederek bu sızıntıyı engeller."""
+    return [
+        (int(round(n["x"] / 100.0 * genislik)), int(round(n["y"] / 100.0 * yukseklik)))
+        for n in roi["noktalar"]
+    ]
+
+
+def _kutu_polygon_icinde_mi(kutu, poligon_piksel: list) -> bool:
+    """`_kutu_roi_icinde_mi`nin polygon karşılığı: bir tespit kutusunun MERKEZ
+    noktası, verilen piksel köşe noktalarıyla tanımlı çokgenin içinde mi?
+
+    Standart "ray casting" (ışın gönderip kaç kenarı kestiğini sayma)
+    algoritması kullanılır -- ekstra bir kütüphane (örn. shapely) gerektirmez,
+    yalnızca kenar sayısı kadar basit aritmetik işlem yapar."""
+    if not kutu or not poligon_piksel or len(poligon_piksel) < 3:
+        return False
+    x1, y1, x2, y2 = kutu
+    merkez_x = (x1 + x2) / 2
+    merkez_y = (y1 + y2) / 2
+    icinde = False
+    n = len(poligon_piksel)
+    j = n - 1
+    for i in range(n):
+        xi, yi = poligon_piksel[i]
+        xj, yj = poligon_piksel[j]
+        # yi/yj eşitliğinde bölme sıfıra gitmesin diye çok küçük bir epsilon
+        # ekleniyor -- yatay bir kenarla tam çakışan sınır durumlarını
+        # dengeler, pratikte sonucu etkilemez.
+        if (yi > merkez_y) != (yj > merkez_y):
+            kesisim_x = (xj - xi) * (merkez_y - yi) / (yj - yi + 1e-9) + xi
+            if merkez_x < kesisim_x:
+                icinde = not icinde
+        j = i
+    return icinde
+
+
+def _roi_ciz_bilgisi_hesapla(roi: Optional[dict], genislik: int, yukseklik: int) -> Optional[tuple]:
+    """Bir kameranın ROI'sini (dikdörtgen ya da serbest çizim/polygon), o anki
+    karenin piksel boyutuna göre, hem oy-birikimi filtresinin hem de canlı
+    önizleme çiziminin (`_kare_uzerine_ciz`) ORTAK olarak kullanacağı tek bir
+    piksel-şekli tanımına çevirir. Dönüş: `("dikdortgen", (x1,y1,x2,y2))`,
+    `("polygon", [(x,y), ...])` ya da ROI tanımlı değilse `None`."""
+    if not roi:
+        return None
+    if roi.get("tip") == "polygon":
+        return "polygon", _roi_polygon_pixel_noktalarini_hesapla(roi, genislik, yukseklik)
+    return "dikdortgen", _roi_pixel_sinirlarini_hesapla(roi, genislik, yukseklik)
+
+
+def _kutu_roi_ciz_bilgisiyle_icinde_mi(kutu, roi_ciz_bilgisi: Optional[tuple]) -> bool:
+    """`_roi_ciz_bilgisi_hesapla`'nın döndürdüğü birleşik (tip, şekil) ikilisine
+    göre, tipe uygun içeride-mi testine (`_kutu_roi_icinde_mi` ya da
+    `_kutu_polygon_icinde_mi`) yönlendirir."""
+    if not roi_ciz_bilgisi:
+        return False
+    tip, sekil = roi_ciz_bilgisi
+    if tip == "polygon":
+        return _kutu_polygon_icinde_mi(kutu, sekil)
+    return _kutu_roi_icinde_mi(kutu, sekil)
+
+
+def _kare_uzerine_ciz(frame, tespitler: list, roi_ciz_bilgisi: Optional[tuple] = None) -> None:
     """Tespit edilen plakaları ve (varsa) yapılandırılmış tespit alanı (ROI)
     sınırını kare üzerine in-place çizer. ROI dışında kaldığı için oy
     birikimine hiç girmeyen tespitler (bkz. `_kareyi_isle`) gri renkte
     çizilir -- operatör bu sayede kamerayı canlı izlerken ROI'yi
     ayarlarken/doğrularken hangi araçların filtrelendiğini görsel olarak
-    doğrulayabilir (bkz. README.md'deki ROI/alan sınırı notu)."""
-    if roi_piksel:
-        rx1, ry1, rx2, ry2 = roi_piksel
-        cv2.rectangle(frame, (rx1, ry1), (rx2, ry2), _ROI_CIZGI_RENK, 2)
+    doğrulayabilir (bkz. README.md'deki ROI/alan sınırı notu).
+
+    `roi_ciz_bilgisi`, `_roi_ciz_bilgisi_hesapla`'nın döndürdüğü
+    `(tip, şekil)` ikilisidir -- dikdörtgen için bir çizgi dörtgeni, serbest
+    çizim (polygon) için kapalı bir çokgen çizilir (2026-09-20)."""
+    if roi_ciz_bilgisi:
+        tip, sekil = roi_ciz_bilgisi
+        if tip == "polygon" and len(sekil) >= 3:
+            noktalar = np.array(sekil, dtype=np.int32).reshape((-1, 1, 2))
+            cv2.polylines(frame, [noktalar], isClosed=True, color=_ROI_CIZGI_RENK, thickness=2)
+        elif tip == "dikdortgen":
+            rx1, ry1, rx2, ry2 = sekil
+            cv2.rectangle(frame, (rx1, ry1), (rx2, ry2), _ROI_CIZGI_RENK, 2)
     for t in tespitler:
         renk = _OVERLAY_RENK if t.get("roi_icinde", True) else _ROI_DISI_RENK
         if t.get("kutu"):
@@ -497,13 +577,19 @@ class KameraPipeline:
         # Bu güven skorunun altındaki OCR sonuçları oy birikimine hiç girmez.
         self.min_guven_skoru = min_guven_skoru
         # TESPİT ALANI SINIRI (ROI, region of interest) -- yüzde (0-100,
-        # çözünürlükten bağımsız) cinsinden {"x1","y1","x2","y2"} veya None
+        # çözünürlükten bağımsız) cinsinden ya {"x1","y1","x2","y2"} (dikdörtgen,
+        # eski/varsayılan biçim) ya da {"tip": "polygon", "noktalar": [{"x","y"}, ...]}
+        # (2026-09-20, serbest çizim -- bkz. `_roi_ciz_bilgisi_hesapla`) ya da None
         # (sınır yok, kare tamamı geçerli). Giriş ve çıkış kameralarının
         # açıları birbirinin şeridini de görüyorsa (bkz. README.md'deki
         # 2026-09-17 notu: aynı aracın hem giriş hem çıkış kamerasında art
         # arda görünmesi), her kamera için SADECE kendi şeridine denk gelen
         # bölge tanımlanarak komşu şeritteki araçların yanlışlıkla o kameranın
-        # kaydına düşmesi engellenir.
+        # kaydına düşmesi engellenir. Dikdörtgen bir şerit çapraz/eğik açıdan
+        # görüntülendiğinde komşu şeridi de kapsayabildiği için (kullanıcı
+        # geri bildirimi: "kare seçimde bazen farklı yönden geçen araçları da
+        # tespit ediyor"), serbest çizim biçimi şeridin gerçek hattını takip
+        # edebilir.
         self.roi = roi
 
         self.motor = _paylasilan_motoru_al()
@@ -721,23 +807,24 @@ class KameraPipeline:
                 "kutu": list(sonuc.kutu) if sonuc.kutu else None,
             })
 
-        # TESPİT ALANI SINIRI (ROI): kameraya bir ROI tanımlıysa, kare
-        # boyutuna göre piksel sınırlarını hesaplayıp her tespiti "alan
-        # içinde mi" diye işaretle. Bu işaretleme burada (oy birikimine
-        # girmeden HEMEN önce) yapılıyor ki hem `_kare_uzerine_ciz` (canlı
-        # önizleme/kalibrasyon) hem aşağıdaki oy döngüsü AYNI sonucu kullansın.
-        roi_piksel = None
+        # TESPİT ALANI SINIRI (ROI): kameraya bir ROI tanımlıysa (dikdörtgen ya
+        # da 2026-09-20'den itibaren serbest çizim/polygon), kare boyutuna göre
+        # piksel şeklini hesaplayıp her tespiti "alan içinde mi" diye işaretle.
+        # Bu işaretleme burada (oy birikimine girmeden HEMEN önce) yapılıyor ki
+        # hem `_kare_uzerine_ciz` (canlı önizleme/kalibrasyon) hem aşağıdaki oy
+        # döngüsü AYNI sonucu kullansın.
+        roi_ciz_bilgisi = None
         if self.roi:
             yukseklik, genislik = frame.shape[:2]
-            roi_piksel = _roi_pixel_sinirlarini_hesapla(self.roi, genislik, yukseklik)
+            roi_ciz_bilgisi = _roi_ciz_bilgisi_hesapla(self.roi, genislik, yukseklik)
             for t in tespitler:
-                t["roi_icinde"] = _kutu_roi_icinde_mi(t.get("kutu"), roi_piksel)
+                t["roi_icinde"] = _kutu_roi_ciz_bilgisiyle_icinde_mi(t.get("kutu"), roi_ciz_bilgisi)
 
         # Kare üstüne tüm tespitleri çiz (overlay kopyası) — bu, oy birikimine
         # girme eşiğinden bağımsız olarak operatöre HER geçerli-formatlı ham
         # okumayı gösterir (şeffaflık için). ROI dışında kalanlar gri çizilir.
         annotated = frame.copy()
-        _kare_uzerine_ciz(annotated, tespitler, roi_piksel)
+        _kare_uzerine_ciz(annotated, tespitler, roi_ciz_bilgisi)
         _, buf = cv2.imencode(".jpg", annotated, [cv2.IMWRITE_JPEG_QUALITY, 75])
         jpeg_bytes = buf.tobytes()
         with self._goruntu_kilit:

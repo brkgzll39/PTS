@@ -1470,6 +1470,30 @@ def kamera_yon_degistir(kamera_id: str, veri: schemas.KameraYonGuncelle, kullani
     return _kamera_guvenli_gorunum(kamera)
 
 
+_ROI_POLIGON_MIN_NOKTA = 3
+_ROI_POLIGON_MAX_NOKTA = 20
+
+
+def _roi_polygon_gecerlilestir(noktalar: list) -> dict:
+    """`schemas.KameraRoiNoktasi` listesini doğrulayıp ROI olarak diskte
+    saklanacak `{"tip": "polygon", "noktalar": [{"x","y"}, ...]}` biçimine
+    çevirir. En az 3 (bir çokgen için asgari), en fazla
+    `_ROI_POLIGON_MAX_NOKTA` nokta kabul edilir -- üst sınır, kullanıcının
+    yanlışlıkla binlerce nokta gönderip (örn. bir sürükleme olayını tıklama
+    sanarak) diski/pipeline'ı şişirmesini engeller."""
+    if len(noktalar) < _ROI_POLIGON_MIN_NOKTA:
+        raise HTTPException(400, f"Serbest çizim (polygon) için en az {_ROI_POLIGON_MIN_NOKTA} nokta gerekir")
+    if len(noktalar) > _ROI_POLIGON_MAX_NOKTA:
+        raise HTTPException(400, f"Serbest çizim (polygon) için en fazla {_ROI_POLIGON_MAX_NOKTA} nokta desteklenir")
+    temiz = []
+    for n in noktalar:
+        x, y = float(n.x), float(n.y)
+        if not (0 <= x <= 100 and 0 <= y <= 100):
+            raise HTTPException(400, "Polygon noktalarının x/y değerleri 0-100 arasında olmalı")
+        temiz.append({"x": x, "y": y})
+    return {"tip": "polygon", "noktalar": temiz}
+
+
 @app.patch("/kameralar/{kamera_id}/roi")
 def kamera_roi_guncelle(kamera_id: str, veri: schemas.KameraRoiGuncelle, kullanici: models.Kullanici = Depends(_personel_girisi_gerekli)):
     """Bir kameranın tespit alanını (ROI -- region of interest) yüzde (0-100,
@@ -1487,7 +1511,12 @@ def kamera_roi_guncelle(kamera_id: str, veri: schemas.KameraRoiGuncelle, kullani
 
     ROI, kameranın id'sini, RTSP adresini/parolasını DEĞİŞTİRMEZ -- yalnızca
     bu alanı günceller; değişikliğin pipeline'a yansıması için kamera etkinse
-    yeniden başlatılır."""
+    yeniden başlatılır.
+
+    2026-09-20: `veri.polygon` gönderilirse (en az 3 nokta), dikdörtgen
+    yerine SERBEST ÇİZİM (polygon) ROI kaydedilir -- bkz.
+    schemas.KameraRoiGuncelle'nin docstring'i ve camera_reader.py::
+    _kutu_polygon_icinde_mi."""
     _rol_dogrula(kullanici, ROL_YONETICI, ROL_OPERATOR)
     kameralar = _kameralari_oku()
     kamera = next((k for k in kameralar if k["id"] == kamera_id), None)
@@ -1495,10 +1524,12 @@ def kamera_roi_guncelle(kamera_id: str, veri: schemas.KameraRoiGuncelle, kullani
         raise HTTPException(404, "Kamera bulunamadı")
     if veri.temizle:
         kamera.pop("roi", None)
+    elif veri.polygon is not None:
+        kamera["roi"] = _roi_polygon_gecerlilestir(veri.polygon)
     else:
         degerler = (veri.x1, veri.y1, veri.x2, veri.y2)
         if any(v is None for v in degerler):
-            raise HTTPException(400, "x1, y1, x2, y2 değerlerinin hepsi gönderilmeli (veya temizle=true)")
+            raise HTTPException(400, "x1, y1, x2, y2 değerlerinin hepsi gönderilmeli (veya polygon / temizle=true)")
         x1, y1, x2, y2 = (float(v) for v in degerler)
         if not all(0 <= v <= 100 for v in (x1, y1, x2, y2)):
             raise HTTPException(400, "Değerler 0-100 arasında olmalı")

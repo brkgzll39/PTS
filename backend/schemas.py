@@ -331,6 +331,13 @@ class KameraYonGuncelle(BaseModel):
     yon: str
 
 
+class KameraRoiNoktasi(BaseModel):
+    """Serbest çizim (polygon) ROI'nin tek bir köşe noktası -- kare
+    genişliğinin/yüksekliğinin YÜZDESİ (0-100) cinsinden."""
+    x: float
+    y: float
+
+
 class KameraRoiGuncelle(BaseModel):
     """Bir kameranın tespit alanını (ROI -- region of interest) kare
     genişliğinin/yüksekliğinin YÜZDESİ (0-100, çözünürlükten bağımsız olsun
@@ -339,12 +346,22 @@ class KameraRoiGuncelle(BaseModel):
     SADECE kendi şeridine denk gelen bölge tanımlanır; bu bölgenin dışındaki
     tespitler oy birikimine hiç girmez (bkz.
     camera_reader.py::_kutu_roi_icinde_mi, main.py::kamera_roi_guncelle).
-    `temizle=True` gönderilirse x1/y1/x2/y2 yok sayılır ve sınır tamamen
-    kaldırılır (kare tamamı tekrar geçerli olur)."""
+
+    İKİ biçimden biri gönderilir:
+    - Dikdörtgen (eski/varsayılan): x1/y1/x2/y2 (x1<x2, y1<y2).
+    - Serbest çizim / polygon (2026-09-20): `polygon` alanında en az 3
+      {"x","y"} noktası -- kullanıcı geri bildirimi ("kare seçimde bazen
+      farklı yönden geçen araçları da tespit ediyor") üzerine, şeridin gerçek
+      hattını takip eden keyfi bir çokgen çizilebilsin diye eklendi (bkz.
+      camera_reader.py::_kutu_polygon_icinde_mi).
+
+    `temizle=True` gönderilirse diğer tüm alanlar yok sayılır ve sınır
+    tamamen kaldırılır (kare tamamı tekrar geçerli olur)."""
     x1: Optional[float] = None
     y1: Optional[float] = None
     x2: Optional[float] = None
     y2: Optional[float] = None
+    polygon: Optional[List[KameraRoiNoktasi]] = None
     temizle: bool = False
 
 

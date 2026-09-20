@@ -189,22 +189,41 @@
 <!-- Kamera tespit alanı (ROI) modalı: giriş/çıkış kameralarının açıları birbirinin
      şeridini de görüyorsa, her kamera için sadece kendi şeridine denk gelen bölgeyi
      tanımlamaya yarar (bkz. main.py::kamera_roi_guncelle). Canlı bir kare üzerinde
-     yüzdesel bir dikdörtgen çizerek kalibrasyonu görsel olarak yapılabilir kılar. -->
+     yüzdesel bir dikdörtgen çizerek kalibrasyonu görsel olarak yapılabilir kılar.
+     2026-09-20: kullanıcı geri bildirimi ("kare seçimde bazen farklı yönden geçen
+     araçları da tespit ediyor") üzerine, dikdörtgenin yeterli olmadığı çapraz/eğik
+     açılı şeritler için SERBEST ÇİZİM (polygon) modu eklendi -- bkz. app.js'deki
+     roiPoligonTiklandi/roiModuDegisti. -->
 <div class="modal fade" id="kameraRoiModal" tabindex="-1" aria-hidden="true">
   <div class="modal-dialog modal-lg modal-dialog-centered"><div class="modal-content">
     <div class="modal-header"><h5 class="modal-title">Tespit Alanı (ROI): <span id="roiKameraAdi">-</span></h5><button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Kapat"></button></div>
     <div class="modal-body">
-      <p class="small text-muted">Kameranın SADECE bu dikdörtgen içindeki araçları kaydetmesini istiyorsanız aşağıdaki yüzdeleri ayarlayın. Komşu şeridi de gören bir kamerada, o şeridi dışarıda bırakacak şekilde daraltın. Boş bırakırsanız (veya "Sınırı Kaldır" derseniz) kameranın tüm görüş alanı geçerli olur.</p>
+      <p class="small text-muted">Kameranın SADECE seçtiğiniz alan içindeki araçları kaydetmesini istiyorsanız aşağıyı ayarlayın. Komşu şeridi de gören bir kamerada, o şeridi dışarıda bırakacak şekilde daraltın. Boş bırakırsanız (veya "Sınırı Kaldır" derseniz) kameranın tüm görüş alanı geçerli olur.</p>
       <input type="hidden" id="roiKameraId">
-      <div class="roi-onizleme-kapsayici position-relative mb-3" style="background:#000;">
+      <div class="btn-group btn-group-sm mb-2" role="group" aria-label="Tespit alanı çizim biçimi">
+        <input type="radio" class="btn-check" name="roiMod" id="roiModKare" autocomplete="off" checked onchange="roiModuDegisti()">
+        <label class="btn btn-outline-secondary" for="roiModKare"><i class="bi bi-square"></i> Kare (Dikdörtgen)</label>
+        <input type="radio" class="btn-check" name="roiMod" id="roiModPoligon" autocomplete="off" onchange="roiModuDegisti()">
+        <label class="btn btn-outline-secondary" for="roiModPoligon"><i class="bi bi-pentagon"></i> Serbest Çizim</label>
+      </div>
+      <div class="roi-onizleme-kapsayici position-relative mb-2 user-select-none" style="background:#000;">
         <img id="roiOnizlemeGorsel" class="w-100 d-block" style="opacity:0.9;" alt="Kamera anlık görüntüsü">
         <div id="roiKutuOnizleme" class="position-absolute border border-3 border-warning" style="pointer-events:none; box-shadow:0 0 0 2000px rgba(0,0,0,0.35);"></div>
+        <svg id="roiPoligonSvg" class="position-absolute top-0 start-0 w-100 h-100 d-none" viewBox="0 0 100 100" preserveAspectRatio="none" style="cursor:crosshair;" onclick="roiPoligonTiklandi(event)"></svg>
       </div>
-      <div class="row g-2">
+      <div id="roiKareAlanlari" class="row g-2">
         <div class="col-3"><label class="form-label small">Sol %</label><input type="number" min="0" max="100" step="1" class="form-control form-control-sm" id="roiX1"></div>
         <div class="col-3"><label class="form-label small">Üst %</label><input type="number" min="0" max="100" step="1" class="form-control form-control-sm" id="roiY1"></div>
         <div class="col-3"><label class="form-label small">Sağ %</label><input type="number" min="0" max="100" step="1" class="form-control form-control-sm" id="roiX2"></div>
         <div class="col-3"><label class="form-label small">Alt %</label><input type="number" min="0" max="100" step="1" class="form-control form-control-sm" id="roiY2"></div>
+      </div>
+      <div id="roiPoligonAlanlari" class="d-none">
+        <p class="small text-muted mb-1">Görüntü üzerinde şeridin köşelerini sırayla tıklayın (en az 3 nokta) -- farklı yönden geçen araçları dışarıda bırakacak şekilde şeridin gerçek hattını takip edin. Şekil otomatik kapanır.</p>
+        <div class="d-flex align-items-center gap-2 mb-1">
+          <button type="button" class="btn btn-sm btn-outline-secondary" onclick="roiPoligonSonNoktayiSil()"><i class="bi bi-arrow-counterclockwise"></i> Son Noktayı Sil</button>
+          <button type="button" class="btn btn-sm btn-outline-secondary" onclick="roiPoligonTemizle()"><i class="bi bi-trash"></i> Temizle</button>
+          <span class="small text-muted" id="roiPoligonNoktaSayisi">0 nokta</span>
+        </div>
       </div>
       <div id="roiSonuc" class="small mt-2"></div>
     </div>

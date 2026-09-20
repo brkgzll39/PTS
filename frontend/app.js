@@ -816,8 +816,13 @@ async function kameralariYukle() {
              <option value="cikis" ${k.yon === "cikis" ? "selected" : ""}>Çıkış</option>
            </select>`
         : (k.yon === "giris" ? "Giriş" : "Çıkış");
+      // 2026-09-20: ROI artık dikdörtgen (x1..y2) VEYA serbest çizim/polygon
+      // ({tip:"polygon", noktalar:[...]}) olabilir -- rozet metni buna göre
+      // ayrılır (bkz. backend/schemas.py::KameraRoiGuncelle).
       const roiRozeti = k.roi
-        ? `<span class="badge bg-info-subtle text-info-emphasis ms-1" title="Tespit alanı sınırlı: yalnızca karenin %${Math.round(k.roi.x1)}-%${Math.round(k.roi.x2)} (yatay) / %${Math.round(k.roi.y1)}-%${Math.round(k.roi.y2)} (dikey) bölgesi geçerli"><i class="bi bi-crop"></i> Alan sınırlı</span>`
+        ? (k.roi.tip === "polygon"
+          ? `<span class="badge bg-info-subtle text-info-emphasis ms-1" title="Tespit alanı sınırlı: ${k.roi.noktalar.length} köşeli serbest çizim (polygon) alanı geçerli"><i class="bi bi-pentagon"></i> Alan sınırlı</span>`
+          : `<span class="badge bg-info-subtle text-info-emphasis ms-1" title="Tespit alanı sınırlı: yalnızca karenin %${Math.round(k.roi.x1)}-%${Math.round(k.roi.x2)} (yatay) / %${Math.round(k.roi.y1)}-%${Math.round(k.roi.y2)} (dikey) bölgesi geçerli"><i class="bi bi-crop"></i> Alan sınırlı</span>`)
         : "";
       const roiBtn = rolYeterli("operatör")
         ? `<button class="btn btn-sm btn-outline-warning ms-1" title="Tespit alanını (ROI) ayarla" onclick="kameraRoiAc('${k.id}')"><i class="bi bi-crop"></i></button>`
@@ -855,6 +860,15 @@ async function kameraYonDegistir(id, selectEl) {
 // ayrı kaydedilebiliyor (bkz. README.md'deki 2026-09-17 notu). Bu modal, canlı
 // bir kare üzerinde yüzdesel bir dikdörtgen (ROI) tanımlayarak her kameranın
 // SADECE kendi şeridine denk gelen bölgeyi izlemesini sağlar.
+//
+// GÜNCELLEME (2026-09-20, kullanıcı geri bildirimi birebir): "kare seçimde
+// bazen farklı yönden geçen araçları da tespit ediyor bunu istemiyorum" --
+// bir şerit çapraz/eğik açıdan görüntülendiğinde dikdörtgen komşu şeridi de
+// kapsayabiliyor. Bu yüzden dikdörtgenin YANINA (onun yerine değil -- basit
+// durumlarda dikdörtgen hâlâ daha hızlı/kolay) SERBEST ÇİZİM (polygon) modu
+// eklendi: kullanıcı görüntü üzerine sırayla tıklayarak şeridin gerçek
+// hattını takip eden keyfi bir çokgen çizebilir (bkz. backend/camera_reader.py::
+// _kutu_polygon_icinde_mi).
 
 function _roiOnizlemeGuncelle() {
   const kutu = document.getElementById("roiKutuOnizleme");
@@ -874,17 +888,104 @@ function _roiOnizlemeGuncelle() {
   document.getElementById(id)?.addEventListener("input", _roiOnizlemeGuncelle);
 });
 
+// Serbest çizim (polygon) noktaları -- {x, y} yüzde (0-100) çiftleri, sırayla.
+let _roiPoligonNoktalari = [];
+
+function roiModuDegisti() {
+  const poligonSecili = document.getElementById("roiModPoligon")?.checked === true;
+  document.getElementById("roiKareAlanlari").classList.toggle("d-none", poligonSecili);
+  document.getElementById("roiPoligonAlanlari").classList.toggle("d-none", !poligonSecili);
+  document.getElementById("roiKutuOnizleme").classList.toggle("d-none", poligonSecili);
+  document.getElementById("roiPoligonSvg").classList.toggle("d-none", !poligonSecili);
+  document.getElementById("roiSonuc").textContent = "";
+  if (poligonSecili) _roiPoligonOnizlemeGuncelle();
+}
+
+function roiPoligonTiklandi(event) {
+  if (document.getElementById("roiModPoligon")?.checked !== true) return;
+  const svg = event.currentTarget;
+  const dikdortgen = svg.getBoundingClientRect();
+  const x = ((event.clientX - dikdortgen.left) / dikdortgen.width) * 100;
+  const y = ((event.clientY - dikdortgen.top) / dikdortgen.height) * 100;
+  _roiPoligonNoktalari.push({
+    x: Math.round(Math.max(0, Math.min(100, x)) * 10) / 10,
+    y: Math.round(Math.max(0, Math.min(100, y)) * 10) / 10,
+  });
+  _roiPoligonOnizlemeGuncelle();
+}
+
+function roiPoligonSonNoktayiSil() {
+  _roiPoligonNoktalari.pop();
+  _roiPoligonOnizlemeGuncelle();
+}
+
+function roiPoligonTemizle() {
+  _roiPoligonNoktalari = [];
+  _roiPoligonOnizlemeGuncelle();
+}
+
+const _ROI_SVG_ISIM_ALANI = "http://www.w3.org/2000/svg";
+
+function _roiPoligonOnizlemeGuncelle() {
+  const svg = document.getElementById("roiPoligonSvg");
+  if (!svg) return;
+  while (svg.firstChild) svg.removeChild(svg.firstChild);
+
+  const noktaSayisi = document.getElementById("roiPoligonNoktaSayisi");
+  if (noktaSayisi) {
+    noktaSayisi.textContent = _roiPoligonNoktalari.length === 0
+      ? "0 nokta"
+      : `${_roiPoligonNoktalari.length} nokta${_roiPoligonNoktalari.length < 3 ? " (en az 3 gerekli)" : ""}`;
+  }
+  if (_roiPoligonNoktalari.length === 0) return;
+
+  const noktaMetni = _roiPoligonNoktalari.map(n => `${n.x},${n.y}`).join(" ");
+  if (_roiPoligonNoktalari.length >= 3) {
+    const cokgen = document.createElementNS(_ROI_SVG_ISIM_ALANI, "polygon");
+    cokgen.setAttribute("points", noktaMetni);
+    cokgen.setAttribute("fill", "rgba(255, 193, 7, 0.25)");
+    cokgen.setAttribute("stroke", "#ffc107");
+    cokgen.setAttribute("stroke-width", "0.6");
+    cokgen.setAttribute("vector-effect", "non-scaling-stroke");
+    svg.appendChild(cokgen);
+  } else {
+    const cizgi = document.createElementNS(_ROI_SVG_ISIM_ALANI, "polyline");
+    cizgi.setAttribute("points", noktaMetni);
+    cizgi.setAttribute("fill", "none");
+    cizgi.setAttribute("stroke", "#ffc107");
+    cizgi.setAttribute("stroke-width", "0.6");
+    cizgi.setAttribute("vector-effect", "non-scaling-stroke");
+    svg.appendChild(cizgi);
+  }
+  _roiPoligonNoktalari.forEach((n, i) => {
+    const daire = document.createElementNS(_ROI_SVG_ISIM_ALANI, "circle");
+    daire.setAttribute("cx", n.x);
+    daire.setAttribute("cy", n.y);
+    daire.setAttribute("r", "1.2");
+    daire.setAttribute("fill", i === 0 ? "#dc3545" : "#ffc107");
+    daire.setAttribute("stroke", "#212529");
+    daire.setAttribute("stroke-width", "0.3");
+    daire.setAttribute("vector-effect", "non-scaling-stroke");
+    svg.appendChild(daire);
+  });
+}
+
 async function kameraRoiAc(id) {
   const kamera = _kameralarCache.find(k => k.id === id);
   if (!kamera) return;
   document.getElementById("roiKameraId").value = id;
   document.getElementById("roiKameraAdi").textContent = kamera.ad;
-  document.getElementById("roiX1").value = kamera.roi ? Math.round(kamera.roi.x1) : "";
-  document.getElementById("roiY1").value = kamera.roi ? Math.round(kamera.roi.y1) : "";
-  document.getElementById("roiX2").value = kamera.roi ? Math.round(kamera.roi.x2) : "";
-  document.getElementById("roiY2").value = kamera.roi ? Math.round(kamera.roi.y2) : "";
+  const poligonMi = kamera.roi && kamera.roi.tip === "polygon";
+  document.getElementById("roiModKare").checked = !poligonMi;
+  document.getElementById("roiModPoligon").checked = poligonMi;
+  document.getElementById("roiX1").value = (kamera.roi && !poligonMi) ? Math.round(kamera.roi.x1) : "";
+  document.getElementById("roiY1").value = (kamera.roi && !poligonMi) ? Math.round(kamera.roi.y1) : "";
+  document.getElementById("roiX2").value = (kamera.roi && !poligonMi) ? Math.round(kamera.roi.x2) : "";
+  document.getElementById("roiY2").value = (kamera.roi && !poligonMi) ? Math.round(kamera.roi.y2) : "";
+  _roiPoligonNoktalari = poligonMi ? kamera.roi.noktalar.map(n => ({ x: n.x, y: n.y })) : [];
   document.getElementById("roiSonuc").textContent = "";
   _roiOnizlemeGuncelle();
+  roiModuDegisti();
   bootstrap.Modal.getOrCreateInstance(document.getElementById("kameraRoiModal")).show();
   // Anlık kare, diğer korumalı görseller gibi (bkz. korumaliGorselAta) token'lı
   // fetch + blob URL ile yüklenir -- ama o yardımcı fonksiyon sabit olarak
@@ -914,19 +1015,33 @@ async function kameraRoiAc(id) {
 async function kameraRoiKaydet() {
   const id = document.getElementById("roiKameraId").value;
   const sonuc = document.getElementById("roiSonuc");
-  const x1 = document.getElementById("roiX1").value;
-  const y1 = document.getElementById("roiY1").value;
-  const x2 = document.getElementById("roiX2").value;
-  const y2 = document.getElementById("roiY2").value;
-  if (x1 === "" || y1 === "" || x2 === "" || y2 === "") {
-    sonuc.className = "small mt-2 text-danger";
-    sonuc.textContent = "Dört değer de (Sol/Üst/Sağ/Alt) girilmeli. Sınırı tamamen kaldırmak için 'Sınırı Kaldır' butonunu kullanın.";
-    return;
+  const poligonMi = document.getElementById("roiModPoligon")?.checked === true;
+
+  let govde;
+  if (poligonMi) {
+    if (_roiPoligonNoktalari.length < 3) {
+      sonuc.className = "small mt-2 text-danger";
+      sonuc.textContent = "Serbest çizim için en az 3 nokta işaretlemelisiniz. Sınırı tamamen kaldırmak için 'Sınırı Kaldır' butonunu kullanın.";
+      return;
+    }
+    govde = { polygon: _roiPoligonNoktalari };
+  } else {
+    const x1 = document.getElementById("roiX1").value;
+    const y1 = document.getElementById("roiY1").value;
+    const x2 = document.getElementById("roiX2").value;
+    const y2 = document.getElementById("roiY2").value;
+    if (x1 === "" || y1 === "" || x2 === "" || y2 === "") {
+      sonuc.className = "small mt-2 text-danger";
+      sonuc.textContent = "Dört değer de (Sol/Üst/Sağ/Alt) girilmeli. Sınırı tamamen kaldırmak için 'Sınırı Kaldır' butonunu kullanın.";
+      return;
+    }
+    govde = { x1: Number(x1), y1: Number(y1), x2: Number(x2), y2: Number(y2) };
   }
+
   try {
     await apiCagir(`/kameralar/${id}/roi`, {
       method: "PATCH", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ x1: Number(x1), y1: Number(y1), x2: Number(x2), y2: Number(y2) }),
+      body: JSON.stringify(govde),
     });
     bootstrap.Modal.getInstance(document.getElementById("kameraRoiModal"))?.hide();
     toastGoster("Tespit alanı kaydedildi, pipeline yeniden başlatılıyor.", "basari");
@@ -1661,16 +1776,30 @@ authBaslat().then(() => {
 // TOAST BİLDİRİMLER
 // ================================================================
 
-function toastGoster(mesaj, tip = "bilgi") {
+// `tikla` (opsiyonel): verilirse toast'un gövdesi TIKLANABİLİR olur -- örn.
+// bir geçiş bildirimine tıklanınca doğrudan o kaydın not/onay ekranını
+// açmak için (bkz. _sseKayitAl, kullanıcı isteği: "bildirim geldiğinde son
+// geçişler de olduğu gibi direkt olarak onun üstüne tıklayıp not ve onay
+// ekranının açılmasını istiyorum", 2026-09-20). Kapatma (X) butonu, olay
+// kabarcıklanmasını (bubbling) durdurarak tıklama işleyicisini TETİKLEMEZ.
+function toastGoster(mesaj, tip = "bilgi", tikla = null) {
   const renkler = { bilgi: "bg-primary", basari: "bg-success", uyari: "bg-warning text-dark", hata: "bg-danger", kara: "bg-dark" };
   const id = "toast_" + Date.now();
+  const govdeSinifi = "toast-body fw-semibold" + (tikla ? " toast-tiklanabilir" : "");
   const html = `<div id="${id}" class="toast align-items-center text-white ${renkler[tip] || "bg-primary"} border-0" role="alert" aria-live="assertive" data-bs-delay="5000">
-    <div class="d-flex"><div class="toast-body fw-semibold">${escapeHtml(mesaj)}</div>
+    <div class="d-flex"><div class="${govdeSinifi}"${tikla ? ' style="cursor:pointer" title="Detayları görmek için tıklayın"' : ""}>${escapeHtml(mesaj)}</div>
     <button type="button" class="btn-close btn-close-white me-2 m-auto" data-bs-dismiss="toast"></button></div></div>`;
   const kont = document.getElementById("toastKonteyneri");
   kont.insertAdjacentHTML("beforeend", html);
   const el = document.getElementById(id);
-  bootstrap.Toast.getOrCreateInstance(el).show();
+  const toastOrnegi = bootstrap.Toast.getOrCreateInstance(el);
+  if (tikla) {
+    el.querySelector(".toast-body").addEventListener("click", () => {
+      tikla();
+      toastOrnegi.hide();
+    });
+  }
+  toastOrnegi.show();
   el.addEventListener("hidden.bs.toast", () => el.remove());
 }
 
@@ -1744,7 +1873,11 @@ function _sseKayitAl(kayit) {
     : kayit.yetki_durumu === "kara_liste" ? "kara"
     : "uyari";
   const yon = kayit.yon === "giris" ? "Giriş" : "Çıkış";
-  toastGoster(`${kayit.plaka_no} · ${yon} · ${kayit.kamera_id}`, tip);
+  // 2026-09-20 kullanıcı isteği (birebir): "bildirim geldiğinde son geçişler
+  // de olduğu gibi direkt olarak onun üstüne tıklayıp not ve onay ekranının
+  // açılmasını istiyorum" -- "Son Geçişler" panelindeki satırların davranışı
+  // (olayDetayAc(id)) burada da aynen uygulanıyor.
+  toastGoster(`${kayit.plaka_no} · ${yon} · ${kayit.kamera_id}`, tip, () => olayDetayAc(kayit.id));
 
   // Panel'deki canlı olay listesini anlık güncelle (sıfır gecikmeli ilk his)
   const canliOlaylar = document.getElementById("canliOlaylar");

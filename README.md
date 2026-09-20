@@ -448,6 +448,57 @@ x1≥x2 veya y1≥y2 olan ROI değerleri; `temizle=true` ile mevcut bir ROI'nin
 kaldırılması) ve olmayan kamera id'si için 404 dönüşünü doğrulayan testler
 eklendi.
 
+**2026-09-20 (devam) — Tespit alanı artık SERBEST ÇİZİM (polygon) olarak da
+tanımlanabiliyor.** Kullanıcı geri bildirimi (birebir): "bir de alan sınırı
+eklemiştik bu alan sınırına serbest çizim ekleme şansımız var mı kare
+seçimde bazen farklı yönden geçen araçları da tespit ediyor bunu
+istemiyorum". Bir şerit kameraya çapraz/eğik açıdan görünüyorsa, dikdörtgen
+ROI şeridin bounding-box'ını (en geniş noktasını) kapsamak zorunda kaldığı
+için komşu şeridi de içine alabiliyordu — dikdörtgenin köşeleri eksene
+paralel olmak zorunda ama gerçek şerit sınırı çoğu zaman değil.
+
+- **Yeni ROI biçimi:** `PATCH /kameralar/{id}/roi` artık `polygon` alanını da
+  kabul ediyor — en az 3, en fazla 20 `{"x","y"}` (yüzde, 0-100) köşe
+  noktası (bkz. `schemas.KameraRoiGuncelle`, `main.py::
+  _roi_polygon_gecerlilestir`). Kaydedilen ROI o zaman
+  `{"tip": "polygon", "noktalar": [...]}` biçiminde saklanıyor; eski
+  dikdörtgen biçim (`{"x1","y1","x2","y2"}`, "tip" anahtarı YOK) hâlâ
+  geçerli ve varsayılan — geriye dönük uyumluluk tamamen korunuyor,
+  hâlihazırda kaydedilmiş hiçbir kameranın ROI'si bu değişiklikle bozulmuyor.
+- **Ortak filtre/çizim altyapısı:** `camera_reader.py::_roi_ciz_bilgisi_hesapla`,
+  ROI'nin tipine bakıp (dikdörtgen/polygon) ortak bir `(tip, şekil)` ikilisi
+  üretiyor; hem oy-birikimi filtresi (`_kutu_roi_ciz_bilgisiyle_icinde_mi`)
+  hem canlı önizleme çizimi (`_kare_uzerine_ciz`, artık `cv2.polylines` ile
+  kapalı bir çokgen de çizebiliyor) AYNI hesaplamayı kullanıyor — eskiden
+  olduğu gibi tutarsızlık riski yok. Polygon içeride-mi testi
+  (`_kutu_polygon_icinde_mi`), standart "ray casting" (bir noktadan ışın
+  gönderip çokgenin kaç kenarını kestiğini sayma) algoritmasıyla, ekstra bir
+  geometri kütüphanesi (shapely vb.) GEREKMEDEN yapılıyor; yine tespit
+  kutusunun MERKEZ noktasına bakılıyor (dikdörtgen ROI ile aynı ilke).
+- **Yeni arayüz:** Tespit Alanı (ROI) modalına "Kare (Dikdörtgen)" / "Serbest
+  Çizim" seçimi eklendi (varsayılan: Kare, mevcut davranış hiç değişmedi).
+  Serbest Çizim seçilince, kameranın anlık görüntüsü üzerine bindirilen bir
+  SVG katmanına (`viewBox="0 0 100 100"`, böylece tıklama koordinatı direkt
+  yüzdeye karşılık geliyor) sırayla tıklanarak şeridin köşeleri işaretlenir;
+  3. noktadan itibaren şekil sarı, yarı saydam bir çokgen olarak canlı
+  önizlenir. "Son Noktayı Sil" ve "Temizle" düğmeleriyle düzeltme yapılabilir.
+  Var olan bir polygon ROI'yi düzenlemek için modal açıldığında noktalar
+  otomatik yüklenir (sıfırdan yeniden çizmeye gerek yok). Kameralar
+  listesindeki "Alan sınırlı" rozeti de iki ROI tipini de doğru etiketliyor.
+
+Testler: `tests/test_camera_reader.py`'ye (gerçekten çalıştırılıp doğrulandı)
+piksel dönüşümü, ray-casting testi (basit bir kare için içeride/dışarıda/
+geçersiz-şekil durumları), `_roi_ciz_bilgisi_hesapla`'nın "tip" anahtarı
+olmayan eski kayıtları hâlâ dikdörtgen sayması, ve — en önemlisi — TAM DA
+kullanıcının şikayet ettiği senaryoyu simüle eden iki uçtan-uca test eklendi:
+bounding-box'ı komşu şeridi de kapsayacak kadar geniş olan çapraz bir şerit
+polygon'u, sabit tespit kutusunu (dikdörtgen olsaydı YANLIŞLIKLA kabul
+edilirdi) doğru şekilde REDDEDİYOR; aynı polygon'un tespitin gerçekten
+olduğu tarafı kapsayan bir varyasyonu ise normal şekilde KABUL EDİYOR.
+`tests/test_api.py`'ye (fastapi gerektirdiği için yalnızca `py_compile` ile
+doğrulandı) polygon ile kaydetme/temizleme, 3'ten az veya 20'den fazla nokta
+ile 400, 0-100 dışı koordinatla 400, ve izleyici için 403 testleri eklendi.
+
 **2026-09-17 (devam) — Panel ve Kayıtlar sekmeleri artık araç geçişinde
 KENDİLİĞİNDEN yenileniyor.** Önceden gerçek zamanlı SSE bağlantısı yalnızca
 Panel'deki "canlı olaylar" küçük listesini ve bir toast bildirimini anlık
@@ -465,6 +516,24 @@ kapsıyor. Kullanıcı o an Kayıtlar sekmesindeki plaka/tarih/durum filtre
 kutularından birine yazı yazıyorsa (`_kayitlarFiltresiDuzenleniyorMu`) arama
 kutusunun elinin altından değişip yarım kalan aramasının bozulmaması için o
 turda yalnızca Kayıtlar tablosu atlanıyor, Panel yine de tazeleniyor.
+
+**2026-09-20 (devam) — Canlı geçiş bildirimine (toast) tıklayınca doğrudan
+not/onay ekranı açılıyor.** Kullanıcı geri bildirimi (birebir): "Giriş veya
+çıkış olduğunda panel ekranında sağ üstte 34 MRU 800 giriş yaptı gibi bir
+bildirim geliyor bu bildirim geldiğinde son geçişler de olduğu gibi direkt
+olarak onun üstüne tıklayıp not ve onay ekranının açılmasını istiyorum."
+`toastGoster()` artık opsiyonel üçüncü bir `tikla` (callback) parametresi
+alıyor; verildiğinde toast'un gövdesi tıklanabilir hale geliyor (imleç
+`pointer`, `title="Detayları görmek için tıklayın"`) ve tıklanınca hem
+callback çalışıp toast kapanıyor. `_sseKayitAl`, her yeni SSE "kayit"
+olayında toast'ı `() => olayDetayAc(kayit.id)` callback'iyle açıyor — yani
+"Son Geçişler" panelindeki bir satıra tıklamakla BİREBİR AYNI davranış
+(görsel + not/onay/ziyaretçi girişi ekranı) artık toast'un kendisinden de
+tetiklenebiliyor. Kapatma (X) butonu ayrı bir olay dinleyicisiyle çalıştığı
+için (bkz. Bootstrap'ın `data-bs-dismiss`'i) tıklama olayı kabarcıklanmıyor
+(bubbling), yani X'e basmak yanlışlıkla detay ekranını açmıyor.
+`tests/test_bildirim_tiklama_ve_roi_polygon.py`'ye (gerçekten çalıştırılıp
+doğrulandı) bu davranışı doğrulayan testler eklendi.
 
 **2026-09-17 (devam) — Ziyaretçi girişi ve site sakini öz-hizmet portalı.**
 Kullanıcı, rakip bir üründen ekran görüntüleri paylaşarak benzer bir "ziyaretçi
@@ -1597,7 +1666,8 @@ olduğunu doğrular.
 
 - `test_plaka_dogrula.py`, `test_lisans.py`, `test_schemas.py`, `test_camera_reader.py`,
   `test_metin_araclari.py`, `test_pdf_export.py`, `test_excel_export.py`, `test_frontend_rbac.py`,
-  `test_olay_detay_plaka_analiz.py`, `test_guvenlik_vardiya_frontend.py`:
+  `test_olay_detay_plaka_analiz.py`, `test_guvenlik_vardiya_frontend.py`,
+  `test_bildirim_tiklama_ve_roi_polygon.py`:
   bağımlılığı hafif (fastapi/sqlalchemy gerektirmez), yalnızca pydantic/opencv/requests/
   reportlab/pdfplumber/openpyxl/BeautifulSoup gibi hedefe özel kütüphaneler yeterlidir.
 - `test_api.py`: FastAPI `TestClient` + geçici bir SQLite veritabanı kullanarak

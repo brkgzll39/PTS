@@ -865,3 +865,109 @@ def test_roi_icindeki_tespit_normal_sekilde_islenir(monkeypatch, sahte_engine):
     gonderilenler = pipeline._kareyi_isle(kare, oturumu_hemen_kapat=True)
 
     assert gonderilenler == ["34 ABC 123"]
+
+
+# ------------------------------------------------------------------
+# TESPİT ALANI SINIRI -- SERBEST ÇİZİM (POLYGON) (2026-09-20)
+#
+# Kullanıcı geri bildirimi (birebir): "alan sınırına serbest çizim ekleme
+# şansımız var mı kare seçimde bazen farklı yönden geçen araçları da tespit
+# ediyor bunu istemiyorum". Bir şerit çapraz/eğik açıdan görüntülendiğinde,
+# şeridin gerçek hattını bir DİKDÖRTGEN her zaman doğru takip edemez --
+# dikdörtgen, şeklin bounding-box'ını (en geniş noktasını) kapsamak zorunda
+# kaldığı için komşu şeridi de içine alabilir. Serbest çizim (polygon), şeridin
+# gerçek köşe noktalarını takip ettiği için bu sızıntıyı engeller.
+# ------------------------------------------------------------------
+
+def test_roi_polygon_pixel_noktalari_yuzdeden_dogru_hesaplanir():
+    roi = {"tip": "polygon", "noktalar": [{"x": 25, "y": 10}, {"x": 75, "y": 10}, {"x": 50, "y": 90}]}
+    noktalar = camera_reader._roi_polygon_pixel_noktalarini_hesapla(roi, genislik=200, yukseklik=100)
+    assert noktalar == [(50, 10), (150, 10), (100, 90)]
+
+
+@pytest.mark.parametrize("kutu, poligon, beklenen", [
+    # Basit bir kare (0,0)-(100,100) -- merkez içeride/dışarıda.
+    ((10, 10, 30, 30), [(0, 0), (100, 0), (100, 100), (0, 100)], True),   # merkez (20,20) -- içeride
+    ((110, 10, 130, 30), [(0, 0), (100, 0), (100, 100), (0, 100)], False),  # merkez (120,20) -- dışarıda
+    (None, [(0, 0), (100, 0), (100, 100), (0, 100)], False),               # kutu yoksa asla içeride sayılmaz
+    ((10, 10, 30, 30), [(0, 0), (100, 0)], False),                          # 2 noktayla geçerli bir çokgen olmaz
+])
+def test_kutu_polygon_icinde_mi_ray_casting_ile_dogru_karar_verir(kutu, poligon, beklenen):
+    assert camera_reader._kutu_polygon_icinde_mi(kutu, poligon) is beklenen
+
+
+def test_roi_ciz_bilgisi_hesapla_roi_yoksa_none_doner():
+    assert camera_reader._roi_ciz_bilgisi_hesapla(None, 200, 100) is None
+
+
+def test_roi_ciz_bilgisi_hesapla_tip_belirtilmemisse_dikdortgen_varsayilir():
+    """Eski (2026-09-18 öncesi) kaydedilmiş ROI'lerde "tip" anahtarı hiç
+    YOK -- geriye dönük uyumluluk için bu, dikdörtgen olarak ele alınmalı."""
+    roi = {"x1": 0, "y1": 0, "x2": 50, "y2": 100}
+    tip, sekil = camera_reader._roi_ciz_bilgisi_hesapla(roi, genislik=100, yukseklik=100)
+    assert tip == "dikdortgen"
+    assert sekil == (0, 0, 50, 100)
+
+
+def test_roi_ciz_bilgisi_hesapla_polygon_tipini_dogru_hesaplar():
+    roi = {"tip": "polygon", "noktalar": [{"x": 0, "y": 0}, {"x": 50, "y": 0}, {"x": 50, "y": 100}]}
+    tip, sekil = camera_reader._roi_ciz_bilgisi_hesapla(roi, genislik=100, yukseklik=100)
+    assert tip == "polygon"
+    assert sekil == [(0, 0), (50, 0), (50, 100)]
+
+
+def test_kutu_roi_ciz_bilgisiyle_icinde_mi_iki_tipi_de_dogru_yonlendirir():
+    dikdortgen_bilgisi = ("dikdortgen", (50, 0, 100, 100))
+    polygon_bilgisi = ("polygon", [(0, 0), (50, 0), (50, 100), (0, 100)])
+    # merkez (55,35) -- dikdörtgende (50-100) içeride, polygon'da (0-50) dışarıda.
+    assert camera_reader._kutu_roi_ciz_bilgisiyle_icinde_mi((10, 10, 100, 60), dikdortgen_bilgisi) is True
+    assert camera_reader._kutu_roi_ciz_bilgisiyle_icinde_mi((10, 10, 100, 60), polygon_bilgisi) is False
+    assert camera_reader._kutu_roi_ciz_bilgisiyle_icinde_mi((10, 10, 100, 60), None) is False
+
+
+def test_capraz_seritte_dikdortgen_kapsardi_ama_polygon_roi_dogru_disinda_birakir(sahte_engine):
+    """TAM DA kullanıcının şikayet ettiği senaryo: kamera açısı şeridi çapraz
+    gösteriyor. Aşağıdaki polygon, üstte dar (x: 0-30) altta geniş (x: 0-70)
+    bir şerit tanımlıyor -- yani şeridin GERÇEK hattı sabit tespit kutusunun
+    (10,10,100,60), merkezi (55,35)) BULUNDUĞU yeri kapsamıyor. Ama bu
+    polygon'un bounding-box'ı (0,0)-(70,100) bir DİKDÖRTGEN ROI olarak
+    kullanılsaydı x=55 bu aralığın İÇİNDE kalacağı için tespiti YANLIŞLIKLA
+    kabul ederdi. Serbest çizim, şeridin gerçek (eğik) hattını takip ettiği
+    için bu komşu şerit sızıntısını doğru şekilde engellemeli."""
+    pipeline = camera_reader.KameraPipeline(
+        video_kaynagi="kullanilmiyor.mp4", kamera_id="TEST-ROI-POLYGON-DISI",
+        roi={"tip": "polygon", "noktalar": [
+            {"x": 0, "y": 0}, {"x": 30, "y": 0}, {"x": 70, "y": 100}, {"x": 0, "y": 100},
+        ]},
+    )
+    kare = np.zeros((100, 100, 3), dtype=np.uint8)
+    gonderilenler = pipeline._kareyi_isle(kare, oturumu_hemen_kapat=True)
+
+    assert gonderilenler == [], (
+        "Çapraz şeridi doğru takip eden polygon ROI, komşu şeritteki tespiti yine de kabul etti"
+    )
+    assert pipeline._oturum_takipcisi.acik_oturum_sayisi() == 0
+
+
+def test_polygon_roi_icindeki_tespit_normal_sekilde_islenir(monkeypatch, sahte_engine):
+    """Aynı çapraz şerit senaryosu ama polygon bu sefer tespitin GERÇEKTEN
+    olduğu tarafı (merkez (55,35)) kapsıyor -- serbest çizim ROI'nin varlığı
+    meşru tespitleri de engellememeli."""
+    def sahte_post(url, data=None, files=None, headers=None, timeout=None):
+        class _Yanit:
+            status_code = 200
+
+        return _Yanit()
+
+    monkeypatch.setattr(camera_reader.requests, "post", sahte_post)
+
+    pipeline = camera_reader.KameraPipeline(
+        video_kaynagi="kullanilmiyor.mp4", kamera_id="TEST-ROI-POLYGON-ICI",
+        roi={"tip": "polygon", "noktalar": [
+            {"x": 40, "y": 0}, {"x": 100, "y": 0}, {"x": 100, "y": 100}, {"x": 20, "y": 100},
+        ]},
+    )
+    kare = np.zeros((100, 100, 3), dtype=np.uint8)
+    gonderilenler = pipeline._kareyi_isle(kare, oturumu_hemen_kapat=True)
+
+    assert gonderilenler == ["34 ABC 123"]
