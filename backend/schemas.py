@@ -400,6 +400,19 @@ class BariyerAyarlariGuncelle(BaseModel):
     aktif: Optional[bool] = None
 
 
+class DenetimKaydiCevap(BaseModel):
+    """GET /denetim-kayitlari yanıtı — bkz. models.DenetimKaydi,
+    main.py::_denetim_kaydet. Yalnızca yönetici görebilir (hassas
+    yönetici işlemlerinin izini taşır)."""
+    id: int
+    zaman: datetime
+    kullanici_adi: str
+    eylem: str
+    aciklama: str
+
+    model_config = ConfigDict(from_attributes=True)
+
+
 class DogrulukTestiIstegi(BaseModel):
     """/sistem/dogruluk-testi isteği — bkz. camera_reader.py::toplu_dogruluk_testi.
     Yalnızca sunucudaki (kamerayı çalıştıran bilgisayardaki) bir klasör yoluna

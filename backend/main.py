@@ -1000,6 +1000,34 @@ def _rol_dogrula(kullanici: models.Kullanici, *izinli_roller: str) -> None:
         )
 
 
+def _denetim_kaydet(db: Session, kullanici_adi: str, eylem: str, aciklama: str) -> None:
+    """Hassas bir yönetici işlemini hem log dosyasına HEM DE kalıcı
+    `denetim_kayitlari` tablosuna (bkz. models.DenetimKaydi) yazar.
+
+    KÖK NEDEN (2026-09-20, kullanıcı talebi: "kalıcı bir veritabanı tablosu +
+    panelde ayrı bir Denetim Kayıtları ekranı olan tam bir audit-trail
+    sistemi kurabilirim -- bunu yapabilirsin"): önceki tur yalnızca
+    `loglar/pts.log`'a yazıyordu -- bu ne filtrelenebiliyor ne de panelde
+    görülebiliyordu. Bu fonksiyon TEK çağrı noktası olarak kullanılmalı ki
+    ileride eklenecek yeni bir hassas işlem türü (varsa) iki kayıt yerinden
+    birini unutmasın.
+
+    GÜVENLİK/DAYANIKLILIK: denetim kaydının YAZILAMAMASI (ör. veritabanı o an
+    kilitliyse) asıl işlemi (kullanıcı silme, kamera silme vb.) ASLA
+    engellememeli/geri almamalı -- bu, ikincil bir gözlemlenebilirlik
+    özelliğidir, birincil iş akışı değil. Bu yüzden ayrı bir try/except'e
+    sarılı; asıl işlemin `db.commit()`'i bu çağrıdan ÖNCE zaten yapılmış
+    olmalı ki bu fonksiyondaki bir hata (varsa) asıl değişikliği geri
+    almasın."""
+    logger.info("[denetim] %s: %s (yapan: %s)", eylem, aciklama, kullanici_adi)
+    try:
+        db.add(models.DenetimKaydi(kullanici_adi=kullanici_adi, eylem=eylem, aciklama=aciklama))
+        db.commit()
+    except Exception:
+        db.rollback()
+        logger.exception("Denetim kaydı veritabanına yazılamadı (eylem=%s)", eylem)
+
+
 # ================================================================
 # GÜVENLİK PERSONELİ VARDİYA FİLTRESİ (2026-09-18, 2026-09-20'de öz-hizmete
 # geçirildi -- bkz. aşağıdaki güncelleme notu)
@@ -1402,7 +1430,7 @@ def lisans_durumunu_getir(_: models.Kullanici = Depends(_personel_girisi_gerekli
 
 
 @app.post("/lisans/aktive-et")
-def lisans_aktive_et(istek: schemas.LisansAktivasyonIstegi, kullanici: models.Kullanici = Depends(_personel_girisi_gerekli)):
+def lisans_aktive_et(istek: schemas.LisansAktivasyonIstegi, db: Session = Depends(get_db), kullanici: models.Kullanici = Depends(_personel_girisi_gerekli)):
     _rol_dogrula(kullanici, ROL_YONETICI)
     temiz_anahtar = istek.anahtar.strip()
     payload = _lisans_anahtarini_coz(temiz_anahtar)
@@ -1421,9 +1449,9 @@ def lisans_aktive_et(istek: schemas.LisansAktivasyonIstegi, kullanici: models.Ku
     })
     _lisans_durumunu_yaz(durum)
     durum["aktif"] = _lisans_aktif_mi()
-    logger.info(
-        "Lisans aktive edildi: müşteri=%s, lisans_id=%s, bitiş=%s (aktive eden: %s)",
-        payload["musteri"], payload["lisans_id"], payload["bitis_tarihi"], kullanici.kullanici_adi,
+    _denetim_kaydet(
+        db, kullanici.kullanici_adi, "lisans_aktivasyon",
+        f"müşteri={payload['musteri']}, lisans_id={payload['lisans_id']}, bitiş={payload['bitis_tarihi']}",
     )
     return _lisans_kalan_gun_ekle(durum)
 
@@ -1764,7 +1792,7 @@ def kamera_ekle(kamera: dict = Body(...), kullanici: models.Kullanici = Depends(
 
 
 @app.delete("/kameralar/{kamera_id}")
-def kamera_sil(kamera_id: str, kullanici: models.Kullanici = Depends(_personel_girisi_gerekli)):
+def kamera_sil(kamera_id: str, db: Session = Depends(get_db), kullanici: models.Kullanici = Depends(_personel_girisi_gerekli)):
     _rol_dogrula(kullanici, ROL_YONETICI, ROL_OPERATOR)
     kameralar = _kameralari_oku()
     silinen = next((kamera for kamera in kameralar if kamera["id"] == kamera_id), None)
@@ -1776,9 +1804,9 @@ def kamera_sil(kamera_id: str, kullanici: models.Kullanici = Depends(_personel_g
     # 2026-09-20: hangi yöneticinin/operatörün hangi kamerayı kaldırdığı
     # önceden hiçbir yere loglanmıyordu -- bir güvenlik kamerasının
     # kaldırılması (kazayla ya da kötü niyetle) sessiz kalıyordu.
-    logger.info(
-        "Kamera silindi: %s (ad: %s) (silen: %s)",
-        kamera_id, (silinen or {}).get("ad", "?"), kullanici.kullanici_adi,
+    _denetim_kaydet(
+        db, kullanici.kullanici_adi, "kamera_sil",
+        f"kamera_id={kamera_id}, ad={(silinen or {}).get('ad', '?')}",
     )
     return {"mesaj": "Kamera silindi"}
 
@@ -3361,7 +3389,7 @@ def kullanici_ekle(istek: schemas.KullaniciOlustur, db: Session = Depends(get_db
     db.add(yeni)
     db.commit()
     db.refresh(yeni)
-    logger.info("Yeni kullanıcı oluşturuldu: %s (ekleyen: %s)", istek.kullanici_adi, kullanici.kullanici_adi)
+    _denetim_kaydet(db, kullanici.kullanici_adi, "kullanici_olustur", f"{yeni.kullanici_adi} (rol: {yeni.rol})")
     return yeni
 
 
@@ -3417,10 +3445,7 @@ def kullanici_guncelle(kullanici_id: int, istek: schemas.KullaniciGuncelle, db: 
     # cevabı yoktu. Değişiklik yoksa (boş bir PUT) log spam'i olmasın diye
     # yalnızca gerçek bir değişiklik olduğunda yazılıyor.
     if degisiklikler:
-        logger.info(
-            "Kullanıcı güncellendi: %s (%s) (güncelleyen: %s)",
-            hedef.kullanici_adi, ", ".join(degisiklikler), kullanici.kullanici_adi,
-        )
+        _denetim_kaydet(db, kullanici.kullanici_adi, "kullanici_guncelle", f"{hedef.kullanici_adi}: {', '.join(degisiklikler)}")
     return hedef
 
 
@@ -3437,10 +3462,7 @@ def kullanici_sil(kullanici_id: int, db: Session = Depends(get_db), kullanici: m
     db.commit()
     # 2026-09-20: bir hesabın silinmesi önceden hiçbir yere loglanmıyordu --
     # kim, hangi hesabı, ne zaman sildi sorusu tamamen cevapsızdı.
-    logger.info(
-        "Kullanıcı silindi: %s (rol: %s) (silen: %s)",
-        silinen_kullanici_adi, silinen_rol, kullanici.kullanici_adi,
-    )
+    _denetim_kaydet(db, kullanici.kullanici_adi, "kullanici_sil", f"{silinen_kullanici_adi} (rol: {silinen_rol})")
     return {"mesaj": "Kullanıcı silindi"}
 
 
@@ -3886,6 +3908,57 @@ def son_loglari_getir(satir: int = 200, kullanici: models.Kullanici = Depends(_p
         return {"satirlar": []}
 
 
+@app.get("/denetim-kayitlari", response_model=List[schemas.DenetimKaydiCevap])
+def denetim_kayitlarini_listele(
+    kullanici_adi: Optional[str] = None,
+    eylem: Optional[str] = None,
+    baslangic: Optional[str] = None,
+    bitis: Optional[str] = None,
+    limit: int = Query(100, ge=1, le=500),
+    offset: int = Query(0, ge=0),
+    db: Session = Depends(get_db),
+    kullanici: models.Kullanici = Depends(_personel_girisi_gerekli),
+):
+    """Hassas yönetici işlemlerinin (kullanıcı yönetimi, kamera silme, lisans
+    aktivasyonu, sistem ayarları değişikliği -- bkz. main.py::_denetim_kaydet)
+    kalıcı izini listeler.
+
+    GÜVENLİK: yalnızca YÖNETİCİ görebilir -- `/sistem/loglar`'ın aksine
+    (operatöre de açık genel arıza teşhis logu), bu uç nokta özellikle
+    "kimin parolası sıfırlandı", "kim hangi role yükseltildi" gibi hesap
+    yönetimi bilgilerini taşır; bu bilgi yalnızca yöneticinin işi."""
+    _rol_dogrula(kullanici, ROL_YONETICI)
+    sorgu = db.query(models.DenetimKaydi)
+    if kullanici_adi:
+        sorgu = sorgu.filter(models.DenetimKaydi.kullanici_adi.ilike(f"%{kullanici_adi.strip()}%"))
+    if eylem:
+        sorgu = sorgu.filter(models.DenetimKaydi.eylem == eylem.strip())
+    baslangic_dt = _iso_tarih_parametresini_coz(baslangic, "baslangic")
+    bitis_dt = _iso_tarih_parametresini_coz(bitis, "bitis")
+    if baslangic_dt:
+        sorgu = sorgu.filter(models.DenetimKaydi.zaman >= baslangic_dt)
+    if bitis_dt:
+        sorgu = sorgu.filter(models.DenetimKaydi.zaman <= bitis_dt)
+    return (
+        sorgu.order_by(models.DenetimKaydi.zaman.desc())
+        .offset(offset)
+        .limit(limit)
+        .all()
+    )
+
+
+@app.get("/denetim-kayitlari/eylem-listesi")
+def denetim_eylem_listesini_getir(db: Session = Depends(get_db), kullanici: models.Kullanici = Depends(_personel_girisi_gerekli)):
+    """Panelin filtre açılır menüsünü doldurmak için, o ana kadar KAYDEDİLMİŞ
+    benzersiz eylem türlerini döner -- sabit bir liste yerine bu tercih
+    edildi ki ileride yeni bir `_denetim_kaydet` çağrı noktası eklendiğinde
+    (bkz. yukarıdaki fonksiyonun docstring'i) filtre listesi otomatik
+    güncel kalsın, kimse ayrıca burayı da güncellemeyi unutmasın."""
+    _rol_dogrula(kullanici, ROL_YONETICI)
+    sonuc = db.query(models.DenetimKaydi.eylem).distinct().order_by(models.DenetimKaydi.eylem).all()
+    return {"eylemler": [s[0] for s in sonuc]}
+
+
 # ==================================================================
 # BİLDİRİM AYARLARI (Webhook)
 # ==================================================================
@@ -4186,7 +4259,7 @@ def sistem_ayarlarini_getir(_: models.Kullanici = Depends(_personel_girisi_gerek
 
 
 @app.put("/sistem/ayarlar")
-def sistem_ayarlarini_guncelle(yeni: dict = Body(...), kullanici: models.Kullanici = Depends(_personel_girisi_gerekli)):
+def sistem_ayarlarini_guncelle(yeni: dict = Body(...), db: Session = Depends(get_db), kullanici: models.Kullanici = Depends(_personel_girisi_gerekli)):
     _rol_dogrula(kullanici, ROL_YONETICI)
     mevcut = _sistem_ayarlari_oku()
     degisiklikler = []
@@ -4201,10 +4274,7 @@ def sistem_ayarlarini_guncelle(yeni: dict = Body(...), kullanici: models.Kullani
     # cevapsızdı. Gerçek bir değişiklik yoksa (aynı değerler tekrar
     # gönderildiyse) log spam'i olmasın diye yalnızca fark varsa yazılıyor.
     if degisiklikler:
-        logger.info(
-            "Sistem ayarları güncellendi: %s (güncelleyen: %s)",
-            "; ".join(degisiklikler), kullanici.kullanici_adi,
-        )
+        _denetim_kaydet(db, kullanici.kullanici_adi, "sistem_ayarlari_guncelle", "; ".join(degisiklikler))
     return mevcut
 
 

@@ -2395,6 +2395,55 @@ async function kullanicilariYukle() {
   }
 }
 
+// ================================================================
+// DENETİM KAYITLARI (2026-09-20) -- bkz. backend/main.py::_denetim_kaydet,
+// GET /denetim-kayitlari. Kullanıcı rolü/aktiflik değiştirme, parola
+// sıfırlama, kullanıcı/kamera silme, lisans aktivasyonu ve sistem ayarları
+// değişikliğinin kalıcı, filtrelenebilir izi. Yalnızca yönetici görebilir.
+// ================================================================
+
+let _denetimEylemListesiYuklendiMi = false;
+
+async function _denetimEylemListesiniDoldur() {
+  if (_denetimEylemListesiYuklendiMi) return;
+  const secim = document.getElementById("denetimFiltreEylem");
+  if (!secim) return;
+  try {
+    const r = await apiCagir("/denetim-kayitlari/eylem-listesi");
+    secim.innerHTML = '<option value="">Tümü</option>' + r.eylemler.map(
+      e => `<option value="${escapeHtml(e)}">${escapeHtml(e)}</option>`
+    ).join("");
+    _denetimEylemListesiYuklendiMi = true;
+  } catch (e) { console.error(e); }
+}
+
+async function denetimKayitlariniYukle() {
+  const tbody = document.getElementById("denetimKayitlariTablo");
+  if (!tbody) return;
+  await _denetimEylemListesiniDoldur();
+  const params = new URLSearchParams();
+  const kullaniciAdi = document.getElementById("denetimFiltreKullanici").value.trim();
+  const eylem = document.getElementById("denetimFiltreEylem").value;
+  const baslangic = document.getElementById("denetimFiltreBaslangic").value;
+  const bitis = document.getElementById("denetimFiltreBitis").value;
+  if (kullaniciAdi) params.set("kullanici_adi", kullaniciAdi);
+  if (eylem) params.set("eylem", eylem);
+  if (baslangic) params.set("baslangic", baslangic);
+  if (bitis) params.set("bitis", bitis);
+  try {
+    const kayitlar = await apiCagir(`/denetim-kayitlari?${params.toString()}`);
+    tbody.innerHTML = kayitlar.map(k => `
+      <tr>
+        <td class="text-nowrap small">${tarihFormatla(k.zaman)}</td>
+        <td><strong>${escapeHtml(k.kullanici_adi)}</strong></td>
+        <td><span class="badge bg-secondary">${escapeHtml(k.eylem)}</span></td>
+        <td class="small">${escapeHtml(k.aciklama)}</td>
+      </tr>`).join("") || `<tr><td colspan="4" class="text-center text-muted py-3">Kayıt bulunamadı</td></tr>`;
+  } catch (e) {
+    tbody.innerHTML = `<tr><td colspan="4" class="text-center text-muted py-3">Bu sekmeyi sadece yönetici görebilir</td></tr>`;
+  }
+}
+
 // rol="sakin" seçilince "Bağlı Kişi" alanını gösterir ve o anki kişi listesini
 // doldurur -- bir sakin hesabı mutlaka bir Kişi kaydına bağlı olmalı (bkz.
 // main.py::_sakin_kisi_id_dogrula, 400 döner aksi halde).
@@ -2659,6 +2708,10 @@ async function dogrulukTestiCalistir(olay) {
 document.querySelector('[data-bs-target="#sistem-sekme"]')?.addEventListener("click", () => {
   sistemSagliginiYukle(); loglariYukle(); sistemAyarlariYukle(); diskBilgisiYukle();
 });
+
+// Denetim Kayıtları sekmesi açıldığında otomatik yükle (bkz. yukarıdaki
+// denetimKayitlariniYukle -- aynı sistem-sekme deseni).
+document.querySelector('[data-bs-target="#denetim-sekme"]')?.addEventListener("click", denetimKayitlariniYukle);
 
 // ================================================================
 // KAMERA DUVARI — TAM EKRAN

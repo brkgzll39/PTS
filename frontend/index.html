@@ -348,6 +348,7 @@
     <button class="side-link" data-target="#site-sekme" data-rol-min="yonetici" data-rol-davranis="gizle"><i class="bi bi-diagram-3"></i>Site / Erişim Noktası</button>
     <button class="side-link" data-target="#kullanicilar-sekme" data-rol-min="yonetici" data-rol-davranis="gizle"><i class="bi bi-person-gear"></i>Kullanıcılar</button>
     <button class="side-link" data-target="#sistem-sekme" data-rol-min="yonetici" data-rol-davranis="gizle"><i class="bi bi-terminal"></i>Sistem / Log</button>
+    <button class="side-link" data-target="#denetim-sekme" data-rol-min="yonetici" data-rol-davranis="gizle"><i class="bi bi-journal-check"></i>Denetim Kayıtları</button>
     <div class="sidebar-footer"><span class="status-led"></span> Sistem çevrimiçi<br><small>TPAO PTS · v2.0</small></div>
   </aside>
   <main class="container-fluid app-main">
@@ -366,6 +367,7 @@
     <li class="nav-item" data-rol-min="yonetici" data-rol-davranis="gizle"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#test-sekme" type="button"><i class="bi bi-plus-circle me-1"></i>Test</button></li>
     <li class="nav-item" data-rol-min="yonetici" data-rol-davranis="gizle"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#lisans-sekme" type="button"><i class="bi bi-key-fill me-1"></i>Lisans</button></li>
     <li class="nav-item" data-rol-min="yonetici" data-rol-davranis="gizle"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#sistem-sekme" type="button"><i class="bi bi-terminal me-1"></i>Sistem</button></li>
+    <li class="nav-item" data-rol-min="yonetici" data-rol-davranis="gizle"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#denetim-sekme" type="button"><i class="bi bi-journal-check me-1"></i>Denetim Kayıtları</button></li>
   </ul>
 
   <div class="tab-content pt-3">
@@ -1136,6 +1138,55 @@
               <pre id="logKonteyneri" style="height:560px;overflow-y:auto;font-size:.72rem;background:#1a1d21;color:#a8b3b8;margin:0;padding:.75rem;border-radius:0 0 .5rem .5rem"></pre>
             </div>
           </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ================= DENETİM KAYITLARI (2026-09-20) =================
+         Kullanıcının "kalıcı bir veritabanı tablosu + panelde ayrı bir
+         Denetim Kayıtları ekranı olan tam bir audit-trail sistemi" isteği
+         üzerine eklendi (bkz. backend/main.py::_denetim_kaydet,
+         models.DenetimKaydi). Yalnızca yönetici görebilir -- hesap
+         yönetimiyle ilgili hassas bilgiler (kimin parolası sıfırlandı,
+         kim hangi role yükseltildi vb.) taşıyor. -->
+    <div class="tab-pane fade" id="denetim-sekme">
+      <div class="card">
+        <div class="card-header d-flex justify-content-between align-items-center">
+          <span><i class="bi bi-journal-check me-1"></i>Denetim Kayıtları</span>
+          <button class="btn btn-sm btn-outline-secondary" onclick="denetimKayitlariniYukle()" title="Yenile" aria-label="Yenile"><i class="bi bi-arrow-clockwise"></i></button>
+        </div>
+        <div class="card-body">
+          <p class="text-muted small mb-3">Kullanıcı rolü/aktiflik değiştirme, parola sıfırlama, kullanıcı oluşturma/
+            silme, kamera silme, lisans aktivasyonu ve sistem ayarları değiştirme gibi hassas yönetici işlemlerinin
+            kalıcı izi. Bu kayıtlar <code>loglar/pts.log</code> dosyasına da AYRICA yazılır (bkz. Sistem sekmesi) --
+            burası, aynı bilgiyi filtrelenebilir/sorgulanabilir şekilde sunar.</p>
+          <form class="row g-2 mb-3" id="denetimFiltreForm" onsubmit="return false;">
+            <div class="col-md-3">
+              <label class="form-label small" for="denetimFiltreKullanici">Kullanıcı adı</label>
+              <input type="text" class="form-control form-control-sm" id="denetimFiltreKullanici" placeholder="ör. admin">
+            </div>
+            <div class="col-md-3">
+              <label class="form-label small" for="denetimFiltreEylem">Eylem</label>
+              <select class="form-select form-select-sm" id="denetimFiltreEylem"><option value="">Tümü</option></select>
+            </div>
+            <div class="col-md-2">
+              <label class="form-label small" for="denetimFiltreBaslangic">Başlangıç</label>
+              <input type="date" class="form-control form-control-sm" id="denetimFiltreBaslangic">
+            </div>
+            <div class="col-md-2">
+              <label class="form-label small" for="denetimFiltreBitis">Bitiş</label>
+              <input type="date" class="form-control form-control-sm" id="denetimFiltreBitis">
+            </div>
+            <div class="col-md-2 d-flex align-items-end">
+              <button type="submit" class="btn btn-sm btn-primary w-100" onclick="denetimKayitlariniYukle()"><i class="bi bi-funnel"></i> Filtrele</button>
+            </div>
+          </form>
+        </div>
+        <div class="card-body p-0">
+          <table class="table table-hover mb-0 align-middle">
+            <thead class="table-light"><tr><th>Zaman</th><th>Kullanıcı</th><th>Eylem</th><th>Açıklama</th></tr></thead>
+            <tbody id="denetimKayitlariTablo"></tbody>
+          </table>
         </div>
       </div>
     </div>

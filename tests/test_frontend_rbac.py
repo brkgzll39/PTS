@@ -36,6 +36,10 @@ _OPERATOR_GORMELI = {
 _OPERATOR_GORMEMELI = {
     "#kamera-sekme", "#bariyer-sekme", "#bildirim-sekme", "#lisans-sekme",
     "#led-sekme", "#site-sekme", "#kullanicilar-sekme", "#sistem-sekme", "#test-sekme",
+    # 2026-09-20: Denetim Kayıtları -- hesap yönetimiyle ilgili hassas bilgi
+    # taşıdığı için (bkz. main.py::denetim_kayitlarini_listele) yalnızca
+    # yönetici görebilir.
+    "#denetim-sekme",
 }
 # "#test-sekme" kenar çubuğunda (sidebar) HİÇ bulunmuyor -- yalnızca ikinci/eski
 # sekme çubuğunda (#anaSekme) bir <li> olarak var (bkz. index.html civarı 347.

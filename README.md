@@ -2076,10 +2076,11 @@ geliştirilmesi gereken neler varsa yapar mısın") sonrası düzeltilenler:**
   değiştirildiği sorusu tamamen cevapsızdı. Artık bu altı işlemin tümü,
   ilgili kullanıcı adı ve neyin değiştiği (parolanın KENDİSİ hariç) ile
   loglanıyor; gerçek bir değişiklik yoksa (ör. aynı değerlerle boş bir PUT)
-  log spam'i olmasın diye hiçbir şey yazılmıyor. Bu, kalıcı bir veritabanı
-  tablosu + panel ekranı olan tam bir denetim sistemi DEĞİL (bu, daha büyük
-  ve ayrı bir çalışma gerektirir) -- şimdilik yalnızca mevcut `/sistem/
-  loglar` ekranından görülebilen bir metin izi.
+  log spam'i olmasın diye hiçbir şey yazılmıyor. **Güncelleme (aynı gün,
+  devam) — bkz. aşağıdaki "Denetim Kayıtları" bölümü:** bu artık yalnızca
+  log dosyasına yazan bir metin izi değil, kalıcı bir veritabanı tablosuna
+  da yazan ve panelde ayrı bir ekrandan görüntülenip filtrelenebilen tam bir
+  audit-trail sistemi.
 - Yeni `tests/test_lisans_suresi_uyarisi.py` dosyası (gerçekten çalıştırılıp
   doğrulandı) frontend'deki lisans uyarısı görselleştirmesini kapsıyor;
   `tests/test_api.py`'ye (yalnızca `py_compile` ile doğrulandı) yukarıdaki
@@ -2097,6 +2098,42 @@ otomatik yedekleme yok, yalnızca manuel `/sistem/yedek` indirmesi var --
 SQL Server kurulumlarında zaten Agent bakım planı + gecikme izleme (yukarı
 bakınız, "SQL Server Yedeği İzleme") olduğu için bu yalnızca küçük/opsiyonel
 bir iyileştirme olarak not edildi.
+
+## Denetim Kayıtları (Audit Trail) (2026-09-20)
+
+Kullanıcının isteği üzerine, yukarıdaki "kim ne yaptı" logunun metin-dosyası
+sınırlaması giderildi: artık kalıcı bir `denetim_kayitlari` veritabanı tablosu
+(`models.DenetimKaydi`) VE panelde ayrı bir **"Denetim Kayıtları"** sekmesi
+(yalnızca yönetici, Sistem sekmesinin yanında yeni bir nav/kenar çubuğu
+girişi) var.
+
+- **Kapsanan işlemler** (tek çağrı noktası: `main.py::_denetim_kaydet`, hem
+  log dosyasına HEM veritabanına yazar): kullanıcı oluşturma/güncelleme/
+  silme (rol değişikliği, aktif/pasif yapma, parola sıfırlama dahil -- parola
+  METNİ asla kaydedilmez), kamera silme, lisans aktivasyonu, sistem ayarları
+  değiştirme. Gerçek bir değişiklik yoksa (ör. aynı değerlerle boş bir PUT)
+  hiçbir kayıt oluşturulmaz.
+- **Panel ekranı:** kullanıcı adına (kısmi eşleşme), eyleme (açılır menüden
+  seçilir, sunucudaki GERÇEK eylem türlerinden otomatik doldurulur -- ileride
+  yeni bir `_denetim_kaydet` çağrı noktası eklenirse filtre listesi elle
+  güncellenmesi gerekmeden otomatik güncel kalır) ve tarih aralığına göre
+  filtrelenebilir.
+- **Dayanıklılık:** denetim kaydının veritabanına YAZILAMAMASI (ör. o an
+  veritabanı kilitliyse) asıl işlemi (kullanıcı silme, kamera silme vb.)
+  ASLA engellemez/geri almaz -- ayrı bir try/except'e sarılı, ikincil bir
+  gözlemlenebilirlik özelliğidir.
+- **Güvenlik:** `GET /denetim-kayitlari` ve `/denetim-kayitlari/eylem-listesi`
+  yalnızca **yönetici** rolüne açık -- `/sistem/loglar`'ın aksine (genel arıza
+  teşhis logu, operatöre de açık), bu bilgi özellikle hesap yönetimiyle
+  ilgili hassas ayrıntılar (kimin parolası sıfırlandı, kim hangi role
+  yükseltildi) taşıdığı için operatöre bile kapalı tutuldu.
+- Bu, LOG DOSYASININ YERİNE geçmiyor -- iki bağımsız kayıt yeri bilinçli
+  olarak korundu (biri bozulursa/silinirse diğeri hâlâ durur).
+- Yeni `tests/test_denetim_kayitlari_frontend.py` dosyası (gerçekten
+  çalıştırılıp doğrulandı) panel ekranını kapsıyor; `tests/test_api.py`'ye
+  (yalnızca `py_compile` ile doğrulandı) uç nokta RBAC'ı, filtreleme ve her
+  bir çağrı noktasının gerçekten bir denetim kaydı bıraktığını doğrulayan
+  testler eklendi.
 
 ## Toplu Doğruluk Testi (Canlı Sisteme Dokunmadan Eşik/Model Karşılaştırma)
 

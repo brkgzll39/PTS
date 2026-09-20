@@ -274,3 +274,25 @@ class BildirimAyarlari(Base):
     http_metot = Column(String(10), default="POST")
     aktif = Column(Boolean, default=True)
     olusturma_tarihi = Column(DateTime, default=datetime.now)
+
+
+class DenetimKaydi(Base):
+    """Hassas yönetici işlemlerinin kalıcı denetim (audit) izi.
+
+    KÖK NEDEN (2026-09-20): kullanıcı rolü/aktiflik değiştirme, hesap silme,
+    kamera silme, lisans aktivasyonu, sistem ayarları değiştirme gibi
+    işlemler önceden yalnızca (döngüsel olarak silinen/sıkıştırılan)
+    `loglar/pts.log` metin dosyasına yazılıyordu -- ne filtrelenebiliyordu
+    ne de panelde görülebiliyordu, yalnızca sunucuya dosya erişimi olan biri
+    okuyabilirdi. Bu tablo AYNI olayları (bkz. main.py::_denetim_kaydet)
+    kalıcı, sorgulanabilir ve panelde ("Denetim Kayıtları" sekmesi, yalnızca
+    yönetici) görüntülenebilir hâle getiriyor. Log dosyasına yazma DEVAM
+    EDİYOR (iki bağımsız kayıt yeri -- biri bozulursa/silinirse diğeri
+    hâlâ durur); bu tablo bunun YERİNE değil, YANINDA eklendi."""
+    __tablename__ = "denetim_kayitlari"
+
+    id = Column(Integer, primary_key=True, index=True)
+    zaman = Column(DateTime, default=datetime.now, index=True)
+    kullanici_adi = Column(String(80), nullable=False, index=True)  # işlemi YAPAN kullanıcı
+    eylem = Column(String(50), nullable=False, index=True)  # ör. "kullanici_sil", "kamera_sil"
+    aciklama = Column(Text, nullable=False)  # insan-okunur detay (ör. "rol: izleyici -> operatör")

@@ -318,6 +318,14 @@ def test_kamera_silme_loglanir(client, caplog, yetkili_header):
     assert kamera_id in caplog.text
     assert "Silinecek Denetim Kamerası" in caplog.text
 
+    # 2026-09-20 (devam, kullanıcı talebi): log dosyasına EK olarak kalıcı
+    # `denetim_kayitlari` tablosuna da yazılmalı (bkz. main.py::_denetim_kaydet).
+    r3 = client.get("/denetim-kayitlari", params={"eylem": "kamera_sil"}, headers=yetkili_header)
+    assert r3.status_code == 200, r3.text
+    aciklamalar = " ".join(k["aciklama"] for k in r3.json())
+    assert kamera_id in aciklamalar
+    assert "Silinecek Denetim Kamerası" in aciklamalar
+
 
 def test_lisans_aktivasyonu_loglanir(client, caplog, yetkili_header):
     """2026-09-20: bir lisansın aktive edilmesi (hangi müşteri, hangi lisans
@@ -328,6 +336,10 @@ def test_lisans_aktivasyonu_loglanir(client, caplog, yetkili_header):
     assert r.status_code == 200, r.text
     assert "Loglama Test Müşterisi" in caplog.text
     assert r.json()["lisans_id"] in caplog.text
+
+    r2 = client.get("/denetim-kayitlari", params={"eylem": "lisans_aktivasyon"}, headers=yetkili_header)
+    assert r2.status_code == 200, r2.text
+    assert any("Loglama Test Müşterisi" in k["aciklama"] for k in r2.json())
 
 
 def test_lisans_kalan_gun_ve_yakinda_doluyor_bayragi(client, yetkili_header):
@@ -1688,6 +1700,12 @@ def test_kullanici_guncelle_rol_degisikligi_loglanir(client, caplog, yetkili_hea
     assert "parola sıfırlandı" in caplog.text
     assert "YeniGucluParola456!" not in caplog.text  # parolanın kendisi ASLA loglanmamalı
 
+    r3 = client.get("/denetim-kayitlari", params={"kullanici_adi": "denetim-log-testi"}, headers=yetkili_header)
+    assert r3.status_code == 200, r3.text
+    kayit = next(k for k in r3.json() if k["eylem"] == "kullanici_guncelle")
+    assert "rol: izleyici -> operatör" in kayit["aciklama"]
+    assert "YeniGucluParola456!" not in kayit["aciklama"]
+
 
 def test_kullanici_guncelle_degisiklik_yoksa_loglanmiyor(client, caplog, yetkili_header):
     """Boş/etkisiz bir PUT (mevcut değerlerin aynısı gönderilmesi) log
@@ -1713,6 +1731,10 @@ def test_kullanici_silme_loglanir(client, caplog, yetkili_header):
         r2 = client.delete(f"/kullanicilar/{kid}", headers=yetkili_header)
     assert r2.status_code == 200, r2.text
     assert "silinecek-denetim-testi" in caplog.text
+
+    r3 = client.get("/denetim-kayitlari", params={"eylem": "kullanici_sil"}, headers=yetkili_header)
+    assert r3.status_code == 200, r3.text
+    assert any("silinecek-denetim-testi" in k["aciklama"] for k in r3.json())
 
 
 def test_kisi_silinince_bagli_sakin_hesabinin_kisi_id_temizlenir(client, yetkili_header):
@@ -2046,13 +2068,87 @@ def test_sistem_ayarlari_degisikligi_loglanir(client, caplog, yetkili_header):
         assert r.status_code == 200, r.text
         assert f"supheli_esik: {onceki!r} -> {onceki + 5!r}" in caplog.text
 
+        # 2026-09-20 (devam, kullanıcı talebi): log dosyasına EK olarak kalıcı
+        # `denetim_kayitlari` tablosuna da yazılmalı.
+        r_denetim = client.get("/denetim-kayitlari", params={"eylem": "sistem_ayarlari_guncelle"}, headers=yetkili_header)
+        assert r_denetim.status_code == 200, r_denetim.text
+        assert any(f"supheli_esik: {onceki!r} -> {onceki + 5!r}" in k["aciklama"] for k in r_denetim.json())
+
         caplog.clear()
         with caplog.at_level("INFO", logger="pts"):
             r2 = client.put("/sistem/ayarlar", json={"supheli_esik": onceki + 5}, headers=yetkili_header)
         assert r2.status_code == 200, r2.text
-        assert "Sistem ayarları güncellendi" not in caplog.text
+        assert "sistem_ayarlari_guncelle" not in caplog.text  # gerçek değişiklik yoksa log/denetim kaydı YOK
     finally:
         client.put("/sistem/ayarlar", json={"supheli_esik": onceki}, headers=yetkili_header)
+
+
+# ------------------------------------------------------------------
+# GET /denetim-kayitlari, GET /denetim-kayitlari/eylem-listesi (2026-09-20)
+# ------------------------------------------------------------------
+# Kullanıcı talebi: "kalıcı bir veritabanı tablosu + panelde ayrı bir Denetim
+# Kayıtları ekranı olan tam bir audit-trail sistemi kurabilirim -- bunu
+# yapabilirsin". Yukarıdaki *_loglanir testleri her bir çağrı noktasının
+# (kullanici_guncelle/sil, kamera_sil, lisans_aktive_et, sistem_ayarlarini_
+# guncelle) doğru şekilde kayıt oluşturduğunu doğruluyor; buradaki testler
+# uç noktanın kendisinin (RBAC, filtreleme) doğru çalıştığını doğruluyor.
+
+def test_denetim_kayitlari_girissiz_401_doner(client):
+    r = client.get("/denetim-kayitlari")
+    assert r.status_code == 401, r.text
+
+
+def test_denetim_kayitlari_yalniz_yonetici_gorebilir(client, izleyici_header, operator_header, yetkili_header):
+    """RBAC: hesap yönetimiyle ilgili hassas bilgi taşıdığı için (bkz.
+    endpoint docstring'i) operatöre bile KAPALI olmalı -- yalnızca yönetici."""
+    assert client.get("/denetim-kayitlari", headers=izleyici_header).status_code == 403
+    assert client.get("/denetim-kayitlari", headers=operator_header).status_code == 403
+    assert client.get("/denetim-kayitlari", headers=yetkili_header).status_code == 200
+
+
+def test_kullanici_olusturma_da_denetim_kaydi_birakir(client, yetkili_header):
+    """kullanici_ekle önceden de logluyordu (bkz. patch #50) ama YENİ
+    denetim tablosuna da yazdığını doğrula (bkz. main.py::kullanici_ekle)."""
+    r = client.post("/kullanicilar", json={
+        "kullanici_adi": "denetim-olusturma-testi", "parola": "GucluParola123!", "rol": "izleyici",
+    }, headers=yetkili_header)
+    assert r.status_code == 200, r.text
+    r2 = client.get("/denetim-kayitlari", params={"eylem": "kullanici_olustur"}, headers=yetkili_header)
+    assert r2.status_code == 200, r2.text
+    assert any("denetim-olusturma-testi" in k["aciklama"] for k in r2.json())
+
+
+def test_denetim_kayitlari_kullanici_adina_gore_filtreler(client, yetkili_header):
+    client.post("/kullanicilar", json={
+        "kullanici_adi": "filtre-testi-a", "parola": "GucluParola123!", "rol": "izleyici",
+    }, headers=yetkili_header)
+    client.post("/kullanicilar", json={
+        "kullanici_adi": "filtre-testi-b", "parola": "GucluParola123!", "rol": "izleyici",
+    }, headers=yetkili_header)
+    r = client.get("/denetim-kayitlari", params={"kullanici_adi": "filtre-testi-a"}, headers=yetkili_header)
+    assert r.status_code == 200, r.text
+    aciklamalar = [k["aciklama"] for k in r.json()]
+    assert any("filtre-testi-a" in a for a in aciklamalar)
+    assert not any("filtre-testi-b" in a for a in aciklamalar)
+
+
+def test_denetim_kayitlari_negatif_limit_422_doner(client, yetkili_header):
+    r = client.get("/denetim-kayitlari", params={"limit": -1}, headers=yetkili_header)
+    assert r.status_code == 422, r.text
+
+
+def test_denetim_eylem_listesi_sonuc_doner(client, yetkili_header):
+    client.post("/kullanicilar", json={
+        "kullanici_adi": "eylem-listesi-testi", "parola": "GucluParola123!", "rol": "izleyici",
+    }, headers=yetkili_header)
+    r = client.get("/denetim-kayitlari/eylem-listesi", headers=yetkili_header)
+    assert r.status_code == 200, r.text
+    assert "kullanici_olustur" in r.json()["eylemler"]
+
+
+def test_denetim_eylem_listesi_operatore_kapali(client, operator_header):
+    r = client.get("/denetim-kayitlari/eylem-listesi", headers=operator_header)
+    assert r.status_code == 403, r.text
 
 
 def test_capraz_kamera_manuel_kayitlari_hic_etkilemez(client, operator_header):
