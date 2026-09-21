@@ -3473,3 +3473,200 @@ def test_rapor_vardiya_sutunu_acik_oturumdaki_kaydi_dogru_etiketler(client, yetk
     assert guvenlik_adi in satir_by_plaka["34 GVN 09B"]["vardiya"], (
         f"oturum AÇIKKEN oluşan kayıt, o oturumun sahibiyle etiketlenmeli: {satir_by_plaka['34 GVN 09B']['vardiya']}"
     )
+
+
+# ================================================================
+# "VARDİYA GRUPLARI" (2026-09-21) -- kullanıcı talebi: "kayıtlar ekranına
+# yeni bir sütun ekleyebilir miyiz. A B C D Vardiyaları olacak şekilde ...
+# LOJMAN A Vardiyası Bülent ile aynı zaman aralığında çalışacağı için ...
+# Ana nizamiyeden bülent kontrol ettiğinde Lojman A geçişlerini de
+# görebilecek ... A B C D vardiyaları 8 saat bazlı çalışmakta ... giriş
+# saatinden 8 saat sonra otomatik çıkış yapılsın." Aşağıdaki testler:
+#  1) kullanici_ekle/guncelle'nin vardiya_adi'nı doğru normalize/atayıp
+#     kaldırdığını,
+#  2) AYNI vardiya adını paylaşan (farklı hesap/nokta) iki güvenlik
+#     kullanıcısının birbirinin kayıtlarını görebildiğini,
+#  3) Kayıtlar ekranındaki "Vardiya" (A/B/C/D) filtresini,
+#  4) Plaka Analizi'ndeki "vardiya_adi" etiketleme alanını,
+#  5) 8 saati aşan açık oturumların otomatik kapandığını
+# doğrudan doğrular.
+# ================================================================
+
+def _rbac_guvenlik_kullanici_olustur_vardiyali(client, yetkili_header, vardiya_adi: str) -> tuple:
+    """`_rbac_guvenlik_kullanici_olustur` ile AYNI ama oluşturulan hesaba
+    ADLANDIRILMIŞ bir vardiya grubu (bkz. models.Kullanici.vardiya_adi)
+    atar."""
+    import uuid
+    kullanici_adi = f"rbac-guvenlik-vardiyali-{uuid.uuid4().hex[:10]}"
+    r = client.post("/kullanicilar", json={
+        "kullanici_adi": kullanici_adi, "parola": "GucluParola123!", "rol": "güvenlik",
+        "vardiya_adi": vardiya_adi,
+    }, headers=yetkili_header)
+    assert r.status_code == 200, r.text
+    assert r.json()["vardiya_adi"] == vardiya_adi
+    kullanici_id = r.json()["id"]
+    r2 = client.post("/auth/giris", json={"kullanici_adi": kullanici_adi, "parola": "GucluParola123!"})
+    assert r2.status_code == 200, r2.text
+    return kullanici_id, {"Authorization": f"Bearer {r2.json()['token']}"}
+
+
+def test_kullanici_ekle_vardiya_adi_normalize_edilir(client, yetkili_header):
+    """Baş/son boşluk temizlenmeli, büyük harfe çevrilmeli (bkz.
+    main.py::_vardiya_adi_normalize) -- arayüz A/B/C/D önerir ama alan
+    serbest metindir."""
+    import uuid
+    kullanici_adi = f"vardiya-normalize-{uuid.uuid4().hex[:10]}"
+    r = client.post("/kullanicilar", json={
+        "kullanici_adi": kullanici_adi, "parola": "GucluParola123!", "rol": "güvenlik",
+        "vardiya_adi": "  a  ",
+    }, headers=yetkili_header)
+    assert r.status_code == 200, r.text
+    assert r.json()["vardiya_adi"] == "A"
+
+
+def test_kullanici_ekle_vardiya_adi_gonderilmezse_none_doner(client, yetkili_header):
+    """Varsayılan: vardiya_adi hiç gönderilmezse hesap bağımsız kalır (eski/
+    varsayılan davranış -- yalnızca KENDİ oturumlarını görür)."""
+    import uuid
+    kullanici_adi = f"vardiya-yok-{uuid.uuid4().hex[:10]}"
+    r = client.post("/kullanicilar", json={
+        "kullanici_adi": kullanici_adi, "parola": "GucluParola123!", "rol": "güvenlik",
+    }, headers=yetkili_header)
+    assert r.status_code == 200, r.text
+    assert r.json()["vardiya_adi"] is None
+
+
+def test_kullanici_guncelle_vardiya_adi_atanir_ve_kaldirilir(client, yetkili_header):
+    """`kullanici_guncelle`: None = değiştirme; boş string (normalize
+    sonrası) = kaldır; dolu string = ata (bkz. schemas.KullaniciGuncelle.
+    vardiya_adi docstring'i)."""
+    guvenlik_id, _ = _rbac_guvenlik_kullanici_olustur(client, yetkili_header)
+
+    # Boş PUT (vardiya_adi göndermeden) -- None kalmalı.
+    r0 = client.put(f"/kullanicilar/{guvenlik_id}", json={}, headers=yetkili_header)
+    assert r0.status_code == 200, r0.text
+    assert r0.json()["vardiya_adi"] is None
+
+    r1 = client.put(f"/kullanicilar/{guvenlik_id}", json={"vardiya_adi": " b "}, headers=yetkili_header)
+    assert r1.status_code == 200, r1.text
+    assert r1.json()["vardiya_adi"] == "B"
+
+    r2 = client.put(f"/kullanicilar/{guvenlik_id}", json={"vardiya_adi": "   "}, headers=yetkili_header)
+    assert r2.status_code == 200, r2.text
+    assert r2.json()["vardiya_adi"] is None, "boş string (normalize sonrası) ataması KALDIRMALI"
+
+
+def test_vardiya_grubu_paylasimli_gorunurluk_farkli_hesaplar_arasinda(client, yetkili_header):
+    """Ana özellik: AYNI vardiya adına ("A") atanmış, birbirinden BAĞIMSIZ
+    iki güvenlik hesabı (ör. Ana Nizamiye + Lojman Nizamiye) birbirinin
+    vardiya penceresindeki kayıtları görebilmeli -- kullanıcı talebi:
+    "Ana nizamiyeden bülent kontrol ettiğinde Lojman A geçişlerini de
+    görebilecek." Farklı ("B") bir gruba atanmış üçüncü bir hesap ise
+    GÖREMEMELİ."""
+    _, ana_a_header = _rbac_guvenlik_kullanici_olustur_vardiyali(client, yetkili_header, "A")
+    _, lojman_a_header = _rbac_guvenlik_kullanici_olustur_vardiyali(client, yetkili_header, "A")
+    _, b_header = _rbac_guvenlik_kullanici_olustur_vardiyali(client, yetkili_header, "B")
+
+    # "lojman-A" hesabının oturumu AÇIKKEN oluşan bir kayıt.
+    r = client.post("/kayitlar/otomatik", data={
+        "plaka_no": "34 VG 01", "kamera_id": "LOJMAN-KAM", "yon": "giris", "guven_skoru": 0.99,
+    })
+    assert r.status_code == 200, r.text
+
+    # AYNI ("A") gruptaki diğer hesap (farklı fiziksel nokta) bu kaydı görmeli.
+    r_ana = client.get("/kayitlar", params={"plaka": "34 VG 01"}, headers=ana_a_header)
+    assert r_ana.status_code == 200, r_ana.text
+    assert len(r_ana.json()) == 1, "aynı vardiya grubundaki BAŞKA bir hesap bu kaydı görebilmeli"
+
+    # FARKLI ("B") gruptaki hesap GÖREMEMELİ.
+    r_b = client.get("/kayitlar", params={"plaka": "34 VG 01"}, headers=b_header)
+    assert r_b.status_code == 200, r_b.text
+    assert r_b.json() == [], "farklı vardiya grubundaki bir hesap bu kaydı GÖRMEMELİ"
+
+
+def test_kayitlar_vardiya_adi_filtresi_dogru_kayitlari_getirir(client, yetkili_header):
+    """Kayıtlar ekranındaki "Vardiya" filtresi (rol ne olursa olsun
+    çağrılabilir, bkz. main.py::_vardiya_adi_filtresi_uygula) -- "Tüm
+    Güvenlik Personeli kayıtlar ekranından A B C D Vardiyalarında geçen
+    araçları filtreleyip ... arayabilsin" talebini doğrular."""
+    _, a_header = _rbac_guvenlik_kullanici_olustur_vardiyali(client, yetkili_header, "A")
+
+    r1 = client.post("/kayitlar/otomatik", data={
+        "plaka_no": "34 VG 02", "kamera_id": "KAM-1", "yon": "giris", "guven_skoru": 0.99,
+    })
+    assert r1.status_code == 200, r1.text
+
+    # Yönetici (filtresiz görünürlük) "A" filtresini uygularsa yalnızca bu kaydı görmeli.
+    r_a = client.get("/kayitlar", params={"plaka": "34 VG 02", "vardiya_adi": "a"}, headers=yetkili_header)
+    assert r_a.status_code == 200, r_a.text
+    assert len(r_a.json()) == 1, "küçük harfle gönderilse bile normalize edilip eşleşmeli"
+    assert r_a.json()[0]["vardiya_adi"] == "A"
+
+    # Hiç kullanılmayan bir vardiya adı -- GÜVENLİ TARAF: boş liste döner.
+    r_c = client.get("/kayitlar", params={"plaka": "34 VG 02", "vardiya_adi": "C"}, headers=yetkili_header)
+    assert r_c.status_code == 200, r_c.text
+    assert r_c.json() == []
+
+    # Filtre uygulanmadan (vardiya_adi yok) da kayıt görünmeli VE "Vardiya" sütunu dolu olmalı.
+    r_tumu = client.get("/kayitlar", params={"plaka": "34 VG 02"}, headers=yetkili_header)
+    assert r_tumu.status_code == 200, r_tumu.text
+    assert r_tumu.json()[0]["vardiya_adi"] == "A"
+    del a_header  # yalnızca hesabı oluşturmak için gerekliydi
+
+
+def test_plaka_analizinde_vardiya_adi_alani_dolar(client, yetkili_header):
+    """"plaka arayınca karşısına kimin vardiyasında girip çıktığı
+    gözükebilsin" talebi -- bkz. main.py::plaka_analiz, son_kayitlar[].
+    vardiya_adi."""
+    _rbac_guvenlik_kullanici_olustur_vardiyali(client, yetkili_header, "D")
+    r1 = client.post("/kayitlar/otomatik", data={
+        "plaka_no": "34 VG 03", "kamera_id": "KAM-1", "yon": "giris", "guven_skoru": 0.99,
+    })
+    assert r1.status_code == 200, r1.text
+    r2 = client.get("/kayitlar/analiz/34 VG 03", headers=yetkili_header)
+    assert r2.status_code == 200, r2.text
+    son_kayitlar = r2.json()["son_kayitlar"]
+    assert len(son_kayitlar) == 1
+    assert son_kayitlar[0]["vardiya_adi"] == "D"
+
+
+def test_vardiya_otomatik_kapama_8_saati_asan_acik_oturumu_kapatir(client, yetkili_header):
+    """"A B C D vardiyaları 8 saat bazlı çalışmakta yani vardiya amiri
+    çıkış yapmayı unutsa bile giriş saatinden 8 saat sonra otomatik çıkış
+    yapılsın" -- bkz. main.py::_vardiya_otomatik_kapama_calistir. Giriş
+    zamanı elle 9 saat geriye alınarak "unutulmuş, süresi geçmiş" bir açık
+    oturum simüle edilir; 7 saat önce açılmış bir oturum ise HENÜZ
+    kapanmamalı."""
+    from backend.database import SessionLocal
+    from backend import models as _models
+
+    guvenlik_id, _ = _rbac_guvenlik_kullanici_olustur(client, yetkili_header)
+    db = SessionLocal()
+    try:
+        oturum = db.query(_models.VardiyaOturumu).filter(
+            _models.VardiyaOturumu.kullanici_id == guvenlik_id
+        ).first()
+        assert oturum is not None and oturum.cikis_zamani is None
+        gercek_giris = datetime.now() - timedelta(hours=9)
+        oturum.giris_zamani = gercek_giris
+        db.commit()
+
+        guvenlik_id2, _ = _rbac_guvenlik_kullanici_olustur(client, yetkili_header)
+        oturum2 = db.query(_models.VardiyaOturumu).filter(
+            _models.VardiyaOturumu.kullanici_id == guvenlik_id2
+        ).first()
+        oturum2.giris_zamani = datetime.now() - timedelta(hours=7)
+        db.commit()
+
+        kapatilan = pts_main._vardiya_otomatik_kapama_calistir(db)
+        assert kapatilan == 1, "yalnızca 8 saati AŞAN oturum kapatılmalı"
+
+        db.refresh(oturum)
+        db.refresh(oturum2)
+        assert oturum.cikis_zamani is not None, "9 saat önce açılmış oturum 8 saat sınırını aştığı için kapanmalı"
+        assert oturum.cikis_zamani == gercek_giris + timedelta(hours=8), (
+            "çıkış zamanı ŞİMDİ değil, giriş+8 saat olarak ayarlanmalı"
+        )
+        assert oturum2.cikis_zamani is None, "7 saat önce açılmış oturum HENÜZ 8 saati aşmadığı için kapanmamalı"
+    finally:
+        db.close()

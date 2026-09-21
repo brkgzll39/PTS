@@ -106,6 +106,12 @@ class KullaniciCevap(BaseModel):
     # main.py::_kullanicinin_izinli_kameralari) -- aşağıdaki validator ham
     # string'i response'ta gerçek bir liste olarak döndürmek için çözer.
     kamera_erisim_listesi: Optional[List[str]] = None
+    # "Vardiya Grupları" (2026-09-21): None = bu hesap adlandırılmış bir
+    # vardiya grubuna atanmamış (bkz. main.py::_kullanicinin_vardiya_pencereleri
+    # ve models.Kullanici.vardiya_adi). Dolu ise (ör. "A"), AYNI değeri
+    # taşıyan tüm hesapların vardiya oturumları görünürlük açısından
+    # BİRLEŞİK sayılır.
+    vardiya_adi: Optional[str] = None
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -133,6 +139,11 @@ class KullaniciOlustur(BaseModel):
     # (bkz. main.py::_kamera_id_listesini_dogrula -- geçersiz id'ler 400 ile
     # reddedilir).
     kamera_erisim_listesi: Optional[List[str]] = None
+    # "Vardiya Grupları" (2026-09-21): boş/None = adlandırılmış bir vardiya
+    # grubuna atanmaz (bkz. main.py::kullanici_ekle -- baş/son boşluk
+    # temizlenir, büyük harfe çevrilir; arayüz A/B/C/D önerir ama serbest
+    # metindir).
+    vardiya_adi: Optional[str] = Field(None, max_length=20)
 
     @field_validator("rol")
     @classmethod
@@ -157,6 +168,12 @@ class KullaniciGuncelle(BaseModel):
     # kamera_roi_guncelle'deki aynı "temizle" deseniyle tutarlı).
     kamera_erisim_listesi: Optional[List[str]] = None
     kamera_erisimi_temizle: bool = False
+    # "Vardiya Grupları" (2026-09-21): None = değiştirme (diğer alanlarla
+    # aynı kural). Boş string (baş/son boşluk temizlendikten sonra) gönderilirse
+    # atama TAMAMEN KALDIRILIR (NULL'a döner) -- kamera_erisim_listesi'ndeki
+    # gibi ayrı bir "temizle" bayrağına GEREK YOK, çünkü boş bir vardiya adı
+    # zaten geçerli bir değer DEĞİLDİR (bkz. main.py::kullanici_guncelle).
+    vardiya_adi: Optional[str] = Field(None, max_length=20)
 
     @field_validator("rol")
     @classmethod
@@ -321,6 +338,14 @@ class KayitCevap(BaseModel):
     manuel_giris: bool = False
     duzenleyen: Optional[str] = None
     duzenleme_tarihi: Optional[datetime] = None
+    # "Vardiya Grupları" (2026-09-21): bu bir ORM sütunu DEĞİLDİR -- bkz.
+    # main.py::_kayitlarin_vardiya_adlarini_ekle (bellek-içi olarak hesaplanıp
+    # yalnızca ilgili uçlarda atanır; atanmadığı uçlarda `from_attributes`
+    # sorunsuzca bu varsayılan `None`a düşer). Bu kaydın gerçekleştiği anda
+    # AÇIK olan adlandırılmış vardiya oturumlarının (ör. "A", birden fazlaysa
+    # "A/B") adı -- Kayıtlar ekranındaki "Vardiya" sütunu/filtresi ve Plaka
+    # Analizi için.
+    vardiya_adi: Optional[str] = None
 
     model_config = ConfigDict(from_attributes=True)
 

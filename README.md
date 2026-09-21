@@ -2622,3 +2622,77 @@ kutusunun işareti kaldırılıp yalnızca Lojman'ın 2 kamerası seçilir — B
 Ana Nizamiye'nin 4 kamerasını ne canlı izleyebilir ne de genel Kayıtlar
 listesinde görebilir, ama bir aracı ararken (Plaka Analizi) tüm noktaların
 geçmişine erişebilir.
+
+## Vardiya Grupları ve Otomatik Kapanma (2026-09-21)
+
+Kullanıcı talebi: "kayıtlar ekranına yeni bir sütun ekleyebilir miyiz. A B C D
+Vardiyaları olacak şekilde. bir de LOJMAN A Vardiyası Bülent ile aynı zaman
+aralığında çalışacağı için Bülent vardiyası ve A vardiyası giriş yaptığı zaman
+aynı raporlamayı yapabiliyor olması gerekiyor. Ana nizamiyeden bülent kontrol
+ettiğinde Lojman A geçişlerini de görebilecek. Tüm Güvenlik Personeli kayıtlar
+ekranından A B C D Vardiyalarında geçen araçları filtreleyip plaka arayınca
+karşısına kimin vardiyasında girip çıktığı gözükebilsin. Bir de şunu istiyorum.
+A B C D vardiyaları 8 saat bazlı çalışmakta yani vardiya amiri çıkış yapmayı
+unutsa bile giriş saatinden 8 saat sonra otomatik çıkış yapılsın."
+
+Bu talep, yukarıdaki "Nizamiye Bazlı Kamera Erişimi" özelliğiyle BİRLİKTE
+düşünüldü: aynı PTS kurulumunu farklı fiziksel noktalardan (ör. Ana Nizamiye +
+Lojman Nizamiye) çalıştıran iki ayrı bilgisayar senaryosunda, her nokta kendi
+kameralarına kısıtlı kalırken (kamera erişimi), VARDİYA bazlı kayıt
+görünürlüğünün noktalar ARASI paylaşılabilmesi gerekiyordu.
+
+**Ne eklendi:**
+
+- `Kullanici.vardiya_adi` (bkz. `models.py`): bir hesaba atanabilen,
+  serbest metin ama arayüzde A/B/C/D önerilen bir "vardiya grubu adı".
+  Baş/son boşluk temizlenir, büyük harfe çevrilir (`_vardiya_adi_normalize`).
+  NULL/boş = hesap bağımsız kalır (eski/varsayılan davranış: yalnızca KENDİ
+  vardiya oturumlarını görür).
+- **Paylaşımlı görünürlük:** AYNI `vardiya_adi`'na sahip TÜM hesapların vardiya
+  oturumları (giriş/çıkış), kayıt görünürlüğü açısından BİRLEŞİK sayılır (bkz.
+  `_kullanicinin_vardiya_pencereleri`). Örnek: Lojman Nizamiye'deki "Bülent"
+  hesabı "A" vardiyasına, Ana Nizamiye'deki başka bir hesap da "A" vardiyasına
+  atanırsa, ikisi de birbirinin vardiya penceresinde geçen kayıtları (iki nokta
+  BİRLİKTE) görebilir — fiziksel nokta/kamera farklı olsa bile.
+- **Kayıtlar ekranında "Vardiya" sütunu ve filtresi:** her kayıt, o an AÇIK olan
+  adlandırılmış vardiya oturumlarının adıyla (ör. "A", aynı anda birden fazla
+  farklı vardiya açıksa "A/B") etiketlenir (bkz. `_kayitlarin_vardiya_adlarini_
+  ekle`) — bu, rapor (Excel/PDF) dışa aktarımındaki AD+SAAT etiketinden
+  (`_vardiya_etiketleri_haritasi`, adlandırılmamış hesaplar için de dolan, ayrı
+  bir özellik) BİLİNÇLİ olarak farklıdır. Ayrıca rol ne olursa olsun (yalnızca
+  güvenlik personeli değil, TÜM personel) kullanılabilen bir "Vardiya" filtresi
+  eklendi (`_vardiya_adi_filtresi_uygula`) — Excel/PDF dışa aktarma da bu
+  filtreyi kullanır.
+- **Plaka Analizi:** "son_kayitlar" listesindeki her kayda da aynı `vardiya_adi`
+  etiketi eklendi — "plaka arayınca karşısına kimin vardiyasında girip çıktığı
+  gözükebilsin" talebini karşılar. Bu ekran zaten (bkz. yukarıdaki kamera
+  erişimi bölümü) vardiya/kamera görünürlük FİLTRESİNDEN muaftı; bu etiketleme
+  o muafiyetten bağımsız, yalnızca bilgilendirme amaçlıdır.
+- **8 saatlik otomatik kapanma:** "A B C D vardiyaları 8 saat bazlı çalışmakta"
+  — arka planda her 5 dakikada bir çalışan bir görev (`_vardiya_otomatik_
+  kapama_dongu` / tek seferlik çalıştırması: `_vardiya_otomatik_kapama_
+  calistir`), giriş saatinden 8 saati aşmış hâlâ AÇIK (`cikis_zamani IS NULL`)
+  vardiya oturumlarını, `giris_zamani + 8 saat` çıkış zamanıyla otomatik olarak
+  kapatır. Bu, mevcut "bir SONRAKİ girişte öz-düzeltme" mekanizmasını (bkz.
+  `_guvenlik_oturum_baslat`) TAMAMLAR — artık hesap hiç tekrar giriş yapmasa
+  bile oturum sonsuza kadar açık kalmaz. Vardiya grupları özelliğiyle birlikte
+  bu ayrıca bir DOĞRULUK düzeltmesi de oldu: unutulmuş, süresiz açık bir oturum
+  artık yalnızca o hesabın değil, AYNI vardiya adını paylaşan TÜM hesapların
+  görünürlüğünü genişletiyordu.
+- Kullanıcı Yönetimi sekmesinde (Yeni Kullanıcı formu VE Düzenle modalı) bir
+  "Vardiya Grubu" seçici (Yok/A/B/C/D) ve kullanıcı tablosunda bir "Vardiya"
+  rozeti sütunu eklendi; "Vardiya Oturumları" tablosuna da hangi oturumun hangi
+  gruba ait olduğunu gösteren bir sütun eklendi.
+
+**Bilinçli tasarım kararları:**
+
+- Bu, `_kayitlari_rapor_satirlari`/`_vardiya_etiketleri_haritasi`'ndeki mevcut
+  rapor-metni özelliğinin (ad+saat, ör. "Eser Akar (15:00-23:10)") YERİNE
+  GEÇMEZ — o, adlandırılmamış hesaplar için de çalışan, farklı bir ihtiyaca
+  (rapor okunabilirliği) hizmet eden ayrı bir mekanizma olarak KORUNDU. Excel/
+  PDF sütun yapısı bu değişiklikte BİLİNÇLİ olarak değiştirilmedi (önceki PDF
+  düzen hatalarından kaynaklanan risk nedeniyle) — yeni "Vardiya" sütunu/filtre
+  yalnızca ekrandaki Kayıtlar tablosu ve JSON API'sine kapsam olarak eklendi.
+- `vardiya_adi` serbest metindir, DB seviyesinde bir kısıtlama YOKTUR (arayüz
+  yalnızca A/B/C/D önerir) — gelecekte 4'ten fazla vardiya/nokta gerekirse
+  kod değişikliği gerekmez.

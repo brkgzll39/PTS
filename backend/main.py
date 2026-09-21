@@ -148,6 +148,11 @@ def _veritabani_migrasyon() -> None:
         # bir metin sütunu olduğu için (yukarıdaki kisi_id ile aynı gerekçe)
         # burada da "WITH VALUES" ihtiyacı YOK.
         f"ALTER TABLE kullanicilar ADD {col_kw}kamera_erisim_listesi {'TEXT' if sqlite_mod else 'NVARCHAR(MAX)'}",
+        # "Vardiya Grubu Adı" (2026-09-21) -- bkz. models.Kullanici.vardiya_adi'nin
+        # docstring'i. NULL kabul eden, DEFAULT'suz bir metin sütunu olduğu
+        # için (yukarıdaki kisi_id ile aynı gerekçe) burada da "WITH VALUES"
+        # ihtiyacı YOK.
+        f"ALTER TABLE kullanicilar ADD {col_kw}vardiya_adi VARCHAR(20)",
         # Yukarıdaki "WITH VALUES" yalnızca BUNDAN SONRA çalışacak taze
         # migrasyonları düzeltir -- kullanıcının veritabanında sütun zaten
         # NULL değerlerle eklenmiş olabileceğinden (birebir bu vakadaki gibi),
@@ -563,7 +568,7 @@ async def _sse_yayinla(olay_turu: str, veri: dict, db: Optional[Session] = None)
             # kayıt hiçbir pencereye denk düşmüyorsa bu istemciye YOLLANMAZ.
             if db is None or kayit_tarihi is None:
                 continue
-            pencereler = _kullanicinin_vardiya_pencereleri(db, istemci["kullanici_id"])
+            pencereler = _kullanicinin_vardiya_pencereleri(db, istemci["kullanici_id"], istemci.get("vardiya_adi"))
             if not any(_pencere_icinde_mi(kayit_tarihi, b, e) for b, e in pencereler):
                 continue
         # KAMERA/NOKTA ERİŞİMİ (2026-09-21): bağlı istemcinin kamera
@@ -824,6 +829,17 @@ async def _son_not_onbellek_temizligini_baslat():
     23:59'da sıfırlayan görevi başlatır (bkz. yukarısı)."""
     asyncio.ensure_future(_son_not_onbellek_temizlik_dongu())
     logger.info("Son kullanılan not önbelleği temizliği başlatıldı (her gece 23:59)")
+
+
+@app.on_event("startup")
+async def _vardiya_otomatik_kapamayi_baslat():
+    """Arka planda sürekli çalışan, 8 saati aşan (unutulmuş) açık vardiya
+    oturumlarını otomatik kapatan görevi başlatır (bkz. yukarısı)."""
+    asyncio.ensure_future(_vardiya_otomatik_kapama_dongu())
+    logger.info(
+        "Vardiya otomatik kapama başlatıldı (her %d sn kontrol, sınır: %d saat)",
+        VARDIYA_OTOMATIK_KAPAMA_ARALIK_SN, VARDIYA_MAKS_SURE_SAAT,
+    )
 
 
 _klasor_izleyici = None  # bkz. _klasor_izlemeyi_baslat_gerekirse — /sistem/saglik'te de raporlanır
@@ -1113,18 +1129,70 @@ def _pencere_icinde_mi(zaman: datetime, baslangic: datetime, bitis: Optional[dat
     return bitis is None or zaman < bitis
 
 
-def _kullanicinin_vardiya_pencereleri(db: Session, kullanici_id: int) -> list:
-    """Bir güvenlik personelinin TÜM vardiya oturumlarını (giriş, çıkış)
-    çiftleri olarak döner -- çıkış NULL ise oturum hâlâ açıktır (bkz.
-    _pencere_icinde_mi). Bu tablo küçük ölçekli olduğu için (kullanıcı
-    başına yılda genelde birkaç yüz oturum) tüm satırlar belleğe alınır;
-    ayrı bir SQL tarih aralığı ön-filtresi bu ölçekte gerekmiyor."""
-    oturumlar = (
-        db.query(models.VardiyaOturumu)
-        .filter(models.VardiyaOturumu.kullanici_id == kullanici_id)
-        .all()
-    )
-    return [(o.giris_zamani, o.cikis_zamani) for o in oturumlar]
+def _vardiya_adi_normalize(v: Optional[str]) -> Optional[str]:
+    """Vardiya grubu adını normalize eder: baş/son boşluk temizlenir, büyük
+    harfe çevrilir. Boş string (temizlik sonrası) `None` döner -- yani hem
+    `kullanici_ekle`/`kullanici_guncelle`'daki ATAMA/TEMİZLEME hem de Kayıtlar
+    ekranındaki "Vardiya" FİLTRESİ (bkz. kayitlari_listele) AYNI kuralı
+    kullanır (ör. " a " ve "A" aynı gruba işaret eder). Arayüz A/B/C/D önerir
+    ama serbest metindir -- DB seviyesinde bir kısıtlama YOK (bkz.
+    models.Kullanici.vardiya_adi)."""
+    if v is None:
+        return None
+    temiz = v.strip().upper()
+    return temiz or None
+
+
+def _kullanicinin_vardiya_pencereleri(db: Session, kullanici_id: Optional[int], vardiya_adi: Optional[str] = None) -> list:
+    """Bir hesabın (ya da PAYLAŞILAN bir vardiya grubunun) TÜM vardiya
+    oturumlarını (giriş, çıkış) çiftleri olarak döner -- çıkış NULL ise oturum
+    hâlâ AÇIKTIR (bkz. _pencere_icinde_mi).
+
+    "Vardiya Grupları" (2026-09-21, kullanıcı talebi): "LOJMAN A Vardiyası
+    Bülent ile aynı zaman aralığında çalışacağı için ... Ana nizamiyeden
+    bülent kontrol ettiğinde Lojman A geçişlerini de görebilecek" -- yani
+    FARKLI fiziksel noktalardaki (Ana Nizamiye/Lojman Nizamiye) hesaplar aynı
+    isimde bir vardiyaya (bkz. models.Kullanici.vardiya_adi) atanmışsa
+    birbirinin kayıt görünürlüğünü PAYLAŞMALI. Bu yüzden:
+    - `vardiya_adi` verilmişse: yalnızca `kullanici_id`'nin DEĞİL, AYNI
+      `vardiya_adi`'na sahip TÜM hesapların oturumları BİRLİKTE döner (Kayıtlar
+      ekranındaki "Vardiya" filtresi de -- bkz. kayitlari_listele -- bunu
+      `kullanici_id=None` ile çağırır, çünkü orada belirli bir hesap değil
+      doğrudan vardiya ADI sorgulanır).
+    - `vardiya_adi` verilmemişse (None): eski/varsayılan davranış -- yalnızca
+      `kullanici_id`'nin KENDİ oturumları döner (adlandırılmamış güvenlik
+      hesapları için).
+
+    Bu tablo küçük ölçekli olduğu için (kullanıcı/vardiya başına yılda genelde
+    birkaç yüz oturum) tüm satırlar belleğe alınır; ayrı bir SQL tarih
+    aralığı ön-filtresi bu ölçekte gerekmiyor."""
+    sorgu = db.query(models.VardiyaOturumu)
+    if vardiya_adi:
+        sorgu = (
+            sorgu.join(models.Kullanici, models.VardiyaOturumu.kullanici_id == models.Kullanici.id)
+            .filter(models.Kullanici.vardiya_adi == vardiya_adi)
+        )
+    elif kullanici_id is not None:
+        sorgu = sorgu.filter(models.VardiyaOturumu.kullanici_id == kullanici_id)
+    else:
+        return []
+    return [(o.giris_zamani, o.cikis_zamani) for o in sorgu.all()]
+
+
+def _pencerelerden_or_kosulu(pencereler: list):
+    """VardiyaOturumu (giriş, çıkış) pencere listesinden, `Kayit.tarih_saat`in
+    bu pencerelerden EN AZ BİRİNE denk düştüğünü ifade eden bir SQLAlchemy OR
+    koşulu üretir -- "tek doğruluk kaynağı" ilkesiyle (bkz. README)
+    `_guvenlik_kayit_filtresi_uygula` ve Kayıtlar ekranındaki "Vardiya" adı
+    filtresi (2026-09-21, bkz. kayitlari_listele) TARAFINDAN ORTAK
+    kullanılır -- ÇAĞRI YAPAN, `pencereler` boşsa bunu ÇAĞIRMADAN ÖNCE ayrıca
+    ele almalı (boş bir OR her zaman "false" değil, SQLAlchemy'de anlamsız/
+    boş bir ifade üretir)."""
+    return or_(*[
+        models.Kayit.tarih_saat >= baslangic if bitis is None
+        else and_(models.Kayit.tarih_saat >= baslangic, models.Kayit.tarih_saat < bitis)
+        for baslangic, bitis in pencereler
+    ])
 
 
 def _kullanicinin_izinli_kameralari(kullanici: models.Kullanici) -> Optional[set]:
@@ -1153,16 +1221,38 @@ def _kamera_erisimi_var_mi(kullanici: models.Kullanici, kamera_id: str) -> bool:
     return izinli is None or kamera_id in izinli
 
 
+def _vardiya_adi_filtresi_uygula(sorgu, vardiya_adi: Optional[str], db: Session):
+    """Kayıtlar ekranındaki (2026-09-21) "Vardiya" FİLTRESİNİ uygular --
+    `_guvenlik_kayit_filtresi_uygula`'daki GÖRÜNÜRLÜK kısıtlamasından
+    BAĞIMSIZDIR: rol ne olursa olsun (kullanıcı talebi: "Tüm Güvenlik
+    Personeli kayıtlar ekranından A B C D Vardiyalarında geçen araçları
+    filtreleyip ... arayabilsin") çağrılabilir, İKİSİ DE (görünürlük +
+    bu filtre) AYNI ANDA uygulanabilir ve birbirini SINIRLAR (AND).
+
+    `vardiya_adi` (zaten `_vardiya_adi_normalize` ile normalize edilmiş
+    olmalı) boş/None ise sorgu DEĞİŞMEDEN döner. O isimde HİÇ vardiya
+    oturumu yoksa (ör. hiç kullanılmayan bir isim aranırsa) GÜVENLİ TARAF
+    seçilir: hiçbir kayıt döndürülmez (`_guvenlik_kayit_filtresi_uygula`'daki
+    aynı "hiç oturum yoksa hiçbir şey gösterme" kuralıyla tutarlı)."""
+    if not vardiya_adi:
+        return sorgu
+    pencereler = _kullanicinin_vardiya_pencereleri(db, None, vardiya_adi)
+    if not pencereler:
+        return sorgu.filter(false())
+    return sorgu.filter(_pencerelerden_or_kosulu(pencereler))
+
+
 def _guvenlik_kayit_filtresi_uygula(sorgu, kullanici: models.Kullanici, db: Session):
     """Verilen SQLAlchemy sorgusuna İKİ BAĞIMSIZ kayıt görünürlüğü
     kısıtlamasını birlikte uygular:
 
     1) VARDİYA PENCERESİ (yalnızca `kullanici.rol == ROL_GUVENLIK`): bu
-       kullanıcının vardiya oturumlarından HİÇBİRİNE denk düşmeyen kayıtları
-       eleyen bir OR filtresi ekler (değişmedi -- bkz. eski docstring). Hiç
-       vardiya oturumu yoksa (henüz hiç giriş yapmamışsa) GÜVENLİ TARAF
-       seçilir: varsayılan olarak her şeyi göstermek yerine HİÇBİR kayıt
-       döndürülmez.
+       kullanıcının (ya da -- 2026-09-21, bkz. models.Kullanici.vardiya_adi --
+       AYNI isimde bir vardiyaya atanmışsa, O VARDİYA GRUBUNUN TÜM üyelerinin)
+       vardiya oturumlarından HİÇBİRİNE denk düşmeyen kayıtları eleyen bir OR
+       filtresi ekler. Hiç vardiya oturumu yoksa (henüz hiç giriş yapmamışsa)
+       GÜVENLİ TARAF seçilir: varsayılan olarak her şeyi göstermek yerine
+       HİÇBİR kayıt döndürülmez.
     2) KAMERA/NOKTA ERİŞİMİ (2026-09-21, HERHANGİ bir rol için): kullanıcıya
        bir `kamera_erisim_listesi` kısıtlaması atanmışsa (bkz.
        _kullanicinin_izinli_kameralari), yalnızca izinli kamera id'lerinden
@@ -1180,17 +1270,11 @@ def _guvenlik_kayit_filtresi_uygula(sorgu, kullanici: models.Kullanici, db: Sess
     güvenlik) sorgu değişmeden döner.
     """
     if kullanici.rol == ROL_GUVENLIK:
-        pencereler = _kullanicinin_vardiya_pencereleri(db, kullanici.id)
+        pencereler = _kullanicinin_vardiya_pencereleri(db, kullanici.id, kullanici.vardiya_adi)
         if not pencereler:
             sorgu = sorgu.filter(false())
         else:
-            kosullar = [
-                # bitis None ise (oturum hâlâ açık) üst sınır YOK -- bkz. _pencere_icinde_mi.
-                models.Kayit.tarih_saat >= baslangic if bitis is None
-                else and_(models.Kayit.tarih_saat >= baslangic, models.Kayit.tarih_saat < bitis)
-                for baslangic, bitis in pencereler
-            ]
-            sorgu = sorgu.filter(or_(*kosullar))
+            sorgu = sorgu.filter(_pencerelerden_or_kosulu(pencereler))
     izinli_kameralar = _kullanicinin_izinli_kameralari(kullanici)
     if izinli_kameralar is not None:
         sorgu = sorgu.filter(models.Kayit.kamera_id.in_(izinli_kameralar))
@@ -1207,8 +1291,52 @@ def _guvenlik_kayit_gorunur_mu(kayit: "models.Kayit", kullanici: models.Kullanic
         return False
     if kullanici.rol != ROL_GUVENLIK:
         return True
-    pencereler = _kullanicinin_vardiya_pencereleri(db, kullanici.id)
+    pencereler = _kullanicinin_vardiya_pencereleri(db, kullanici.id, kullanici.vardiya_adi)
     return any(_pencere_icinde_mi(kayit.tarih_saat, baslangic, bitis) for baslangic, bitis in pencereler)
+
+
+def _kayitlarin_vardiya_adlarini_ekle(kayitlar: list, db: Session) -> None:
+    """`kayitlar` listesindeki HER kayda, o kaydın gerçekleştiği anda AÇIK
+    olan (bkz. _pencere_icinde_mi) adlandırılmış vardiya oturumlarının
+    (bkz. models.Kullanici.vardiya_adi) isimlerinden oluşan bellek-içi bir
+    `vardiya_adi` özniteliği ekler -- bu bir ORM SÜTUNU DEĞİLDİR, yalnızca bu
+    yanıt için hesaplanır ve schemas.KayitCevap.vardiya_adi tarafından
+    `from_attributes` ile okunur (bkz. o alanın docstring'i; öznitelik hiç
+    ATANMAMIŞ bir Kayit için de alan sorunsuzca varsayılan `None`a düşer).
+
+    2026-09-21 kullanıcı talebi: "kayıtlar ekranına yeni bir sütun
+    ekleyebilir miyiz. A B C D Vardiyaları olacak şekilde ... Tüm Güvenlik
+    Personeli kayıtlar ekranından A B C D Vardiyalarında geçen araçları
+    filtreleyip plaka arayınca karşısına kimin vardiyasında girip çıktığı
+    gözükebilsin." Bu, RAPOR (Excel/PDF) çıktısındaki ad+saat etiketinden
+    (bkz. _vardiya_etiketleri_haritasi) BİLİNÇLİ olarak AYRI bir özelliktir:
+    adlandırılmamış (vardiya_adi IS NULL) hesapların oturumları bu sütuna
+    KATKI YAPMAZ -- yalnızca rapor metninde görünürler.
+
+    Aynı anda BİRDEN FAZLA FARKLI adlandırılmış vardiya açık olabilir (ör.
+    Ana Nizamiye'de "A", Lojman'da "B" aynı gerçek zaman diliminde
+    çalışıyor olabilir) -- bu durumda tüm farklı adlar görülme sırasına göre
+    "/" ile birleştirilir; AYNI ad birden fazla hesapta (ör. Ana Nizamiye VE
+    Lojman ikisi de "A") açıksa TEKRARLANMAZ.
+
+    N+1 sorgudan kaçınmak için (bkz. _vardiya_etiketleri_haritasi'ndeki aynı
+    ölçek gerekçesi) TÜM adlandırılmış vardiya oturumları TEK SEFERDE
+    çekilip bellekte eşleştirilir."""
+    if not kayitlar:
+        return
+    oturumlar = (
+        db.query(models.VardiyaOturumu, models.Kullanici.vardiya_adi)
+        .join(models.Kullanici, models.VardiyaOturumu.kullanici_id == models.Kullanici.id)
+        .filter(models.Kullanici.vardiya_adi.isnot(None))
+        .all()
+    )
+    for k in kayitlar:
+        adlar = []
+        for oturum, vardiya_adi in oturumlar:
+            if _pencere_icinde_mi(k.tarih_saat, oturum.giris_zamani, oturum.cikis_zamani):
+                if vardiya_adi not in adlar:
+                    adlar.append(vardiya_adi)
+        k.vardiya_adi = "/".join(adlar) if adlar else None
 
 
 def _guvenlik_oturum_baslat(db: Session, kullanici: models.Kullanici) -> None:
@@ -1231,6 +1359,79 @@ def _guvenlik_oturum_baslat(db: Session, kullanici: models.Kullanici) -> None:
         onceki.cikis_zamani = simdi
     db.add(models.VardiyaOturumu(kullanici_id=kullanici.id, giris_zamani=simdi))
     db.commit()
+
+
+# ================================================================
+# VARDİYA OTOMATİK KAPAMA (8 SAAT) — kullanıcı talebi (2026-09-21)
+# ================================================================
+VARDIYA_MAKS_SURE_SAAT = 8
+VARDIYA_OTOMATIK_KAPAMA_ARALIK_SN = 300  # her 5 dakikada bir kontrol et
+
+
+def _vardiya_otomatik_kapama_calistir(db: Session) -> int:
+    """TEK SEFERLİK çalıştırma -- 8 saati aşan, hâlâ AÇIK (unutulmuş) tüm
+    vardiya oturumlarını kapatır ve kaç tanesinin kapatıldığını döner (bkz.
+    _goruntu_temizle_calistir'deki AYNI "döngü/tek-çalıştırma" ayrımı --
+    döngü fonksiyonu test edilemez ama bu fonksiyon doğrudan testlerde
+    çağrılabilir).
+
+    `cikis_zamani`, bu fonksiyonun ÇAĞRILDIĞI an DEĞİL, `giris_zamani + 8
+    saat` olarak ayarlanır -- yani kayıt görünürlüğü GERÇEKTEN 8 saatlik
+    pencereyle sınırlanır; kontrol ANI (ör. 8 saat 3 dakika sonra fark
+    edilmesi) görünürlük sınırını KAYDIRMAZ."""
+    simdi = datetime.now()
+    sinir = simdi - timedelta(hours=VARDIYA_MAKS_SURE_SAAT)
+    acik_ve_gecmis = (
+        db.query(models.VardiyaOturumu)
+        .filter(
+            models.VardiyaOturumu.cikis_zamani.is_(None),
+            models.VardiyaOturumu.giris_zamani <= sinir,
+        )
+        .all()
+    )
+    for oturum in acik_ve_gecmis:
+        oturum.cikis_zamani = oturum.giris_zamani + timedelta(hours=VARDIYA_MAKS_SURE_SAAT)
+    if acik_ve_gecmis:
+        db.commit()
+    return len(acik_ve_gecmis)
+
+
+async def _vardiya_otomatik_kapama_dongu() -> None:
+    """Sonsuz döngü: "unutulan çıkış" (bkz. VardiyaOturumu docstring'i ve
+    yukarıdaki _guvenlik_oturum_baslat) için, bir SONRAKİ girişe kadar
+    BEKLEMEDEN, ZAMANA dayalı bir ikinci güvenlik ağı ekler.
+
+    2026-09-21 kullanıcı talebi: "A B C D vardiyaları 8 saat bazlı çalışmakta
+    yani vardiya amiri çıkış yapmayı unutsa bile giriş saatinden 8 saat sonra
+    otomatik çıkış yapılsın." `_guvenlik_oturum_baslat`'taki öz-düzeltme
+    yalnızca AYNI hesabın bir SONRAKİ girişinde tetiklenir -- hesap hiç
+    tekrar giriş yapmazsa oturum eskiden SONSUZA kadar açık kalırdı.
+
+    Bu düzeltme, "Vardiya Grupları" (bkz. models.Kullanici.vardiya_adi)
+    özelliğiyle BİRLİKTE ayrıca önem kazandı: unutulmuş, süresiz açık bir
+    oturum artık yalnızca o hesabın DEĞİL, AYNI vardiya adını paylaşan TÜM
+    hesapların (bkz. _kullanicinin_vardiya_pencereleri) kayıt görünürlüğünü
+    de SINIRSIZCA genişletiyordu -- bu döngü olmadan, unutulan tek bir çıkış
+    tüm vardiya grubuna aşırı geniş görünürlük kazandırabilirdi.
+
+    Gerçek işi (bkz. yukarısı) _vardiya_otomatik_kapama_calistir yapar --
+    burada yalnızca periyodik çağrı ve hata izolasyonu var."""
+    while True:
+        try:
+            db = SessionLocal()
+            try:
+                kapatilan = _vardiya_otomatik_kapama_calistir(db)
+                if kapatilan:
+                    logger.info(
+                        "Vardiya otomatik kapama: %d oturum giriş saatinden %d saat sonrasına "
+                        "ayarlanarak kapatıldı (unutulan çıkış)",
+                        kapatilan, VARDIYA_MAKS_SURE_SAAT,
+                    )
+            finally:
+                db.close()
+        except Exception as exc:
+            logger.error("[vardiya-otomatik-kapama] Döngüde hata: %s", exc, exc_info=True)
+        await asyncio.sleep(VARDIYA_OTOMATIK_KAPAMA_ARALIK_SN)
 
 
 # Basit bellek-içi bruteforce koruması: kullanıcı adı -> (başarısız deneme sayısı, kilit bitiş zamanı)
@@ -2878,6 +3079,7 @@ def kayitlari_listele(
     bitis: Optional[str] = None,
     yetki_durumu: Optional[str] = None,
     kamera_id: Optional[str] = None,
+    vardiya_adi: Optional[str] = None,
     limit: int = Query(50, ge=1, le=500),
     offset: int = Query(0, ge=0),
     db: Session = Depends(get_db),
@@ -2898,6 +3100,9 @@ def kayitlari_listele(
     # bkz. "GÜVENLİK PERSONELİ VARDİYA FİLTRESİ" notu: güvenlik rolü dışındaki
     # kullanıcılar için bu çağrı sorguyu DEĞİŞTİRMEDEN döner.
     sorgu = _guvenlik_kayit_filtresi_uygula(sorgu, kullanici, db)
+    # "Vardiya" (A/B/C/D) ekran filtresi (2026-09-21) -- yukarıdaki görünürlük
+    # kısıtlamasından BAĞIMSIZ, bkz. _vardiya_adi_filtresi_uygula.
+    sorgu = _vardiya_adi_filtresi_uygula(sorgu, _vardiya_adi_normalize(vardiya_adi), db)
     toplam = sorgu.count()
     # NOT (2026-09-20): `limit`/`offset` artık yukarıdaki `Query(ge=..., le=...)`
     # ile FastAPI/Pydantic seviyesinde doğrulanıyor -- önceden burada
@@ -2909,6 +3114,10 @@ def kayitlari_listele(
     # düşük yetkili "izleyici" rolü dahil. `Query(ge=1, le=500)` bu değeri
     # isteğin FastAPI'ye ulaştığı ANDA reddeder (422), sorgu hiç kurulmaz.
     kayitlar = sorgu.order_by(desc(models.Kayit.tarih_saat)).offset(offset).limit(limit).all()
+    # Ekrandaki "Vardiya" sütunu için her kayda o anki adlandırılmış vardiya
+    # adını(nı) ekler (bkz. _kayitlarin_vardiya_adlarini_ekle) -- bu FİLTREden
+    # BAĞIMSIZDIR, filtre uygulanmasa (vardiya_adi=None) bile sütun doludur.
+    _kayitlarin_vardiya_adlarini_ekle(kayitlar, db)
     return kayitlar
 
 
@@ -2919,6 +3128,7 @@ def kayitlar_sayfa_bilgisi(
     bitis: Optional[str] = None,
     yetki_durumu: Optional[str] = None,
     kamera_id: Optional[str] = None,
+    vardiya_adi: Optional[str] = None,
     limit: int = Query(50, ge=1, le=500),
     db: Session = Depends(get_db),
     kullanici: models.Kullanici = Depends(_personel_girisi_gerekli),
@@ -2937,6 +3147,7 @@ def kayitlar_sayfa_bilgisi(
     if bitis_siniri is not None:
         sorgu = sorgu.filter(models.Kayit.tarih_saat <= bitis_siniri)
     sorgu = _guvenlik_kayit_filtresi_uygula(sorgu, kullanici, db)
+    sorgu = _vardiya_adi_filtresi_uygula(sorgu, _vardiya_adi_normalize(vardiya_adi), db)
     toplam = sorgu.count()
     sayfa_sayisi = max(1, -(-toplam // max(1, limit)))
     return {"toplam": toplam, "sayfa_sayisi": sayfa_sayisi, "limit": limit}
@@ -2952,7 +3163,9 @@ def olaylari_getir(
     """Canlı ekran için son olayları veya verilen ID'den sonrasını döndürür."""
     sorgu = db.query(models.Kayit).filter(models.Kayit.id > since_id)
     sorgu = _guvenlik_kayit_filtresi_uygula(sorgu, kullanici, db)
-    return sorgu.order_by(desc(models.Kayit.id)).limit(limit).all()
+    kayitlar = sorgu.order_by(desc(models.Kayit.id)).limit(limit).all()
+    _kayitlarin_vardiya_adlarini_ekle(kayitlar, db)
+    return kayitlar
 
 
 @app.get("/alarmlar", response_model=List[schemas.AlarmCevap])
@@ -3205,6 +3418,13 @@ def plaka_analiz(plaka_no: str, db: Session = Depends(get_db), kullanici: models
         .order_by(desc(models.Kayit.tarih_saat))
         .limit(50).all()
     )
+    # "Vardiya Grupları" (2026-09-21): "plaka arayınca karşısına kimin
+    # vardiyasında girip çıktığı gözükebilsin" -- bkz.
+    # _kayitlarin_vardiya_adlarini_ekle; bu ekranın vardiya/kamera
+    # FİLTRESİNDEN muaf olması (yukarıdaki not) ile bu ETİKETLEME birbirinden
+    # BAĞIMSIZDIR -- etiket yalnızca BİLGİLENDİRME amaçlıdır, hiçbir kaydı
+    # gizlemez.
+    _kayitlarin_vardiya_adlarini_ekle(kayitlar, db)
     kisi = None
     for k in db.query(models.Kisi).filter(models.Kisi.aktif == True).all():  # noqa: E712
         if _plaka_normalize(k.plaka_no) == hedef:
@@ -3245,7 +3465,8 @@ def plaka_analiz(plaka_no: str, db: Session = Depends(get_db), kullanici: models
              "not_metni": k.not_metni,
              "manuel_giris": k.manuel_giris, "kisi_id": k.kisi_id,
              "duzenleyen": k.duzenleyen,
-             "duzenleme_tarihi": k.duzenleme_tarihi.isoformat() if k.duzenleme_tarihi else None}
+             "duzenleme_tarihi": k.duzenleme_tarihi.isoformat() if k.duzenleme_tarihi else None,
+             "vardiya_adi": k.vardiya_adi}
             for k in kayitlar[:15]
         ],
     }
@@ -3260,16 +3481,24 @@ async def sse_baglantisi(request: Request, authorization: Optional[str] = Header
     # Güvenlik personeli için canlı akışın da vardiya penceresine göre
     # filtrelenebilmesi (bkz. _sse_yayinla) için bağlı istemcinin rolü de
     # tutulur -- token yalnızca ID doğrular, rolü vermez. 2026-09-21: aynı
-    # gerekçeyle kamera erişim kısıtlaması da bağlantı anında hesaplanıp
-    # tutuluyor (bkz. _kullanicinin_izinli_kameralari) -- ikisi de yalnızca
-    # BU bağlantı açıldığı anki değeri yansıtır; hesap sonradan değişirse
-    # istemcinin yeniden bağlanması (sayfa yenilemesi) gerekir.
+    # gerekçeyle kamera erişim kısıtlaması ve adlandırılmış vardiya grubu adı
+    # (bkz. _kullanicinin_izinli_kameralari, Kullanici.vardiya_adi) da bağlantı
+    # anında hesaplanıp tutuluyor -- üçü de yalnızca BU bağlantı açıldığı
+    # anki değeri yansıtır; hesap sonradan değişirse istemcinin yeniden
+    # bağlanması (sayfa yenilemesi) gerekir.
     baglanan = db.query(models.Kullanici).filter(models.Kullanici.id == kullanici_id).first()
     rol = baglanan.rol if baglanan else ROL_IZLEYICI
     izinli_kameralar = _kullanicinin_izinli_kameralari(baglanan) if baglanan else None
+    vardiya_adi = baglanan.vardiya_adi if baglanan else None
 
     q: asyncio.Queue = asyncio.Queue(maxsize=100)
-    istemci = {"kuyruk": q, "kullanici_id": kullanici_id, "rol": rol, "izinli_kameralar": izinli_kameralar}
+    istemci = {
+        "kuyruk": q,
+        "kullanici_id": kullanici_id,
+        "rol": rol,
+        "izinli_kameralar": izinli_kameralar,
+        "vardiya_adi": vardiya_adi,
+    }
     _sse_istemcileri.append(istemci)
 
     async def _akis():
@@ -3464,7 +3693,7 @@ def _kayitlari_rapor_satirlari(kayitlar: list, db: Session) -> list:
 @app.get("/disa-aktar/excel/kayitlar")
 def kayitlari_excel_indir(
     plaka: Optional[str] = None, baslangic: Optional[str] = None,
-    bitis: Optional[str] = None, db: Session = Depends(get_db),
+    bitis: Optional[str] = None, vardiya_adi: Optional[str] = None, db: Session = Depends(get_db),
     kullanici: models.Kullanici = Depends(_personel_girisi_gerekli),
 ):
     # NOT: kayitlari_listele() burada FastAPI'nin DI mekanizması ÜZERİNDEN
@@ -3491,8 +3720,8 @@ def kayitlari_excel_indir(
     # tamamen geçerli olsa bile HER Excel/PDF dışa aktarma isteği bu
     # yüzden çöküyordu.
     kayitlar = kayitlari_listele(
-        plaka=plaka, baslangic=baslangic, bitis=bitis, yetki_durumu=None, limit=5000, offset=0,
-        db=db, kullanici=kullanici,
+        plaka=plaka, baslangic=baslangic, bitis=bitis, yetki_durumu=None, vardiya_adi=vardiya_adi,
+        limit=5000, offset=0, db=db, kullanici=kullanici,
     )
     satirlar = _kayitlari_rapor_satirlari(kayitlar, db)
     dosya_yolu = os.path.join(DISA_AKTAR_KLASORU, f"pts_kayitlar_{int(datetime.now().timestamp())}.xlsx")
@@ -3506,15 +3735,15 @@ def kayitlari_excel_indir(
 @app.get("/disa-aktar/pdf/kayitlar")
 def kayitlari_pdf_indir(
     plaka: Optional[str] = None, baslangic: Optional[str] = None,
-    bitis: Optional[str] = None, db: Session = Depends(get_db),
+    bitis: Optional[str] = None, vardiya_adi: Optional[str] = None, db: Session = Depends(get_db),
     kullanici: models.Kullanici = Depends(_personel_girisi_gerekli),
 ):
     # bkz. kayitlari_excel_indir'deki AYNI başlıklı not: `kullanici` VE
     # `offset` burada da AÇIKÇA geçirilmeli (offset eksikliği, gerçek
     # üretim verisiyle raporlanan asıl 500 çökmesinin kök nedeniydi).
     kayitlar = kayitlari_listele(
-        plaka=plaka, baslangic=baslangic, bitis=bitis, yetki_durumu=None, limit=2000, offset=0,
-        db=db, kullanici=kullanici,
+        plaka=plaka, baslangic=baslangic, bitis=bitis, yetki_durumu=None, vardiya_adi=vardiya_adi,
+        limit=2000, offset=0, db=db, kullanici=kullanici,
     )
     satirlar = _kayitlari_rapor_satirlari(kayitlar, db)
     tarih_araligi_metni = _rapor_tarih_araligi_metni(baslangic, bitis, kayitlar)
@@ -3609,6 +3838,9 @@ def kullanici_ekle(istek: schemas.KullaniciOlustur, db: Session = Depends(get_db
         rol=istek.rol,
         kisi_id=kisi_id,
         kamera_erisim_listesi=json.dumps(kamera_listesi) if kamera_listesi is not None else None,
+        # "Vardiya Grupları" (2026-09-21) -- bkz. _vardiya_adi_normalize ve
+        # models.Kullanici.vardiya_adi'nin docstring'i.
+        vardiya_adi=_vardiya_adi_normalize(istek.vardiya_adi),
     )
     db.add(yeni)
     db.commit()
@@ -3675,6 +3907,14 @@ def kullanici_guncelle(kullanici_id: int, istek: schemas.KullaniciGuncelle, db: 
         kamera_listesi = _kamera_id_listesini_dogrula(istek.kamera_erisim_listesi)
         hedef.kamera_erisim_listesi = json.dumps(kamera_listesi)
         degisiklikler.append(f"kamera erişimi: {len(kamera_listesi)} kameraya kısıtlandı")
+    # "Vardiya Grupları" (2026-09-21) -- bkz. schemas.KullaniciGuncelle.vardiya_adi
+    # docstring'i: None = değiştirme; normalize sonrası boş string = kaldır;
+    # normalize sonrası dolu = ata/değiştir.
+    if istek.vardiya_adi is not None:
+        yeni_vardiya_adi = _vardiya_adi_normalize(istek.vardiya_adi)
+        if yeni_vardiya_adi != hedef.vardiya_adi:
+            degisiklikler.append(f"vardiya adı: {hedef.vardiya_adi or '(yok)'} -> {yeni_vardiya_adi or '(yok)'}")
+            hedef.vardiya_adi = yeni_vardiya_adi
     db.commit()
     db.refresh(hedef)
     # 2026-09-20: bu uç nokta (rol değişikliği, hesap aktif/pasif yapma,
@@ -3769,17 +4009,36 @@ def vardiya_oturumu_durumum(db: Session = Depends(get_db), kullanici: models.Kul
     Güvenlik dışı roller için de zararsız bir yanıt döner (yalnızca
     `rol_guvenlik_mi: false`) -- bu uç nokta rol kontrolü yapmaz, çünkü
     yalnızca ÇAĞIRANIN KENDİ verisini döner.
+
+    "Vardiya Grupları" (2026-09-21): `kullanici.vardiya_adi` DOLU ise
+    (bkz. _kullanicinin_vardiya_pencereleri'ndeki AYNI gerekçe), gerçek kayıt
+    görünürlüğü artık yalnızca BU hesabın DEĞİL, AYNI vardiya adını paylaşan
+    TÜM hesapların oturumlarına dayandığı için, bu teşhis uç noktası da GRUP
+    genelindeki oturumları döner -- aksi halde banner "şu an aktif vardiyanız
+    yok" derken, aslında AYNI grup içindeki BAŞKA bir hesap (ör. diğer
+    noktadaki) o an giriş yapmış olabilir ve kayıtlar zaten görünür olurdu;
+    bu YANILTICI teşhis mesajı olurdu.
     """
     simdi = datetime.now()
     if kullanici.rol != ROL_GUVENLIK:
         return {"rol_guvenlik_mi": False, "sunucu_simdiki_zaman": simdi.isoformat()}
-    oturumlar = (
-        db.query(models.VardiyaOturumu)
-        .filter(models.VardiyaOturumu.kullanici_id == kullanici.id)
-        .order_by(desc(models.VardiyaOturumu.giris_zamani))
-        .limit(30)
-        .all()
-    )
+    if kullanici.vardiya_adi:
+        oturumlar = (
+            db.query(models.VardiyaOturumu)
+            .join(models.Kullanici, models.VardiyaOturumu.kullanici_id == models.Kullanici.id)
+            .filter(models.Kullanici.vardiya_adi == kullanici.vardiya_adi)
+            .order_by(desc(models.VardiyaOturumu.giris_zamani))
+            .limit(30)
+            .all()
+        )
+    else:
+        oturumlar = (
+            db.query(models.VardiyaOturumu)
+            .filter(models.VardiyaOturumu.kullanici_id == kullanici.id)
+            .order_by(desc(models.VardiyaOturumu.giris_zamani))
+            .limit(30)
+            .all()
+        )
     su_an_aktif = any(o.cikis_zamani is None for o in oturumlar)
     liste = [{
         "id": o.id,
@@ -3790,6 +4049,7 @@ def vardiya_oturumu_durumum(db: Session = Depends(get_db), kullanici: models.Kul
     return {
         "rol_guvenlik_mi": True,
         "sunucu_simdiki_zaman": simdi.isoformat(),
+        "vardiya_adi": kullanici.vardiya_adi,
         "su_an_aktif_vardiya_var_mi": su_an_aktif,
         "toplam_oturum_sayisi": len(oturumlar),
         "oturumlar": liste,

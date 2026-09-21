@@ -631,19 +631,25 @@ async function guvenlikVardiyaDurumunuGuncelle() {
     if (!d.rol_guvenlik_mi) { el.innerHTML = ""; return; }
     const sunucuSaati = tarihFormatla(d.sunucu_simdiki_zaman);
     const istemciSaati = tarihFormatla(new Date().toISOString());
+    // "Vardiya Grupları" (2026-09-21): vardiya_adi doluysa bu bilgi ARTIK
+    // yalnızca bu hesabı değil, AYNI grubu paylaşan tüm hesapları yansıtır
+    // (bkz. backend/main.py::vardiya_oturumu_durumum) -- metin buna göre
+    // netleştirilir, aksi halde "vardiyanız açık/kapalı" ifadesi başka bir
+    // hesabın oturumuna dayandığında kafa karıştırıcı olurdu.
+    const grupMu = !!d.vardiya_adi;
     const aktifDurum = d.su_an_aktif_vardiya_var_mi
-      ? '<span class="text-success fw-bold"><i class="bi bi-check-circle-fill"></i> Vardiyanız şu an AÇIK (giriş yaptığınızdan beri)</span>'
-      : '<span class="text-danger fw-bold"><i class="bi bi-x-circle-fill"></i> Şu an açık bir vardiyanız YOK -- çıkış yapmış görünüyorsunuz</span>';
+      ? `<span class="text-success fw-bold"><i class="bi bi-check-circle-fill"></i> ${grupMu ? `"${escapeHtml(d.vardiya_adi)}" vardiya grubunda şu an AÇIK bir oturum var` : "Vardiyanız şu an AÇIK (giriş yaptığınızdan beri)"}</span>`
+      : `<span class="text-danger fw-bold"><i class="bi bi-x-circle-fill"></i> ${grupMu ? `"${escapeHtml(d.vardiya_adi)}" vardiya grubunda şu an AÇIK bir oturum YOK` : "Şu an açık bir vardiyanız YOK -- çıkış yapmış görünüyorsunuz"}</span>`;
     let oturumListesi = "";
     if (!d.toplam_oturum_sayisi) {
-      oturumListesi = '<div class="text-warning">Hiç vardiya oturumunuz yok -- bu normalde olmamalı (her girişte otomatik açılır), lütfen sayfayı yenileyin.</div>';
+      oturumListesi = '<div class="text-warning">Hiç vardiya oturumu yok -- bu normalde olmamalı (her girişte otomatik açılır), lütfen sayfayı yenileyin.</div>';
     } else {
       const satirlar = (d.oturumlar || []).map(o => {
         const rozet = o.devam_ediyor ? '<span class="badge bg-success">devam ediyor</span>' : '<span class="badge bg-secondary">kapandı</span>';
         const cikisMetni = o.cikis_zamani ? tarihFormatla(o.cikis_zamani) : "devam ediyor";
         return `<div>${tarihFormatla(o.giris_zamani)} → ${cikisMetni} ${rozet}</div>`;
       }).join("");
-      oturumListesi = `<div class="mt-1">Son ${d.oturumlar.length} vardiya oturumunuz:</div>${satirlar}`;
+      oturumListesi = `<div class="mt-1">Son ${d.oturumlar.length} ${grupMu ? `"${escapeHtml(d.vardiya_adi)}" vardiya grubu` : "vardiya"} oturumu:</div>${satirlar}`;
     }
     el.innerHTML = `<div>Sunucu saati: <strong>${sunucuSaati}</strong> · Tarayıcınızın saati: <strong>${istemciSaati}</strong></div><div>${aktifDurum}</div>${oturumListesi}` +
       (sunucuSaati !== istemciSaati ? '<div class="text-warning mt-1"><i class="bi bi-exclamation-triangle-fill"></i> Sunucu ile tarayıcınızın saati farklı görünüyor -- kayıt görünürlüğü SUNUCU saatine göre belirlenir.</div>' : "");
@@ -1436,10 +1442,15 @@ function filtreParametreleri() {
   const baslangic = _tarihSaatDegeriOlustur("filtreBaslangic", "filtreBaslangicSaat");
   const bitis = _tarihSaatDegeriOlustur("filtreBitis", "filtreBitisSaat");
   const durum = document.getElementById("filtreDurum").value;
+  // "Vardiya Grupları" (2026-09-21) -- bkz. main.py::kayitlari_listele. Bu
+  // filtre `disaAktar`'da da (Excel/PDF, AYNI `filtreParametreleri` çağrısı)
+  // otomatik olarak kullanılır.
+  const vardiyaAdi = document.getElementById("filtreVardiyaAdi")?.value || "";
   if (plaka) params.set("plaka", plaka);
   if (baslangic) params.set("baslangic", baslangic);
   if (bitis) params.set("bitis", bitis);
   if (durum) params.set("yetki_durumu", durum);
+  if (vardiyaAdi) params.set("vardiya_adi", vardiyaAdi);
   params.set("limit", _kayitlarLimit);
   params.set("offset", _kayitlarSayfa * _kayitlarLimit);
   return params;
@@ -1476,6 +1487,7 @@ async function kayitlariYukle(sifirla = true) {
       <td>${k.yon === "giris" ? "Giriş" : "Çıkış"}</td>
       <td>${durumRozeti(k.yetki_durumu)}</td>
       <td>${tipRozeti(k.kisi_tip_anlik)}</td>
+      <td>${k.vardiya_adi ? `<span class="badge bg-info text-dark">${escapeHtml(k.vardiya_adi)}</span>` : '<span class="text-muted small">-</span>'}</td>
       <td>${k.guven_skoru ? (k.guven_skoru * 100).toFixed(0) + "%" : "-"}</td>
       <td>${dogrulamaRozeti(k.dogrulama_kare_sayisi, k.farkli_okuma_sayisi)}</td>
       <td class="text-nowrap">
@@ -1484,7 +1496,7 @@ async function kayitlariYukle(sifirla = true) {
         ${rolYeterli("yonetici") ? `<button class="btn btn-sm btn-outline-secondary ms-1" onclick="kayitSil(${k.id})" title="Kaydı sil" aria-label="Kaydı sil"><i class="bi bi-trash"></i></button>` : ""}
       </td>
     </tr>
-  `).join("") || `<tr><td colspan="11" class="text-center text-muted py-3">Kayıt bulunamadı</td></tr>`;
+  `).join("") || `<tr><td colspan="12" class="text-center text-muted py-3">Kayıt bulunamadı</td></tr>`;
   korumaliGorselleriYukle(tbody);
 
   // Sayfalama kontrolleri
@@ -2080,6 +2092,7 @@ async function plakaAnalizAc(plaka) {
         <td>${k.yon === "giris" ? "Giriş" : "Çıkış"}</td>
         <td>${escapeHtml(k.kamera_id)}</td>
         <td>${durumRozeti(k.yetki_durumu)}</td>
+        <td>${k.vardiya_adi ? `<span class="badge bg-info text-dark">${escapeHtml(k.vardiya_adi)}</span>` : '<span class="text-muted small">-</span>'}</td>
         <td>${k.guven_skoru ? (k.guven_skoru * 100).toFixed(0) + "%" : "-"}</td>
         <td>${dogrulamaRozeti(k.dogrulama_kare_sayisi, k.farkli_okuma_sayisi)}</td>
         <td class="small">${k.manuel_giris ? '<span class="badge bg-secondary d-block mb-1">Manuel</span>' : ""}${k.not_metni ? escapeHtml(k.not_metni) : (k.manuel_giris ? "" : '<span class="text-muted">-</span>')}</td>
@@ -2098,8 +2111,8 @@ async function plakaAnalizAc(plaka) {
       ${v.kara_sebep ? `<div class="alert alert-danger py-2 mb-3">Engel sebebi: ${escapeHtml(v.kara_sebep)}</div>` : ""}
       <div class="table-responsive">
         <table class="table table-sm align-middle">
-          <thead class="table-light"><tr><th>Görsel</th><th>Tarih/Saat</th><th>Yön</th><th>Kamera</th><th>Durum</th><th>Güven</th><th title="Bu okuma kaç farklı karede doğrulandı">Doğrulama</th><th>Not</th><th></th></tr></thead>
-          <tbody>${satirlar || "<tr><td colspan='9' class='text-center text-muted'>Kayıt yok</td></tr>"}</tbody>
+          <thead class="table-light"><tr><th>Görsel</th><th>Tarih/Saat</th><th>Yön</th><th>Kamera</th><th>Durum</th><th>Vardiya</th><th>Güven</th><th title="Bu okuma kaç farklı karede doğrulandı">Doğrulama</th><th>Not</th><th></th></tr></thead>
+          <tbody>${satirlar || "<tr><td colspan='10' class='text-center text-muted'>Kayıt yok</td></tr>"}</tbody>
         </table>
       </div>
       <div class="d-flex gap-2 mt-2 flex-wrap">
@@ -2444,11 +2457,16 @@ async function kullanicilariYukle() {
       const kameraEtiketi = k.kamera_erisim_listesi === null || k.kamera_erisim_listesi === undefined
         ? '<span class="badge bg-light text-dark border">Tümü</span>'
         : `<span class="badge bg-warning text-dark" title="Yalnızca ${k.kamera_erisim_listesi.length} kamera">${k.kamera_erisim_listesi.length} kamera</span>`;
+      // "Vardiya Grupları" (2026-09-21) -- bkz. main.py::_kullanicinin_vardiya_pencereleri.
+      const vardiyaEtiketi = k.vardiya_adi
+        ? `<span class="badge bg-info text-dark">${escapeHtml(k.vardiya_adi)} Vardiyası</span>`
+        : '<span class="text-muted small">-</span>';
       return `<tr>
       <td><strong>${escapeHtml(k.kullanici_adi)}</strong></td>
       <td><span class="badge ${roller[k.rol] || "bg-secondary"}">${escapeHtml(k.rol)}</span></td>
       <td class="small">${bagliKisi ? escapeHtml(bagliKisi.ad_soyad) : (k.kisi_id ? `#${k.kisi_id} (silinmiş)` : "-")}</td>
       <td>${kameraEtiketi}</td>
+      <td>${vardiyaEtiketi}</td>
       <td class="small text-muted">${k.son_giris ? tarihFormatla(k.son_giris) : "—"}</td>
       <td>${k.aktif ? '<span class="badge bg-success">Aktif</span>' : '<span class="badge bg-secondary">Pasif</span>'}</td>
       <td>
@@ -2459,10 +2477,10 @@ async function kullanicilariYukle() {
         ` : '<span class="text-muted small">-</span>'}
       </td>
     </tr>`;
-    }).join("") || `<tr><td colspan="7" class="text-center text-muted py-3">Kullanıcı bulunamadı</td></tr>`;
+    }).join("") || `<tr><td colspan="8" class="text-center text-muted py-3">Kullanıcı bulunamadı</td></tr>`;
   } catch (e) {
     const el = document.getElementById("kullanicilarTablo");
-    if (el) el.innerHTML = `<tr><td colspan="7" class="text-center text-muted py-3">Bu sekmeyi sadece yönetici görebilir</td></tr>`;
+    if (el) el.innerHTML = `<tr><td colspan="8" class="text-center text-muted py-3">Bu sekmeyi sadece yönetici görebilir</td></tr>`;
   }
 }
 
@@ -2548,6 +2566,8 @@ document.getElementById("kullaniciForm")?.addEventListener("submit", async (e) =
       rol,
     };
     if (rol === "sakin") govde.kisi_id = Number(document.getElementById("yeniKullaniciKisi").value);
+    // "Vardiya Grupları" (2026-09-21): boş seçim ("Yok") -> null (bağımsız hesap).
+    govde.vardiya_adi = document.getElementById("yeniKullaniciVardiyaAdi").value || null;
     // "Nizamiye Bazlı Kamera Erişimi" (2026-09-21): "Tüm Kameralar" işaretliyse
     // alan HİÇ gönderilmez (backend'de None = kısıtlama yok, varsayılan);
     // işaret kaldırılmışsa SEÇİLİ kameraların id listesi gönderilir (boş
@@ -2599,6 +2619,7 @@ async function kullaniciDuzenleAc(id) {
   document.getElementById("kdKullaniciAdi").value = k.kullanici_adi;
   document.getElementById("kdRol").value = k.rol;
   document.getElementById("kdParola").value = "";
+  document.getElementById("kdVardiyaAdi").value = k.vardiya_adi || "";
   document.getElementById("kdSonuc").textContent = "";
 
   const kisitliMi = k.kamera_erisim_listesi !== null && k.kamera_erisim_listesi !== undefined;
@@ -2621,6 +2642,11 @@ document.getElementById("kullaniciDuzenleForm")?.addEventListener("submit", asyn
   const govde = { rol: document.getElementById("kdRol").value };
   const parola = document.getElementById("kdParola").value;
   if (parola) govde.parola = parola;
+  // "Vardiya Grupları" (2026-09-21): boş seçim ("Yok") gönderilirse backend
+  // atamayı KALDIRIR (bkz. main.py::kullanici_guncelle) -- diğer alanların
+  // "None = değiştirme" kuralından FARKLI olarak burada her zaman gönderilir,
+  // çünkü bu seçim kutusu her zaman güncel bir değer taşır.
+  govde.vardiya_adi = document.getElementById("kdVardiyaAdi").value || "";
   if (document.getElementById("kdTumKameralar").checked) {
     govde.kamera_erisimi_temizle = true;
   } else {
@@ -2662,17 +2688,21 @@ async function vardiyaOturumlariniYukle() {
       apiCagir("/kullanicilar"),
     ]);
     const kullaniciAdi = Object.fromEntries(kullanicilar.map(k => [k.id, k.kullanici_adi]));
+    // "Vardiya Grupları" (2026-09-21): bu tablodan hangi oturumun hangi
+    // ADLANDIRILMIŞ vardiyaya (ör. "A") ait olduğunu da görebilmek için.
+    const kullaniciVardiyaAdi = Object.fromEntries(kullanicilar.map(k => [k.id, k.vardiya_adi]));
     tabloEl.innerHTML = oturumlar.map(o => `
       <tr>
         <td>${escapeHtml(kullaniciAdi[o.kullanici_id] || `#${o.kullanici_id} (silinmiş)`)}</td>
+        <td>${kullaniciVardiyaAdi[o.kullanici_id] ? `<span class="badge bg-info text-dark">${escapeHtml(kullaniciVardiyaAdi[o.kullanici_id])}</span>` : '<span class="text-muted small">-</span>'}</td>
         <td>${tarihFormatla(o.giris_zamani)}</td>
         <td>${o.cikis_zamani ? tarihFormatla(o.cikis_zamani) : "-"}</td>
         <td>${o.cikis_zamani ? '<span class="badge bg-secondary">kapandı</span>' : '<span class="badge bg-success">devam ediyor</span>'}</td>
         <td>${o.cikis_zamani ? "" : `<button class="btn btn-sm btn-outline-danger" onclick="vardiyaOturumunuSonlandir(${o.id})" title="Sonlandır"><i class="bi bi-stop-circle"></i> Sonlandır</button>`}</td>
       </tr>
-    `).join("") || `<tr><td colspan="5" class="text-center text-muted py-3">Henüz vardiya oturumu yok</td></tr>`;
+    `).join("") || `<tr><td colspan="6" class="text-center text-muted py-3">Henüz vardiya oturumu yok</td></tr>`;
   } catch (e) {
-    tabloEl.innerHTML = `<tr><td colspan="5" class="text-center text-muted py-3">Bu bölümü sadece yönetici görebilir</td></tr>`;
+    tabloEl.innerHTML = `<tr><td colspan="6" class="text-center text-muted py-3">Bu bölümü sadece yönetici görebilir</td></tr>`;
   }
 }
 

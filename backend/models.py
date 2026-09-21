@@ -53,6 +53,24 @@ class Kullanici(Base):
     # geçerlilik main.py::_kamera_id_listesini_dogrula ile UYGULAMA seviyesinde
     # sağlanıyor.
     kamera_erisim_listesi = Column(Text, nullable=True)
+    # VARDİYA GRUBU ADI (2026-09-21): NULL = bu hesap adlandırılmış bir
+    # vardiya grubuna atanmamış -- güvenlik oturumu görünürlüğü (bkz.
+    # main.py::_kullanicinin_vardiya_pencereleri) yalnızca KENDİ oturumlarıyla
+    # sınırlı kalır (eski/varsayılan davranış). Dolu olduğunda (ör. "A"),
+    # AYNI değeri taşıyan TÜM hesapların vardiya oturumları BİRLEŞİK olarak
+    # görünür hale gelir -- kullanıcı talebi (2026-09-21): "LOJMAN A Vardiyası
+    # Bülent ile aynı zaman aralığında çalışacağı için ... Ana nizamiyeden
+    # bülent kontrol ettiğinde Lojman A geçişlerini de görebilecek" -- yani
+    # FARKLI fiziksel noktalardaki (Ana Nizamiye/Lojman Nizamiye) hesaplar aynı
+    # vardiya adını paylaşarak birbirinin kayıt görünürlüğünü PAYLAŞABİLİR.
+    # Panelde serbest metin olarak saklanır (main.py::kullanici_ekle/
+    # kullanici_guncelle normalize eder: baş/son boşluk temizlenir, büyük harfe
+    # çevrilir) ama arayüz A/B/C/D önerir. Kayıtlar ekranındaki "Vardiya"
+    # sütununu/filtresini de besler (bkz. main.py::
+    # _kayitlarin_vardiya_adlarini_ekle). Ham ALTER TABLE ile eklendiği için
+    # (bkz. _veritabani_migrasyon, kisi_id ile AYNI desen) DB seviyesinde bir
+    # kısıtlama yok.
+    vardiya_adi = Column(String(20), nullable=True)
     olusturma_tarihi = Column(DateTime, default=datetime.now)
 
 

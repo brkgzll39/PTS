@@ -164,6 +164,18 @@
           <label class="form-label small" for="kdParola">Yeni Parola</label>
           <input type="password" class="form-control" id="kdParola" minlength="8" placeholder="Değiştirmemek için boş bırakın">
         </div>
+        <div class="mb-2">
+          <label class="form-label small" for="kdVardiyaAdi">Vardiya Grubu</label>
+          <select class="form-select" id="kdVardiyaAdi">
+            <option value="">Yok (bağımsız hesap)</option>
+            <option value="A">A Vardiyası</option>
+            <option value="B">B Vardiyası</option>
+            <option value="C">C Vardiyası</option>
+            <option value="D">D Vardiyası</option>
+          </select>
+          <div class="form-text">Aynı vardiya grubuna atanan hesaplar (farklı fiziksel noktalarda olsalar
+            bile) birbirinin vardiya penceresindeki kayıtları paylaşır.</div>
+        </div>
         <div class="mb-2" id="kdKameraAlani">
           <div class="form-check">
             <input class="form-check-input" type="checkbox" id="kdTumKameralar" onchange="kullaniciDuzenleKameraListesiGoster()">
@@ -528,7 +540,10 @@
            SESSİZCE liste kısaltması yerine kullanıcıya AÇIKÇA bildirilmesi için
            (bkz. 2026-09-18 notu, README). -->
       <div class="alert alert-info d-none py-2 mb-3" id="guvenlikVardiyaBilgisi">
-        <div><i class="bi bi-info-circle-fill me-1"></i>Bu liste yalnızca SİZİN vardiyanıza denk gelen kayıtları gösterir.</div>
+        <div><i class="bi bi-info-circle-fill me-1"></i>Bu liste yalnızca SİZİN (ya da -- adlandırılmış bir vardiya
+          grubuna atandıysanız, ör. "A" -- farklı bir noktadaki AYNI vardiya grubundaki hesapların da) vardiya
+          penceresine denk gelen kayıtları gösterir. "A B C D Vardiyaları" filtresiyle (yukarıdaki Kayıtlar
+          filtre satırı) tüm vardiyalardaki geçişler de aranabilir.</div>
         <!-- Teşhis alanı: GET /vardiya-oturumlari/durumum sonucuna göre app.js::guvenlikVardiyaDurumunuGuncelle
              tarafından doldurulur -- "neden boş görünüyor" sorusunu sessiz bırakmamak için
              (bkz. 2026-09-18 kullanıcı geri bildirimi notu, README). -->
@@ -569,6 +584,21 @@
                 <option value="kara_liste">Kara Liste</option>
               </select>
             </div>
+            <!-- "Vardiya Grupları" (2026-09-21): "Tüm Güvenlik Personeli kayıtlar ekranından
+                 A B C D Vardiyalarında geçen araçları filtreleyip ... arayabilsin" -- bkz.
+                 main.py::kayitlari_listele, _vardiya_adi_filtresi_uygula. Bu, yukarıdaki
+                 "yalnızca KENDİ vardiyanı gör" görünürlük kısıtlamasından BAĞIMSIZ, HERKESİN
+                 kullanabileceği bir filtredir. -->
+            <div class="col-md-2">
+              <label class="form-label small" for="filtreVardiyaAdi">Vardiya</label>
+              <select class="form-select" id="filtreVardiyaAdi">
+                <option value="">Tümü</option>
+                <option value="A">A Vardiyası</option>
+                <option value="B">B Vardiyası</option>
+                <option value="C">C Vardiyası</option>
+                <option value="D">D Vardiyası</option>
+              </select>
+            </div>
             <div class="col-md-2 d-flex gap-2">
               <button class="btn btn-primary flex-fill" onclick="kayitlariYukle()"><i class="bi bi-search"></i> Filtrele</button>
             </div>
@@ -586,7 +616,7 @@
           <div class="table-responsive">
             <table class="table table-hover mb-0 align-middle">
               <thead class="table-light">
-                <tr><th>Görsel</th><th>ID</th><th>Plaka</th><th>Tarih/Saat</th><th>Kamera</th><th>Yön</th><th>Durum</th><th>Kişi/Tip</th><th>Güven</th><th title="Bu okuma kaç farklı karede tekrarlanıp doğrulandı">Doğrulama</th><th></th></tr>
+                <tr><th>Görsel</th><th>ID</th><th>Plaka</th><th>Tarih/Saat</th><th>Kamera</th><th>Yön</th><th>Durum</th><th>Kişi/Tip</th><th>Vardiya</th><th>Güven</th><th title="Bu okuma kaç farklı karede tekrarlanıp doğrulandı">Doğrulama</th><th></th></tr>
               </thead>
               <tbody id="kayitlarTablo"></tbody>
             </table>
@@ -999,6 +1029,25 @@
                     giriş yapıldığı an vardiyası başlar, "Çıkış" yapılana kadar sürer (bkz. aşağıdaki
                     "Vardiya Oturumları" bölümü).</div>
                 </div>
+                <!-- "Vardiya Grupları" (2026-09-21): birden fazla fiziksel noktadaki (ör. Ana
+                     Nizamiye + Lojman Nizamiye) hesapların AYNI vardiyayı paylaşarak birbirinin
+                     kayıt görünürlüğüne sahip olabilmesi için (bkz. main.py::kullanici_ekle,
+                     _kullanicinin_vardiya_pencereleri). "Yok" seçiliyse hesap bağımsız kalır
+                     (eski/varsayılan davranış: yalnızca KENDİ vardiya oturumlarını görür). -->
+                <div class="mb-2">
+                  <label class="form-label small" for="yeniKullaniciVardiyaAdi">Vardiya Grubu</label>
+                  <select class="form-select" id="yeniKullaniciVardiyaAdi">
+                    <option value="">Yok (bağımsız hesap)</option>
+                    <option value="A">A Vardiyası</option>
+                    <option value="B">B Vardiyası</option>
+                    <option value="C">C Vardiyası</option>
+                    <option value="D">D Vardiyası</option>
+                  </select>
+                  <div class="form-text">Aynı vardiya grubuna atanan hesaplar (farklı fiziksel noktalarda
+                    olsalar bile) birbirinin vardiya penceresindeki kayıtları görebilir. Ör. Lojman
+                    Nizamiye'deki "Bülent" hesabı "A" vardiyasına atanırsa, Ana Nizamiye'de "A"
+                    vardiyasına atanmış bir hesapla AYNI geçişleri (iki nokta birlikte) görür.</div>
+                </div>
                 <!-- Yalnızca rol="sakin" seçilince görünür: bkz. app.js::yeniKullaniciRolDegisti,
                      main.py::_sakin_kisi_id_dogrula. Bir sakin hesabı MUTLAKA bir Kişi kaydına
                      bağlı olmalı -- öz-hizmet uçları bu bağlantı üzerinden çalışır. -->
@@ -1041,7 +1090,7 @@
             </div>
             <div class="card-body p-0">
               <table class="table table-hover mb-0 align-middle">
-                <thead class="table-light"><tr><th>Kullanıcı Adı</th><th>Rol</th><th>Bağlı Kişi</th><th>Kamera Erişimi</th><th>Son Giriş</th><th>Durum</th><th></th></tr></thead>
+                <thead class="table-light"><tr><th>Kullanıcı Adı</th><th>Rol</th><th>Bağlı Kişi</th><th>Kamera Erişimi</th><th>Vardiya</th><th>Son Giriş</th><th>Durum</th><th></th></tr></thead>
                 <tbody id="kullanicilarTablo"></tbody>
               </table>
             </div>
@@ -1067,11 +1116,16 @@
               <p class="text-muted small mb-2">Güvenlik personeli giriş yapınca vardiyası otomatik başlar, "Çıkış"
                 butonuna basınca biter -- burada elle vardiya oluşturmanız GEREKMEZ. Bir oturum, personel çıkış
                 yapmayı unutup uzaklaştıysa "Devam ediyor" olarak görünmeye devam eder; personel bir dahaki
-                girişinde bu ZATEN otomatik kapanır, ama isterseniz aşağıdan da elle sonlandırabilirsiniz.</p>
+                girişinde bu ZATEN otomatik kapanır. Ayrıca (2026-09-21) her oturum, giriş saatinden
+                <b>8 saat</b> sonra -- personel hiç tekrar giriş yapmasa bile -- kendiliğinden otomatik
+                olarak kapanır; isterseniz aşağıdan da elle sonlandırabilirsiniz. "Vardiya Grubu" sütunu,
+                "Kullanıcı Yönetimi" sekmesinde bu hesaba atanmış adlandırılmış vardiyayı (A/B/C/D) gösterir
+                -- aynı grubu paylaşan hesaplar (farklı fiziksel noktalarda olsalar bile) birbirinin kayıt
+                görünürlüğünü paylaşır.</p>
             </div>
             <div class="card-body p-0">
               <table class="table table-hover mb-0 align-middle">
-                <thead class="table-light"><tr><th>Güvenlik Personeli</th><th>Giriş</th><th>Çıkış</th><th>Durum</th><th></th></tr></thead>
+                <thead class="table-light"><tr><th>Güvenlik Personeli</th><th>Vardiya Grubu</th><th>Giriş</th><th>Çıkış</th><th>Durum</th><th></th></tr></thead>
                 <tbody id="vardiyaOturumlariTablo"></tbody>
               </table>
             </div>
