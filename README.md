@@ -2163,6 +2163,54 @@ Kullanıcının bu doğrudan sorusu üzerine yapılan ek bir tur:
   dokümantasyonunun varsayılan olarak kapalı olduğunu ve sürüm alanının
   `app.version` ile aynı kaynaktan geldiğini doğrulayan testler eklendi.
 
+## PDF Dışa Aktarma Çökme Düzeltmesi ve Saat Aralığı Filtresi (2026-09-21)
+
+Kullanıcının ekran görüntüsüyle bildirdiği "geçerli bir istekte bile
+`/disa-aktar/pdf/kayitlar` genel 'Sunucuda beklenmeyen bir hata oluştu'
+500'üne düşüyor" sorununun kök nedeni ve aynı oturumdaki bir takip talebi:
+
+- **KÖK NEDEN (PDF çökmesi):** reportlab'ın `Paragraph` flowable'ı,
+  kendisine verilen metni düz metin olarak DEĞİL, sınırlı bir HTML/XML
+  biçimlendirme dili olarak ayrıştırıyor. Kişi adı/soyadı, site adı,
+  daire/departman, erişim noktası adı ve araç tipi (personel için
+  `daire_departman`'dan gelir) gibi yönetici panelinden serbest metin
+  olarak girilen alanlardan biri, kapatılmamış bir biçimlendirme
+  etiketiyle (örn. `<b>metin`) karışabilecek bir değer içerdiğinde, PDF
+  üretimi yakalanmamış bir `ValueError` ile çöküyordu -- istek kendisi
+  tamamen geçerli olsa bile. Düzeltme: `backend/pdf_export.py`'de yeni bir
+  `_pdf_metin()` yardımcı fonksiyonu, `Paragraph`'a giden HER hücre
+  metnini standart XML kaçış kurallarıyla (`&`/`<`/`>`) kaçışlıyor --
+  kullanıcı verisi artık ASLA bir biçimlendirme komutu olarak
+  yorumlanamıyor.
+- **İkinci savunma katmanı:** Türkçe karakter desteği için özel
+  DejaVu Sans fontlarını kaydeden `_turkce_fontlari_kaydet()` önceden
+  hiçbir try/except ile korunmuyordu -- `backend/fonts/*.ttf` dosyaları
+  eksik/bozuk kopyalanırsa (Türkçe karakterlerle HİÇ ilgisi olmayan) HER
+  PDF dışa aktarma isteği aynı şekilde çökerdi. Artık font dosyaları
+  okunamazsa reportlab'ın gömülü Helvetica fontuna düşülüyor (durum
+  loglanıyor, Türkçe karakterler o durumda hatalı görünebilir ama rapor
+  en azından ÜRETİLİYOR).
+- **Yeni özellik (aynı oturumdaki takip talebi): kayıt filtrelemede saat
+  aralığı.** Kayıtlar sekmesindeki "Başlangıç/Bitiş Tarihi" filtreleri
+  yalnızca GÜN bazında çalışıyordu -- belirli bir gün içinde yalnızca
+  belirli saatler arasındaki geçişleri görmek mümkün değildi. Her iki
+  filtrenin yanına opsiyonel bir saat seçici (`<input type="time">`)
+  eklendi; saat boş bırakılırsa eski davranış (o günün tamamı) aynen
+  korunuyor. Backend tarafında `_bitis_tarih_filtresi_sinirini_hesapla()`
+  paylaşılan yardımcı fonksiyonu, `bitis` değerinin ham metninde `T`
+  ayırıcısı olup olmadığına bakarak (salt tarih mi, tarih+saat mi) doğru
+  üst sınırı hesaplıyor -- bu mantık `/kayitlar`, `/kayitlar/sayfa-bilgisi`
+  ve dışa aktarma raporlarının "Bu raporda X - Y tarihleri arasında..."
+  açıklama metniyle PAYLAŞILIYOR, aksi halde rapor metni ile gerçek sorgu
+  sonucu birbirinden sessizce sapabilirdi.
+- Testler: `tests/test_pdf_export.py`'ye (gerçekten çalıştırılabilir --
+  reportlab/Pillow dışında bağımlılığı yok) hem markup-benzeri metinle
+  çökmediğini hem kaçışlamanın metni gizlemediğini hem de font
+  bulunamama durumunda Helvetica'ya düştüğünü doğrulayan testler
+  eklendi. `tests/test_api.py`'ye (yalnızca `py_compile` ile doğrulandı)
+  saat aralığı filtresinin doğru çalıştığını ve saat verilmeden eski
+  davranışın (günün tamamı) korunduğunu doğrulayan testler eklendi.
+
 ## Toplu Doğruluk Testi (Canlı Sisteme Dokunmadan Eşik/Model Karşılaştırma)
 
 Farklı `PTS_ANPR_DETECTOR_ESIGI` / `PTS_ANPR_DETECTOR_MODEL` / kontrast

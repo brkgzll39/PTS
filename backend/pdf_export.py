@@ -1,7 +1,9 @@
 """Kayıtları PDF formatında dışa aktarma. Tekil kayıt PDF'i araç görselini de içerir."""
 import io
+import logging
 import os
 from datetime import datetime
+from xml.sax.saxutils import escape as _xml_escape
 
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import A4, landscape
@@ -12,6 +14,34 @@ from reportlab.platypus import (
     SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, Image
 )
 from reportlab.lib.styles import getSampleStyleSheet
+
+logger = logging.getLogger("pts.pdf_export")
+
+
+def _pdf_metin(deger) -> str:
+    """`Paragraph`e verilecek HER metni güvenli hale getirir.
+
+    KÖK NEDEN (2026-09-21, kullanıcı ekran görüntüsüyle bildirdi -- toplu
+    "GEÇİŞ RAPORU" PDF'i, kimliği doğrulanmış geçerli bir istekte bile genel
+    "Sunucuda beklenmeyen bir hata oluştu" 500'üne düşüyordu): reportlab'ın
+    `Paragraph` flowable'ı, kendisine verilen metni DÜZ METİN olarak DEĞİL,
+    sınırlı bir HTML/XML biçimlendirme dili (`<b>`, `<i>`, `<font .../>` vb.
+    etiketleri tanıyan bir mini ayrıştırıcı) olarak işler. Bu satırlardaki
+    hücrelerin çoğu (kişi adı/soyadı, site adı, daire/departman, erişim
+    noktası adı, vardiya kullanıcı adı) yönetici panelinden serbest metin
+    olarak girilir -- hiçbiri bu amaçla doğrulanmış/kısıtlanmış DEĞİLDİR.
+    Biri bu alanlardan birine kazara (veya bilerek) eşleşmeyen/kapatılmamış
+    bir etiketle karışabilecek bir metin girerse (örn. "<b>önemli" gibi
+    kapatılmamış kalın etiketi), reportlab'ın ayrıştırıcısı yakalanmamış bir
+    `ValueError` fırlatır ve TÜM rapor oluşturma isteği (istek kendisi
+    tamamen geçerli olsa bile) genel 500 hatasına düşer. Çözüm: HER hücre
+    metnini `Paragraph`e vermeden önce standart XML kaçış kurallarıyla
+    (`&`->`&amp;`, `<`->`&lt;`, `>`->`&gt;`) kaçışlamak -- böylece kullanıcı
+    verisi ASLA bir biçimlendirme komutu olarak yorumlanamaz, yalnızca düz
+    metin olarak görüntülenir (bkz. aynı gerekçeyle görsel/font
+    hatalarının da TEK bir bozuk satır yüzünden tüm raporu çökertmemesi
+    gerektiğini anlatan bu dosyadaki diğer notlar)."""
+    return _xml_escape(str(deger))
 
 # TÜRKÇE KARAKTER DÜZELTMESİ (2026-09-18, kullanıcı ekran görüntüsüyle
 # bildirdi): reportlab'ın gömülü 14 temel fontu (Helvetica/Helvetica-Bold
@@ -32,12 +62,33 @@ def _turkce_fontlari_kaydet() -> None:
     """DejaVu Sans'ı reportlab'a kaydeder -- modül başına yalnızca bir kez
     (gereksiz disk I/O'sundan kaçınmak için); `registerFont`'un kendisi de
     tekrar çağrılmaya karşı zararsızdır ama bu bayrak dosyayı her PDF
-    üretiminde yeniden OKUMAMIZI önler."""
-    global _turkce_fontlari_kayitli
+    üretiminde yeniden OKUMAMIZI önler.
+
+    2026-09-21: bu iki `registerFont` çağrısı önceden HİÇBİR try/except ile
+    korunmuyordu -- kurulum klasörü kopyalanırken/taşınırken (ör. zip
+    olarak paylaşılırken) `backend/fonts/*.ttf` dosyaları eksik kalır ya da
+    bozulursa (sıfır bayt, kesik indirme vb.), bu satır yakalanmamış bir
+    istisna fırlatıp TÜM PDF dışa aktarmayı (Türkçe karakter sorunuyla
+    hiçbir ilgisi olmayan tek bir kayıt indirme isteğini bile) genel 500'e
+    düşürürdü. Artık font dosyaları okunamazsa reportlab'ın gömülü
+    Helvetica fontlarına düşülüyor (ı/İ/ş/Ş/ğ/Ğ o durumda hatalı
+    görünebilir ama rapor en azından ÜRETİLİR) ve durum loglanıyor ki
+    sorun sessizce geçiştirilmesin."""
+    global _turkce_fontlari_kayitli, FONT_NORMAL, FONT_BOLD
     if _turkce_fontlari_kayitli:
         return
-    pdfmetrics.registerFont(TTFont(FONT_NORMAL, os.path.join(_FONT_DIZINI, "DejaVuSans.ttf")))
-    pdfmetrics.registerFont(TTFont(FONT_BOLD, os.path.join(_FONT_DIZINI, "DejaVuSans-Bold.ttf")))
+    try:
+        pdfmetrics.registerFont(TTFont(FONT_NORMAL, os.path.join(_FONT_DIZINI, "DejaVuSans.ttf")))
+        pdfmetrics.registerFont(TTFont(FONT_BOLD, os.path.join(_FONT_DIZINI, "DejaVuSans-Bold.ttf")))
+    except Exception:
+        logger.exception(
+            "Türkçe karakter destekli font (%s) yüklenemedi -- Helvetica'ya "
+            "düşülüyor (ı/İ/ş/Ş/ğ/Ğ karakterleri PDF'lerde hatalı görünebilir). "
+            "backend/fonts/ klasörünün eksiksiz kopyalandığını kontrol edin.",
+            _FONT_DIZINI,
+        )
+        FONT_NORMAL = "Helvetica"
+        FONT_BOLD = "Helvetica-Bold"
     _turkce_fontlari_kayitli = True
 
 
@@ -126,20 +177,23 @@ def kayitlar_pdf_olustur(satirlar: list, dosya_yolu: str, tarih_araligi_metni: s
     veri = [basliklar]
     for s in satirlar:
         veri.append([
-            Paragraph(str(s["id"]), hucre_stili),
-            Paragraph(s["plaka_no"], hucre_stili),
-            Paragraph(s["ad"] or "-", hucre_stili),
-            Paragraph(s["soyad"] or "-", hucre_stili),
-            Paragraph(s["site"] or "-", hucre_stili),
-            Paragraph(s["blok"] or "-", hucre_stili),
-            Paragraph(s["daire"] or "-", hucre_stili),
-            Paragraph(s["otopark"] or "-", hucre_stili),
-            Paragraph(s["nokta"] or "-", hucre_stili),
-            Paragraph(s["gecis_tipi"], hucre_stili),
-            Paragraph(s["arac_tipi"], hucre_stili),
+            Paragraph(_pdf_metin(s["id"]), hucre_stili),
+            Paragraph(_pdf_metin(s["plaka_no"]), hucre_stili),
+            Paragraph(_pdf_metin(s["ad"]) if s["ad"] else "-", hucre_stili),
+            Paragraph(_pdf_metin(s["soyad"]) if s["soyad"] else "-", hucre_stili),
+            Paragraph(_pdf_metin(s["site"]) if s["site"] else "-", hucre_stili),
+            Paragraph(_pdf_metin(s["blok"]) if s["blok"] else "-", hucre_stili),
+            Paragraph(_pdf_metin(s["daire"]) if s["daire"] else "-", hucre_stili),
+            Paragraph(_pdf_metin(s["otopark"]) if s["otopark"] else "-", hucre_stili),
+            Paragraph(_pdf_metin(s["nokta"]) if s["nokta"] else "-", hucre_stili),
+            Paragraph(_pdf_metin(s["gecis_tipi"]), hucre_stili),
+            Paragraph(_pdf_metin(s["arac_tipi"]), hucre_stili),
+            # Tarih, sunucu tarafında strftime ile üretilir (kullanıcı girdisi
+            # DEĞİLDİR) -- kaçışlamak zararsız olsa da gereksiz; yine de "\n"
+            # içerdiği için Paragraph yerine kaçışsız bırakmak render'ı bozmaz.
             Paragraph(s["tarih_saat"].strftime("%d.%m.%Y\n%H:%M:%S"), hucre_stili),
             _pdf_gorsel_hucresi(s.get("goruntu_yolu"), hucre_stili),
-            Paragraph(s.get("vardiya") or "-", hucre_stili),
+            Paragraph(_pdf_metin(s["vardiya"]) if s.get("vardiya") else "-", hucre_stili),
         ])
 
     tablo = Table(veri, repeatRows=1, colWidths=[g * cm for g in genislikler_cm])

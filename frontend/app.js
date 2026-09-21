@@ -1409,14 +1409,32 @@ const _kayitlarLimit = 50;
 // yarım kalan aramasını bozmasın diye bu durumu tespit eder.
 function _kayitlarFiltresiDuzenleniyorMu() {
   const aktif = document.activeElement;
-  return !!aktif && ["filtrePlaka", "filtreBaslangic", "filtreBitis", "filtreDurum"].includes(aktif.id);
+  return !!aktif && [
+    "filtrePlaka", "filtreBaslangic", "filtreBaslangicSaat", "filtreBitis", "filtreBitisSaat", "filtreDurum",
+  ].includes(aktif.id);
+}
+
+// Bir tarih (<input type="date">) ve opsiyonel bir saat (<input type="time">)
+// alanını backend'in beklediği TEK bir ISO 8601 dizgesine birleştirir.
+// 2026-09-21 kullanıcı talebi: "kayıt filtreleme kısmına saat seçme özelliği
+// de ekler misin, sadece tarih var, belirli saat aralıklarıyla da kayıt
+// almam gerekiyor" -- saat alanı BOŞ bırakılırsa (eski/varsayılan davranış)
+// yalnızca tarih gönderilir ("YYYY-MM-DD"), backend bunu "o günün tamamı"
+// olarak yorumlamaya devam eder (bkz. main.py::_bitis_tarih_filtresi_sinirini_hesapla
+// -- ayrım tam olarak dizgede "T" olup olmamasına göre yapılıyor, bu yüzden
+// burada saat verildiğinde MUTLAKA "T" ayırıcılı tam ISO biçimi üretilmeli).
+function _tarihSaatDegeriOlustur(tarihId, saatId) {
+  const tarih = document.getElementById(tarihId).value;
+  if (!tarih) return "";
+  const saat = document.getElementById(saatId).value;
+  return saat ? `${tarih}T${saat}:00` : tarih;
 }
 
 function filtreParametreleri() {
   const params = new URLSearchParams();
   const plaka = document.getElementById("filtrePlaka").value.trim();
-  const baslangic = document.getElementById("filtreBaslangic").value;
-  const bitis = document.getElementById("filtreBitis").value;
+  const baslangic = _tarihSaatDegeriOlustur("filtreBaslangic", "filtreBaslangicSaat");
+  const bitis = _tarihSaatDegeriOlustur("filtreBitis", "filtreBitisSaat");
   const durum = document.getElementById("filtreDurum").value;
   if (plaka) params.set("plaka", plaka);
   if (baslangic) params.set("baslangic", baslangic);
@@ -1430,15 +1448,19 @@ function filtreParametreleri() {
 async function kayitlariYukle(sifirla = true) {
   if (sifirla) _kayitlarSayfa = 0;
   const params = filtreParametreleri();
+  // NOT (2026-09-21): sayfa-bilgisi çağrısı, /kayitlar ile AYNI filtre
+  // parametrelerini (özellikle yeni saat-birleştirmeli baslangic/bitis'i)
+  // kullanmalı -- önceden bu iki çağrı filtre alanlarını BİRBİRİNDEN
+  // BAĞIMSIZ, ayrı ayrı okuyordu (bkz. eski kod); bu "tek gerçek kaynak"
+  // ihlali, saat filtresi eklenirken biri güncellenip diğeri unutulursa
+  // tablo ile toplam sayaç/sayfalama arasında SESSİZCE tutarsızlık
+  // doğurabilirdi. Artık `params`'tan limit/offset çıkarılıp AYNEN yeniden
+  // kullanılıyor.
+  const sayfaBilgisiParams = new URLSearchParams(params);
+  sayfaBilgisiParams.delete("offset");
   const [kayitlar, sayfaBilgisi] = await Promise.all([
     apiCagir(`/kayitlar?${params.toString()}`),
-    apiCagir(`/kayitlar/sayfa-bilgisi?${new URLSearchParams({
-      plaka: document.getElementById("filtrePlaka").value.trim(),
-      baslangic: document.getElementById("filtreBaslangic").value,
-      bitis: document.getElementById("filtreBitis").value,
-      yetki_durumu: document.getElementById("filtreDurum").value,
-      limit: _kayitlarLimit,
-    }).toString()}`),
+    apiCagir(`/kayitlar/sayfa-bilgisi?${sayfaBilgisiParams.toString()}`),
   ]);
   sonKayitlarCache = [...sonKayitlarCache.filter(k => !kayitlar.find(n => n.id === k.id)), ...kayitlar];
   const el = document.getElementById("kayitlarSayac");

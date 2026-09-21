@@ -489,17 +489,26 @@
       <div class="card mb-3">
         <div class="card-body">
           <div class="row g-2 align-items-end">
-            <div class="col-md-3">
+            <div class="col-md-2">
               <label class="form-label small" for="filtrePlaka">Plaka Ara</label>
               <input type="text" class="form-control" id="filtrePlaka" placeholder="örn. 34 ABC">
             </div>
-            <div class="col-md-2">
-              <label class="form-label small" for="filtreBaslangic">Başlangıç Tarihi</label>
-              <input type="date" class="form-control" id="filtreBaslangic">
+            <div class="col-md-3">
+              <label class="form-label small" for="filtreBaslangic">Başlangıç Tarihi/Saati</label>
+              <div class="d-flex gap-1">
+                <input type="date" class="form-control" id="filtreBaslangic">
+                <!-- Saat OPSİYONEL: boş bırakılırsa (mevcut/eski davranış) o günün
+                     00:00'ından itibaren, doldurulursa TAM o andan itibaren filtrelenir
+                     (bkz. app.js::_tarihSaatDegeriOlustur, main.py::_bitis_tarih_filtresi_sinirini_hesapla). -->
+                <input type="time" class="form-control" id="filtreBaslangicSaat" style="max-width: 6.5rem;" title="Saat (opsiyonel) — boş bırakılırsa günün başından itibaren">
+              </div>
             </div>
-            <div class="col-md-2">
-              <label class="form-label small" for="filtreBitis">Bitiş Tarihi</label>
-              <input type="date" class="form-control" id="filtreBitis">
+            <div class="col-md-3">
+              <label class="form-label small" for="filtreBitis">Bitiş Tarihi/Saati</label>
+              <div class="d-flex gap-1">
+                <input type="date" class="form-control" id="filtreBitis">
+                <input type="time" class="form-control" id="filtreBitisSaat" style="max-width: 6.5rem;" title="Saat (opsiyonel) — boş bırakılırsa günün sonuna kadar">
+              </div>
             </div>
             <div class="col-md-2">
               <label class="form-label small" for="filtreDurum">Yetki Durumu</label>
@@ -512,7 +521,7 @@
                 <option value="kara_liste">Kara Liste</option>
               </select>
             </div>
-            <div class="col-md-3 d-flex gap-2">
+            <div class="col-md-2 d-flex gap-2">
               <button class="btn btn-primary flex-fill" onclick="kayitlariYukle()"><i class="bi bi-search"></i> Filtrele</button>
             </div>
           </div>

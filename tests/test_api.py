@@ -953,6 +953,99 @@ def test_gecerli_tarih_filtresi_normal_calisir(client, izleyici_header):
     assert r.status_code == 200, r.text
 
 
+# ------------------------------------------------------------------
+# Kayıt filtrelemede SAAT aralığı (2026-09-21 kullanıcı talebi: "kayıt
+# filtreleme kısmına saat seçme özelliği de ekler misin, sadece tarih var,
+# belirli saat aralıklarıyla da kayıt almam gerekiyor") -- baslangic/bitis
+# artık yalnızca tarih değil, saat de içerebiliyor (örn.
+# "2026-01-15T14:00:00", frontend'deki yeni saat seçiciyle üretilir, bkz.
+# app.js::_tarihSaatDegeriOlustur). Bkz. main.py::_bitis_tarih_filtresi_sinirini_hesapla.
+# ------------------------------------------------------------------
+
+def test_kayitlar_saat_araligi_ile_filtrelenebilir(client, yetkili_header):
+    """AYNI güne düşen ama farklı SAATLERDE olan üç kaydın, dar bir saat
+    aralığı filtresiyle doğru ayrıştırıldığını doğrular."""
+    from backend.database import SessionLocal
+    from backend import models
+
+    on_ek = "34 SAAT01"  # bu teste özgü, başka hiçbir testle çakışmayacak benzersiz plaka öneki
+    db = SessionLocal()
+    try:
+        db.add_all([
+            models.Kayit(plaka_no=f"{on_ek} SABAH", kamera_id="TEST", tarih_saat=datetime(2026, 1, 15, 8, 0, 0)),
+            models.Kayit(plaka_no=f"{on_ek} OGLE", kamera_id="TEST", tarih_saat=datetime(2026, 1, 15, 14, 0, 0)),
+            models.Kayit(plaka_no=f"{on_ek} AKSAM", kamera_id="TEST", tarih_saat=datetime(2026, 1, 15, 20, 0, 0)),
+        ])
+        db.commit()
+    finally:
+        db.close()
+
+    r = client.get("/kayitlar", params={
+        "plaka": on_ek,
+        "baslangic": "2026-01-15T12:00:00",
+        "bitis": "2026-01-15T18:00:00",
+    }, headers=yetkili_header)
+    assert r.status_code == 200, r.text
+    plakalar = {k["plaka_no"] for k in r.json()}
+    assert plakalar == {f"{on_ek} OGLE"}, (
+        f"12:00-18:00 saat aralığı filtresi yalnızca öğle kaydını döndürmeliydi, dönen: {plakalar}"
+    )
+
+
+def test_kayitlar_bitis_saatsiz_gunun_sonuna_kadar_kapsar(client, yetkili_header):
+    """Regresyon: `bitis` saat İÇERMEDİĞİNDE (salt tarih, örn. '2026-01-16')
+    eski davranış korunmalı -- o günün TAMAMI (23:59:59'a kadar) dahil
+    edilmeli. Saat seçme özelliği eklenirken bu davranış YANLIŞLIKLA
+    bozulmamalı."""
+    from backend.database import SessionLocal
+    from backend import models
+
+    on_ek = "34 SAAT02"
+    db = SessionLocal()
+    try:
+        db.add(models.Kayit(plaka_no=on_ek, kamera_id="TEST", tarih_saat=datetime(2026, 1, 16, 23, 59, 59)))
+        db.commit()
+    finally:
+        db.close()
+
+    r = client.get(
+        "/kayitlar", params={"plaka": on_ek, "baslangic": "2026-01-16", "bitis": "2026-01-16"}, headers=yetkili_header,
+    )
+    assert r.status_code == 200, r.text
+    plakalar = {k["plaka_no"] for k in r.json()}
+    assert plakalar == {on_ek}, (
+        f"Saat içermeyen bitis='2026-01-16' filtresi, o günün 23:59:59'undaki kaydı da KAPSAMALIYDI, dönen: {plakalar}"
+    )
+
+
+def test_kayitlar_sayfa_bilgisi_saat_araligini_kayitlar_ile_tutarli_sayar(client, yetkili_header):
+    """/kayitlar ve /kayitlar/sayfa-bilgisi AYNI saat aralığı filtresiyle
+    çağrıldığında TUTARLI bir 'toplam' sayısı döndürmeli -- ikisi ayrı ayrı
+    aynı üst sınır mantığını (bkz. main.py::_bitis_tarih_filtresi_sinirini_hesapla)
+    kullanıyor, bu regresyona karşı doğrulanıyor."""
+    from backend.database import SessionLocal
+    from backend import models
+
+    on_ek = "34 SAAT03"
+    db = SessionLocal()
+    try:
+        db.add_all([
+            models.Kayit(plaka_no=f"{on_ek} A", kamera_id="TEST", tarih_saat=datetime(2026, 1, 17, 9, 0, 0)),
+            models.Kayit(plaka_no=f"{on_ek} B", kamera_id="TEST", tarih_saat=datetime(2026, 1, 17, 11, 0, 0)),
+        ])
+        db.commit()
+    finally:
+        db.close()
+
+    ortak_params = {"plaka": on_ek, "baslangic": "2026-01-17T08:00:00", "bitis": "2026-01-17T12:00:00"}
+    r1 = client.get("/kayitlar", params=ortak_params, headers=yetkili_header)
+    r2 = client.get("/kayitlar/sayfa-bilgisi", params=ortak_params, headers=yetkili_header)
+    assert r1.status_code == 200, r1.text
+    assert r2.status_code == 200, r2.text
+    assert len(r1.json()) == 2
+    assert r2.json()["toplam"] == 2
+
+
 def test_guvenlik_baslikları_her_yanitta_var(client):
     """2026-09-20: her yanıta clickjacking/MIME-sniffing'e karşı ek bir
     savunma katmanı ekleyen standart güvenlik başlıkları eklendi (bkz.

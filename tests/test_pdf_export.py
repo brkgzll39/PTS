@@ -203,6 +203,85 @@ def test_kayitlar_pdf_turkce_karakterler_dogru_render_edilir(tmp_path):
         )
 
 
+# ------------------------------------------------------------------
+# Kullanıcı verisindeki "biçimlendirme benzeri" metin PDF üretimini
+# çökertmemeli (2026-09-21, kullanıcı ekran görüntüsüyle bildirdi: geçerli
+# bir /disa-aktar/pdf/kayitlar isteği genel "Sunucuda beklenmeyen bir hata
+# oluştu" 500'üne düşüyordu).
+# ------------------------------------------------------------------
+
+def test_kayitlar_pdf_reportlab_markup_benzeri_metinle_cokmez(tmp_path):
+    """KÖK NEDEN: reportlab'ın `Paragraph` flowable'ı, kendisine verilen
+    metni düz metin olarak DEĞİL, sınırlı bir HTML/XML biçimlendirme dili
+    olarak ayrıştırır. Kişi adı/soyadı, site adı, daire/departman, erişim
+    noktası adı ve araç tipi (personel için daire_departman'dan gelir) gibi
+    yönetici panelinden serbest metin olarak girilen alanlardan biri,
+    kapatılmamış bir biçimlendirme etiketiyle (örn. '<b>metin') karışabilecek
+    bir değer içerirse, eskiden PDF üretimi yakalanmamış bir `ValueError` ile
+    çökerdi -- istek kendisi (geçerli bir kimlik doğrulaması ve tarih
+    filtresiyle) tamamen normal olsa bile. Artık `pdf_export._pdf_metin` ile
+    TÜM hücre metinleri kaçışlanıyor (bkz. modül başındaki kök neden notu)."""
+    tehlikeli_deger = "<b>kapatılmamış kalın etiket"
+    for alan in ("plaka_no", "ad", "soyad", "site", "daire", "nokta", "arac_tipi", "vardiya"):
+        satir = _ornek_satir(**{alan: tehlikeli_deger})
+        dosya = tmp_path / f"rapor_{alan}.pdf"
+        pdf_export.kayitlar_pdf_olustur([satir], str(dosya))
+        assert dosya.exists(), f"'{alan}' alanında biçimlendirme benzeri metinle PDF üretimi çökmemeli"
+        with open(dosya, "rb") as f:
+            assert f.read(5) == b"%PDF-"
+
+
+def test_kayitlar_pdf_ozel_karakterler_metin_olarak_gorunur(tmp_path):
+    """Kaçışlamanın metni GİZLEMEDİĞİNİ, yalnızca güvenli hale getirdiğini
+    doğrular -- '&' gibi karakterler PDF'te düz metin olarak görünmeli,
+    sessizce yutulmamalı.
+
+    NOT: "A & B" ve "Sitesi" tek bir string olarak DEĞİL ayrı ayrı aranıyor
+    -- dar "Site" sütunu bu metni iki satıra sarıyor (bkz.
+    test_kayitlar_pdf_turkce_karakterler_dogru_render_edilir'deki AYNI
+    başlıklı not, "Nizamiye Kapısı" örneğiyle)."""
+    import pdfplumber
+
+    satir = _ornek_satir(site="A & B Sitesi")
+    dosya = tmp_path / "ozel_karakter.pdf"
+    pdf_export.kayitlar_pdf_olustur([satir], str(dosya))
+    with pdfplumber.open(str(dosya)) as pdf:
+        tam_metin = "\n".join(sayfa.extract_text() or "" for sayfa in pdf.pages)
+    assert "A & B" in tam_metin
+    assert "Sitesi" in tam_metin
+
+
+def test_turkce_fontlari_kaydet_font_dosyasi_bulunamazsa_helvetica_ya_duser(tmp_path, monkeypatch):
+    """2026-09-21: font kaydı (`pdfmetrics.registerFont`) önceden try/except
+    İLE KORUNMUYORDU -- kurulum klasörü eksik/bozuk kopyalanırsa
+    (backend/fonts/*.ttf okunamazsa), bu, Türkçe karakter sorunuyla HİÇ
+    ilgisi olmayan HER PDF dışa aktarma isteğini çökertirdi. Artık font
+    dosyaları okunamazsa reportlab'ın gömülü Helvetica fontuna düşülüyor
+    (Türkçe karakterler o durumda hatalı görünse de rapor ÜRETİLİYOR)."""
+    onceki_font_normal = pdf_export.FONT_NORMAL
+    onceki_font_bold = pdf_export.FONT_BOLD
+    onceki_kayitli = pdf_export._turkce_fontlari_kayitli
+    monkeypatch.setattr(pdf_export, "_FONT_DIZINI", str(tmp_path / "olmayan-font-klasoru"))
+    pdf_export._turkce_fontlari_kayitli = False
+    try:
+        pdf_export._turkce_fontlari_kaydet()
+        assert pdf_export.FONT_NORMAL == "Helvetica"
+        assert pdf_export.FONT_BOLD == "Helvetica-Bold"
+
+        dosya = tmp_path / "font_dusus.pdf"
+        pdf_export.kayitlar_pdf_olustur([_ornek_satir()], str(dosya))
+        assert dosya.exists()
+    finally:
+        # Modül durumunu SONRAKİ testler (örn. Türkçe karakter render
+        # testleri) bu testten ÖNCEKİ haliyle miras alsın diye elle geri
+        # yükle -- `_FONT_DIZINI` monkeypatch tarafından otomatik geri
+        # alınıyor ama modül-seviyesi `FONT_NORMAL`/`FONT_BOLD`/
+        # `_turkce_fontlari_kayitli` DEĞİŞKENLERİ değil.
+        pdf_export.FONT_NORMAL = onceki_font_normal
+        pdf_export.FONT_BOLD = onceki_font_bold
+        pdf_export._turkce_fontlari_kayitli = onceki_kayitli
+
+
 def test_kayit_detay_pdf_turkce_karakterler_dogru_render_edilir(tmp_path):
     import pdfplumber
     from types import SimpleNamespace

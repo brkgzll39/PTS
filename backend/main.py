@@ -2736,6 +2736,41 @@ def _iso_tarih_parametresini_coz(deger: Optional[str], alan_adi: str) -> Optiona
         )
 
 
+def _bitis_tarih_filtresi_sinirini_hesapla(bitis: Optional[str]) -> Optional[datetime]:
+    """`bitis` filtre parametresini, SQL sorgusunda `<=` ile kullanılacak
+    somut bir ÜST SINIR datetime'ına çevirir.
+
+    KÖK NEDEN (2026-09-21, kullanıcı talebi: "kayıt filtreleme kısmına saat
+    seçme özelliği de ekler misin, sadece tarih var, belirli saat
+    aralıklarıyla da kayıt almam gerekiyor"): `bitis` önceden HER ZAMAN salt
+    bir tarih ("2026-09-21") olarak kabul edilip, kullanıcının "o gün DAHİL"
+    beklentisini karşılamak için körlemesine +1 gün eklenirdi (aksi halde
+    tarih 00:00:00'a ayrıştığından o günün TAMAMI filtre dışı kalırdı).
+    Şimdi `bitis` bir SAAT de içerebiliyor (örn. "2026-09-21T18:00:00",
+    frontend'deki yeni saat seçiciyle üretilir) -- bu durumda kullanıcı
+    "o günün SONUNA kadar" değil, TAM O ANA kadar filtrelemek istiyor;
+    körlemesine +1 gün eklemek isteği bir sonraki güne kaydırıp yanlış
+    (fazladan ~24 saatlik) sonuçlar döndürürdü.
+
+    Ayrım, ayrıştırılmış datetime nesnesinin SAAT bileşenine bakılarak
+    YAPILMAZ (saat bileşeni tesadüfen 00:00:00 da olabilir -- örn. kullanıcı
+    bilerek "gece yarısına kadar" filtrelemek isteyebilir) -- ham metnin
+    "T" ayırıcısı içerip içermediğine bakılır: ISO 8601'de salt tarih
+    biçimi ("YYYY-MM-DD") "T" İÇEREMEZ, yalnızca tarih+saat biçimi
+    ("YYYY-MM-DDTHH:MM[:SS]") içerir.
+
+    `/kayitlar`, `/kayitlar/sayfa-bilgisi` ve `_rapor_tarih_araligi_metni`
+    (Excel/PDF dışa aktarma başlığı) AYNI mantığı kullanmalı -- aksi halde
+    dışa aktarılan rapordaki "arasında" metni ile gerçekte dönen kayıt
+    kümesi birbirinden sapabilir."""
+    if not bitis:
+        return None
+    bitis_dt = _iso_tarih_parametresini_coz(bitis, "bitis")
+    if "T" not in bitis:
+        bitis_dt = bitis_dt + timedelta(days=1)
+    return bitis_dt
+
+
 @app.get("/kayitlar", response_model=List[schemas.KayitCevap])
 def kayitlari_listele(
     plaka: Optional[str] = None,
@@ -2757,10 +2792,9 @@ def kayitlari_listele(
         sorgu = sorgu.filter(models.Kayit.kamera_id.ilike(f"%{kamera_id}%"))
     if baslangic:
         sorgu = sorgu.filter(models.Kayit.tarih_saat >= _iso_tarih_parametresini_coz(baslangic, "baslangic"))
-    if bitis:
-        sorgu = sorgu.filter(
-            models.Kayit.tarih_saat <= _iso_tarih_parametresini_coz(bitis, "bitis") + timedelta(days=1)
-        )
+    bitis_siniri = _bitis_tarih_filtresi_sinirini_hesapla(bitis)
+    if bitis_siniri is not None:
+        sorgu = sorgu.filter(models.Kayit.tarih_saat <= bitis_siniri)
     # bkz. "GÜVENLİK PERSONELİ VARDİYA FİLTRESİ" notu: güvenlik rolü dışındaki
     # kullanıcılar için bu çağrı sorguyu DEĞİŞTİRMEDEN döner.
     sorgu = _guvenlik_kayit_filtresi_uygula(sorgu, kullanici, db)
@@ -2799,10 +2833,9 @@ def kayitlar_sayfa_bilgisi(
         sorgu = sorgu.filter(models.Kayit.kamera_id.ilike(f"%{kamera_id}%"))
     if baslangic:
         sorgu = sorgu.filter(models.Kayit.tarih_saat >= _iso_tarih_parametresini_coz(baslangic, "baslangic"))
-    if bitis:
-        sorgu = sorgu.filter(
-            models.Kayit.tarih_saat <= _iso_tarih_parametresini_coz(bitis, "bitis") + timedelta(days=1)
-        )
+    bitis_siniri = _bitis_tarih_filtresi_sinirini_hesapla(bitis)
+    if bitis_siniri is not None:
+        sorgu = sorgu.filter(models.Kayit.tarih_saat <= bitis_siniri)
     sorgu = _guvenlik_kayit_filtresi_uygula(sorgu, kullanici, db)
     toplam = sorgu.count()
     sayfa_sayisi = max(1, -(-toplam // max(1, limit)))
@@ -3162,12 +3195,31 @@ def _rapor_tarih_araligi_metni(baslangic: Optional[str], bitis: Optional[str], k
     ayrıştırılıyor -- pratikte bu fonksiyona ulaşan değerler zaten
     `kayitlari_listele` tarafından (aynı parametrelerle, DAHA ÖNCE) doğrulanmış
     oluyor (dışa aktarma uçları onu doğrudan çağırıyor), ama savunma amaçlı
-    bu fonksiyonun kendi başına da güvenli olması tercih edildi."""
+    bu fonksiyonun kendi başına da güvenli olması tercih edildi.
+
+    2026-09-21: `baslangic`/`bitis` artık bir SAAT de içerebiliyor (bkz.
+    _bitis_tarih_filtresi_sinirini_hesapla'daki aynı tarihli kök neden
+    notu) -- bu fonksiyon o durumda `%H:%M` içeren bir metin üretir ("...
+    21.09.2026 14:00 - 21.09.2026 18:00 tarihleri arasında..."), salt tarih
+    filtrelerinde ise eski davranış (gün bazlı, "arasında" ifadesinin
+    ima ettiği ÜST SINIRIN bir sonraki güne denk gelmesi) korunur. Üst
+    sınır hesaplaması `_bitis_tarih_filtresi_sinirini_hesapla` ile PAYLAŞILIR
+    -- burada AYRI bir +1 gün mantığı tekrarlanırsa, dışa aktarılan
+    rapordaki "arasında" metni ile sorgunun GERÇEKTEN döndürdüğü kayıt
+    kümesi birbirinden sessizce sapabilirdi."""
     if baslangic or bitis:
-        b1 = _iso_tarih_parametresini_coz(baslangic, "baslangic").strftime("%d.%m.%Y") if baslangic else "en eski kayıt"
+        baslangic_saatli = bool(baslangic) and "T" in baslangic
+        bitis_saatli = bool(bitis) and "T" in bitis
+        b1 = (
+            _iso_tarih_parametresini_coz(baslangic, "baslangic").strftime(
+                "%d.%m.%Y %H:%M" if baslangic_saatli else "%d.%m.%Y"
+            )
+            if baslangic else "en eski kayıt"
+        )
+        bitis_siniri = _bitis_tarih_filtresi_sinirini_hesapla(bitis)
         b2 = (
-            (_iso_tarih_parametresini_coz(bitis, "bitis") + timedelta(days=1)).strftime("%d.%m.%Y")
-            if bitis else "şimdi"
+            bitis_siniri.strftime("%d.%m.%Y %H:%M" if bitis_saatli else "%d.%m.%Y")
+            if bitis_siniri is not None else "şimdi"
         )
         return f"Bu raporda {b1} - {b2} tarihleri arasındaki geçiş kayıtları listelenmektedir."
     if kayitlar:
