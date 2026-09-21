@@ -3355,8 +3355,26 @@ def kayitlari_excel_indir(
     # `kullanici` parametresi burada AÇIKÇA geçirilmezse (Depends() varsayılan
     # değeri hiç ÇÖZÜLMEZ) vardiya filtresi sessizce uygulanmaz ve bir güvenlik
     # personeli dışa aktarma raporunda TÜM kayıtları görebilirdi.
+    #
+    # KÖK NEDEN (2026-09-21, kullanıcının paylaştığı GERÇEK hata izinden
+    # bulundu -- önceki iki "düzeltme" turu bu asıl sorunu KAÇIRMIŞTI):
+    # AYNI sebepten `offset` de burada AÇIKÇA geçirilmeliydi ama
+    # geçirilmiyordu. `kayitlari_listele`'nin imzasındaki
+    # `offset: int = Query(0, ge=0)` -- FastAPI bir HTTP isteğini bu
+    # fonksiyona yönlendirirken bu `Query(...)` işaretleyicisini TANIYIP
+    # gerçek tam sayı değerine ÇÖZER, ama fonksiyon burada olduğu gibi
+    # DÜZ bir Python çağrısıyla (routing katmanı hiç devreye girmeden)
+    # çağrılırsa, Python parametrenin varsayılan değeri olarak doğrudan bu
+    # `Query(...)` NESNESİNİ kullanır -- yani `offset` isim olarak var ama
+    # DEĞERİ bir tam sayı DEĞİL, FastAPI'nin kendi `Query` sınıfının bir
+    # örneğiydi. Bu, `sorgu...offset(offset)` satırına kadar sessizce
+    # ilerleyip SQLAlchemy içinde yakalanmamış bir
+    # `TypeError: int() argument must be ... not 'Query'` fırlatıyordu --
+    # istek kendisi (kimlik doğrulaması, tarih filtresi, veri, hepsi)
+    # tamamen geçerli olsa bile HER Excel/PDF dışa aktarma isteği bu
+    # yüzden çöküyordu.
     kayitlar = kayitlari_listele(
-        plaka=plaka, baslangic=baslangic, bitis=bitis, yetki_durumu=None, limit=5000,
+        plaka=plaka, baslangic=baslangic, bitis=bitis, yetki_durumu=None, limit=5000, offset=0,
         db=db, kullanici=kullanici,
     )
     satirlar = _kayitlari_rapor_satirlari(kayitlar, db)
@@ -3374,10 +3392,11 @@ def kayitlari_pdf_indir(
     bitis: Optional[str] = None, db: Session = Depends(get_db),
     kullanici: models.Kullanici = Depends(_personel_girisi_gerekli),
 ):
-    # bkz. kayitlari_excel_indir'deki AYNI başlıklı not: `kullanici` burada da
-    # AÇIKÇA geçirilmeli.
+    # bkz. kayitlari_excel_indir'deki AYNI başlıklı not: `kullanici` VE
+    # `offset` burada da AÇIKÇA geçirilmeli (offset eksikliği, gerçek
+    # üretim verisiyle raporlanan asıl 500 çökmesinin kök nedeniydi).
     kayitlar = kayitlari_listele(
-        plaka=plaka, baslangic=baslangic, bitis=bitis, yetki_durumu=None, limit=2000,
+        plaka=plaka, baslangic=baslangic, bitis=bitis, yetki_durumu=None, limit=2000, offset=0,
         db=db, kullanici=kullanici,
     )
     satirlar = _kayitlari_rapor_satirlari(kayitlar, db)

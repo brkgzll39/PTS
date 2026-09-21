@@ -2510,6 +2510,37 @@ def test_disa_aktar_uc_noktalari_authorization_basligiyla_calisir(client, yetkil
         assert r.status_code == 200, f"GET {yol}: Authorization başlığıyla 200 beklenirdi ({r.text})"
 
 
+def test_disa_aktar_kayitlar_offset_query_nesnesi_olarak_sizmaz(client, yetkili_header):
+    """KÖK NEDEN (2026-09-21, kullanıcının paylaştığı GERÇEK hata iziyle
+    bulundu): `kayitlari_excel_indir`/`kayitlari_pdf_indir`,
+    `kayitlari_listele()`'yi FastAPI'nin DI mekanizması ÜZERİNDEN DEĞİL
+    doğrudan bir Python fonksiyonu olarak çağırıyor (bkz. her ikisindeki
+    "kullanici AÇIKÇA geçirilmeli" notu) -- ama `offset` parametresi
+    AÇIKÇA geçirilmiyordu. `kayitlari_listele`'nin imzasındaki
+    `offset: int = Query(0, ge=0)` yalnızca FastAPI'nin kendi routing
+    katmanından çağrıldığında gerçek bir tam sayıya çözülür; düz bir
+    Python çağrısında `offset`, FastAPI'nin `Query` sınıfının bir örneği
+    olarak KALIR. Bu, `.offset(offset)` satırında SQLAlchemy içinde
+    yakalanmamış bir `TypeError` fırlatıp HER Excel/PDF dışa aktarma
+    isteğini (istek kendisi -- kimlik doğrulaması, veri, hepsi -- tamamen
+    geçerli olsa bile) genel 500'e düşürüyordu. Bu test özellikle EN AZ
+    bir kayıt varken bu iki uç noktayı çağırır (`.offset()`/`.limit()`
+    HER çağrıda -- kayıt sayısından bağımsız olarak -- işletilir, bu
+    yüzden aslında sıfır kayıtla da tetiklenirdi, ama gerçekçi bir veri
+    kümesiyle test etmek daha az kırılgan)."""
+    olusturulan = client.post("/kayitlar", json={
+        "plaka_no": "34 DAO 001", "kamera_id": "TEST-DISA-AKTAR-OFFSET", "yon": "giris",
+    }, headers=yetkili_header)
+    assert olusturulan.status_code == 200, olusturulan.text
+
+    for yol in ("/disa-aktar/excel/kayitlar", "/disa-aktar/pdf/kayitlar"):
+        r = client.get(yol, headers=yetkili_header)
+        assert r.status_code == 200, (
+            f"GET {yol}: 200 beklenirdi ama {r.status_code} döndü -- `offset` parametresi "
+            f"kayitlari_listele()'ye açıkça geçirilmiyor olabilir (bkz. kök neden notu), {r.text}"
+        )
+
+
 def test_disa_aktar_uc_noktalari_sorgu_token_ile_calisir(client, admin_token):
     """window.open() ile açılan indirme bağlantıları Authorization başlığı
     TAŞIYAMAZ -- bu yüzden frontend token'ı ?token= sorgu parametresi olarak

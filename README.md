@@ -2247,6 +2247,57 @@ neden daha bulundu:
   `test_pdf_export.py` -- ikisi de gerçekten çalıştırılabilir) doğrudan
   bu iki senaryoyu yeniden üreten regresyon testleri eklendi.
 
+### Devamı: ASIL kök neden bulundu -- `offset` parametresi Query nesnesi olarak sızıyordu (2026-09-21, aynı gün, kullanıcının paylaştığı GERÇEK hata iziyle)
+
+Yukarıdaki iki tur (kaçışlama + kontrol karakteri/uzunluk kırpma) GERÇEK ve
+bağımsız hatalardı, ama kullanıcı düzeltmelerden SONRA bile AYNI 500'ün
+devam ettiğini bildirince, panelin "Sistem" sekmesinden tam hata izini
+istedik. İz, her ikisinden de TAMAMEN FARKLI, çok daha temel bir sorunu
+ortaya çıkardı:
+
+```
+File "backend\main.py", line 2811, in kayitlari_listele
+    kayitlar = sorgu.order_by(...).offset(offset).limit(limit).all()
+...
+TypeError: int() argument must be a string, a bytes-like object or a real number, not 'Query'
+```
+
+**Kök neden:** `kayitlari_excel_indir` ve `kayitlari_pdf_indir`,
+`kayitlari_listele()`'yi FastAPI'nin DI (bağımlılık enjeksiyonu)
+mekanizması ÜZERİNDEN DEĞİL, doğrudan bir Python fonksiyonu olarak
+çağırıyor -- bu, `kullanici` parametresi için zaten bilinen ve
+belgelenmiş bir kısıtlamaydı ("kullanici AÇIKÇA geçirilmezse Depends()
+varsayılanı hiç ÇÖZÜLMEZ" notu, bkz. yukarıdaki "Güvenlik Personeli
+Vardiya Filtresi" bölümü). Ama AYNI kısıtlama `offset` parametresi için
+de geçerliydi ve fark edilmemişti: `kayitlari_listele`'nin imzasındaki
+`offset: int = Query(0, ge=0)`, yalnızca FastAPI'nin kendi routing
+katmanından çağrıldığında gerçek bir tam sayıya çözülür. Fonksiyon
+buradaki gibi düz bir Python çağrısıyla (limit AÇIKÇA veriliyordu ama
+offset VERİLMİYORDU) çağrılırsa, Python `offset` için doğrudan FastAPI'nin
+`Query(...)` çağrısının DÖNDÜRDÜĞÜ NESNEYİ kullanır -- yani `offset`
+isim olarak var ama değeri bir tam sayı DEĞİL, `fastapi.params.Query`
+sınıfının bir örneğiydi. Bu, `.offset(offset)` satırına kadar sessizce
+ilerleyip SQLAlchemy içinde yakalanmamış bir `TypeError` fırlatıyordu --
+istek kendisi (kimlik doğrulaması, tarih filtresi, veri, hepsi) tamamen
+geçerli olsa bile HER TEK Excel/PDF dışa aktarma isteği bu yüzden
+çöküyordu (kayıt sayısından ya da içeriğinden TAMAMEN BAĞIMSIZ -- yukarıdaki
+iki "düzeltme" turu gerçek hatalardı ama HİÇBİRİ bu asıl engelleyici
+sorunu çözmüyordu).
+
+**Düzeltme:** her iki çağrı sitesine de `offset=0` AÇIKÇA eklendi.
+
+**Neden test paketi bunu yakalamadı:** `tests/test_api.py`'deki
+`test_disa_aktar_uc_noktalari_authorization_basligiyla_calisir` testi bu
+iki uç noktayı zaten çağırıp 200 bekliyordu -- bu depo bu testi gerçekten
+ÇALIŞTIRABİLECEK bir ortamda (fastapi/sqlalchemy kurulu) çalıştırılsaydı bu
+regresyon HEMEN yakalanırdı. Bu oturumun kendi kum havuzunda bu paket kurulu
+olmadığından (bkz. "Kalıcı Test Altyapısı" bölümü) bu dosya yalnızca
+`py_compile` ile doğrulanabildi -- **kullanıcının kendi ortamında (ya da
+CI'da) `pytest tests/` çalıştırması, tam olarak bu sınıftaki hataları erken
+yakalamanın yoludur.** Kök nedeni netleştiren, mekanizmayı açıkça anlatan
+yeni bir regresyon testi (`test_disa_aktar_kayitlar_offset_query_nesnesi_olarak_sizmaz`)
+`tests/test_api.py`'ye eklendi.
+
 ## Toplu Doğruluk Testi (Canlı Sisteme Dokunmadan Eşik/Model Karşılaştırma)
 
 Farklı `PTS_ANPR_DETECTOR_ESIGI` / `PTS_ANPR_DETECTOR_MODEL` / kontrast
