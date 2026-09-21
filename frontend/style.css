@@ -29,6 +29,48 @@ body {
 .dashboard-heading h1 { font-size: 1.45rem; margin: .2rem 0; font-weight: 600; }
 .dashboard-heading p { color: #788793; font-size: .82rem; margin: 0; }
 .eyebrow { color: #2785ad; font-size: .67rem; letter-spacing: .12em; font-weight: 700; }
+
+/* Panel/Kontrol Merkezi bölüm başlıkları (2026-09-21, "benzersiz ana sayfa"
+   isteği) -- .eyebrow ile aynı görsel dil, ama sayfa üstündeki tekil
+   kickerdan farklı olarak panel içindeki her bölümü (Nizamiye Durumu, Hızlı
+   Erişim, Genel İstatistikler) birbirinden ayırmak için tekrar kullanılır. */
+.section-label { color: #91a0ad; font-size: .68rem; letter-spacing: .1em; font-weight: 700; text-transform: uppercase; margin: 0 0 .6rem; }
+
+/* Vardiya durum şeridi: güvenlik personeli Panel'e girer girmez "vardiyam
+   açık mı, ne zaman otomatik kapanacak" sorusunun cevabını arama yapmadan
+   görsün diye (bkz. app.js::guvenlikVardiyaDurumunuGuncelle). Renk dili
+   .license-pill ile aynı aile (yeşil=iyi/aktif, kırmızı=dikkat/kapalı). */
+.shift-banner { display: flex; align-items: center; gap: .75rem; background: #fff; border: 1px solid #d4dce4; border-left: 4px solid #91a0ad; padding: .8rem 1.1rem; }
+.shift-banner strong { display: block; font-size: .9rem; }
+.shift-banner span { color: #667685; font-size: .78rem; }
+.shift-dot { width: 11px; height: 11px; border-radius: 50%; flex: 0 0 auto; background: #91a0ad; }
+.shift-banner.active { border-left-color: #3c9478; }
+.shift-banner.active .shift-dot { background: #3c9478; box-shadow: 0 0 0 4px #dcf0e7; }
+.shift-banner.inactive { border-left-color: #a85c59; }
+.shift-banner.inactive .shift-dot { background: #a85c59; box-shadow: 0 0 0 4px #f2dedd; }
+
+/* Nizamiye durum şeması: her kart bir "nizamiye"yi (kamera "ad" alanına göre
+   otomatik gruplanmış bir veya daha fazla kamera) temsil eder -- soyut bir
+   KPI sayısı değil, GERÇEK fiziksel giriş noktasının o anki canlılık
+   durumunu gösterir (bkz. app.js::nizamiyeSemasiniYukle). Renkler
+   .quick-tile'daki aynı yeşil/amber/kırmızı/gri paletle bilinçli olarak
+   tutarlı tutuldu. */
+.gate-scheme { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: .65rem; }
+.gate-card { display: flex; align-items: flex-start; gap: .6rem; background: #fff; border: 1px solid #d4dce4; border-left: 4px solid #91a0ad; padding: .85rem .95rem; text-align: left; transition: transform .15s ease; }
+.gate-card:hover { transform: translateY(-2px); }
+.gate-card .gate-dot { width: 10px; height: 10px; border-radius: 50%; margin-top: .3rem; flex: 0 0 auto; background: #91a0ad; }
+.gate-card strong { display: block; font-size: .86rem; margin-bottom: .15rem; }
+.gate-card .gate-status { display: block; font-size: .74rem; color: #56636f; }
+.gate-card .gate-meta { display: block; font-size: .68rem; color: #91a0ad; margin-top: .15rem; }
+.gate-card.ok { border-left-color: #3c9478; }
+.gate-card.ok .gate-dot { background: #3c9478; box-shadow: 0 0 0 3px #dcf0e7; }
+.gate-card.warn { border-left-color: #b1833e; }
+.gate-card.warn .gate-dot { background: #b1833e; box-shadow: 0 0 0 3px #f5e8d3; }
+.gate-card.down { border-left-color: #a85c59; }
+.gate-card.down .gate-dot { background: #a85c59; box-shadow: 0 0 0 3px #f2dedd; }
+.gate-card.off { border-left-color: #5d7482; opacity: .72; }
+.gate-card.off .gate-dot { background: #5d7482; }
+
 .quick-grid { display: grid; grid-template-columns: repeat(5, minmax(130px, 1fr)); gap: .65rem; }
 .quick-tile { border: 0; min-height: 112px; color: #fff; padding: 1rem; text-align: left; display: flex; flex-direction: column; align-items: flex-start; transition: transform .15s ease, filter .15s ease; }
 .quick-tile:hover { transform: translateY(-2px); filter: brightness(1.05); }

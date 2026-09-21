@@ -454,7 +454,27 @@
     <!-- ================= PANEL (DASHBOARD) ================= -->
     <div class="tab-pane fade" id="panel-sekme">
       <div class="dashboard-heading"><div><span class="eyebrow">GENEL BAKIŞ</span><h1>Kontrol Merkezi</h1><p>Plaka hareketleri ve sistem durumunu tek ekrandan yönetin.</p></div><div class="d-flex gap-2"><button class="btn btn-success" onclick="ziyaretciBilgileriAc()" data-rol-min="operatör" data-rol-davranis="gizle"><i class="bi bi-person-plus-fill"></i> Ziyaretçi Girişi</button><button class="btn btn-outline-secondary" onclick="panelYenile()"><i class="bi bi-arrow-clockwise"></i> Yenile</button></div></div>
+
+      <!-- Vardiya durum şeridi (2026-09-21, "benzersiz ana sayfa" isteği): yalnızca
+           rol="güvenlik" girişinde ve gerçekten bir VardiyaOturumu varsa görünür
+           (bkz. app.js::guvenlikVardiyaDurumunuGuncelle, aynı /vardiya-oturumlari/durumum
+           çağrısını Kayıtlar sekmesindeki teşhis kutusuyla PAYLAŞIR -- ekstra bir
+           istek eklenmedi). Amaç: "vardiyam açık mı, ne zaman otomatik kapanacak"
+           sorusunun cevabını girişte hemen, aramadan görünür kılmak. -->
+      <div id="vardiyaHeroSeridi" class="shift-banner d-none mb-3"></div>
+
+      <div class="section-label">NİZAMİYE DURUMU</div>
+      <!-- Kamera listesinden OTOMATIK türetilir (kamera "ad" alanına göre gruplanır,
+           bkz. app.js::nizamiyeSemasiniYukle) -- yeni bir kamera eklendiğinde/silindiğinde
+           elle güncelleme gerekmez. "id" değil "ad" kullanılması bilinçli: bu, sistemin
+           geri kalanındaki (Vardiya Grupları, Kamera Erişimi) aynı "ad bazlı nokta kimliği"
+           kuralıyla tutarlıdır. -->
+      <div id="nizamiyeSemasi" class="gate-scheme mb-4"><div class="empty-state">Kameralar yükleniyor…</div></div>
+
+      <div class="section-label">HIZLI ERİŞİM</div>
       <div class="quick-grid mb-4"><button class="quick-tile blue" data-target="#canli-sekme"><i class="bi bi-display"></i><strong>Canlı İzleme</strong><span>Kamera duvarı</span></button><button class="quick-tile green" data-target="#kayitlar-sekme"><i class="bi bi-arrow-left-right"></i><strong>Geçiş Kayıtları</strong><span>Hareket geçmişi</span></button><button class="quick-tile amber" data-target="#kisiler-sekme"><i class="bi bi-person-badge"></i><strong>Kişiler</strong><span>Yetkili plakalar</span></button><button class="quick-tile slate" data-target="#kamera-sekme" data-rol-min="yonetici" data-rol-davranis="gizle"><i class="bi bi-camera-video"></i><strong>Kamera Yönetimi</strong><span>RTSP bağlantıları</span></button><button class="quick-tile red" data-target="#lisans-sekme" data-rol-min="yonetici" data-rol-davranis="gizle"><i class="bi bi-shield-lock"></i><strong>Lisans</strong><span>Durum ve limitler</span></button></div>
+
+      <div class="section-label">GENEL İSTATİSTİKLER</div>
       <div class="row g-3 mb-3">
         <div class="col-6 col-md-3">
           <div class="card stat-card"><div class="card-body">
@@ -524,7 +544,7 @@
           <div class="table-responsive">
             <table class="table table-hover mb-0 align-middle">
               <thead class="table-light">
-                <tr><th>Görsel</th><th>Plaka</th><th>Tarih/Saat</th><th>Yön</th><th>Durum</th><th>Kişi/Tip</th></tr>
+                <tr><th>Görsel</th><th>Plaka</th><th>Tarih/Saat</th><th>Yön</th><th>Durum</th><th>Kişi/Tip</th><th>Vardiya</th></tr>
               </thead>
               <tbody id="sonKayitlarTablo"></tbody>
             </table>

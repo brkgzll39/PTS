@@ -569,8 +569,80 @@ async function authFormGonder(e) {
 
 // ---------------------- PANEL (DASHBOARD) ----------------------
 
+// Backend'deki VARDIYA_MAKS_SURE_SAAT = 8 (main.py, "8 saatlik otomatik
+// kapanma") ile AYNI değer -- yalnızca vardiya durum şeridinde kalan süreyi
+// göstermek için burada tekrarlanır, sunucudaki gerçek kapanma mantığı
+// (main.py::_vardiya_otomatik_kapama_calistir) BU değere değil kendi sabitine
+// bakar; ikisi değişirse burası da güncellenmeli.
+const VARDIYA_MAKS_SURE_SAAT_DK = 8 * 60;
+
+// Dakika cinsinden bir süreyi "3 sa 12 dk" / "45 dk" biçiminde okunur hale
+// getirir -- vardiya durum şeridinde (geçen/kalan süre) ve ileride benzer
+// ihtiyaçlarda kullanılmak üzere genel amaçlı tutuldu.
+function _saatDkMetni(toplamDk) {
+  const dk = Math.max(0, Math.round(toplamDk));
+  const saat = Math.floor(dk / 60);
+  const kalanDk = dk % 60;
+  if (saat > 0) return kalanDk > 0 ? `${saat} sa ${kalanDk} dk` : `${saat} sa`;
+  return `${kalanDk} dk`;
+}
+
+// "Nizamiye Durumu" şeması (2026-09-21, "benzersiz ana sayfa" isteği): Panel
+// sekmesinin en üstünde, soyut KPI sayıları yerine GERÇEK fiziksel giriş
+// noktalarının (nizamiye) o anki canlılık durumunu gösterir. Kullanıcının
+// tercihi doğrultusunda tamamen KAMERA LİSTESİNDEN OTOMATİK türetilir --
+// kameranın "ad" alanına göre gruplanır (bkz. backend'deki aynı "ad bazlı
+// nokta kimliği" kuralı: Vardiya Grupları ve Kamera Erişimi de aynı alanı
+// kullanır, bkz. main.py::_kullanicinin_izinli_kamera_adlari'nin kök neden
+// notu) -- yeni bir kamera eklenip aynı "ad" ile kaydedildiğinde şema elle
+// güncellenmeden otomatik büyür. `/kameralar` zaten Canlı İzleme sekmesinde
+// kullanılan, TCP/soket açmayan HAFİF bir uç nokta olduğu için (aksine
+// `/kameralar/saglik/tumu` her çağrıda gerçek bir soket bağlantısı dener,
+// bkz. tumKameralarSaglikKontrol) burada da o kullanılıyor -- panelYenile
+// her 15 saniyede bir veya her SSE olayında tetiklendiği için ağır bir
+// sağlık taramasını burada tekrar tekrar çalıştırmak istemeyiz.
+async function nizamiyeSemasiniYukle() {
+  const el = document.getElementById("nizamiyeSemasi");
+  if (!el) return;
+  try {
+    const kameralar = await apiCagir("/kameralar");
+    if (!kameralar.length) {
+      el.innerHTML = '<div class="empty-state">Henüz kamera eklenmedi</div>';
+      return;
+    }
+    const gruplar = {};
+    kameralar.forEach(k => {
+      const ad = k.ad || "Adsız";
+      (gruplar[ad] = gruplar[ad] || []).push(k);
+    });
+    el.innerHTML = Object.entries(gruplar).map(([ad, liste]) => {
+      const aktifOlanlar = liste.filter(k => k.aktif !== false);
+      const canliSayisi = aktifOlanlar.filter(k => k.pipeline_calisiyor && !k.donmus).length;
+      const donmusSayisi = aktifOlanlar.filter(k => k.pipeline_calisiyor && k.donmus).length;
+      let durumSinif = "down", durumMetni = "Bağlı değil", ikon = "bi-x-circle-fill";
+      if (!aktifOlanlar.length) {
+        durumSinif = "off"; durumMetni = "Pasif"; ikon = "bi-dash-circle";
+      } else if (canliSayisi === aktifOlanlar.length) {
+        durumSinif = "ok"; durumMetni = liste.length > 1 ? "Tüm kameralar canlı" : "Canlı"; ikon = "bi-check-circle-fill";
+      } else if (canliSayisi > 0 || donmusSayisi > 0) {
+        durumSinif = "warn";
+        durumMetni = donmusSayisi && !canliSayisi ? "Görüntü donmuş" : `${canliSayisi}/${aktifOlanlar.length} kamera canlı`;
+        ikon = "bi-exclamation-triangle-fill";
+      }
+      const yonler = [...new Set(liste.map(k => k.yon === "giris" ? "Giriş" : "Çıkış"))].join(" + ");
+      return `<button type="button" class="gate-card ${durumSinif}" onclick="document.querySelector('[data-target=\\"#canli-sekme\\"]').click()">
+        <div class="gate-dot"></div>
+        <div><strong>${escapeHtml(ad)}</strong><span class="gate-status"><i class="bi ${ikon} me-1"></i>${durumMetni}</span><span class="gate-meta">${liste.length} kamera · ${yonler || "-"}</span></div>
+      </button>`;
+    }).join("");
+  } catch (e) {
+    el.innerHTML = `<div class="empty-state text-danger">Nizamiye durumu alınamadı: ${escapeHtml(e.message)}</div>`;
+  }
+}
+
 async function panelYenile() {
   try {
+    nizamiyeSemasiniYukle();
     const ist = await apiCagir("/kayitlar/istatistik");
     document.getElementById("istToplam").textContent = ist.toplam_kayit;
     document.getElementById("istBugun").textContent = ist.bugunku_kayit;
@@ -607,8 +679,9 @@ async function panelYenile() {
         <td>${k.yon === "giris" ? "Giriş" : "Çıkış"}</td>
         <td>${durumRozeti(k.yetki_durumu)}</td>
         <td>${tipRozeti(k.kisi_tip_anlik)}</td>
+        <td>${k.vardiya_adi ? `<span class="badge bg-info text-dark">${escapeHtml(k.vardiya_adi)}</span>` : '<span class="text-muted small">-</span>'}</td>
       </tr>
-    `).join("") || `<tr><td colspan="6" class="text-center text-muted py-3">Henüz kayıt yok</td></tr>`;
+    `).join("") || `<tr><td colspan="7" class="text-center text-muted py-3">Henüz kayıt yok</td></tr>`;
     korumaliGorselleriYukle(tbody);
     if (mevcutRol === "güvenlik") guvenlikVardiyaDurumunuGuncelle();
   } catch (e) {
@@ -623,11 +696,43 @@ async function panelYenile() {
 // rağmen canlı geçişlerin Kayıtlar sekmesinde görünmediği bildirilmişti --
 // bu, filtrenin NEDEN boş kaldığını sunucu/istemci saat karşılaştırmasıyla
 // teşhis etmeye yarar; aynı gerekçe öz-hizmet sistemi için de geçerli.
+// Panel sekmesindeki vardiya durum şeridi (bkz. index.html #vardiyaHeroSeridi,
+// "benzersiz ana sayfa" isteği, 2026-09-21). Ayrı bir uç nokta çağırmaz --
+// guvenlikVardiyaDurumunuGuncelle'nin ZATEN çektiği /vardiya-oturumlari/durumum
+// yanıtını (d) yeniden kullanır, bu yüzden bu fonksiyon o fonksiyonun İÇİNDEN
+// çağrılır, ayrı bir async akış olarak DEĞİL.
+function _vardiyaHeroSeridiniGuncelle(d) {
+  const heroEl = document.getElementById("vardiyaHeroSeridi");
+  if (!heroEl) return;
+  if (!d || !d.rol_guvenlik_mi) { heroEl.classList.add("d-none"); heroEl.innerHTML = ""; return; }
+  const grupMu = !!d.vardiya_adi;
+  const adEtiketi = grupMu ? `"${escapeHtml(d.vardiya_adi)}" Vardiyası` : "Vardiyanız";
+  const acikOturum = (d.oturumlar || []).find(o => o.devam_ediyor);
+  let sinif, ozet;
+  if (acikOturum) {
+    const simdi = new Date(d.sunucu_simdiki_zaman);
+    const giris = new Date(acikOturum.giris_zamani);
+    const gecenDk = (simdi - giris) / 60000;
+    const kalanDk = VARDIYA_MAKS_SURE_SAAT_DK - gecenDk;
+    sinif = "active";
+    ozet = kalanDk > 0
+      ? `${_saatDkMetni(gecenDk)} önce giriş yapıldı · ${_saatDkMetni(kalanDk)} sonra otomatik kapanacak`
+      : "8 saatlik süre doldu, sıradaki otomatik kapanma taramasında kapatılacak";
+  } else {
+    sinif = "inactive";
+    ozet = "Şu an açık bir oturum yok";
+  }
+  heroEl.classList.remove("d-none");
+  heroEl.className = `shift-banner mb-3 ${sinif}`;
+  heroEl.innerHTML = `<div class="shift-dot"></div><div><strong>${adEtiketi} ${acikOturum ? "aktif" : "kapalı"}</strong><span>${ozet}</span></div>`;
+}
+
 async function guvenlikVardiyaDurumunuGuncelle() {
   const el = document.getElementById("guvenlikVardiyaDurumu");
   if (!el || mevcutRol !== "güvenlik") return;
   try {
     const d = await apiCagir("/vardiya-oturumlari/durumum");
+    _vardiyaHeroSeridiniGuncelle(d);
     if (!d.rol_guvenlik_mi) { el.innerHTML = ""; return; }
     const sunucuSaati = tarihFormatla(d.sunucu_simdiki_zaman);
     const istemciSaati = tarihFormatla(new Date().toISOString());
@@ -655,6 +760,8 @@ async function guvenlikVardiyaDurumunuGuncelle() {
       (sunucuSaati !== istemciSaati ? '<div class="text-warning mt-1"><i class="bi bi-exclamation-triangle-fill"></i> Sunucu ile tarayıcınızın saati farklı görünüyor -- kayıt görünürlüğü SUNUCU saatine göre belirlenir.</div>' : "");
   } catch (e) {
     el.textContent = "Vardiya durumu alınamadı: " + e.message;
+    const heroEl = document.getElementById("vardiyaHeroSeridi");
+    if (heroEl) heroEl.classList.add("d-none");
   }
 }
 
