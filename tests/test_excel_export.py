@@ -94,6 +94,27 @@ def test_kayitlar_excel_formul_enjeksiyonu_engellenir(tmp_path):
     assert satir[-1] == "'=ALSO_BAD()"
 
 
+def test_kayitlar_excel_kontrol_karakteri_icermez_cokmez(tmp_path):
+    """KÖK NEDEN (2026-09-21, kullanıcı bildirdi -- toplu "GEÇİŞ RAPORU"
+    Excel'i, kimliği doğrulanmış geçerli bir istekte bile genel 500'e
+    düşüyordu): OOXML biçimi XML 1.0 gereği belirli KONTROL
+    KARAKTERLERİNİ (NUL, backspace vb. -- sekme/satır sonu HARİÇ) hücre
+    metninde barındıramaz. `not_metni` gibi serbest metin alanlarından
+    birine (kopyala/yapıştır ya da bozuk bir kaynaktan) böyle bir karakter
+    karışırsa, önceden openpyxl `wb.save()` sırasında yakalanmamış bir
+    `IllegalCharacterError` fırlatırdı. Artık `_guvenli_hucre` bu
+    karakterleri hücreye yazmadan önce temizliyor."""
+    dosya = tmp_path / "kontrol_karakteri.xlsx"
+    tehlikeli = "not: \x00\x01\x02 arıza bildirildi \x0b\x0c\x1f"
+    # Çökmemeli:
+    excel_export.kayitlar_excel_olustur([_ornek_satir(notlar=tehlikeli)], str(dosya))
+    wb = openpyxl.load_workbook(str(dosya))
+    ws = wb.active
+    notlar_hucresi = ws[2][12].value  # "Notlar" sütunu (0-indeksli 12. sütun)
+    assert "\x00" not in notlar_hucresi and "\x01" not in notlar_hucresi
+    assert "arıza bildirildi" in notlar_hucresi, "kontrol karakterleri temizlenirken ÇEVRESİNDEKİ düz metin de silinmemeli"
+
+
 def test_kayitlar_excel_bos_liste_ile_de_calisir(tmp_path):
     """Filtreye uyan hiçbir kayıt yoksa da rapor (yalnızca başlık satırıyla)
     hatasız üretilmeli -- boş bir sonuç, dışa aktarma özelliğini bozmamalı."""

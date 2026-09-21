@@ -2211,6 +2211,42 @@ Kullanıcının ekran görüntüsüyle bildirdiği "geçerli bir istekte bile
   saat aralığı filtresinin doğru çalıştığını ve saat verilmeden eski
   davranışın (günün tamamı) korunduğunu doğrulayan testler eklendi.
 
+### Devamı: gerçek üretim verisiyle (2408 kayıt) İKİ FARKLI çökme daha bulundu (2026-09-21, aynı gün)
+
+Kullanıcı yukarıdaki düzeltmeyi uyguladıktan SONRA bile hem PDF HEM Excel
+dışa aktarmanın (ekran kaydıyla) hâlâ çöktüğünü bildirdi. Gerçek üretim
+verisiyle (kaçışlama düzeltmesinin kapsamadığı) tamamen BAĞIMSIZ iki kök
+neden daha bulundu:
+
+- **Excel çökmesi -- `IllegalCharacterError`:** OOXML (.xlsx) biçimi, XML
+  1.0 spesifikasyonu gereği belirli KONTROL KARAKTERLERİNİ (NUL, backspace
+  vb. -- sekme/satır sonu HARİÇ) hücre metninde HİÇ barındıramaz.
+  `not_metni` (serbest metin not alanı) gibi bir alana kopyala/yapıştır ya
+  da bozuk bir kaynaktan böyle bir karakter karışırsa, `wb.save()`
+  sırasında yakalanmamış bir `IllegalCharacterError` fırlatılıyordu. Bu,
+  yukarıdaki PDF kaçışlama düzeltmesinin KAPSAMADIĞI, Excel'e ÖZGÜ ayrı bir
+  hataydı (reportlab bu karakterlere PDF tarafında farklı davranıyor, bkz.
+  aşağıdaki madde). Düzeltme: `backend/excel_export.py::_guvenli_hucre`,
+  openpyxl'in kendi `ILLEGAL_CHARACTERS_RE` deseniyle bu karakterleri
+  hücreye yazmadan önce temizliyor.
+- **PDF çökmesi (ikinci, FARKLI kök neden) -- `LayoutError`:** kaçışlama
+  düzeltmesi biçimlendirme-etiketi sorununu kapatmıştı, ama reportlab'ın
+  `Table`'ı AYRI bir durumda da çöküyordu: bir hücrenin sarılmış metni TEK
+  SAYFAYA sığmayacak kadar uzun/boşluksuz olursa yakalanmamış bir
+  `LayoutError` fırlatıyordu. Gerçek dünyada bu, programatik olarak
+  birleştirilmiş "Vardiya" alanının (bkz. `_vardiya_etiketleri_haritasi`)
+  unutulmuş/kapanmamış çok sayıda eski oturum birikince anormal
+  uzamasıyla tetiklenebilir. Düzeltme: `_pdf_metin()` artık her hücre
+  metnini (kaçışlamadan ÖNCE) sabit bir `_PDF_HUCRE_MAKS_UZUNLUK` (200
+  karakter) sınırına kırpıyor -- yerel olarak ikili aramayla, en dar
+  sütunun (1.1cm) bu sınırın ÜZERİNDE (~220 karakterden sonra) çökmeye
+  başladığı doğrulandıktan sonra seçilen, güvenli paylı bir değer. Normal
+  hiçbir isim/site/departman/nokta adı bu uzunluğa asla yaklaşmaz -- bu
+  yalnızca anormal/runaway veriye karşı bir güvenlik ağı.
+- Testler: her iki modülün kendi test dosyasına (`test_excel_export.py`,
+  `test_pdf_export.py` -- ikisi de gerçekten çalıştırılabilir) doğrudan
+  bu iki senaryoyu yeniden üreten regresyon testleri eklendi.
+
 ## Toplu Doğruluk Testi (Canlı Sisteme Dokunmadan Eşik/Model Karşılaştırma)
 
 Farklı `PTS_ANPR_DETECTOR_ESIGI` / `PTS_ANPR_DETECTOR_MODEL` / kontrast

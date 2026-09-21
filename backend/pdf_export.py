@@ -18,10 +18,28 @@ from reportlab.lib.styles import getSampleStyleSheet
 logger = logging.getLogger("pts.pdf_export")
 
 
+# 2026-09-21: kullanıcı, `_pdf_metin`'in ilk (kaçışlama) düzeltmesinden SONRA
+# BİLE PDF dışa aktarmanın gerçek üretim verisiyle (2408 kayıt) hâlâ genel
+# 500'e düştüğünü bildirdi. Kök neden bu sefer FARKLIYDI: reportlab'ın
+# `Table`'ı, bir hücrenin sarılmış metni TEK SAYFAYA sığmayacak kadar
+# uzun/boşluksuz olursa (örn. programatik olarak birleştirilmiş, çakışan
+# çok sayıda vardiya oturumunun "; " ile ayrılmış listesi -- bkz.
+# main.py::_vardiya_etiketleri_haritasi -- unutulmuş/kapanmamış eski
+# oturumlar birikince bu liste anormal uzayabilir) yakalanmamış bir
+# `reportlab.platypus.doc.LayoutError` fırlatır. En dar sütun (1.1cm,
+# "Blok"/"Otopark" -- bunlar pratikte hep boş ama savunma amaçlı en KÖTÜ
+# durum baz alındı) tek bir hücrede ~220 karakterden sonra bu limiti
+# aşıyor (yerel olarak ikili aramayla doğrulandı). Çözüm: her hücre
+# metnini, bu sınırın ALTINDA sabit bir uzunlukta kırpmak -- normal/geçerli
+# hiçbir isim/site/departman/nokta adı bu uzunluğa asla yaklaşmaz, bu
+# yalnızca anormal/runaway veriye karşı bir güvenlik ağıdır.
+_PDF_HUCRE_MAKS_UZUNLUK = 200
+
+
 def _pdf_metin(deger) -> str:
     """`Paragraph`e verilecek HER metni güvenli hale getirir.
 
-    KÖK NEDEN (2026-09-21, kullanıcı ekran görüntüsüyle bildirdi -- toplu
+    KÖK NEDEN 1 (2026-09-21, kullanıcı ekran görüntüsüyle bildirdi -- toplu
     "GEÇİŞ RAPORU" PDF'i, kimliği doğrulanmış geçerli bir istekte bile genel
     "Sunucuda beklenmeyen bir hata oluştu" 500'üne düşüyordu): reportlab'ın
     `Paragraph` flowable'ı, kendisine verilen metni DÜZ METİN olarak DEĞİL,
@@ -33,15 +51,18 @@ def _pdf_metin(deger) -> str:
     Biri bu alanlardan birine kazara (veya bilerek) eşleşmeyen/kapatılmamış
     bir etiketle karışabilecek bir metin girerse (örn. "<b>önemli" gibi
     kapatılmamış kalın etiketi), reportlab'ın ayrıştırıcısı yakalanmamış bir
-    `ValueError` fırlatır ve TÜM rapor oluşturma isteği (istek kendisi
-    tamamen geçerli olsa bile) genel 500 hatasına düşer. Çözüm: HER hücre
-    metnini `Paragraph`e vermeden önce standart XML kaçış kurallarıyla
-    (`&`->`&amp;`, `<`->`&lt;`, `>`->`&gt;`) kaçışlamak -- böylece kullanıcı
-    verisi ASLA bir biçimlendirme komutu olarak yorumlanamaz, yalnızca düz
-    metin olarak görüntülenir (bkz. aynı gerekçeyle görsel/font
-    hatalarının da TEK bir bozuk satır yüzünden tüm raporu çökertmemesi
-    gerektiğini anlatan bu dosyadaki diğer notlar)."""
-    return _xml_escape(str(deger))
+    `ValueError` fırlatırdı. Çözüm: HER hücre metnini standart XML kaçış
+    kurallarıyla (`&`->`&amp;`, `<`->`&lt;`, `>`->`&gt;`) kaçışlamak.
+
+    KÖK NEDEN 2 (aynı gün, İKİNCİ bir kullanıcı bildirimiyle bulundu --
+    yukarıdaki düzeltmeden SONRA bile aynı 500 devam ediyordu): aşırı uzun/
+    boşluksuz bir hücre metni, `_PDF_HUCRE_MAKS_UZUNLUK` docstring'indeki
+    notta anlatılan `LayoutError`'a yol açıyordu. Çözüm: kaçışlamadan ÖNCE
+    metni bu sınıra kırpmak (kırpıldığını belli etmek için "…" eklenir)."""
+    metin = str(deger)
+    if len(metin) > _PDF_HUCRE_MAKS_UZUNLUK:
+        metin = metin[:_PDF_HUCRE_MAKS_UZUNLUK] + "…"
+    return _xml_escape(metin)
 
 # TÜRKÇE KARAKTER DÜZELTMESİ (2026-09-18, kullanıcı ekran görüntüsüyle
 # bildirdi): reportlab'ın gömülü 14 temel fontu (Helvetica/Helvetica-Bold

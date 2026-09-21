@@ -210,6 +210,32 @@ def test_kayitlar_pdf_turkce_karakterler_dogru_render_edilir(tmp_path):
 # oluştu" 500'üne düşüyordu).
 # ------------------------------------------------------------------
 
+def test_kayitlar_pdf_asiri_uzun_bosluksuz_metinle_cokmez(tmp_path):
+    """İKİNCİ kök neden (2026-09-21, kaçışlama düzeltmesinden SONRA bile
+    aynı 500'ün devam ettiği bildirildi): reportlab'ın `Table`'ı, bir
+    hücrenin sarılmış metni TEK SAYFAYA sığmayacak kadar uzun/boşluksuz
+    olursa yakalanmamış bir `LayoutError` fırlatır. Gerçek dünyada bu,
+    programatik olarak birleştirilmiş "vardiya" alanının (bkz.
+    main.py::_vardiya_etiketleri_haritasi) unutulmuş/kapanmamış çok sayıda
+    eski oturum birikince anormal uzamasıyla tetiklenebilir. `_pdf_metin`
+    artık her hücreyi `_PDF_HUCRE_MAKS_UZUNLUK`'a kırpıyor."""
+    asiri_uzun = "A" * 5000
+    for alan in ("nokta", "vardiya", "arac_tipi", "daire", "site", "ad", "soyad", "plaka_no"):
+        satir = _ornek_satir(**{alan: asiri_uzun})
+        dosya = tmp_path / f"rapor_uzun_{alan}.pdf"
+        pdf_export.kayitlar_pdf_olustur([satir], str(dosya))
+        assert dosya.exists(), f"'{alan}' alanında aşırı uzun metinle PDF üretimi çökmemeli"
+        with open(dosya, "rb") as f:
+            assert f.read(5) == b"%PDF-"
+
+
+def test_pdf_metin_uzun_degeri_belirtec_ekleyerek_kirpar():
+    kirpilan = pdf_export._pdf_metin("A" * (pdf_export._PDF_HUCRE_MAKS_UZUNLUK + 50))
+    # "…" kaçışlanmaz (XML özel karakteri değil) ama kırpma noktasını belli eder.
+    assert kirpilan.endswith("…")
+    assert len(kirpilan) == pdf_export._PDF_HUCRE_MAKS_UZUNLUK + 1  # +1: sondaki "…"
+
+
 def test_kayitlar_pdf_reportlab_markup_benzeri_metinle_cokmez(tmp_path):
     """KÖK NEDEN: reportlab'ın `Paragraph` flowable'ı, kendisine verilen
     metni düz metin olarak DEĞİL, sınırlı bir HTML/XML biçimlendirme dili

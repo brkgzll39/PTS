@@ -1,5 +1,6 @@
 """Kayıtları ve kişileri .xlsx (Excel) formatında dışa aktarma."""
 from openpyxl import Workbook
+from openpyxl.cell.cell import ILLEGAL_CHARACTERS_RE
 from openpyxl.styles import Font, PatternFill, Alignment
 from openpyxl.utils import get_column_letter
 from openpyxl.worksheet.datavalidation import DataValidation
@@ -9,7 +10,26 @@ BASLIK_YAZI = Font(color="FFFFFF", bold=True)
 
 
 def _guvenli_hucre(deger):
-    """Excel/CSV formül enjeksiyonunu engeller: kullanıcı girdisi '=','+','-','@' ile başlıyorsa kaçış karakteri eklenir."""
+    """Excel/CSV formül enjeksiyonunu engeller: kullanıcı girdisi '=','+','-','@' ile başlıyorsa kaçış karakteri eklenir.
+
+    KÖK NEDEN (2026-09-21, kullanıcı bildirdi -- toplu "GEÇİŞ RAPORU"
+    Excel'i, kimliği doğrulanmış geçerli bir istekte bile genel "Sunucuda
+    beklenmeyen bir hata oluştu" 500'üne düşüyordu): OOXML (.xlsx) biçimi,
+    XML 1.0 spesifikasyonu gereği belirli KONTROL KARAKTERLERİNİ (örn.
+    NUL, backspace -- sekme/satır sonu/satır başı HARİÇ) hücre metninde
+    HİÇ barındıramaz. `not_metni` (serbest metin not alanı) gibi bir alana
+    -- kopyala/yapıştır yoluyla ya da bozuk bir OCR/harici kaynaktan --
+    böyle bir karakter karışırsa, openpyxl `wb.save()` sırasında
+    yakalanmamış bir `IllegalCharacterError` (ValueError alt sınıfı)
+    fırlatırdı -- istek kendisi tamamen geçerli olsa bile TÜM rapor
+    çökerdi. Çözüm: openpyxl'in kendi `ILLEGAL_CHARACTERS_RE` deseniyle bu
+    karakterleri hücreye yazmadan ÖNCE temizlemek (bkz. aynı kök nedenle
+    ilgili backend/pdf_export.py::_pdf_metin'deki kaçışlama notu -- PDF
+    tarafında reportlab bu karakterlere karşı DAHA toleranslı olduğu için
+    orada AYRI bir sorun (LayoutError) olarak ortaya çıktı, bkz. o
+    dosyadaki not)."""
+    if isinstance(deger, str):
+        deger = ILLEGAL_CHARACTERS_RE.sub("", deger)
     if isinstance(deger, str) and deger[:1] in ("=", "+", "-", "@"):
         return "'" + deger
     return deger
