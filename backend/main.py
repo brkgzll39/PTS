@@ -1216,9 +1216,55 @@ def _kullanicinin_izinli_kameralari(kullanici: models.Kullanici) -> Optional[set
 
 def _kamera_erisimi_var_mi(kullanici: models.Kullanici, kamera_id: str) -> bool:
     """Tek bir kameraya (canlı izleme uçlarında) erişim kontrolü -- bkz.
-    _kullanicinin_izinli_kameralari."""
+    _kullanicinin_izinli_kameralari. Burada `kamera_id`, cameras.json'daki
+    "id" alanıdır (URL path parametresi -- ör. `/kameralar/{kamera_id}/
+    goruntu`) -- bu yüzden `Kayit.kamera_id` (kaydın "ad" ile damgalanmış
+    ETİKETİ) ile KARIŞTIRILMAMALI (bkz. _kullanicinin_izinli_kamera_adlari'nın
+    docstring'indeki KÖK NEDEN notu)."""
     izinli = _kullanicinin_izinli_kameralari(kullanici)
     return izinli is None or kamera_id in izinli
+
+
+def _kullanicinin_izinli_kamera_adlari(kullanici: models.Kullanici) -> Optional[set]:
+    """`_kullanicinin_izinli_kameralari`'nin döndürdüğü kısıtlama listesi
+    cameras.json'daki "id" alanına göredir (kamera CRUD/canlı izleme uçları
+    -- ör. `GET /kameralar`, `/kameralar/{id}/goruntu` -- hep "id" ile
+    çalışır). AMA gerçek geçiş kayıtları (`Kayit.kamera_id`) "id" DEĞİL,
+    kameranın "ad" (isim) alanıyla damgalanır (bkz. _pipeline_baslat:
+    `kamera_id=kamera["ad"]`) -- yani "kamera kimliği" (id) ile "geçiş
+    kaydındaki kamera etiketi" (ad) İKİ FARKLI KAVRAM, ama ikisi de aynı
+    `kamera_id` ismiyle anılıyor.
+
+    GERÇEK ÜRETİM VERİSİYLE BULUNAN HATA (2026-09-21, kullanıcının "Lojman A
+    Vardiyası" hesabı hiçbir geçiş göremiyor" geri bildirimiyle ortaya
+    çıktı): bir hesaba id bazlı bir kısıtlama atandığında (ör. panelden
+    "Lojman" ve "L.ÇIKIŞ" kameraları seçilince), `_guvenlik_kayit_filtresi_
+    uygula`/`_guvenlik_kayit_gorunur_mu`/SSE bu id kümesini DOĞRUDAN
+    `Kayit.kamera_id.in_(...)` ile karşılaştırıyordu. Bir kameranın "id"si
+    "ad"ıyla TESADÜFEN aynıysa çalışıyor gibi görünüyordu, ama genelde
+    id != ad olduğu için kısıtlı bir hesap kendi noktasının TÜM geçmiş
+    kayıtlarını SESSİZCE göremez hale geliyordu (boş bir liste dönüyordu --
+    "hiç geçiş gözükmüyor" şikayeti tam olarak buradan kaynaklandı; oysa
+    aynı kayıtlar kısıtlamasız -- yönetici -- bir hesapta ve "Vardiya"
+    etiketlemesinde doğru görünüyordu, çünkü o ikisi kamera kısıtlamasına
+    hiç bakmıyor/id'ye değil vardiya penceresine dayanıyor).
+
+    Bu fonksiyon, id bazlı kısıtlamayı cameras.json üzerinden KARŞILIK GELEN
+    "ad" değerlerine çevirir. `Kayit.kamera_id` ile KARŞILAŞTIRILACAK HER
+    YERDE (`_guvenlik_kayit_filtresi_uygula`, `_guvenlik_kayit_gorunur_mu`,
+    `sse_baglantisi`/`_sse_yayinla`) bu fonksiyon kullanılmalı; canlı izleme/
+    kamera CRUD uçlarında (id bazlı çalışmaya devam eden)
+    `_kullanicinin_izinli_kameralari` KULLANILMAYA DEVAM EDER.
+
+    Silinmiş/artık cameras.json'da bulunmayan bir id, hiçbir "ad"a
+    çevrilemediği için sessizce ATLANIR (o kısıtlama parçası kalıcı olarak
+    erişilemez hale gelir -- zaten var olmayan bir kamera için beklenen
+    davranış budur)."""
+    izinli_idler = _kullanicinin_izinli_kameralari(kullanici)
+    if izinli_idler is None:
+        return None
+    id_den_ada = {k["id"]: (k.get("ad") or k["id"]) for k in _kameralari_oku()}
+    return {id_den_ada[kid] for kid in izinli_idler if kid in id_den_ada}
 
 
 def _vardiya_adi_filtresi_uygula(sorgu, vardiya_adi: Optional[str], db: Session):
@@ -1255,16 +1301,18 @@ def _guvenlik_kayit_filtresi_uygula(sorgu, kullanici: models.Kullanici, db: Sess
        HİÇBİR kayıt döndürülmez.
     2) KAMERA/NOKTA ERİŞİMİ (2026-09-21, HERHANGİ bir rol için): kullanıcıya
        bir `kamera_erisim_listesi` kısıtlaması atanmışsa (bkz.
-       _kullanicinin_izinli_kameralari), yalnızca izinli kamera id'lerinden
-       gelen kayıtlar görünür kalır. Örn. "Lojman Nizamiye"de çalışan ve
-       yalnızca o noktanın kameralarını izleyebilen bir hesap, genel
-       "Kayıtlar" listesinde gezinerek "Ana Nizamiye"nin geçmiş kayıtlarını
-       da GÖREMEZ -- ama BELİRLİ bir plakayı hedefleyen "Plaka Analizi"
-       aramasından (bkz. plaka_analiz) KASITLI OLARAK MUAFTIR, çünkü bir
-       vardiyanın/noktanın başka bir vardiyada/noktada geçen belirli bir
-       aracı tespit edebilmesi meşru bir ihtiyaçtır (kullanıcı talebi,
-       2026-09-21: "A Vardiyasının nöbet saatinde giriş yapan bir aracı, B
-       vardiyası geldiğinde tespit edebilmesi gerekiyor").
+       _kullanicinin_izinli_kamera_adlari -- Kayit.kamera_id ile
+       karşılaştırma bu fonksiyonla, "ad" bazlı yapılır, ham id'lerle DEĞİL,
+       bkz. o fonksiyonun docstring'indeki kök neden), yalnızca izinli
+       kameralardan gelen kayıtlar görünür kalır. Örn. "Lojman Nizamiye"de
+       çalışan ve yalnızca o noktanın kameralarını izleyebilen bir hesap,
+       genel "Kayıtlar" listesinde gezinerek "Ana Nizamiye"nin geçmiş
+       kayıtlarını da GÖREMEZ -- ama BELİRLİ bir plakayı hedefleyen "Plaka
+       Analizi" aramasından (bkz. plaka_analiz) KASITLI OLARAK MUAFTIR,
+       çünkü bir vardiyanın/noktanın başka bir vardiyada/noktada geçen
+       belirli bir aracı tespit edebilmesi meşru bir ihtiyaçtır (kullanıcı
+       talebi, 2026-09-21: "A Vardiyasının nöbet saatinde giriş yapan bir
+       aracı, B vardiyası geldiğinde tespit edebilmesi gerekiyor").
 
     İkisi de geçerli değilse (izleyici/operatör/yönetici, kısıtlamasız
     güvenlik) sorgu değişmeden döner.
@@ -1275,7 +1323,7 @@ def _guvenlik_kayit_filtresi_uygula(sorgu, kullanici: models.Kullanici, db: Sess
             sorgu = sorgu.filter(false())
         else:
             sorgu = sorgu.filter(_pencerelerden_or_kosulu(pencereler))
-    izinli_kameralar = _kullanicinin_izinli_kameralari(kullanici)
+    izinli_kameralar = _kullanicinin_izinli_kamera_adlari(kullanici)
     if izinli_kameralar is not None:
         sorgu = sorgu.filter(models.Kayit.kamera_id.in_(izinli_kameralar))
     return sorgu
@@ -1286,7 +1334,7 @@ def _guvenlik_kayit_gorunur_mu(kayit: "models.Kayit", kullanici: models.Kullanic
     aktarma uçlarında) bu kullanıcı için görünür olup olmadığını kontrol eder
     -- `_guvenlik_kayit_filtresi_uygula` ile AYNI iki kısıtlamayı (vardiya
     penceresi + kamera erişimi) tek bir kayda uygular."""
-    izinli_kameralar = _kullanicinin_izinli_kameralari(kullanici)
+    izinli_kameralar = _kullanicinin_izinli_kamera_adlari(kullanici)
     if izinli_kameralar is not None and kayit.kamera_id not in izinli_kameralar:
         return False
     if kullanici.rol != ROL_GUVENLIK:
@@ -3482,13 +3530,16 @@ async def sse_baglantisi(request: Request, authorization: Optional[str] = Header
     # filtrelenebilmesi (bkz. _sse_yayinla) için bağlı istemcinin rolü de
     # tutulur -- token yalnızca ID doğrular, rolü vermez. 2026-09-21: aynı
     # gerekçeyle kamera erişim kısıtlaması ve adlandırılmış vardiya grubu adı
-    # (bkz. _kullanicinin_izinli_kameralari, Kullanici.vardiya_adi) da bağlantı
-    # anında hesaplanıp tutuluyor -- üçü de yalnızca BU bağlantı açıldığı
-    # anki değeri yansıtır; hesap sonradan değişirse istemcinin yeniden
-    # bağlanması (sayfa yenilemesi) gerekir.
+    # (bkz. Kullanici.vardiya_adi) da bağlantı anında hesaplanıp tutuluyor --
+    # üçü de yalnızca BU bağlantı açıldığı anki değeri yansıtır; hesap
+    # sonradan değişirse istemcinin yeniden bağlanması (sayfa yenilemesi)
+    # gerekir. `_kullanicinin_izinli_kamera_adlari` (id DEĞİL, "ad" bazlı)
+    # kullanılıyor çünkü burada karşılaştırılacak olan canlı olay payload'ının
+    # `kamera_id` alanı da (bkz. _sse_yayinla) gerçek Kayit.kamera_id
+    # değeridir -- yani "ad" (bkz. o fonksiyonun docstring'indeki kök neden).
     baglanan = db.query(models.Kullanici).filter(models.Kullanici.id == kullanici_id).first()
     rol = baglanan.rol if baglanan else ROL_IZLEYICI
-    izinli_kameralar = _kullanicinin_izinli_kameralari(baglanan) if baglanan else None
+    izinli_kameralar = _kullanicinin_izinli_kamera_adlari(baglanan) if baglanan else None
     vardiya_adi = baglanan.vardiya_adi if baglanan else None
 
     q: asyncio.Queue = asyncio.Queue(maxsize=100)

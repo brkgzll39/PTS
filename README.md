@@ -2696,3 +2696,46 @@ görünürlüğünün noktalar ARASI paylaşılabilmesi gerekiyordu.
 - `vardiya_adi` serbest metindir, DB seviyesinde bir kısıtlama YOKTUR (arayüz
   yalnızca A/B/C/D önerir) — gelecekte 4'ten fazla vardiya/nokta gerekirse
   kod değişikliği gerekmez.
+
+## Kamera Kısıtlaması "id" / "ad" Karışıklığı Düzeltmesi (2026-09-21)
+
+**GERÇEK ÜRETİM VERİSİYLE BULUNAN KRİTİK HATA:** kullanıcı, "Lojman A
+Vardiyası" isimli, yalnızca Lojman kameralarına kısıtlanmış bir güvenlik
+hesabıyla giriş yaptığında panelinde/Kayıtlar ekranında HİÇBİR geçiş kaydı
+görünmediğini bildirdi — hatta giriş yaptıktan SONRA yeni bir araç geçse
+bile. Yönetici hesabı aynı kayıtları sorunsuz görebiliyor, "Vardiya" sütunu
+da doğru etiketleniyordu; yalnızca kamera kısıtlaması olan hesap etkileniyordu.
+
+**Kök neden:** "Nizamiye Bazlı Kamera Erişimi" (2026-09-21, önceki bölüm)
+özelliği, bir hesabın kamera erişim kısıtlamasını cameras.json'daki "id"
+alanına göre saklıyor (`kamera_erisim_listesi`, panel checkbox'larının
+`value`si `k.id`dir) ve doğruluyordu (`_kamera_id_listesini_dogrula`). AMA
+gerçek geçiş kayıtları (`Kayit.kamera_id`), kameranın "id"si DEĞİL "ad"ıyla
+(insan tarafından okunabilir isim, ör. "Lojman Nizamiye Kamerası")
+damgalanıyordu (bkz. `_pipeline_baslat`: `kamera_id=kamera["ad"]`) — bu,
+patch #57'den ÖNCE, kamera erişim kısıtlaması hiç var olmadan önceki bir
+tasarım kararıydı. `"id"` HER ZAMAN rastgele bir UUID'dir (`kamera_ekle`:
+`"id": str(uuid.uuid4())`) — yani ID, "ad" ile ASLA örtüşmez. Sonuç: bir
+hesaba kamera kısıtlaması atandığında, `_guvenlik_kayit_filtresi_uygula`,
+`_guvenlik_kayit_gorunur_mu` ve canlı SSE bildirimi (`_sse_yayinla`),
+`Kayit.kamera_id` ("ad") değerini DOĞRUDAN "id" kümesiyle karşılaştırıyordu
+— bu ikisi asla eşleşmediği için kısıtlı HERHANGİ bir hesap, kısıtlandığı
+kameralardan gelen kayıtları da dahil TÜM geçmiş kayıtları SESSİZCE
+göremez hale geliyordu. (Patch #57'nin kendi testleri bu hatayı
+YAKALAYAMAMIŞTI çünkü test verisi, gerçek pipeline'ı simüle etmek yerine
+sentetik kayıtları doğrudan "id" ile oluşturuyordu — bu README'nin
+güncellenmiş testleri artık gerçek pipeline'ı taklit ederek "ad" kullanıyor.)
+
+Live kamera izleme uçları (`GET /kameralar`, `/kameralar/{id}/goruntu`,
+`/akis`, `/son-plaka`, `/saglik`, `/saglik/tumu`) bu hatadan ETKİLENMEDİ —
+onlar zaten hem kısıtlamayı hem URL parametresini "id" ile karşılaştırıyordu.
+
+**Düzeltme:** yeni bir `_kullanicinin_izinli_kamera_adlari(kullanici)`
+fonksiyonu, id bazlı kısıtlamayı cameras.json üzerinden karşılık gelen "ad"
+değerlerine çevirir; `Kayit.kamera_id` ile KARŞILAŞTIRILACAK üç yer
+(`_guvenlik_kayit_filtresi_uygula`, `_guvenlik_kayit_gorunur_mu`,
+`sse_baglantisi`) artık bu yeni fonksiyonu kullanıyor. Kamera CRUD/canlı
+izleme uçları hâlâ eski, id bazlı `_kullanicinin_izinli_kameralari`'yı
+kullanmaya devam ediyor — kısıtlamanın PANELDEKİ/API'DEKİ biçimi (id
+listesi) hiç değişmedi, yalnızca Kayıt kayıtlarıyla karşılaştırılırken
+doğru alana çevriliyor.

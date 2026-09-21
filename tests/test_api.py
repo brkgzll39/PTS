@@ -1866,19 +1866,37 @@ def test_kullanici_silme_loglanir(client, caplog, yetkili_header):
 def kamera_erisim_test_kameralari(client, yetkili_header):
     """Bu testler için İKİ ayrı GERÇEK kamera (bkz. roi_test_kamera_id'deki
     AYNI lisans-yükseltme deseni -- bu modüldeki lisans limiti önceki
-    testlerde tüketilmiş olabilir)."""
+    testlerde tüketilmiş olabilir).
+
+    Hem "id" (cameras.json'daki KİMLİK -- her zaman rastgele bir UUID, bkz.
+    main.py::kamera_ekle) hem de "ad" (gerçek geçiş kayıtlarının
+    `Kayit.kamera_id` alanına damgalanan değer, bkz. main.py::_pipeline_
+    baslat) döndürülür -- ikisi KASITLI olarak FARKLI (id ASLA "ad" ile aynı
+    değildir, gerçek bir kamera eklerken de böyle), ki testler "id ile ad
+    tesadüfen aynı" durumunu maskeleyip 2026-09-21'de gerçek üretim
+    verisiyle bulunan id/ad karışıklığı hatasını YENİDEN gözden
+    kaçırmasın."""
     anahtar = lisans.uret("Kamera Erisim Test Site", kamera_limiti=10, gun=30)
     r = client.post("/lisans/aktive-et", json={"anahtar": anahtar}, headers=yetkili_header)
     assert r.status_code == 200, r.text
+    ana_ad = "Ana Nizamiye Kamerası"
+    lojman_ad = "Lojman Nizamiye Kamerası"
     r1 = client.post("/kameralar", json={
-        "ad": "Ana Nizamiye Kamerası", "rtsp_url": "rtsp://127.0.0.1/ana-nizamiye", "yon": "giris",
+        "ad": ana_ad, "rtsp_url": "rtsp://127.0.0.1/ana-nizamiye", "yon": "giris",
     }, headers=yetkili_header)
     assert r1.status_code == 200, r1.text
     r2 = client.post("/kameralar", json={
-        "ad": "Lojman Nizamiye Kamerası", "rtsp_url": "rtsp://127.0.0.1/lojman-nizamiye", "yon": "giris",
+        "ad": lojman_ad, "rtsp_url": "rtsp://127.0.0.1/lojman-nizamiye", "yon": "giris",
     }, headers=yetkili_header)
     assert r2.status_code == 200, r2.text
-    return {"ana": r1.json()["id"], "lojman": r2.json()["id"]}
+    assert r1.json()["id"] != ana_ad and r2.json()["id"] != lojman_ad, (
+        "id, UUID olduğu için 'ad' ile ASLA aynı olmamalı -- aksi halde bu fixture "
+        "id/ad karışıklığı hatasını maskeler"
+    )
+    return {
+        "ana": r1.json()["id"], "ana_ad": ana_ad,
+        "lojman": r2.json()["id"], "lojman_ad": lojman_ad,
+    }
 
 
 def _kullanici_id_bul(client, yetkili_header, kullanici_adi: str) -> int:
@@ -1945,11 +1963,20 @@ def test_kamera_kisitli_hesap_izinsiz_kameranin_goruntusunu_alamaz(client, yetki
 
 
 def test_kamera_kisitli_hesap_kayitlar_listesinde_sadece_izinli_kameradan_gelenleri_gorur(client, yetkili_header, kamera_erisim_test_kameralari):
-    ana_id = kamera_erisim_test_kameralari["ana"]
+    """KÖK NEDEN DÜZELTMESİ (2026-09-21, gerçek üretim verisiyle bulunan hata
+    -- "Lojman A Vardiyası" hesabı hiçbir geçiş göremiyordu): gerçek geçiş
+    kayıtları `Kayit.kamera_id` alanına kameranın "id"si DEĞİL "ad"ıyla
+    damgalanır (bkz. main.py::_pipeline_baslat) -- bu yüzden burada da
+    kayıtlar `..._ad` değerleriyle oluşturulur (gerçek pipeline'ı simüle
+    eder), ama kısıtlama (kamera_erisim_listesi) YİNE "id" ile ayarlanır
+    (panelin/API'nin beklediği biçim budur) -- bkz. main.py::
+    _kullanicinin_izinli_kamera_adlari'nın bu ikisini nasıl eşleştirdiği."""
+    ana_ad = kamera_erisim_test_kameralari["ana_ad"]
+    lojman_ad = kamera_erisim_test_kameralari["lojman_ad"]
     lojman_id = kamera_erisim_test_kameralari["lojman"]
-    r1 = client.post("/kayitlar", json={"plaka_no": "34 KAM 01", "kamera_id": ana_id, "yon": "giris"}, headers=yetkili_header)
+    r1 = client.post("/kayitlar", json={"plaka_no": "34 KAM 01", "kamera_id": ana_ad, "yon": "giris"}, headers=yetkili_header)
     assert r1.status_code == 200, r1.text
-    r2 = client.post("/kayitlar", json={"plaka_no": "34 KAM 02", "kamera_id": lojman_id, "yon": "giris"}, headers=yetkili_header)
+    r2 = client.post("/kayitlar", json={"plaka_no": "34 KAM 02", "kamera_id": lojman_ad, "yon": "giris"}, headers=yetkili_header)
     assert r2.status_code == 200, r2.text
 
     hedef = _rol_ile_kullanici_olustur_ve_giris_yap(client, yetkili_header, "lojman-izleyici-3", "izleyici")
@@ -1959,7 +1986,10 @@ def test_kamera_kisitli_hesap_kayitlar_listesinde_sadece_izinli_kameradan_gelenl
     r3 = client.get("/kayitlar", params={"plaka": "34 KAM"}, headers=hedef)
     assert r3.status_code == 200, r3.text
     plakalar = {k["plaka_no"] for k in r3.json()}
-    assert "34 KAM 02" in plakalar
+    assert "34 KAM 02" in plakalar, (
+        "kısıtlama id bazlı saklansa da, id'nin cameras.json üzerinden karşılık geldiği "
+        "'ad' değeriyle damgalanmış kayıt GÖRÜNMELİ (bkz. _kullanicinin_izinli_kamera_adlari)"
+    )
     assert "34 KAM 01" not in plakalar
 
 
@@ -2009,6 +2039,56 @@ def test_kamera_erisimi_temizle_kisitlamayi_kaldirir(client, yetkili_header, kam
     r2 = client.put(f"/kullanicilar/{kid}", json={"kamera_erisimi_temizle": True}, headers=yetkili_header)
     assert r2.status_code == 200, r2.text
     assert r2.json()["kamera_erisim_listesi"] is None
+
+
+def test_kamera_erisimi_id_ad_karisikligindan_etkilenmez(client, yetkili_header, kamera_erisim_test_kameralari):
+    """KÖK NEDEN REGRESYON TESTİ (2026-09-21, gerçek üretim verisiyle
+    bulunan hata): `_kullanicinin_izinli_kamera_adlari`'nin, id bazlı bir
+    kısıtlamayı doğru "ad" değerlerine çevirdiğini DOĞRUDAN doğrular --
+    `pts_main._kullanicinin_izinli_kameralari` (eski, id bazlı) ile
+    KARIŞTIRILMAMASI gereken yeni fonksiyon. Ayrıca tekil kayıt görünürlüğü
+    uç noktasının (`/disa-aktar/pdf/kayit/{id}`, bkz. main.py::
+    _guvenlik_kayit_gorunur_mu) da AYNI ad-bazlı eşleştirmeyi kullandığını
+    doğrular -- bu, `_guvenlik_kayit_filtresi_uygula`'dan AYRI bir kod
+    yoludur, düzeltme unutulursa bağımsız olarak bozuk kalabilirdi."""
+    import json as _json
+    from backend.database import SessionLocal
+    from backend import models as _models
+
+    lojman_id = kamera_erisim_test_kameralari["lojman"]
+    lojman_ad = kamera_erisim_test_kameralari["lojman_ad"]
+    ana_ad = kamera_erisim_test_kameralari["ana_ad"]
+
+    db = SessionLocal()
+    try:
+        kisitli = _models.Kullanici(
+            kullanici_adi="birim-testi-kamera-kisitli-x", parola_hash="x", rol="izleyici",
+            kamera_erisim_listesi=_json.dumps([lojman_id]),
+        )
+        # Fonksiyon sadece kullanici.kamera_erisim_listesi'ne bakıyor, DB'ye
+        # eklemeye gerek yok -- ama import döngüsünü basit tutmak için
+        # gerçek bir ORM nesnesi kullanılıyor.
+        izinli_adlar = pts_main._kullanicinin_izinli_kamera_adlari(kisitli)
+    finally:
+        db.close()
+    assert izinli_adlar == {lojman_ad}, (
+        f"id bazlı kısıtlama ({lojman_id}) karşılık gelen 'ad' değerine ({lojman_ad}) "
+        f"çevrilmeli, ham id'ye DEĞİL -- döndü: {izinli_adlar}"
+    )
+
+    r1 = client.post("/kayitlar", json={"plaka_no": "34 KAM 03", "kamera_id": lojman_ad, "yon": "giris"}, headers=yetkili_header)
+    assert r1.status_code == 200, r1.text
+    kayit_id_izinli = r1.json()["id"]
+    r2 = client.post("/kayitlar", json={"plaka_no": "34 KAM 04", "kamera_id": ana_ad, "yon": "giris"}, headers=yetkili_header)
+    assert r2.status_code == 200, r2.text
+    kayit_id_izinsiz = r2.json()["id"]
+
+    hedef = _rol_ile_kullanici_olustur_ve_giris_yap(client, yetkili_header, "lojman-izleyici-kamera-x", "izleyici")
+    kid = _kullanici_id_bul(client, yetkili_header, "lojman-izleyici-kamera-x")
+    client.put(f"/kullanicilar/{kid}", json={"kamera_erisim_listesi": [lojman_id]}, headers=yetkili_header)
+
+    assert client.get(f"/disa-aktar/pdf/kayit/{kayit_id_izinli}", headers=hedef).status_code == 200
+    assert client.get(f"/disa-aktar/pdf/kayit/{kayit_id_izinsiz}", headers=hedef).status_code == 403
 
 
 def test_kisi_silinince_bagli_sakin_hesabinin_kisi_id_temizlenir(client, yetkili_header):
