@@ -776,8 +776,15 @@ async function olayDetayAc(id) {
   const detay = kayit.kisi_id ? await apiCagir(`/kisiler/${kayit.kisi_id}`).catch(() => null) : null;
   // Kameranın bağlı olduğu erişim noktasını (ve varsa sitesini/bariyerini) bul —
   // kameralar ile siteler/bariyerler arasındaki tek bağlantı Nokta kaydıdır.
+  // ÖNEMLİ (2026-09-21, "id vs ad" hata sınıfı -- bkz. schemas.NoktaCevap.
+  // kamera_adi'nin docstring'i): kayit.kamera_id HER ZAMAN kameranın "ad"
+  // alanıdır, Nokta.kamera_id ise "id"dir -- bu yüzden burada n.kamera_id
+  // DEĞİL, sunucunun ayrıca hesapladığı n.kamera_adi ile karşılaştırılır.
+  // Eskiden n.kamera_id ile karşılaştırılıyordu ve id!=ad olduğu (yani
+  // neredeyse HER kurulumda) bu eşleşme hiçbir zaman tutmuyor, "Bağlı site
+  // tanımlı değil" her olayda sessizce gösteriliyordu.
   const noktalar = await apiCagir("/noktalar").catch(() => []);
-  const nokta = noktalar.find(n => n.kamera_id && n.kamera_id === kayit.kamera_id) || null;
+  const nokta = noktalar.find(n => n.kamera_adi && n.kamera_adi === kayit.kamera_id) || null;
   let siteAdi = null;
   if (nokta) {
     const siteler = await apiCagir("/siteler").catch(() => []);

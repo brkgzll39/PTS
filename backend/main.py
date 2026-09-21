@@ -1225,6 +1225,19 @@ def _kamera_erisimi_var_mi(kullanici: models.Kullanici, kamera_id: str) -> bool:
     return izinli is None or kamera_id in izinli
 
 
+def _kamera_id_den_ad_haritasi() -> dict:
+    """cameras.json'daki her kameranın "id" -> "ad" eşlemesini döner (ad
+    boşsa id'nin kendisine düşer). `Kayit.kamera_id` (HER ZAMAN ad bazlı,
+    bkz. _pipeline_baslat) ile KARŞILAŞTIRILACAK id bazlı bir veriyi (ör.
+    kamera erişim kısıtlaması, Nokta.kamera_id) çevirmek isteyen HER YER
+    bunu kullanmalı -- bkz. _kullanicinin_izinli_kamera_adlari ve
+    _kayitlari_rapor_satirlari'nin docstring'lerindeki aynı kök neden
+    (2026-09-21, "id vs ad" hata sınıfı). Tek doğru kaynak burası: aynı
+    eşleme iki ayrı yerde ayrı ayrı yazılırsa biri güncellenip diğeri
+    unutulabilir."""
+    return {k["id"]: (k.get("ad") or k["id"]) for k in _kameralari_oku()}
+
+
 def _kullanicinin_izinli_kamera_adlari(kullanici: models.Kullanici) -> Optional[set]:
     """`_kullanicinin_izinli_kameralari`'nin döndürdüğü kısıtlama listesi
     cameras.json'daki "id" alanına göredir (kamera CRUD/canlı izleme uçları
@@ -1263,7 +1276,7 @@ def _kullanicinin_izinli_kamera_adlari(kullanici: models.Kullanici) -> Optional[
     izinli_idler = _kullanicinin_izinli_kameralari(kullanici)
     if izinli_idler is None:
         return None
-    id_den_ada = {k["id"]: (k.get("ad") or k["id"]) for k in _kameralari_oku()}
+    id_den_ada = _kamera_id_den_ad_haritasi()
     return {id_den_ada[kid] for kid in izinli_idler if kid in id_den_ada}
 
 
@@ -2239,7 +2252,14 @@ def noktalari_listele(site_id: Optional[int] = None, db: Session = Depends(get_d
     sorgu = db.query(models.Nokta)
     if site_id is not None:
         sorgu = sorgu.filter(models.Nokta.site_id == site_id)
-    return sorgu.order_by(models.Nokta.ad).all()
+    noktalar = sorgu.order_by(models.Nokta.ad).all()
+    # bkz. schemas.NoktaCevap.kamera_adi'nin docstring'i -- Nokta.kamera_id
+    # "id" bazlıdır, Kayit.kamera_id "ad" bazlıdır; istemcinin bu ikisini
+    # karıştırmadan eşleştirebilmesi için "ad" karşılığı burada eklenir.
+    id_den_ad = _kamera_id_den_ad_haritasi()
+    for nokta in noktalar:
+        nokta.kamera_adi = id_den_ad.get(nokta.kamera_id) if nokta.kamera_id else None
+    return noktalar
 
 
 @app.delete("/noktalar/{nokta_id}")
@@ -3674,22 +3694,37 @@ def _kayitlari_rapor_satirlari(kayitlar: list, db: Session) -> list:
     bırakılmıştı, bkz. README). Bu sütunlar, referans raporla sütun
     uyumluluğu için yer tutucu olarak eklendi ama HER ZAMAN boş kalır --
     var olmayan bir veri UYDURULMAZ.
+
+    KÖK NEDEN (2026-09-21, "id vs ad" hata sınıfı -- bkz.
+    _kullanicinin_izinli_kamera_adlari'nin docstring'indeki aynı kök neden):
+    `Nokta.kamera_id` cameras.json'daki kamera "id"siyle doğrulanır (bkz.
+    nokta_ekle), ama `Kayit.kamera_id` HER ZAMAN kameranın "ad" alanıyla
+    damgalanır (bkz. _pipeline_baslat). Bu fonksiyon eskiden Nokta'ları
+    DOĞRUDAN "id" ile anahtarlayıp `k.kamera_id` ("ad") ile arıyordu -- id
+    rastgele bir uuid4 olduğu (yani neredeyse HER ZAMAN id != ad olduğu)
+    için bu eşleşme HİÇBİR ZAMAN tutmuyordu: bir Nokta/Site tanımlanmış
+    olsa BİLE, Excel/PDF dışa aktarımındaki "Nokta" ve "Site" sütunları
+    her kurulumda SESSİZCE boş kalıyordu. Artık Nokta'lar "ad" ile
+    anahtarlanıyor (_kamera_id_den_ad_haritasi ile çevrilerek).
     """
     kisi_idler = {k.kisi_id for k in kayitlar if k.kisi_id}
     kisiler = {
         kisi.id: kisi
         for kisi in (db.query(models.Kisi).filter(models.Kisi.id.in_(kisi_idler)).all() if kisi_idler else [])
     }
-    nokta_by_kamera = {
-        n.kamera_id: n for n in db.query(models.Nokta).filter(models.Nokta.kamera_id.isnot(None)).all()
-    }
+    id_den_ad = _kamera_id_den_ad_haritasi()
+    nokta_by_kamera_ad = {}
+    for n in db.query(models.Nokta).filter(models.Nokta.kamera_id.isnot(None)).all():
+        ad = id_den_ad.get(n.kamera_id)
+        if ad:
+            nokta_by_kamera_ad[ad] = n
     site_adi_by_id = {s.id: s.ad for s in db.query(models.Site).all()}
     vardiya_etiketi_by_kayit_id = _vardiya_etiketleri_haritasi(kayitlar, db)
 
     satirlar = []
     for k in kayitlar:
         kisi = kisiler.get(k.kisi_id) if k.kisi_id else None
-        nokta = nokta_by_kamera.get(k.kamera_id)
+        nokta = nokta_by_kamera_ad.get(k.kamera_id)
         site_adi = site_adi_by_id.get(nokta.site_id) if nokta else ""
 
         ad, soyad = "", ""

@@ -789,6 +789,36 @@ def test_nokta_gecerli_bariyerle_olusturulur_ve_bariyer_acmaya_baglanir(client, 
     assert r2.status_code == 200, r2.text
 
 
+def test_nokta_kamera_adi_id_degil_gercek_ad_degerini_dondurur(client, yetkili_header):
+    """schemas.NoktaCevap.kamera_adi (2026-09-21, "id vs ad" hata sınıfı --
+    bkz. o alanın docstring'i): GET /noktalar, bağlı kameranın "id"sini
+    DEĞİL, gerçek geçiş kayıtlarında (Kayit.kamera_id) kullanılan "ad"
+    değerini de döndürmeli -- aksi halde frontend (app.js::olayDetayAc) bir
+    olayın hangi Nokta'ya ait olduğunu HİÇBİR ZAMAN bulamaz (id != ad)."""
+    anahtar = lisans.uret("Nokta Kamera Adi Test", kamera_limiti=10, gun=30)
+    r = client.post("/lisans/aktive-et", json={"anahtar": anahtar}, headers=yetkili_header)
+    assert r.status_code == 200, r.text
+    kamera_ad = "Nokta Testi Kamerası"
+    kamera = client.post("/kameralar", json={
+        "ad": kamera_ad, "rtsp_url": "rtsp://127.0.0.1/nokta-testi", "yon": "giris",
+    }, headers=yetkili_header).json()
+    assert kamera["id"] != kamera_ad
+
+    site = client.post("/siteler", json={"ad": "Nokta Kamera Adi Test Sitesi"}, headers=yetkili_header).json()
+    nokta = client.post("/noktalar", json={
+        "site_id": site["id"], "ad": "Nokta Kamera Adi Test Noktası", "kamera_id": kamera["id"],
+    }, headers=yetkili_header).json()
+    assert nokta["kamera_id"] == kamera["id"]
+
+    r = client.get("/noktalar", headers=yetkili_header)
+    assert r.status_code == 200, r.text
+    donen_nokta = next(n for n in r.json() if n["id"] == nokta["id"])
+    assert donen_nokta["kamera_adi"] == kamera_ad, (
+        "kamera_adi, kameranın 'ad' alanına eşit olmalı (id'ye DEĞİL) -- "
+        "frontend olay detayında Nokta'yı Kayit.kamera_id (ad bazlı) ile eşleştirir"
+    )
+
+
 def test_site_silinince_bagli_nokta_da_silinir(client, yetkili_header):
     site = client.post("/siteler", json={"ad": "Silinecek Site"}, headers=yetkili_header).json()
     nokta = client.post("/noktalar", json={"site_id": site["id"], "ad": "Silinecek Nokta"}, headers=yetkili_header).json()
@@ -2851,14 +2881,32 @@ _RAPOR_TEST_PLAKA_KARALISTE = "34KARALISTE01"
 
 @pytest.fixture
 def rapor_test_kurulumu(client, yetkili_header):
-    """Site + Nokta'yı doğrudan DB'ye yazar (Nokta oluşturma uç noktası,
-    kamera_id verildiğinde cameras.json'da GERÇEK bir kamera olmasını/aktif
-    lisans olmasını şart koşuyor -- bu testin odağı o kısıtlama değil,
-    _kayitlari_rapor_satirlari'nin zenginleştirme mantığı olduğu için burada
-    bu karmaşıklık bilinçli olarak atlanıyor; dosyadaki diğer karmaşık DB
-    kurulumlarıyla aynı desen, bkz. test_dusuk_guven_temizle_*)."""
+    """Site + Nokta'yı doğrudan DB'ye yazar, ama Nokta.kamera_id ve
+    Kayit.kamera_id için GERÇEK bir kamera üzerinden GERÇEK "id"/"ad"
+    çiftini kullanır (bkz. kamera_erisim_test_kameralari'nin docstring'i,
+    2026-09-21 "id vs ad" hata sınıfı): Nokta.kamera_id kamera "id"si
+    (cameras.json), Kayit.kamera_id ise kameranın "ad"ı olmalı -- ikisi
+    KASITLI olarak farklı tutulur. Bu test eskiden "KAM-RAPTEST" adında
+    UYDURMA bir dizeyi HEM Nokta.kamera_id HEM DE Kayit.kamera_id için
+    kullanıyordu -- id ile ad'ın TESADÜFEN aynı olduğu bu senaryo,
+    _kayitlari_rapor_satirlari'ndaki gerçek id/ad karışıklığı hatasını
+    (Nokta/Site sütunlarının HER ZAMAN boş kalması) maskeliyordu."""
     from backend.database import SessionLocal
     from backend import models
+
+    anahtar = lisans.uret("Rapor Test Site", kamera_limiti=10, gun=30)
+    r = client.post("/lisans/aktive-et", json={"anahtar": anahtar}, headers=yetkili_header)
+    assert r.status_code == 200, r.text
+    kamera_ad = "RAPTEST KAMERA"
+    r = client.post("/kameralar", json={
+        "ad": kamera_ad, "rtsp_url": "rtsp://127.0.0.1/raptest", "yon": "giris",
+    }, headers=yetkili_header)
+    assert r.status_code == 200, r.text
+    kamera_id = r.json()["id"]
+    assert kamera_id != kamera_ad, (
+        "id, UUID olduğu için 'ad' ile ASLA aynı olmamalı -- aksi halde bu fixture "
+        "id/ad karışıklığı hatasını maskeler"
+    )
 
     db = SessionLocal()
     try:
@@ -2866,7 +2914,7 @@ def rapor_test_kurulumu(client, yetkili_header):
         db.add(site)
         db.commit()
         db.refresh(site)
-        nokta = models.Nokta(site_id=site.id, ad="RAPTEST GİRİŞ", yon="giris", kamera_id="KAM-RAPTEST")
+        nokta = models.Nokta(site_id=site.id, ad="RAPTEST GİRİŞ", yon="giris", kamera_id=kamera_id)
         db.add(nokta)
         db.commit()
     finally:
@@ -2893,8 +2941,10 @@ def rapor_test_kurulumu(client, yetkili_header):
         _RAPOR_TEST_PLAKA_PERSONEL, _RAPOR_TEST_PLAKA_ABONE,
         _RAPOR_TEST_PLAKA_TANIMSIZ, _RAPOR_TEST_PLAKA_KARALISTE,
     ):
+        # ÖNEMLİ: gerçek pipeline'ın damgaladığı gibi (kamera_id=kamera["ad"])
+        # burada da kamera_id "ad" değeri olarak gönderiliyor, id DEĞİL.
         r = client.post("/kayitlar", json={
-            "plaka_no": plaka, "kamera_id": "KAM-RAPTEST", "yon": "giris",
+            "plaka_no": plaka, "kamera_id": kamera_ad, "yon": "giris",
         }, headers=yetkili_header)
         assert r.status_code == 200, r.text
 

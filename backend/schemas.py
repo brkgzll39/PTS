@@ -74,6 +74,14 @@ class NoktaCevap(BaseModel):
     aciklama: Optional[str] = None
     aktif: bool
     olusturma_tarihi: datetime
+    # ORM sütunu DEĞİLDİR -- main.py::noktalari_listele tarafından, "id vs ad"
+    # hata sınıfını (bkz. _kullanicinin_izinli_kamera_adlari'nin docstring'i)
+    # istemci tarafına da taşımadan önlemek için doldurulur. `kamera_id` bu
+    # noktaya bağlı kameranın "id"si iken, gerçek geçiş kayıtları (Kayit.
+    # kamera_id) kameranın "ad" alanıyla damgalanır -- frontend bir olayın
+    # hangi Nokta'ya ait olduğunu bulurken (bkz. app.js::olayDetayAc) "id"yi
+    # DEĞİL, bu alanı `kayit.kamera_id` ile karşılaştırmalıdır.
+    kamera_adi: Optional[str] = None
 
     model_config = ConfigDict(from_attributes=True)
 
