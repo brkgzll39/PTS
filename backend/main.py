@@ -572,7 +572,33 @@ async def _sse_yayinla(olay_turu: str, veri: dict, db: Optional[Session] = None)
             pass
 
 
-app = FastAPI(title="PTS - Plaka Tanıma Sistemi", version="2.0")
+def _api_dokumantasyonu_acik_mi() -> bool:
+    """Otomatik oluşturulan Swagger UI (`/docs`), ReDoc (`/redoc`) ve ham
+    OpenAPI şeması (`/openapi.json`) FastAPI'de VARSAYILAN OLARAK açık ve
+    HİÇBİR kimlik doğrulaması gerektirmiyordu.
+
+    KÖK NEDEN (2026-09-20, "daha profesyonel neler yapabilirsin" denetimi):
+    bu, ağa erişimi olan HERKESİN (giriş yapmadan) TÜM API uç noktalarının
+    tam listesini, istek/yanıt şemalarını ve alan adlarını görebilmesi
+    anlamına geliyordu -- tek başına bir veri sızıntısı değil ama bir saldırı
+    yüzeyi haritası (attack surface map) sunuyordu, ve ticari/özel bir ürün
+    için gereksiz bir açık kapıydı. Projedeki diğer "varsayılan olarak
+    güvenli, isteyen açar" desenleriyle (PTS_CORS_ORIGINS, PTS_KAMERA_ANAHTARI
+    vb.) tutarlı olması için: varsayılan olarak KAPALI, yalnızca bu ortam
+    değişkeni açıkça ayarlanırsa (örn. geliştirme/hata ayıklama sırasında)
+    devreye giriyor."""
+    return os.getenv("PTS_API_DOKUMANTASYONU_AC", "").strip().lower() in ("1", "true", "evet")
+
+
+_API_DOKUMANTASYONU_ACIK = _api_dokumantasyonu_acik_mi()
+
+app = FastAPI(
+    title="PTS - Plaka Tanıma Sistemi",
+    version="2.0",
+    docs_url="/docs" if _API_DOKUMANTASYONU_ACIK else None,
+    redoc_url="/redoc" if _API_DOKUMANTASYONU_ACIK else None,
+    openapi_url="/openapi.json" if _API_DOKUMANTASYONU_ACIK else None,
+)
 
 
 def _cors_origin_listesi() -> list[str]:
@@ -3806,7 +3832,13 @@ async def sistem_sagligi(db: Session = Depends(get_db), _: models.Kullanici = De
         "sse_istemci": len(_sse_istemcileri),
         "kutuphaneler_mevcut": _CAM_LIBS,
         "zaman": datetime.now().isoformat(),
-        "surum": "2.0",
+        # KÖK NEDEN (2026-09-20): burada "2.0" sabit metni, `app = FastAPI(...,
+        # version="2.0")` çağrısındaki AYNI değerin BAĞIMSIZ bir kopyasıydı --
+        # biri güncellenip diğeri unutulursa (bu depoda daha önce defalarca
+        # görülen "aynı gerçeğin birden fazla, birbirinden sapabilen kopyası"
+        # hata sınıfı) panel yanlış bir sürüm numarası gösterirdi. Artık TEK
+        # doğru kaynak `app.version`.
+        "surum": app.version,
         "yedek": _son_yedek_bilgisini_al(),
         "gorsel_izleme": {
             "aktif": _klasor_izleyici is not None and _klasor_izleyici.calisiyor,

@@ -2135,6 +2135,34 @@ girişi) var.
   bir çağrı noktasının gerçekten bir denetim kaydı bıraktığını doğrulayan
   testler eklendi.
 
+## "Daha Profesyonel Neler Yapabilirsin?" Denetimi (2026-09-20)
+
+Kullanıcının bu doğrudan sorusu üzerine yapılan ek bir tur:
+
+- **API dokümantasyonu (Swagger UI/ReDoc) artık varsayılan olarak kapalı:**
+  FastAPI'nin otomatik oluşturduğu `/docs`, `/redoc` ve `/openapi.json`
+  hiçbir kimlik doğrulaması gerektirmeden VARSAYILAN OLARAK açıktı -- tek
+  başına bir veri sızıntısı değil ama ağa erişimi olan HERKESE (giriş
+  yapmadan) TÜM API uç noktalarının, alan adlarının ve şemalarının tam bir
+  haritasını sunuyordu. Ticari/özel bir ürün için gereksiz bir saldırı yüzeyi
+  genişletmesiydi. Artık projedeki diğer "varsayılan güvenli, isteyen açar"
+  desenleriyle tutarlı: yalnızca `PTS_API_DOKUMANTASYONU_AC=1` ile (geliştirme/
+  hata ayıklama amaçlı) açıkça istenirse devreye giriyor.
+- **Sürüm numarası tekrarı düzeltildi:** `/sistem/saglik`'in `surum` alanı,
+  `app = FastAPI(..., version="2.0")`'daki AYNI değerin bağımsız, elle
+  senkronize edilmesi gereken bir kopyasıydı (bu depoda tekrar tekrar
+  görülen "aynı gerçeğin birden fazla kopyası" hata sınıfı) -- artık tek
+  kaynak `app.version`.
+- **Yeni `.env.example` dosyası:** uygulamanın okuduğu TÜM `PTS_*` ortam
+  değişkenleri (güvenlik, veritabanı, ANPR/kamera, dosya yolları,
+  geliştirme) önceden yalnızca README'ye dağılmış onlarca ayrı yorum/bölüm
+  olarak vardı -- artık tek, güncel bir referans dosyasında toplu. `.gitignore`
+  de gerçek bir `.env` dosyasının (sırlar içerebileceği için) yanlışlıkla
+  commit edilmesine karşı güncellendi (`.env.example` istisna).
+- `tests/test_api.py`'ye (yalnızca `py_compile` ile doğrulandı) API
+  dokümantasyonunun varsayılan olarak kapalı olduğunu ve sürüm alanının
+  `app.version` ile aynı kaynaktan geldiğini doğrulayan testler eklendi.
+
 ## Toplu Doğruluk Testi (Canlı Sisteme Dokunmadan Eşik/Model Karşılaştırma)
 
 Farklı `PTS_ANPR_DETECTOR_ESIGI` / `PTS_ANPR_DETECTOR_MODEL` / kontrast

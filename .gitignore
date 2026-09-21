@@ -4,6 +4,13 @@ __pycache__/
 *.rar
 *.zip
 
+# PTS kendisi bir .env dosyası OKUMAZ (bkz. .env.example'daki not) ama biri
+# yerel bir referans olarak oluşturabilir -- gerçek sırlar (PTS_LICENSE_SECRET
+# vb.) içerebileceği için asla commit edilmemeli. .env.example İSTİSNA.
+.env
+.env.*
+!.env.example
+
 backend/license.json
 backend/cameras.json
 backend/config.json

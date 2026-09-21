@@ -966,6 +966,28 @@ def test_guvenlik_baslikları_her_yanitta_var(client):
     assert "max-age=31536000" in r.headers["Strict-Transport-Security"]
 
 
+def test_api_dokumantasyonu_varsayilan_olarak_kapali(client):
+    """2026-09-20 ("daha profesyonel neler yapabilirsin" denetimi): Swagger UI
+    (/docs), ReDoc (/redoc) ve ham OpenAPI şeması (/openapi.json) FastAPI'de
+    varsayılan olarak açık ve kimliksizdi -- kimlik doğrulaması olmayan bir
+    saldırı yüzeyi haritası sunuyordu. Test ortamı PTS_API_DOKUMANTASYONU_AC'ı
+    AYARLAMAZ, bu yüzden bu üç uç nokta burada 404 dönmeli (bkz.
+    main.py::_api_dokumantasyonu_acik_mi)."""
+    assert client.get("/docs").status_code == 404
+    assert client.get("/redoc").status_code == 404
+    assert client.get("/openapi.json").status_code == 404
+
+
+def test_sistem_sagligi_surum_app_version_ile_tek_kaynaktan_geliyor(client, izleyici_header):
+    """2026-09-20: /sistem/saglik'teki "surum" alanı önceden "2.0" olarak
+    AYRICA sabitlenmişti -- `app = FastAPI(..., version="2.0")`'daki AYNI
+    değerin bağımsız bir kopyası. Artık tek kaynak `app.version` (bkz.
+    main.py::sistem_sagligi)."""
+    r = client.get("/sistem/saglik", headers=izleyici_header)
+    assert r.status_code == 200, r.text
+    assert r.json()["surum"] == pts_main.app.version
+
+
 # ------------------------------------------------------------------
 # GET /olaylar, GET /alarmlar — temel işlevsellik (2026-09-20)
 # ------------------------------------------------------------------
