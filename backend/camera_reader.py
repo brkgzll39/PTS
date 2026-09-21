@@ -897,7 +897,20 @@ class KameraPipeline:
                 # ama hiçbir zaman kayda düşmüyor — tam da bu depoda defalarca
                 # peşine düşülen semptom sınıfı). Artık aynı ortam değişkeni
                 # burada da okunup başlığa ekleniyor.
-                _kamera_anahtari = os.getenv("PTS_KAMERA_ANAHTARI")
+                #
+                # .strip(): GERÇEK ÜRETİMDE BULUNAN HATA (2026-09-21): kullanıcı
+                # bu değişkeni Windows'ta ayarlarken (kopyala-yapıştır, `setx`
+                # ile çok satırlı bir değer vb.) sona görünmez bir satır sonu
+                # (\n) karakteri karışmıştı. `requests`, başlık (header)
+                # değerinde satır sonu karakterini KABUL ETMEZ ve isteği hiç
+                # GÖNDERMEDEN "Invalid leading whitespace, reserved
+                # character(s)..." hatasıyla reddeder (bkz. aşağıdaki except
+                # bloğu) -- yani anahtarın kendisi doğru olsa BİLE, sondaki bu
+                # tek görünmez karakter yüzünden dedektörün gerçekten
+                # doğruladığı HER plaka, panelde HİÇBİR iz bırakmadan (yalnızca
+                # log dosyasında bir ERROR satırı olarak) sessizce kayboluyordu.
+                # Artık .strip() ile bu sınıftaki hatalara karşı bağışıklık var.
+                _kamera_anahtari = (os.getenv("PTS_KAMERA_ANAHTARI") or "").strip() or None
                 _istek_basliklari = {"X-PTS-Kamera-Anahtari": _kamera_anahtari} if _kamera_anahtari else {}
                 with open(gecici, "rb") as f:
                     yanit = requests.post(

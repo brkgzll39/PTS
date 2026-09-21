@@ -44,9 +44,22 @@ def secret_al() -> str:
     unutan (ya da bilmeyen) herhangi bir kurulumda, kaynağa erişimi olan
     HERKES `lisans_uretici.py`yi bu bilinen secret ile çalıştırıp geçerli
     imzalı, istediği kamera limiti/süreye sahip bir lisans üretebilirdi. Artık
-    süreç başına bir kez (log spam olmasın diye) uyarı basılıyor."""
+    süreç başına bir kez (log spam olmasın diye) uyarı basılıyor.
+
+    .strip(): GERÇEK ÜRETİMDE BULUNAN HATA (2026-09-21, bkz. main.py::
+    _kamera_anahtari_degeri'nin AYNI kök neden notu -- PTS_KAMERA_ANAHTARI'nda
+    bulunan bu sınıf hata, PTS_LICENSE_SECRET için de aynı şekilde mümkündür):
+    ortam değişkeni Windows'ta ayarlanırken sona görünmez bir satır sonu (\n)
+    karışabilir. Bu fonksiyon HEM `uret()` (imzalama, lisans_uretici.py CLI)
+    HEM DE `coz()` (doğrulama, sunucu) tarafından çağrıldığı için, tek bir
+    yerde .strip() uygulamak iki tarafın da HER ZAMAN aynı (temizlenmiş)
+    değeri kullanmasını garanti eder -- bu patch'ten SONRA üretilen/aktive
+    edilen bir lisans için sorun yaşanmaz; ama değişkenin GERÇEKTEN sonunda
+    bir \n varsa, bu patch'ten önce (eski, ham değerle) üretilmiş MEVCUT bir
+    lisans, patch sonrası bir kez daha üretilip aktive edilmelidir (eski imza,
+    artık temizlenmiş secret ile uyuşmayabilir)."""
     global _varsayilan_secret_uyarisi_yapildi
-    deger = os.getenv("PTS_LICENSE_SECRET")
+    deger = (os.getenv("PTS_LICENSE_SECRET") or "").strip()
     if deger:
         return deger
     if not _varsayilan_secret_uyarisi_yapildi:

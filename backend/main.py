@@ -750,6 +750,22 @@ _hiz_sinir_giris = _hiz_siniri_olustur(limit=20, pencere_sn=60)
 _hiz_sinir_otomatik_kayit = _hiz_siniri_olustur(limit=120, pencere_sn=60)
 
 
+def _kamera_anahtari_degeri() -> Optional[str]:
+    """PTS_KAMERA_ANAHTARI'nı okur ve .strip() uygular.
+
+    GERÇEK ÜRETİMDE BULUNAN HATA (2026-09-21): kullanıcı bu değişkeni
+    Windows'ta ayarlarken (kopyala-yapıştır) sona görünmez bir satır sonu
+    (\n) karakteri karışmıştı. `requests` kütüphanesi (bkz. camera_reader.py
+    -- aynı düzeltmenin kök neden notu), başlık değerinde satır sonu
+    karakterini KABUL ETMEZ ve isteği hiç GÖNDERMEDEN reddeder -- yani
+    anahtarın kendisi doğru olsa BİLE, dedektörün gerçekten doğruladığı HER
+    plaka sessizce kayboluyordu. Karşılaştırmanın YAPILDIĞI (bu fonksiyon)
+    ve gönderilen (camera_reader.py) TARAFLARIN İKİSİ DE aynı şekilde
+    .strip() uygulamalı -- aksi halde biri düzeltilip diğeri unutulursa iki
+    taraf arasında SESSİZ bir uyuşmazlık oluşabilir."""
+    return (os.getenv("PTS_KAMERA_ANAHTARI") or "").strip() or None
+
+
 def _kamera_anahtari_uyarisi() -> None:
     """PTS_KAMERA_ANAHTARI ayarlanmamışsa `/kayitlar/otomatik` TAMAMEN
     kimliksizdir (kameralar giriş yapamadığı için bu uç nokta bilinçli olarak
@@ -757,7 +773,7 @@ def _kamera_anahtari_uyarisi() -> None:
     zamanında bir kez uyarılır. Zorunlu KILINMIYOR (bazı kurulumlar
     kameraları güvenilir, izole bir ağda çalıştırıp bu anahtarı bilinçli
     olarak atlıyor olabilir), ama sessizce geçilmemesi gerekir."""
-    if not os.getenv("PTS_KAMERA_ANAHTARI"):
+    if not _kamera_anahtari_degeri():
         logger.warning(
             "PTS_KAMERA_ANAHTARI ayarlanmamış — /kayitlar/otomatik uç noktası TAMAMEN "
             "kimliksiz (rate-limit dışında hiçbir koruması yok). Kameralar/NVR'lar güvenilmeyen "
@@ -873,8 +889,11 @@ AUTH_SECRET_DOSYASI = os.path.join(BACKEND_DIR, "auth_secret.key")
 
 
 def _auth_secret_al() -> str:
-    """Ortam değişkeni yoksa gizli anahtar yerel dosyada kalıcı tutulur (yeniden başlatmada oturumların düşmemesi için)."""
-    env_deger = os.getenv("PTS_AUTH_SECRET")
+    """Ortam değişkeni yoksa gizli anahtar yerel dosyada kalıcı tutulur (yeniden başlatmada oturumların düşmemesi için).
+
+    .strip(): tutarlılık için -- bkz. _kamera_anahtari_degeri/lisans.secret_al'daki
+    aynı kök neden notu (sona karışan görünmez bir \n bu değişken için de mümkündür)."""
+    env_deger = (os.getenv("PTS_AUTH_SECRET") or "").strip()
     if env_deger:
         return env_deger
     if os.path.exists(AUTH_SECRET_DOSYASI):
@@ -2981,8 +3000,13 @@ async def kayit_ekle_otomatik(
     Kullanıcı oturumu gerektirmez (kameralar giriş yapamaz); bunun yerine PTS_KAMERA_ANAHTARI ortam
     değişkeni ayarlıysa X-PTS-Kamera-Anahtari başlığıyla eşleşmesi zorunlu tutulur.
     """
-    beklenen_anahtar = os.getenv("PTS_KAMERA_ANAHTARI")
-    if beklenen_anahtar and x_pts_kamera_anahtari != beklenen_anahtar:
+    beklenen_anahtar = _kamera_anahtari_degeri()
+    # x_pts_kamera_anahtari.strip(): gönderen taraf (camera_reader.py) artık
+    # kendi değerini .strip() ediyor, ama gelen başlığı da aynı şekilde ele
+    # almak (harici bir CCTV/NVR sisteminin kendi ayarlarında sona boşluk/
+    # satır sonu bırakması ihtimaline karşı) savunmayı iki katına çıkarır --
+    # bkz. _kamera_anahtari_degeri'nin kök neden notu.
+    if beklenen_anahtar and (x_pts_kamera_anahtari or "").strip() != beklenen_anahtar:
         raise HTTPException(401, "Geçersiz kamera anahtarı")
 
     goruntu_yolu = None
@@ -4359,8 +4383,13 @@ def _guvenlik_uyarilarini_topla() -> dict:
     yenilemesinde) çağrıldığı için, aksi halde her çağrıda log spam'ine yol
     açardı."""
     return {
-        "lisans_secret_ayarli_mi": bool(os.getenv("PTS_LICENSE_SECRET")),
-        "kamera_anahtari_ayarli_mi": bool(os.getenv("PTS_KAMERA_ANAHTARI")),
+        # .strip(): sadece boşluk/satır sonundan oluşan bir değer de
+        # "ayarlanmamış" sayılmalı -- bkz. _kamera_anahtari_degeri'nin kök
+        # neden notu (aynı sınıf hata, burada yalnızca DOĞRU/YANLIŞ göstergesi
+        # olduğu için sessiz bir kayıp riski yok, ama tutarlılık için aynı
+        # şekilde ele alınır).
+        "lisans_secret_ayarli_mi": bool((os.getenv("PTS_LICENSE_SECRET") or "").strip()),
+        "kamera_anahtari_ayarli_mi": bool(_kamera_anahtari_degeri()),
         "cors_tum_originlere_acik": os.getenv("PTS_CORS_ORIGINS", "").strip() == "*",
     }
 

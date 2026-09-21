@@ -2307,6 +2307,44 @@ def test_kayit_ekle_otomatik_esik_ve_uzeri_kayda_dusurulur(client, yetkili_heade
     assert len(r2.json()) == 1
 
 
+# ------------------------------------------------------------------
+# /kayitlar/otomatik — PTS_KAMERA_ANAHTARI başlık kontrolü
+# (2026-09-21, GERÇEK ÜRETİMDE BULUNAN HATA: bkz. main.py::
+# _kamera_anahtari_degeri'nin kök neden notu -- ortam değişkenine sona
+# karışan görünmez bir satır sonu (\n), `requests` kütüphanesinin isteği
+# HİÇ GÖNDERMEMESİNE yol açıyordu; yani gerçek kameraların doğruladığı HER
+# plaka sessizce kayboluyordu. Bu testler hem normal başlık kontrolünü hem
+# de .strip() ile bu sınıf hataya karşı bağışıklığı doğrular.)
+# ------------------------------------------------------------------
+
+def test_kayit_ekle_otomatik_kamera_anahtari_ayarliyken_basliksiz_401_doner(client, monkeypatch):
+    monkeypatch.setenv("PTS_KAMERA_ANAHTARI", "gizli-kamera-anahtari")
+    r = client.post("/kayitlar/otomatik", data={
+        "plaka_no": "34 KAT 01", "kamera_id": "TEST-ANAHTAR-YOK", "yon": "giris",
+    })
+    assert r.status_code == 401, r.text
+
+
+def test_kayit_ekle_otomatik_kamera_anahtari_dogru_basliktan_kabul_edilir(client, monkeypatch):
+    monkeypatch.setenv("PTS_KAMERA_ANAHTARI", "gizli-kamera-anahtari")
+    r = client.post("/kayitlar/otomatik", data={
+        "plaka_no": "34 KAT 02", "kamera_id": "TEST-ANAHTAR-DOGRU", "yon": "giris",
+    }, headers={"X-PTS-Kamera-Anahtari": "gizli-kamera-anahtari"})
+    assert r.status_code == 200, r.text
+
+
+def test_kayit_ekle_otomatik_kamera_anahtarindaki_sondaki_satir_sonu_sessizce_temizlenir(client, monkeypatch):
+    """Kök neden testi: ortam değişkeninin (sunucu tarafı) VEYA gönderilen
+    başlığın (kamera/CCTV tarafı) sonunda bir \n/boşluk olması, gerçek bir
+    kamera pipeline'ının doğruladığı plakanın sessizce reddedilmesine
+    (ya da hiç gönderilememesine) yol açmamalı."""
+    monkeypatch.setenv("PTS_KAMERA_ANAHTARI", "gizli-kamera-anahtari\n")
+    r = client.post("/kayitlar/otomatik", data={
+        "plaka_no": "34 KAT 03", "kamera_id": "TEST-ANAHTAR-NEWLINE", "yon": "giris",
+    }, headers={"X-PTS-Kamera-Anahtari": "gizli-kamera-anahtari"})
+    assert r.status_code == 200, r.text
+
+
 def test_kayit_ekle_otomatik_farkli_okuma_sayisi_kaydedilir_ve_dondurulur(client, yetkili_header):
     """2026-09-18: kamera pipeline'ının bu oturumda kaç FARKLI OCR metin
     varyantı gördüğü (bkz. camera_reader.py::PlakaOyBirikimi.kazanan) artık

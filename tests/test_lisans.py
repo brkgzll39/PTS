@@ -115,3 +115,18 @@ def test_secret_ayarliysa_hic_uyarmaz(monkeypatch, caplog):
     with caplog.at_level("WARNING", logger="pts.lisans"):
         assert lisans.secret_al() == "test-icin-sabit-secret"  # autouse fixture'dan
         assert caplog.records == []
+
+
+def test_secret_sonundaki_satir_sonu_sessizce_temizlenir(monkeypatch):
+    """GERÇEK ÜRETİMDE BULUNAN HATA (2026-09-21, aynı sınıf hata PTS_KAMERA_
+    ANAHTARI'nda da bulundu -- bkz. main.py::_kamera_anahtari_degeri'nin kök
+    neden notu): PTS_LICENSE_SECRET, Windows'ta ayarlanırken sona görünmez
+    bir \n karışabilir. secret_al() bunu .strip() etmezse, aynı (görünüşte
+    aynı) ortam değişkeni değerine rağmen sign/verify arasında tutarsızlık
+    riski oluşur -- burada doğrudan bunu doğruluyoruz: sonunda \n olan bir
+    secret ile üretilen lisans, GENE sonunda \n olan bir secret ile
+    (secret_al'ın kendisi üzerinden) doğrulanabilmeli."""
+    monkeypatch.setenv("PTS_LICENSE_SECRET", "test-icin-sabit-secret\n")
+    anahtar = lisans.uret("Satir Sonu Test Site", kamera_limiti=2, gun=30)
+    payload = lisans.coz(anahtar)
+    assert payload["musteri"] == "Satir Sonu Test Site"

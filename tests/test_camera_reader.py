@@ -402,6 +402,43 @@ def test_kayit_api_istegine_dogrulama_kare_sayisi_eklenir(monkeypatch, sahte_eng
     assert yakalanan["data"]["dogrulama_kare_sayisi"] == 1
 
 
+def test_kamera_anahtari_basligindaki_satir_sonu_gonderilmeden_once_temizlenir(monkeypatch, sahte_engine):
+    """GERÇEK ÜRETİMDE BULUNAN HATA (2026-09-21, bkz. main.py::
+    _kamera_anahtari_degeri'nin kök neden notu): PTS_KAMERA_ANAHTARI ortam
+    değişkenine Windows'ta ayarlanırken sona görünmez bir satır sonu (\n)
+    karışmıştı. `requests` kütüphanesi böyle bir karakter içeren bir başlık
+    değerini KABUL ETMEYİP isteği hiç göndermeden reddediyordu -- yani
+    dedektörün gerçekten doğruladığı HER plaka, panelde hiçbir iz
+    bırakmadan sessizce kayboluyordu. Bu test, düzeltmenin başlığa GERÇEKTEN
+    temiz bir değer koyduğunu (requests'e ulaşmadan önce) doğrudan
+    doğrular."""
+    import numpy as np
+
+    monkeypatch.setenv("PTS_KAMERA_ANAHTARI", "gizli-anahtar\n")
+    yakalanan = {}
+
+    def sahte_post(url, data=None, files=None, headers=None, timeout=None):
+        yakalanan["headers"] = headers
+
+        class _Yanit:
+            status_code = 200
+
+        return _Yanit()
+
+    monkeypatch.setattr(camera_reader.requests, "post", sahte_post)
+
+    pipeline = camera_reader.KameraPipeline(
+        video_kaynagi="kullanilmiyor.mp4", kamera_id="TEST-ANAHTAR-NEWLINE",
+    )
+    kare = np.full((100, 100, 3), 128, dtype=np.uint8)
+    pipeline._kareyi_isle(kare, oturumu_hemen_kapat=True)
+
+    assert yakalanan["headers"]["X-PTS-Kamera-Anahtari"] == "gizli-anahtar", (
+        "Başlık değeri sonundaki \\n temizlenmemiş -- requests kütüphanesi "
+        "bu değeri reddedip isteği hiç göndermeyebilirdi"
+    )
+
+
 class _CogulPlakaEngine:
     """Ardışık `tahmin_et()` çağrılarında FARKLI plaka varyantları döndüren
     sahte motor -- gerçek bir kameranın aynı aracı birkaç karede biraz farklı
