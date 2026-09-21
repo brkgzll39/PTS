@@ -1,3 +1,4 @@
+import json
 import re
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
@@ -100,8 +101,24 @@ class KullaniciCevap(BaseModel):
     olusturma_tarihi: Optional[datetime] = None
     # Yalnızca rol="sakin" hesaplarında dolu (bkz. models.Kullanici.kisi_id).
     kisi_id: Optional[int] = None
+    # "Nizamiye Bazlı Kamera Erişimi" (2026-09-21): None = kısıtlama yok (tüm
+    # kameraları görebilir); DB'de JSON dizi (string) olarak saklanıyor (bkz.
+    # main.py::_kullanicinin_izinli_kameralari) -- aşağıdaki validator ham
+    # string'i response'ta gerçek bir liste olarak döndürmek için çözer.
+    kamera_erisim_listesi: Optional[List[str]] = None
 
     model_config = ConfigDict(from_attributes=True)
+
+    @field_validator("kamera_erisim_listesi", mode="before")
+    @classmethod
+    def _kamera_erisim_listesini_coz(cls, v):
+        if v is None or isinstance(v, list):
+            return v
+        try:
+            cozulen = json.loads(v)
+        except (ValueError, TypeError):
+            return None
+        return cozulen if isinstance(cozulen, list) else None
 
 
 class KullaniciOlustur(BaseModel):
@@ -111,6 +128,11 @@ class KullaniciOlustur(BaseModel):
     # rol="sakin" iken ZORUNLU: bu hesabın hangi Kişi kaydına bağlanacağı
     # (bkz. main.py::kullanici_ekle). Diğer roller için yok sayılır.
     kisi_id: Optional[int] = None
+    # None = kısıtlama yok (varsayılan, geriye dönük uyumlu); dolu bir liste
+    # (BOŞ liste dahil) verilirse hesap SADECE o kamera id'lerini görebilir
+    # (bkz. main.py::_kamera_id_listesini_dogrula -- geçersiz id'ler 400 ile
+    # reddedilir).
+    kamera_erisim_listesi: Optional[List[str]] = None
 
     @field_validator("rol")
     @classmethod
@@ -128,6 +150,13 @@ class KullaniciGuncelle(BaseModel):
     # main.py::kullanici_guncelle. None = "değiştirme" (diğer alanlarla aynı
     # kural), bağlantıyı kaldırmak için bu uç nokta kullanılmaz.
     kisi_id: Optional[int] = None
+    # None = değiştirme (diğer alanlarla aynı kural). Bir liste (BOŞ liste
+    # DAHİL) gönderilirse kısıtlama TAM OLARAK o listeye ayarlanır. Kısıtlamayı
+    # tamamen KALDIRIP hesabı yeniden "tüm kameralar" durumuna getirmek için
+    # `kamera_erisimi_temizle=true` gönderilir (bkz. main.py::
+    # kamera_roi_guncelle'deki aynı "temizle" deseniyle tutarlı).
+    kamera_erisim_listesi: Optional[List[str]] = None
+    kamera_erisimi_temizle: bool = False
 
     @field_validator("rol")
     @classmethod

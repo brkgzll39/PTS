@@ -2386,34 +2386,83 @@ async function noktaSil(id) {
 // KULLANICI YÖNETİMİ
 // ================================================================
 
+// "Nizamiye Bazlı Kamera Erişimi" (2026-09-21) -- kullanıcı listesi ve
+// düzenleme modalı arasında paylaşılan, o oturumda bir kez yüklenen kamera
+// listesi önbelleği (bkz. _kameraListesiniGetir).
+let _kullanicilarCache = [];
+let _kameraListesiCache = null;
+
+async function _kameraListesiniGetir() {
+  if (_kameraListesiCache) return _kameraListesiCache;
+  try {
+    _kameraListesiCache = await apiCagir("/kameralar");
+  } catch (e) {
+    _kameraListesiCache = [];
+  }
+  return _kameraListesiCache;
+}
+
+// Bir kamera checkbox listesi HTML'i üretir -- `seciliIdler` null ise
+// hepsi işaretlenir (yeni kullanıcı formunda "Tüm Kameralar" işaretini
+// kaldırınca varsayılan budur), aksi halde yalnızca o id'ler işaretlenir.
+function _kameraCheckboxListesiHtml(kameralar, seciliIdler, girdiAdi) {
+  if (!kameralar.length) return '<div class="text-muted small">Tanımlı kamera bulunamadı.</div>';
+  return kameralar.map(k => {
+    const isaretli = seciliIdler === null || seciliIdler.includes(k.id);
+    return `<div class="form-check">
+      <input class="form-check-input" type="checkbox" name="${girdiAdi}" value="${escapeHtml(k.id)}" id="${girdiAdi}-${escapeHtml(k.id)}" ${isaretli ? "checked" : ""}>
+      <label class="form-check-label small" for="${girdiAdi}-${escapeHtml(k.id)}">${escapeHtml(k.ad || k.id)}</label>
+    </div>`;
+  }).join("");
+}
+
+function _isaretliKameraIdleriniAl(girdiAdi) {
+  return Array.from(document.querySelectorAll(`input[name="${girdiAdi}"]:checked`)).map(el => el.value);
+}
+
+async function yeniKullaniciKameraListesiGoster() {
+  const tumKameralar = document.getElementById("yeniKullaniciTumKameralar").checked;
+  const alan = document.getElementById("yeniKullaniciKameraListesi");
+  alan.classList.toggle("d-none", tumKameralar);
+  if (tumKameralar) return;
+  const kameralar = await _kameraListesiniGetir();
+  alan.innerHTML = _kameraCheckboxListesiHtml(kameralar, [], "yeniKullaniciKamera");
+}
+
 async function kullanicilariYukle() {
   try {
     const [kullanicilar, kisiler] = await Promise.all([
       apiCagir("/kullanicilar"),
       apiCagir("/kisiler").catch(() => []),
     ]);
+    _kullanicilarCache = kullanicilar;
     const el = document.getElementById("kullanicilarTablo");
     if (!el) return;
     const roller = { yonetici: "bg-danger", "operatör": "bg-warning text-dark", "güvenlik": "bg-primary", izleyici: "bg-secondary", sakin: "bg-info text-dark" };
     el.innerHTML = kullanicilar.map(k => {
       const bagliKisi = k.kisi_id ? kisiler.find(ki => ki.id === k.kisi_id) : null;
+      const kameraEtiketi = k.kamera_erisim_listesi === null || k.kamera_erisim_listesi === undefined
+        ? '<span class="badge bg-light text-dark border">Tümü</span>'
+        : `<span class="badge bg-warning text-dark" title="Yalnızca ${k.kamera_erisim_listesi.length} kamera">${k.kamera_erisim_listesi.length} kamera</span>`;
       return `<tr>
       <td><strong>${escapeHtml(k.kullanici_adi)}</strong></td>
       <td><span class="badge ${roller[k.rol] || "bg-secondary"}">${escapeHtml(k.rol)}</span></td>
       <td class="small">${bagliKisi ? escapeHtml(bagliKisi.ad_soyad) : (k.kisi_id ? `#${k.kisi_id} (silinmiş)` : "-")}</td>
+      <td>${kameraEtiketi}</td>
       <td class="small text-muted">${k.son_giris ? tarihFormatla(k.son_giris) : "—"}</td>
       <td>${k.aktif ? '<span class="badge bg-success">Aktif</span>' : '<span class="badge bg-secondary">Pasif</span>'}</td>
       <td>
         ${rolYeterli("yonetici") ? `
-        <button class="btn btn-sm btn-outline-secondary" onclick="kullaniciDurumDegistir(${k.id}, ${!k.aktif})" title="${k.aktif ? "Pasif yap" : "Aktif yap"}"><i class="bi bi-toggle2-on"></i></button>
+        <button class="btn btn-sm btn-outline-primary" onclick="kullaniciDuzenleAc(${k.id})" title="Düzenle"><i class="bi bi-pencil"></i></button>
+        <button class="btn btn-sm btn-outline-secondary ms-1" onclick="kullaniciDurumDegistir(${k.id}, ${!k.aktif})" title="${k.aktif ? "Pasif yap" : "Aktif yap"}"><i class="bi bi-toggle2-on"></i></button>
         <button class="btn btn-sm btn-outline-danger ms-1" onclick="kullaniciSil(${k.id})" title="Sil"><i class="bi bi-trash"></i></button>
         ` : '<span class="text-muted small">-</span>'}
       </td>
     </tr>`;
-    }).join("") || `<tr><td colspan="6" class="text-center text-muted py-3">Kullanıcı bulunamadı</td></tr>`;
+    }).join("") || `<tr><td colspan="7" class="text-center text-muted py-3">Kullanıcı bulunamadı</td></tr>`;
   } catch (e) {
     const el = document.getElementById("kullanicilarTablo");
-    if (el) el.innerHTML = `<tr><td colspan="6" class="text-center text-muted py-3">Bu sekmeyi sadece yönetici görebilir</td></tr>`;
+    if (el) el.innerHTML = `<tr><td colspan="7" class="text-center text-muted py-3">Bu sekmeyi sadece yönetici görebilir</td></tr>`;
   }
 }
 
@@ -2499,10 +2548,18 @@ document.getElementById("kullaniciForm")?.addEventListener("submit", async (e) =
       rol,
     };
     if (rol === "sakin") govde.kisi_id = Number(document.getElementById("yeniKullaniciKisi").value);
+    // "Nizamiye Bazlı Kamera Erişimi" (2026-09-21): "Tüm Kameralar" işaretliyse
+    // alan HİÇ gönderilmez (backend'de None = kısıtlama yok, varsayılan);
+    // işaret kaldırılmışsa SEÇİLİ kameraların id listesi gönderilir (boş
+    // seçim = hiçbir kameraya erişim yok).
+    if (!document.getElementById("yeniKullaniciTumKameralar").checked) {
+      govde.kamera_erisim_listesi = _isaretliKameraIdleriniAl("yeniKullaniciKamera");
+    }
     await apiCagir("/kullanicilar", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(govde) });
     sonuc.className = "small mt-2 text-success"; sonuc.textContent = "Kullanıcı oluşturuldu.";
     e.target.reset();
     document.getElementById("yeniKullaniciKisiAlani").classList.add("d-none");
+    document.getElementById("yeniKullaniciKameraListesi").classList.add("d-none");
     kullanicilariYukle();
   } catch (err) { sonuc.className = "small mt-2 text-danger"; sonuc.textContent = err.message; }
 });
@@ -2513,6 +2570,70 @@ async function kullaniciDurumDegistir(id, yeniDurum) {
     kullanicilariYukle();
   } catch (e) { toastGoster(e.message, "hata"); }
 }
+
+// ================================================================
+// KULLANICI DÜZENLEME (2026-09-21) -- rol/parola/kamera erişimi. Önceden bu
+// sekmede bir kullanıcıyı OLUŞTURDUKTAN SONRA rolünü ya da (yeni eklenen)
+// kamera erişim kısıtlamasını değiştirmenin hiçbir yolu yoktu.
+// ================================================================
+
+async function kullaniciDuzenleKameraListesiGoster() {
+  const tumKameralar = document.getElementById("kdTumKameralar").checked;
+  const alan = document.getElementById("kdKameraListesi");
+  alan.classList.toggle("d-none", tumKameralar);
+  if (tumKameralar) return;
+  const kameralar = await _kameraListesiniGetir();
+  // Liste zaten doldurulmuşsa (kullaniciDuzenleAc'te) yeniden ÜZERİNE YAZMA --
+  // yalnızca ilk kez (henüz boşken) doldur, aksi halde kullanıcının az önce
+  // yaptığı seçimleri sıfırlardı.
+  if (!alan.dataset.dolduruldu) {
+    alan.innerHTML = _kameraCheckboxListesiHtml(kameralar, [], "kdKamera");
+    alan.dataset.dolduruldu = "1";
+  }
+}
+
+async function kullaniciDuzenleAc(id) {
+  const k = _kullanicilarCache.find(k2 => k2.id === id);
+  if (!k) return;
+  document.getElementById("kdId").value = k.id;
+  document.getElementById("kdKullaniciAdi").value = k.kullanici_adi;
+  document.getElementById("kdRol").value = k.rol;
+  document.getElementById("kdParola").value = "";
+  document.getElementById("kdSonuc").textContent = "";
+
+  const kisitliMi = k.kamera_erisim_listesi !== null && k.kamera_erisim_listesi !== undefined;
+  document.getElementById("kdTumKameralar").checked = !kisitliMi;
+  const kameraListesiAlani = document.getElementById("kdKameraListesi");
+  kameraListesiAlani.classList.toggle("d-none", !kisitliMi);
+  delete kameraListesiAlani.dataset.dolduruldu;
+  if (kisitliMi) {
+    const kameralar = await _kameraListesiniGetir();
+    kameraListesiAlani.innerHTML = _kameraCheckboxListesiHtml(kameralar, k.kamera_erisim_listesi, "kdKamera");
+    kameraListesiAlani.dataset.dolduruldu = "1";
+  }
+  bootstrap.Modal.getOrCreateInstance(document.getElementById("kullaniciDuzenleModal")).show();
+}
+
+document.getElementById("kullaniciDuzenleForm")?.addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const id = document.getElementById("kdId").value;
+  const sonuc = document.getElementById("kdSonuc");
+  const govde = { rol: document.getElementById("kdRol").value };
+  const parola = document.getElementById("kdParola").value;
+  if (parola) govde.parola = parola;
+  if (document.getElementById("kdTumKameralar").checked) {
+    govde.kamera_erisimi_temizle = true;
+  } else {
+    govde.kamera_erisim_listesi = _isaretliKameraIdleriniAl("kdKamera");
+  }
+  try {
+    await apiCagir(`/kullanicilar/${id}`, {
+      method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(govde),
+    });
+    bootstrap.Modal.getInstance(document.getElementById("kullaniciDuzenleModal"))?.hide();
+    kullanicilariYukle();
+  } catch (err) { sonuc.className = "small text-danger"; sonuc.textContent = err.message; }
+});
 
 async function kullaniciSil(id) {
   if (!confirm("Bu kullanıcıyı silmek istediğinize emin misiniz?")) return;

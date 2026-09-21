@@ -143,6 +143,11 @@ def _veritabani_migrasyon() -> None:
         # "WITH VALUES" ihtiyacı YOK -- var olan satırlarda zaten istenen
         # değer olan NULL'a düşer, ayrıca bir UPDATE gerekmez.
         f"ALTER TABLE kullanicilar ADD {col_kw}kisi_id INTEGER",
+        # "Nizamiye Bazlı Kamera Erişimi" (2026-09-21) -- bkz. models.Kullanici.
+        # kamera_erisim_listesi'nin docstring'i. NULL kabul eden, DEFAULT'suz
+        # bir metin sütunu olduğu için (yukarıdaki kisi_id ile aynı gerekçe)
+        # burada da "WITH VALUES" ihtiyacı YOK.
+        f"ALTER TABLE kullanicilar ADD {col_kw}kamera_erisim_listesi {'TEXT' if sqlite_mod else 'NVARCHAR(MAX)'}",
         # Yukarıdaki "WITH VALUES" yalnızca BUNDAN SONRA çalışacak taze
         # migrasyonları düzeltir -- kullanıcının veritabanında sütun zaten
         # NULL değerlerle eklenmiş olabileceğinden (birebir bu vakadaki gibi),
@@ -561,6 +566,16 @@ async def _sse_yayinla(olay_turu: str, veri: dict, db: Optional[Session] = None)
             pencereler = _kullanicinin_vardiya_pencereleri(db, istemci["kullanici_id"])
             if not any(_pencere_icinde_mi(kayit_tarihi, b, e) for b, e in pencereler):
                 continue
+        # KAMERA/NOKTA ERİŞİMİ (2026-09-21): bağlı istemcinin kamera
+        # kısıtlaması varsa ve bu kayıt izinli olmayan bir kameradan
+        # geliyorsa, canlı "Son Geçişler" bildirimi de gönderilmez -- aksi
+        # halde izleyemediği bir kameranın plakası CANLI olarak beliriyor
+        # olurdu (tutarsız/sessiz bir bilgi sızıntısı). `izinli_kameralar`
+        # bağlantı anında hesaplanıp istemci sözlüğünde tutuluyor (bkz.
+        # sse_baglantisi) -- `rol` ile aynı desen.
+        izinli_kameralar = istemci.get("izinli_kameralar")
+        if izinli_kameralar is not None and veri.get("kamera_id") not in izinli_kameralar:
+            continue
         try:
             await istemci["kuyruk"].put(payload)
         except Exception:
@@ -1112,36 +1127,84 @@ def _kullanicinin_vardiya_pencereleri(db: Session, kullanici_id: int) -> list:
     return [(o.giris_zamani, o.cikis_zamani) for o in oturumlar]
 
 
-def _guvenlik_kayit_filtresi_uygula(sorgu, kullanici: models.Kullanici, db: Session):
-    """`kullanici.rol == ROL_GUVENLIK` ise verilen SQLAlchemy sorgusuna, bu
-    kullanıcının vardiya oturumlarından HİÇBİRİNE denk düşmeyen kayıtları
-    eleyen bir OR filtresi ekler; diğer roller için sorgu değişmeden döner.
+def _kullanicinin_izinli_kameralari(kullanici: models.Kullanici) -> Optional[set]:
+    """"Nizamiye Bazlı Kamera Erişimi" (2026-09-21) -- bkz.
+    models.Kullanici.kamera_erisim_listesi'nin docstring'i.
 
-    Hiç vardiya oturumu yoksa (henüz hiç giriş yapmamışsa) GÜVENLİ TARAF
-    seçilir: varsayılan olarak her şeyi göstermek yerine HİÇBİR kayıt
-    döndürülmez -- henüz vardiyası olmayan bir güvenlik hesabının kayıtlar
-    listesinin boş görünmesi, yanlışlıkla TÜM kayıtları göstermesinden çok
-    daha güvenli bir varsayılan davranıştır.
+    `None` dönerse KISITLAMA YOK -- hesap tüm kameraları görebilir (geriye
+    dönük uyumluluk varsayılanı: mevcut tüm hesaplar bu haldeydi). Bir `set`
+    dönerse (BOŞ set dahil), yalnızca o id'lere sahip kameralar bu hesaba
+    görünür/erişilebilir olmalıdır."""
+    if not kullanici.kamera_erisim_listesi:
+        return None
+    try:
+        idler = json.loads(kullanici.kamera_erisim_listesi)
+    except (ValueError, TypeError):
+        return None
+    if not isinstance(idler, list):
+        return None
+    return set(idler)
+
+
+def _kamera_erisimi_var_mi(kullanici: models.Kullanici, kamera_id: str) -> bool:
+    """Tek bir kameraya (canlı izleme uçlarında) erişim kontrolü -- bkz.
+    _kullanicinin_izinli_kameralari."""
+    izinli = _kullanicinin_izinli_kameralari(kullanici)
+    return izinli is None or kamera_id in izinli
+
+
+def _guvenlik_kayit_filtresi_uygula(sorgu, kullanici: models.Kullanici, db: Session):
+    """Verilen SQLAlchemy sorgusuna İKİ BAĞIMSIZ kayıt görünürlüğü
+    kısıtlamasını birlikte uygular:
+
+    1) VARDİYA PENCERESİ (yalnızca `kullanici.rol == ROL_GUVENLIK`): bu
+       kullanıcının vardiya oturumlarından HİÇBİRİNE denk düşmeyen kayıtları
+       eleyen bir OR filtresi ekler (değişmedi -- bkz. eski docstring). Hiç
+       vardiya oturumu yoksa (henüz hiç giriş yapmamışsa) GÜVENLİ TARAF
+       seçilir: varsayılan olarak her şeyi göstermek yerine HİÇBİR kayıt
+       döndürülmez.
+    2) KAMERA/NOKTA ERİŞİMİ (2026-09-21, HERHANGİ bir rol için): kullanıcıya
+       bir `kamera_erisim_listesi` kısıtlaması atanmışsa (bkz.
+       _kullanicinin_izinli_kameralari), yalnızca izinli kamera id'lerinden
+       gelen kayıtlar görünür kalır. Örn. "Lojman Nizamiye"de çalışan ve
+       yalnızca o noktanın kameralarını izleyebilen bir hesap, genel
+       "Kayıtlar" listesinde gezinerek "Ana Nizamiye"nin geçmiş kayıtlarını
+       da GÖREMEZ -- ama BELİRLİ bir plakayı hedefleyen "Plaka Analizi"
+       aramasından (bkz. plaka_analiz) KASITLI OLARAK MUAFTIR, çünkü bir
+       vardiyanın/noktanın başka bir vardiyada/noktada geçen belirli bir
+       aracı tespit edebilmesi meşru bir ihtiyaçtır (kullanıcı talebi,
+       2026-09-21: "A Vardiyasının nöbet saatinde giriş yapan bir aracı, B
+       vardiyası geldiğinde tespit edebilmesi gerekiyor").
+
+    İkisi de geçerli değilse (izleyici/operatör/yönetici, kısıtlamasız
+    güvenlik) sorgu değişmeden döner.
     """
-    if kullanici.rol != ROL_GUVENLIK:
-        return sorgu
-    pencereler = _kullanicinin_vardiya_pencereleri(db, kullanici.id)
-    if not pencereler:
-        return sorgu.filter(false())
-    kosullar = [
-        # bitis None ise (oturum hâlâ açık) üst sınır YOK -- bkz. _pencere_icinde_mi.
-        models.Kayit.tarih_saat >= baslangic if bitis is None
-        else and_(models.Kayit.tarih_saat >= baslangic, models.Kayit.tarih_saat < bitis)
-        for baslangic, bitis in pencereler
-    ]
-    return sorgu.filter(or_(*kosullar))
+    if kullanici.rol == ROL_GUVENLIK:
+        pencereler = _kullanicinin_vardiya_pencereleri(db, kullanici.id)
+        if not pencereler:
+            sorgu = sorgu.filter(false())
+        else:
+            kosullar = [
+                # bitis None ise (oturum hâlâ açık) üst sınır YOK -- bkz. _pencere_icinde_mi.
+                models.Kayit.tarih_saat >= baslangic if bitis is None
+                else and_(models.Kayit.tarih_saat >= baslangic, models.Kayit.tarih_saat < bitis)
+                for baslangic, bitis in pencereler
+            ]
+            sorgu = sorgu.filter(or_(*kosullar))
+    izinli_kameralar = _kullanicinin_izinli_kameralari(kullanici)
+    if izinli_kameralar is not None:
+        sorgu = sorgu.filter(models.Kayit.kamera_id.in_(izinli_kameralar))
+    return sorgu
 
 
 def _guvenlik_kayit_gorunur_mu(kayit: "models.Kayit", kullanici: models.Kullanici, db: Session) -> bool:
     """Tek bir Kayit'in (ör. `/disa-aktar/pdf/kayit/{id}` gibi tekil dışa
-    aktarma uçlarında) güvenlik personeli için görünür olup olmadığını
-    kontrol eder -- `_guvenlik_kayit_filtresi_uygula` ile aynı pencere
-    mantığını tek bir kayda uygular."""
+    aktarma uçlarında) bu kullanıcı için görünür olup olmadığını kontrol eder
+    -- `_guvenlik_kayit_filtresi_uygula` ile AYNI iki kısıtlamayı (vardiya
+    penceresi + kamera erişimi) tek bir kayda uygular."""
+    izinli_kameralar = _kullanicinin_izinli_kameralari(kullanici)
+    if izinli_kameralar is not None and kayit.kamera_id not in izinli_kameralar:
+        return False
     if kullanici.rol != ROL_GUVENLIK:
         return True
     pencereler = _kullanicinin_vardiya_pencereleri(db, kullanici.id)
@@ -1492,6 +1555,26 @@ def _kameralari_oku() -> list:
         return []
 
 
+def _kamera_id_listesini_dogrula(id_listesi: list) -> list:
+    """"Nizamiye Bazlı Kamera Erişimi" (2026-09-21): bir kullanıcıya kamera
+    erişim kısıtlaması atanırken gönderilen id listesini `cameras.json`'daki
+    GERÇEK kamera id'leriyle doğrular -- var olmayan/typo bir id sessizce
+    kaydedilip o hesabı (kısıtlama artık NULL olmadığı için) fiilen HİÇBİR
+    kameraya erişemez hale getirmesin diye (bkz. kullanici_ekle,
+    kullanici_guncelle). Yinelenenler elenir, sıra korunur."""
+    gecerli_idler = {k["id"] for k in _kameralari_oku()}
+    temiz = []
+    for kid in id_listesi:
+        kid = str(kid).strip()
+        if not kid:
+            continue
+        if kid not in gecerli_idler:
+            raise HTTPException(400, f"'{kid}' id'li bir kamera bulunamadı")
+        if kid not in temiz:
+            temiz.append(kid)
+    return temiz
+
+
 def _kameralari_yaz(kameralar: list) -> None:
     with open(KAMERA_DOSYASI, "w", encoding="utf-8") as dosya:
         json.dump(kameralar, dosya, ensure_ascii=False, indent=2)
@@ -1510,8 +1593,14 @@ def _kamera_guvenli_gorunum(kamera: dict) -> dict:
 
 
 @app.get("/kameralar")
-def kameralari_getir(_: models.Kullanici = Depends(_personel_girisi_gerekli)):
+def kameralari_getir(kullanici: models.Kullanici = Depends(_personel_girisi_gerekli)):
+    izinli = _kullanicinin_izinli_kameralari(kullanici)
     kameralar = _kameralari_oku()
+    if izinli is not None:
+        # "Nizamiye Bazlı Kamera Erişimi" (2026-09-21): kısıtlı bir hesap,
+        # canlı izleme listesinde YALNIZCA kendi noktasına atanmış kameraları
+        # görür -- bkz. models.Kullanici.kamera_erisim_listesi'nin docstring'i.
+        kameralar = [k for k in kameralar if k["id"] in izinli]
     sonuclar = []
     for k in kameralar:
         gorunum = _kamera_guvenli_gorunum(k)
@@ -1664,8 +1753,10 @@ def kamera_roi_guncelle(kamera_id: str, veri: schemas.KameraRoiGuncelle, kullani
 
 
 @app.get("/kameralar/{kamera_id}/goruntu")
-async def kamera_goruntu_al(kamera_id: str, _: models.Kullanici = Depends(_personel_girisi_gerekli)):
+async def kamera_goruntu_al(kamera_id: str, kullanici: models.Kullanici = Depends(_personel_girisi_gerekli)):
     """Kameradan anlık JPEG kare alır. Pipeline çalışıyorsa cached+annotated frame döner (sıfır gecikme)."""
+    if not _kamera_erisimi_var_mi(kullanici, kamera_id):
+        raise HTTPException(403, "Bu kameraya erişim yetkiniz yok")
     kamera = next((k for k in _kameralari_oku() if k["id"] == kamera_id), None)
     if not kamera:
         raise HTTPException(404, "Kamera bulunamadı")
@@ -1701,7 +1792,7 @@ async def kamera_goruntu_al(kamera_id: str, _: models.Kullanici = Depends(_perso
 
 
 @app.get("/kameralar/{kamera_id}/akis")
-async def kamera_akis(kamera_id: str, request: Request, authorization: Optional[str] = Header(None)):
+async def kamera_akis(kamera_id: str, request: Request, authorization: Optional[str] = Header(None), db: Session = Depends(get_db)):
     """Kameradan GERÇEK ZAMANLI MJPEG akışı (multipart/x-mixed-replace).
 
     Panel eskiden bu kareyi 3 saniyede bir `fetch` ile "anlık görüntü" (snapshot)
@@ -1715,11 +1806,18 @@ async def kamera_akis(kamera_id: str, request: Request, authorization: Optional[
     (frontend/app.js: `_kameraAkisiBaslat`)."""
     if not authorization or not authorization.lower().startswith("bearer "):
         raise HTTPException(401, "Bearer token gerekli")
-    _token_coz(authorization[7:].strip())
+    kullanici_id = _token_coz(authorization[7:].strip())
 
     kamera = next((k for k in _kameralari_oku() if k["id"] == kamera_id), None)
     if not kamera:
         raise HTTPException(404, "Kamera bulunamadı")
+
+    # Kamera erişim kısıtlaması (2026-09-21) -- bu uç nokta yalnızca token'ı
+    # (kullanıcı ID'sini) doğruluyordu, hesabın kısıtlamasına hiç BAKMIYORDU;
+    # bkz. _kamera_erisimi_var_mi.
+    baglanan = db.query(models.Kullanici).filter(models.Kullanici.id == kullanici_id).first()
+    if not baglanan or not _kamera_erisimi_var_mi(baglanan, kamera_id):
+        raise HTTPException(403, "Bu kameraya erişim yetkiniz yok")
 
     SINIR = b"ptsframe"
 
@@ -1752,8 +1850,10 @@ async def kamera_akis(kamera_id: str, request: Request, authorization: Optional[
 
 
 @app.get("/kameralar/{kamera_id}/son-plaka")
-def kamera_son_plaka(kamera_id: str, _: models.Kullanici = Depends(_personel_girisi_gerekli)):
+def kamera_son_plaka(kamera_id: str, kullanici: models.Kullanici = Depends(_personel_girisi_gerekli)):
     """Pipeline'ın son tespit ettiği plaka(ları) döner (canlı overlay için)."""
+    if not _kamera_erisimi_var_mi(kullanici, kamera_id):
+        raise HTTPException(403, "Bu kameraya erişim yetkiniz yok")
     pipeline = _aktif_pipelineler.get(kamera_id)
     if not pipeline or not pipeline.calisiyor:
         return {"tespitler": []}
@@ -3081,18 +3181,30 @@ def plaka_analiz(plaka_no: str, db: Session = Depends(get_db), kullanici: models
     # kayıtlarla AYNI (boşluklu) biçime sahip `goruntu_plaka` ile dönüyor
     # (ör. "Kara Listeye Ekle" düğmesi artık doğru biçimde plaka gönderir).
     goruntu_plaka = re.sub(r"[^A-Za-z0-9 ]", "", plaka_no).strip().upper() or hedef
-    # bkz. "GÜVENLİK PERSONELİ VARDİYA FİLTRESİ" notu: bu ekrandaki geçmiş
-    # listesi ve "Toplam Geçiş"/"Son Geçiş" istatistikleri de birer KAYIT
-    # görünürlüğü olduğu için güvenlik rolü için aynı vardiya filtresinden
-    # geçirilir (kişi/kara liste bilgisi PLAKAYA ait sabit veridir, filtreye
-    # tabi değildir).
-    kayitlar_sorgu = _guvenlik_kayit_filtresi_uygula(
-        db.query(models.Kayit).filter(_plaka_normalize_sql(models.Kayit.plaka_no) == hedef),
-        kullanici, db,
+    # GÜVENLİK PERSONELİ VARDİYA FİLTRESİ / KAMERA ERİŞİMİ İSTİSNASI
+    # (2026-09-21): bu ekran ÖNCEDEN (2026-09-18) diğer KAYIT görünürlüğü
+    # ekranlarıyla (bkz. _guvenlik_kayit_filtresi_uygula) AYNI vardiya
+    # penceresi filtresine tabiydi -- güvenlik personeli yalnızca KENDİ
+    # vardiya penceresinde geçen kayıtları "Plaka Analizi" ile de görebiliyordu.
+    # Kullanıcı geri bildirimi (2026-09-21): "A Vardiyasının nöbet saatinde
+    # giriş yapan bir aracı, B vardiyası geldiğinde TESPİT edebilmesi
+    # gerekiyor" -- yani bir sonraki vardiyanın/noktanın, BELİRLİ bir plakayı
+    # arayarak önceki vardiya(lar)ın/noktanın kayıtlarına erişebilmesi
+    # gereken, meşru ve BİLİNÇLİ bir ihtiyaç. "Kayıtlar" listesi (bkz.
+    # kayitlari_listele) genel BROWSE ekranı olduğu için hem vardiya hem de
+    # kamera erişim filtresi ORADA hâlâ uygulanıyor -- ama bu uç nokta (Plaka
+    # Analizi) TEK BİR plakayı hedefleyen, kasıtlı bir arama olduğundan artık
+    # HER İKİ kısıtlamadan da BAĞIMSIZ olarak tüm geçmişi döner. Böylece
+    # güvenlik personeli genel kayıt akışını (diğer vardiyaların/noktaların
+    # TÜM trafiğini) gezinemez ama belirli bir aracı sorduğunda tam geçmişini
+    # görebilir (kişi/kara liste bilgisi zaten PLAKAYA ait sabit veridir,
+    # hiçbir filtreye tabi değildir).
+    kayitlar = (
+        db.query(models.Kayit)
+        .filter(_plaka_normalize_sql(models.Kayit.plaka_no) == hedef)
+        .order_by(desc(models.Kayit.tarih_saat))
+        .limit(50).all()
     )
-    kayitlar = (kayitlar_sorgu
-                .order_by(desc(models.Kayit.tarih_saat))
-                .limit(50).all())
     kisi = None
     for k in db.query(models.Kisi).filter(models.Kisi.aktif == True).all():  # noqa: E712
         if _plaka_normalize(k.plaka_no) == hedef:
@@ -3147,12 +3259,17 @@ async def sse_baglantisi(request: Request, authorization: Optional[str] = Header
     kullanici_id = _token_coz(authorization[7:].strip())
     # Güvenlik personeli için canlı akışın da vardiya penceresine göre
     # filtrelenebilmesi (bkz. _sse_yayinla) için bağlı istemcinin rolü de
-    # tutulur -- token yalnızca ID doğrular, rolü vermez.
+    # tutulur -- token yalnızca ID doğrular, rolü vermez. 2026-09-21: aynı
+    # gerekçeyle kamera erişim kısıtlaması da bağlantı anında hesaplanıp
+    # tutuluyor (bkz. _kullanicinin_izinli_kameralari) -- ikisi de yalnızca
+    # BU bağlantı açıldığı anki değeri yansıtır; hesap sonradan değişirse
+    # istemcinin yeniden bağlanması (sayfa yenilemesi) gerekir.
     baglanan = db.query(models.Kullanici).filter(models.Kullanici.id == kullanici_id).first()
     rol = baglanan.rol if baglanan else ROL_IZLEYICI
+    izinli_kameralar = _kullanicinin_izinli_kameralari(baglanan) if baglanan else None
 
     q: asyncio.Queue = asyncio.Queue(maxsize=100)
-    istemci = {"kuyruk": q, "kullanici_id": kullanici_id, "rol": rol}
+    istemci = {"kuyruk": q, "kullanici_id": kullanici_id, "rol": rol, "izinli_kameralar": izinli_kameralar}
     _sse_istemcileri.append(istemci)
 
     async def _akis():
@@ -3477,11 +3594,21 @@ def kullanici_ekle(istek: schemas.KullaniciOlustur, db: Session = Depends(get_db
     if db.query(models.Kullanici).filter(models.Kullanici.kullanici_adi == istek.kullanici_adi).first():
         raise HTTPException(409, "Bu kullanıcı adı zaten kullanımda")
     kisi_id = _sakin_kisi_id_dogrula(db, istek.rol, istek.kisi_id)
+    # "Nizamiye Bazlı Kamera Erişimi" (2026-09-21): None = kısıtlama yok
+    # (varsayılan, geriye dönük uyumlu); bir liste (BOŞ liste dahil)
+    # gönderilirse hesap SADECE o kamera id'lerini görebilir -- geçersiz bir
+    # id sessizce kaydedilmesin diye önce doğrulanır (bkz.
+    # _kamera_id_listesini_dogrula).
+    kamera_listesi = (
+        _kamera_id_listesini_dogrula(istek.kamera_erisim_listesi)
+        if istek.kamera_erisim_listesi is not None else None
+    )
     yeni = models.Kullanici(
         kullanici_adi=istek.kullanici_adi.strip(),
         parola_hash=_parola_hashle(istek.parola),
         rol=istek.rol,
         kisi_id=kisi_id,
+        kamera_erisim_listesi=json.dumps(kamera_listesi) if kamera_listesi is not None else None,
     )
     db.add(yeni)
     db.commit()
@@ -3534,6 +3661,20 @@ def kullanici_guncelle(kullanici_id: int, istek: schemas.KullaniciGuncelle, db: 
     if istek.parola:
         hedef.parola_hash = _parola_hashle(istek.parola)
         degisiklikler.append("parola sıfırlandı")  # asla parolanın kendisini loglama
+    # "Nizamiye Bazlı Kamera Erişimi" (2026-09-21) -- bkz. modelin docstring'i.
+    # `kamera_erisimi_temizle=true` KASITLI OLARAK diğer alanların "None =
+    # değiştirme" kuralının DIŞINDA: kısıtlamayı tamamen kaldırıp hesabı
+    # yeniden "tüm kameralar" durumuna getirmenin TEK yolu budur (bkz.
+    # kamera_roi_guncelle'deki aynı "temizle" deseni). `kamera_erisim_listesi`
+    # gönderilirse (BOŞ liste dahil) kısıtlama TAM OLARAK o listeye ayarlanır.
+    if istek.kamera_erisimi_temizle:
+        if hedef.kamera_erisim_listesi is not None:
+            hedef.kamera_erisim_listesi = None
+            degisiklikler.append("kamera erişimi: kısıtlama kaldırıldı (tüm kameralar)")
+    elif istek.kamera_erisim_listesi is not None:
+        kamera_listesi = _kamera_id_listesini_dogrula(istek.kamera_erisim_listesi)
+        hedef.kamera_erisim_listesi = json.dumps(kamera_listesi)
+        degisiklikler.append(f"kamera erişimi: {len(kamera_listesi)} kameraya kısıtlandı")
     db.commit()
     db.refresh(hedef)
     # 2026-09-20: bu uç nokta (rol değişikliği, hesap aktif/pasif yapma,
@@ -4131,8 +4272,10 @@ async def bildirim_test_gonder(ayar_id: int, db: Session = Depends(get_db), kull
 # ==================================================================
 
 @app.get("/kameralar/{kamera_id}/saglik")
-async def kamera_saglik_kontrol(kamera_id: str, _: models.Kullanici = Depends(_personel_girisi_gerekli)):
+async def kamera_saglik_kontrol(kamera_id: str, kullanici: models.Kullanici = Depends(_personel_girisi_gerekli)):
     """Kameranın TCP portuna bağlanabilirliğini ve pipeline durumunu raporlar."""
+    if not _kamera_erisimi_var_mi(kullanici, kamera_id):
+        raise HTTPException(403, "Bu kameraya erişim yetkiniz yok")
     kamera = next((k for k in _kameralari_oku() if k["id"] == kamera_id), None)
     if not kamera:
         raise HTTPException(404, "Kamera bulunamadı")
@@ -4189,9 +4332,12 @@ async def kamera_saglik_kontrol(kamera_id: str, _: models.Kullanici = Depends(_p
 
 
 @app.get("/kameralar/saglik/tumu")
-async def tum_kameralar_saglik(_: models.Kullanici = Depends(_personel_girisi_gerekli)):
+async def tum_kameralar_saglik(kullanici: models.Kullanici = Depends(_personel_girisi_gerekli)):
     """Tüm kameralar için sağlık kontrolü — toplu sorgu."""
+    izinli = _kullanicinin_izinli_kameralari(kullanici)
     kameralar = _kameralari_oku()
+    if izinli is not None:
+        kameralar = [k for k in kameralar if k["id"] in izinli]
     if not kameralar:
         return []
     sonuclar = []

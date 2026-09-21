@@ -2568,3 +2568,57 @@ bu doküman yalnızca genel bilgilendirme amaçlıdır.
   günlerdir hiç yenilemeden açık tutmak da (özellikle canlı kamera/DB yedek gibi
   JS tabanlı düzeltmeler için) aynı yanıltıcı "düzeltme çalışmıyor" görünümüne
   yol açar.
+
+## Nizamiye Bazlı Kamera Erişimi (2026-09-21)
+
+Kullanıcı talebi: aynı ağdaki farklı fiziksel noktalardan (ör. "Ana Nizamiye" ve
+"Lojman Nizamiye") çalışan güvenlik personelinin, panelde YALNIZCA kendi
+noktasının kameralarını görebilmesi gerekiyordu — örneğin Ana Nizamiye'de 4
+kamera izlenirken, Lojman Nizamiye'de çalışan bir personelin (örnekte "Bülent")
+yalnızca 2 kamerayı görmesi, diğer 4 kameraya hiç erişememesi isteniyordu.
+Önceden panelde HERHANGİ bir personel hesabı (izleyici dahil) TÜM kameraları
+sınırsız görebiliyordu — hesap bazlı bir kamera kısıtlama mekanizması yoktu.
+
+**Ne eklendi:**
+
+- `Kullanıcılar` sekmesinde (hem "Yeni Kullanıcı" formunda hem de artık eklenen
+  "Düzenle" modalında) bir kamera erişim kısıtlaması ayarlanabilir: "Tüm
+  Kameralar" kutusu işaretliyken hesap eskisi gibi TÜM kameraları görür
+  (varsayılan, geriye dönük uyumlu); işaret kaldırılıp belirli kameralar
+  seçilirse hesap YALNIZCA o kameraları canlı izleyebilir VE genel "Kayıtlar"
+  akışında yalnızca o kameralardan gelen geçişleri görür.
+- Bu kısıtlama şu uç noktalarda uygulanır: `GET /kameralar` (liste), `GET
+  /kameralar/{id}/goruntu` (anlık kare), `GET /kameralar/{id}/akis` (canlı MJPEG
+  akışı), `GET /kameralar/{id}/son-plaka`, `GET /kameralar/{id}/saglik` ve `GET
+  /kameralar/saglik/tumu` (izinsiz bir kameraya erişim 403 ile reddedilir/listeden
+  çıkarılır); ayrıca CANLI SSE bildirimlerinde de (`/olaylar/sse`, "Son Geçişler"
+  paneli) izinsiz bir kameradan gelen geçiş artık gösterilmez. Genel "Kayıtlar"
+  listesi/raporları/istatistikleri de (`_guvenlik_kayit_filtresi_uygula` — daha
+  önce yalnızca güvenlik personelinin vardiya penceresini uyguluyordu, artık
+  HERHANGİ bir rol için kamera kısıtlamasını da AYNI ANDA uyguluyor) bu
+  kısıtlamaya tabidir.
+- Panelde artık bir kullanıcının rolünü/kamera erişimini/parolasını
+  OLUŞTURULDUKTAN SONRA değiştirebileceğiniz bir "Düzenle" (kalem ikonu) düğmesi
+  var — önceden yalnızca aktif/pasif yapma ve silme mümkündü, rol değiştirmenin
+  panelden hiçbir yolu yoktu.
+
+**Bilinçli istisna — "Plaka Analizi" (`GET /kayitlar/analiz/{plaka}`):** takip
+sırasında ortaya çıkan gerçek ihtiyaç şuydu: "A Vardiyasının nöbet saatinde
+giriş yapan bir aracı, B vardiyası geldiğinde tespit edebilmesi gerekiyor" —
+yani farklı bir vardiyada/noktada çalışan personelin, belirli bir aracı
+ararken diğer vardiyanın/noktanın kayıtlarına erişebilmesi gereken meşru bir
+ihtiyaç var. Bu yüzden "Plaka Analizi" ekranı (belirli TEK bir plakayı
+hedefleyen, kasıtlı bir arama) hem vardiya penceresi filtresinden HEM DE
+kamera erişim kısıtlamasından MUAF tutuldu — güvenlik personeli genel kayıt
+akışını (diğer vardiyaların/noktaların TÜM trafiğini) gezinemez ama belirli
+bir aracı sorguladığında tam geçmişini görebilir. Genel "Kayıtlar" listesi bu
+istisnanın DIŞINDA kalmaya devam ediyor (orada hem vardiya hem kamera filtresi
+hâlâ tam olarak uygulanıyor).
+
+**Kurulum örneği (kullanıcının senaryosu):** Ana Nizamiye'de 4, Lojman
+Nizamiye'de 2 kamera olan bir kurulumda, Lojman'da çalışacak "Bülent" isimli
+güvenlik hesabı oluşturulurken (veya sonradan "Düzenle" ile) "Tüm Kameralar"
+kutusunun işareti kaldırılıp yalnızca Lojman'ın 2 kamerası seçilir — Bülent artık
+Ana Nizamiye'nin 4 kamerasını ne canlı izleyebilir ne de genel Kayıtlar
+listesinde görebilir, ama bir aracı ararken (Plaka Analizi) tüm noktaların
+geçmişine erişebilir.

@@ -136,6 +136,54 @@
   </div></div>
 </div>
 
+<!-- Kullanıcı düzenleme modalı: rol/aktiflik/parola sıfırlama VE "Nizamiye Bazlı
+     Kamera Erişimi" kısıtlaması (bkz. main.py::kullanici_guncelle, 2026-09-21).
+     Önceden panelde bir kullanıcının rolünü/kamera erişimini OLUŞTURDUKTAN SONRA
+     değiştirmenin hiçbir yolu yoktu (yalnızca aktif/pasif toggle ve silme vardı). -->
+<div class="modal fade" id="kullaniciDuzenleModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered"><div class="modal-content">
+    <div class="modal-header"><h5 class="modal-title">Kullanıcıyı Düzenle</h5><button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Kapat"></button></div>
+    <form id="kullaniciDuzenleForm" data-rol-min="yonetici">
+      <div class="modal-body">
+        <input type="hidden" id="kdId">
+        <div class="mb-2">
+          <label class="form-label small">Kullanıcı Adı</label>
+          <input type="text" class="form-control" id="kdKullaniciAdi" disabled>
+        </div>
+        <div class="mb-2">
+          <label class="form-label small" for="kdRol">Rol</label>
+          <select class="form-select" id="kdRol">
+            <option value="izleyici">İzleyici (salt okunur)</option>
+            <option value="operatör">Operatör</option>
+            <option value="güvenlik">Güvenlik Personeli (vardiya bazlı)</option>
+            <option value="yonetici">Yönetici (tam yetki)</option>
+            <option value="sakin">Sakin (öz-hizmet portalı)</option>
+          </select>
+        </div>
+        <div class="mb-2">
+          <label class="form-label small" for="kdParola">Yeni Parola</label>
+          <input type="password" class="form-control" id="kdParola" minlength="8" placeholder="Değiştirmemek için boş bırakın">
+        </div>
+        <div class="mb-2" id="kdKameraAlani">
+          <div class="form-check">
+            <input class="form-check-input" type="checkbox" id="kdTumKameralar" onchange="kullaniciDuzenleKameraListesiGoster()">
+            <label class="form-check-label small" for="kdTumKameralar">Tüm kameraları görebilir</label>
+          </div>
+          <div class="d-none border rounded p-2 mt-1" id="kdKameraListesi" style="max-height: 160px; overflow-y: auto;"></div>
+          <div class="form-text">"Nizamiye Bazlı Kamera Erişimi" -- bu hesabın canlı izleyebileceği ve genel
+            "Kayıtlar" listesinde görebileceği kameraları sınırlar. "Plaka Analizi" araması (belirli bir aracı
+            arama) bu kısıtlamadan her zaman MUAFTIR.</div>
+        </div>
+        <div id="kdSonuc" class="small"></div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Vazgeç</button>
+        <button type="submit" class="btn btn-primary"><i class="bi bi-check-circle"></i> Kaydet</button>
+      </div>
+    </form>
+  </div></div>
+</div>
+
 <!-- Geçiş kaydı düzenleme modalı: plaka/yön/durum/kişi eşleştirmesi/not tam düzenlenebilir (bkz. main.py::kayit_duzenle) -->
 <div class="modal fade" id="kayitDuzenleModal" tabindex="-1" aria-hidden="true">
   <div class="modal-dialog modal-dialog-centered"><div class="modal-content">
@@ -959,6 +1007,26 @@
                   <select class="form-select" id="yeniKullaniciKisi"><option value="">Kişi seçiniz...</option></select>
                   <div class="form-text">Bu hesap, giriş yaptığında yalnızca bu kişinin kendi plaka/geçmiş bilgisini görebilir.</div>
                 </div>
+                <!-- "Nizamiye Bazlı Kamera Erişimi" (2026-09-21): varsayılan olarak
+                     hesap TÜM kameraları görebilir -- "Tüm Kameralar" kutusu
+                     işaretliyken kısıtlama hiç gönderilmez (kamera_erisim_listesi=None).
+                     İşaret kaldırılınca aşağıdaki listeden SEÇİLEN kameralarla
+                     sınırlı bir hesap oluşturulur (bkz. main.py::kullanici_ekle,
+                     _kamera_id_listesini_dogrula). Örn. "Bülent" isimli, yalnızca
+                     Lojman Nizamiye'deki 2 kamerayı izleyecek bir güvenlik hesabı
+                     için bu kutunun işareti kaldırılıp o 2 kamera seçilir. -->
+                <div class="mb-2" id="yeniKullaniciKameraAlani">
+                  <div class="form-check">
+                    <input class="form-check-input" type="checkbox" id="yeniKullaniciTumKameralar" checked onchange="yeniKullaniciKameraListesiGoster()">
+                    <label class="form-check-label small" for="yeniKullaniciTumKameralar">Tüm kameraları görebilir</label>
+                  </div>
+                  <div class="d-none border rounded p-2 mt-1" id="yeniKullaniciKameraListesi" style="max-height: 160px; overflow-y: auto;">
+                    <div class="text-muted small">Kameralar yükleniyor...</div>
+                  </div>
+                  <div class="form-text">Kutunun işaretini kaldırıp yalnızca bu hesabın izleyebileceği kameraları seçin
+                    (ör. Lojman Nizamiye'de çalışan personel yalnızca o noktanın kameralarını görsün). "Plaka Analizi"
+                    araması (belirli bir aracı arama) bu kısıtlamadan her zaman MUAFTIR.</div>
+                </div>
                 <button type="submit" class="btn btn-primary w-100"><i class="bi bi-person-check"></i> Kullanıcı Oluştur</button>
               </form>
               <div id="kullaniciSonuc" class="small mt-2"></div>
@@ -973,7 +1041,7 @@
             </div>
             <div class="card-body p-0">
               <table class="table table-hover mb-0 align-middle">
-                <thead class="table-light"><tr><th>Kullanıcı Adı</th><th>Rol</th><th>Bağlı Kişi</th><th>Son Giriş</th><th>Durum</th><th></th></tr></thead>
+                <thead class="table-light"><tr><th>Kullanıcı Adı</th><th>Rol</th><th>Bağlı Kişi</th><th>Kamera Erişimi</th><th>Son Giriş</th><th>Durum</th><th></th></tr></thead>
                 <tbody id="kullanicilarTablo"></tbody>
               </table>
             </div>

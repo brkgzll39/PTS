@@ -37,6 +37,22 @@ class Kullanici(Base):
     # -- noktalar.bariyer_id ile aynı desen); kisi silinirse main.py::kisi_sil
     # bu alanı NULL'a çeker.
     kisi_id = Column(Integer, ForeignKey("kisiler.id"), nullable=True)
+    # KAMERA/NOKTA ERİŞİM KISITLAMASI (2026-09-21): NULL/boş = kısıtlama YOK,
+    # hesap TÜM kameraları görebilir -- geriye dönük uyumluluk için varsayılan
+    # budur (mevcut tüm hesaplar bu haldeydi). Dolu olduğunda, `cameras.json`
+    # id'lerinin bir JSON dizisi ("[\"uuid-1\", \"uuid-2\"]") olarak saklanır;
+    # bu hesap yalnızca listedeki kameraları canlı izleyebilir VE genel
+    # "Kayıtlar" akışında yalnızca bu kameralardan gelen geçişleri görür (bkz.
+    # main.py::_kullanicinin_izinli_kameralari, _guvenlik_kayit_filtresi_uygula).
+    # KASITLI İSTİSNA: "Plaka Analizi" (bkz. main.py::plaka_analiz) belirli bir
+    # aracı hedefleyen bir arama olduğu için bu kısıtlamadan MUAFTIR -- bir
+    # vardiyanın/noktanın, başka bir vardiyada/noktada geçen belirli bir aracı
+    # tespit edebilmesi gerekir (bkz. README'deki 2026-09-21 notu, kullanıcı
+    # talebi). Ham ALTER TABLE ile eklendiği için (bkz. _veritabani_migrasyon,
+    # kisi_id ile AYNI desen) burada da DB seviyesinde bir kısıtlama/FK yok;
+    # geçerlilik main.py::_kamera_id_listesini_dogrula ile UYGULAMA seviyesinde
+    # sağlanıyor.
+    kamera_erisim_listesi = Column(Text, nullable=True)
     olusturma_tarihi = Column(DateTime, default=datetime.now)
 
 

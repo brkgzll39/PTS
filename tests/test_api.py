@@ -1852,6 +1852,165 @@ def test_kullanici_silme_loglanir(client, caplog, yetkili_header):
     assert any("silinecek-denetim-testi" in k["aciklama"] for k in r3.json())
 
 
+# ------------------------------------------------------------------
+# "Nizamiye Bazlı Kamera Erişimi" (2026-09-21) -- bir kullanıcı hesabını
+# belirli kameralarla sınırlama (bkz. models.Kullanici.kamera_erisim_listesi,
+# main.py::_kullanicinin_izinli_kameralari). Kullanıcı talebi: aynı ağdaki
+# farklı bilgisayarlardan/noktalardan çalışan güvenlik personelinin yalnızca
+# KENDİ noktasının kameralarını görebilmesi ("Bülent" örneği -- Lojman
+# Nizamiye'de yalnızca 2 kamera görmesi gerekiyor, Ana Nizamiye'nin 4
+# kamerasını GÖRMEMELİ).
+# ------------------------------------------------------------------
+
+@pytest.fixture(scope="module")
+def kamera_erisim_test_kameralari(client, yetkili_header):
+    """Bu testler için İKİ ayrı GERÇEK kamera (bkz. roi_test_kamera_id'deki
+    AYNI lisans-yükseltme deseni -- bu modüldeki lisans limiti önceki
+    testlerde tüketilmiş olabilir)."""
+    anahtar = lisans.uret("Kamera Erisim Test Site", kamera_limiti=10, gun=30)
+    r = client.post("/lisans/aktive-et", json={"anahtar": anahtar}, headers=yetkili_header)
+    assert r.status_code == 200, r.text
+    r1 = client.post("/kameralar", json={
+        "ad": "Ana Nizamiye Kamerası", "rtsp_url": "rtsp://127.0.0.1/ana-nizamiye", "yon": "giris",
+    }, headers=yetkili_header)
+    assert r1.status_code == 200, r1.text
+    r2 = client.post("/kameralar", json={
+        "ad": "Lojman Nizamiye Kamerası", "rtsp_url": "rtsp://127.0.0.1/lojman-nizamiye", "yon": "giris",
+    }, headers=yetkili_header)
+    assert r2.status_code == 200, r2.text
+    return {"ana": r1.json()["id"], "lojman": r2.json()["id"]}
+
+
+def _kullanici_id_bul(client, yetkili_header, kullanici_adi: str) -> int:
+    r = client.get("/kullanicilar", headers=yetkili_header)
+    return next(k["id"] for k in r.json() if k["kullanici_adi"] == kullanici_adi)
+
+
+def test_kullanici_ekle_gecersiz_kamera_id_ile_reddedilir(client, yetkili_header):
+    r = client.post("/kullanicilar", json={
+        "kullanici_adi": "kamera-kisitli-gecersiz", "parola": "GucluParola123!", "rol": "güvenlik",
+        "kamera_erisim_listesi": ["olmayan-kamera-id"],
+    }, headers=yetkili_header)
+    assert r.status_code == 400, r.text
+
+
+def test_kullanici_ekle_kamera_kisitlamasiyla_olusturulur(client, yetkili_header, kamera_erisim_test_kameralari):
+    r = client.post("/kullanicilar", json={
+        "kullanici_adi": "bulent-lojman", "parola": "GucluParola123!", "rol": "güvenlik",
+        "kamera_erisim_listesi": [kamera_erisim_test_kameralari["lojman"]],
+    }, headers=yetkili_header)
+    assert r.status_code == 200, r.text
+    assert r.json()["kamera_erisim_listesi"] == [kamera_erisim_test_kameralari["lojman"]]
+
+
+def test_kullanici_ekle_kisitlamasiz_kamera_erisim_listesi_null_doner(client, yetkili_header):
+    """Geriye dönük uyumluluk: `kamera_erisim_listesi` hiç gönderilmezse
+    hesap kısıtlamasız (tüm kameraları görebilir) kalmalı -- mevcut tüm
+    hesaplar bu haldeydi, bu özellik onları ETKİLEMEMELİ."""
+    r = client.post("/kullanicilar", json={
+        "kullanici_adi": "kisitlamasiz-hesap", "parola": "GucluParola123!", "rol": "izleyici",
+    }, headers=yetkili_header)
+    assert r.status_code == 200, r.text
+    assert r.json()["kamera_erisim_listesi"] is None
+
+
+def test_kamera_kisitli_hesap_kameralar_listesinde_sadece_izinliyi_gorur(client, yetkili_header, kamera_erisim_test_kameralari):
+    hedef = _rol_ile_kullanici_olustur_ve_giris_yap(client, yetkili_header, "lojman-izleyici-1", "izleyici")
+    kid = _kullanici_id_bul(client, yetkili_header, "lojman-izleyici-1")
+    r = client.put(f"/kullanicilar/{kid}", json={
+        "kamera_erisim_listesi": [kamera_erisim_test_kameralari["lojman"]],
+    }, headers=yetkili_header)
+    assert r.status_code == 200, r.text
+
+    r2 = client.get("/kameralar", headers=hedef)
+    assert r2.status_code == 200, r2.text
+    assert [k["id"] for k in r2.json()] == [kamera_erisim_test_kameralari["lojman"]]
+
+
+def test_kamera_kisitli_hesap_izinsiz_kameranin_goruntusunu_alamaz(client, yetkili_header, kamera_erisim_test_kameralari):
+    hedef = _rol_ile_kullanici_olustur_ve_giris_yap(client, yetkili_header, "lojman-izleyici-2", "izleyici")
+    kid = _kullanici_id_bul(client, yetkili_header, "lojman-izleyici-2")
+    client.put(f"/kullanicilar/{kid}", json={
+        "kamera_erisim_listesi": [kamera_erisim_test_kameralari["lojman"]],
+    }, headers=yetkili_header)
+
+    r = client.get(f"/kameralar/{kamera_erisim_test_kameralari['ana']}/goruntu", headers=hedef)
+    assert r.status_code == 403, r.text
+    r2 = client.get(f"/kameralar/{kamera_erisim_test_kameralari['ana']}/son-plaka", headers=hedef)
+    assert r2.status_code == 403, r2.text
+    # İZİNLİ kameraya erişim REDDEDİLMEMELİ -- gerçek bir RTSP bağlantısı
+    # olmadığı için "son-plaka" boş liste döner, önemli olan 403 OLMAMASI.
+    r3 = client.get(f"/kameralar/{kamera_erisim_test_kameralari['lojman']}/son-plaka", headers=hedef)
+    assert r3.status_code == 200, r3.text
+
+
+def test_kamera_kisitli_hesap_kayitlar_listesinde_sadece_izinli_kameradan_gelenleri_gorur(client, yetkili_header, kamera_erisim_test_kameralari):
+    ana_id = kamera_erisim_test_kameralari["ana"]
+    lojman_id = kamera_erisim_test_kameralari["lojman"]
+    r1 = client.post("/kayitlar", json={"plaka_no": "34 KAM 01", "kamera_id": ana_id, "yon": "giris"}, headers=yetkili_header)
+    assert r1.status_code == 200, r1.text
+    r2 = client.post("/kayitlar", json={"plaka_no": "34 KAM 02", "kamera_id": lojman_id, "yon": "giris"}, headers=yetkili_header)
+    assert r2.status_code == 200, r2.text
+
+    hedef = _rol_ile_kullanici_olustur_ve_giris_yap(client, yetkili_header, "lojman-izleyici-3", "izleyici")
+    kid = _kullanici_id_bul(client, yetkili_header, "lojman-izleyici-3")
+    client.put(f"/kullanicilar/{kid}", json={"kamera_erisim_listesi": [lojman_id]}, headers=yetkili_header)
+
+    r3 = client.get("/kayitlar", params={"plaka": "34 KAM"}, headers=hedef)
+    assert r3.status_code == 200, r3.text
+    plakalar = {k["plaka_no"] for k in r3.json()}
+    assert "34 KAM 02" in plakalar
+    assert "34 KAM 01" not in plakalar
+
+
+def test_plaka_analizi_kamera_kisitlamasindan_muaftir(client, yetkili_header, kamera_erisim_test_kameralari):
+    """Kullanıcı talebi (2026-09-21): bir vardiya/nokta, BAŞKA bir
+    vardiyanın/noktanın kamerasından geçen belirli bir aracı "Plaka Analizi"
+    ile TESPİT edebilmeli ("A Vardiyasının nöbet saatinde giriş yapan bir
+    aracı, B vardiyası geldiğinde tespit edebilmesi gerekiyor") -- bkz.
+    main.py::plaka_analiz'in güncellenen docstring'i. Bu test hem KAMERA hem
+    de VARDİYA PENCERESİ kısıtlamasının BİRLİKTE muaf tutulduğunu doğrular:
+    kayıt, hedef güvenlik hesabının vardiyası başlamadan ÖNCE ve izinsiz bir
+    kameradan oluşturuluyor."""
+    ana_id = kamera_erisim_test_kameralari["ana"]
+    r1 = client.post("/kayitlar", json={"plaka_no": "34 MUAF 01", "kamera_id": ana_id, "yon": "giris"}, headers=yetkili_header)
+    assert r1.status_code == 200, r1.text
+
+    # Giriş (bkz. _rol_ile_kullanici_olustur_ve_giris_yap -> /auth/giris),
+    # güvenlik rolü için ŞİMDİ başlayan bir vardiya oturumu açar -- yukarıdaki
+    # kayıt bundan ÖNCE oluşturulduğu için normal şartlarda vardiya
+    # penceresinin de dışında kalırdı.
+    hedef = _rol_ile_kullanici_olustur_ve_giris_yap(client, yetkili_header, "lojman-guvenlik-4", "güvenlik")
+    kid = _kullanici_id_bul(client, yetkili_header, "lojman-guvenlik-4")
+    client.put(f"/kullanicilar/{kid}", json={
+        "kamera_erisim_listesi": [kamera_erisim_test_kameralari["lojman"]],
+    }, headers=yetkili_header)
+
+    # Genel "Kayıtlar" listesinde göremez (hem kamera hem vardiya kısıtlaması) ...
+    r2 = client.get("/kayitlar", params={"plaka": "34 MUAF"}, headers=hedef)
+    assert r2.status_code == 200, r2.text
+    assert not any(k["plaka_no"] == "34 MUAF 01" for k in r2.json())
+
+    # ... ama "Plaka Analizi" ile TAM geçmişi görebilir.
+    r3 = client.get("/kayitlar/analiz/34 MUAF 01", headers=hedef)
+    assert r3.status_code == 200, r3.text
+    assert r3.json()["toplam_gecis"] == 1
+
+
+def test_kamera_erisimi_temizle_kisitlamayi_kaldirir(client, yetkili_header, kamera_erisim_test_kameralari):
+    r = client.post("/kullanicilar", json={
+        "kullanici_adi": "kisitlama-kaldirilacak", "parola": "GucluParola123!", "rol": "izleyici",
+        "kamera_erisim_listesi": [kamera_erisim_test_kameralari["lojman"]],
+    }, headers=yetkili_header)
+    assert r.status_code == 200, r.text
+    kid = r.json()["id"]
+    assert r.json()["kamera_erisim_listesi"] == [kamera_erisim_test_kameralari["lojman"]]
+
+    r2 = client.put(f"/kullanicilar/{kid}", json={"kamera_erisimi_temizle": True}, headers=yetkili_header)
+    assert r2.status_code == 200, r2.text
+    assert r2.json()["kamera_erisim_listesi"] is None
+
+
 def test_kisi_silinince_bagli_sakin_hesabinin_kisi_id_temizlenir(client, yetkili_header):
     rk = client.post("/kisiler", json={
         "ad_soyad": "Silinecek Sakin Kişisi", "plaka_no": "34 SLN 02", "tip": "abone",
