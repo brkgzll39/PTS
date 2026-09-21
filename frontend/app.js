@@ -1347,6 +1347,35 @@ async function ziyaretciBilgileriKaydet() {
 let _kameraAkisAbortlar = {};
 let _kameraPlakaInterval = null;
 
+// 2026-09-21: GERÇEK ÜRETİMDE BULUNAN HATA -- "LOJMAN A Vardiyası" ile
+// "yönetici" hesapları AYNI tarayıcıda iki farklı sekmede açıkken, ikinci
+// sekmedeki kamera karoları hiç görüntü almıyordu (karo HTML'si geliyor ama
+// görüntü siyah/donmuş kalıyordu). Kök neden: tarayıcılar aynı origin'e
+// (host:port) HTTP/1.1 üzerinden en fazla ~6 eşzamanlı bağlantı açmaya izin
+// verir ve bu sınır TARAYICI SEKMELERİ ARASINDA PAYLAŞILIR (sekmeye özel
+// değil). PTS düz HTTP üzerinden çalışıyor (bkz. calistir.bat), her kamera
+// karosu `_kameraAkisiBaslat` ile SÜRESİZ açık bir MJPEG bağlantısı tutuyor,
+// buna bir de gerçek zamanlı olaylar için süresiz SSE bağlantısı ekleniyor
+// (bkz. aşağıda `sseBaglantisiniBaslat`) -- iki sekme birlikte kamera sayısı
+// arttıkça bu ~6 bağlantı sınırını kolayca aşabiliyor, sınırı aşan bağlantılar
+// tarayıcı tarafından SESSİZCE kuyrukta bekletiliyor (ne hata, ne de zaman
+// aşımı -- sonsuza dek "bağlantı bekleniyor" durumunda kalıyor).
+//
+// Kalıcı/doğru çözüm (çoklu kamera + çoklu eşzamanlı izleyici) tüm kare
+// akışını tek bir bağlantıda çoğullamak (ör. websocket) olurdu; bu daha büyük
+// bir mimari değişiklik. Bunun yerine, daha küçük ve daha güvenli bir önlemle
+// asıl israfı ortadan kaldırıyoruz: bir tarayıcı SEKMESİ arka plana
+// alındığında (kullanıcı başka bir sekmeye/uygulamaya geçtiğinde), o sekmenin
+// tuttuğu TÜM kamera akış bağlantılarını bırakıyoruz (Page Visibility API,
+// bkz. aşağıdaki `visibilitychange` dinleyicisi); sekme tekrar öne geldiğinde
+// en son bilinen canlı kamera listesiyle yeniden açıyoruz. Böylece arka
+// plandaki bir sekme, önde olan sekmenin bağlantı payını sonsuza dek işgal
+// etmiyor. Bu, gerçek üretim kullanım deseninde (her nöbet noktası kendi
+// bilgisayarında/tarayıcısında) zaten hiç tetiklenmez; yalnızca aynı
+// tarayıcıda birden fazla hesabın sekmelerde açık tutulduğu senaryoları
+// (ör. test/denetim amaçlı) düzeltir.
+let _sonCanliKameralar = [];
+
 function _tumKameraAkislariniDurdur() {
   const eskiler = _kameraAkisAbortlar;
   _kameraAkisAbortlar = {};
@@ -1424,6 +1453,59 @@ function _kameraAkisiBaslat(kameraId) {
     });
 }
 
+// Akış başlatma/durdurma mantığının kendisi (kameraDuvariniGuncelle'dan
+// çıkarıldı, bkz. yukarıdaki 2026-09-21 kök neden notu) -- hem normal karo
+// yenilemesinde HEM DE sekme visibilitychange ile öne geldiğinde, karo
+// HTML'sini yeniden kurmadan sadece bağlantıları (ve plaka anketini) açıp
+// kapatabilmek için ayrı bir fonksiyon. `canliKameralar` boş dizi verilirse
+// (sekme arka plandayken) sadece mevcut akışları durdurur, hiçbir şey açmaz.
+function _canliAkislariBaslat(canliKameralar) {
+  _tumKameraAkislariniDurdur();
+  if (_kameraPlakaInterval) { clearInterval(_kameraPlakaInterval); _kameraPlakaInterval = null; }
+  if (!canliKameralar.length) return;
+
+  canliKameralar.forEach(k => _kameraAkisiBaslat(k.id));
+
+  // Son plaka overlay — 2 sn'de bir güncelle
+  const _plakalariGuncelle = () => {
+    canliKameralar.forEach(async k => {
+      try {
+        const token = sessionStorage.getItem("pts_token");
+        const r = await fetch(`/kameralar/${k.id}/son-plaka`, { headers: { Authorization: `Bearer ${token}` } });
+        if (!r.ok) return;
+        const veri = await r.json();
+        const tile = document.getElementById(`tile-${k.id}`);
+        if (!tile) return;
+        let overlay = tile.querySelector(".plaka-overlay");
+        if (veri.tespitler?.length) {
+          const t = veri.tespitler[0];
+          if (!overlay) {
+            overlay = document.createElement("div");
+            overlay.className = "plaka-overlay";
+            tile.appendChild(overlay);
+          }
+          overlay.textContent = `${t.plaka}  ${(t.guven * 100).toFixed(0)}%`;
+          overlay.className = "plaka-overlay";
+          overlay._timeout && clearTimeout(overlay._timeout);
+          overlay._timeout = setTimeout(() => overlay.remove(), 8000);
+        }
+      } catch {}
+    });
+  };
+  _plakalariGuncelle();
+  _kameraPlakaInterval = setInterval(_plakalariGuncelle, 2000);
+}
+
+// Sekme arka plana alınıp öne geldiğinde akışları durdurup yeniden başlatır
+// (bkz. yukarıdaki 2026-09-21 kök neden notu). `_sonCanliKameralar`, en son
+// `kameraDuvariniGuncelle` çağrısında hesaplanan canlı kamera listesidir --
+// sekme arka planda kalırken bir kamera eklenip/silinmiş olsa bile, sekme
+// öne geldiğinde zaten bir sonraki `kameralariYukle()` çağrısı listeyi
+// tazeleyecektir (ör. Kamera Yönetimi'nde bir işlem yapılınca).
+document.addEventListener("visibilitychange", () => {
+  _canliAkislariBaslat(document.hidden ? [] : _sonCanliKameralar);
+});
+
 function kameraDuvariniGuncelle(kameralar) {
   const duvar = document.getElementById("kameraDuvari");
   const sayacBtn = document.getElementById("kameraSayacBtn");
@@ -1431,7 +1513,8 @@ function kameraDuvariniGuncelle(kameralar) {
   if (sayacBtn) sayacBtn.innerHTML = `<i class="bi bi-grid-2x2"></i> ${kameralar.length} Kamera`;
   if (!kameralar.length) {
     duvar.innerHTML = `<div class="camera-tile camera-simulated"><div class="camera-label"><span><i class="bi bi-camera-video-fill me-1"></i>KAMERA TANIMLI DEĞİL</span><span class="camera-status">Simülasyon</span></div><div class="camera-empty"><i class="bi bi-camera-video"></i><strong>Henüz kamera eklenmedi</strong><small>Kamera Yönetimi ekranından RTSP kamera ekleyin</small></div></div>`;
-    _tumKameraAkislariniDurdur();
+    _sonCanliKameralar = [];
+    _canliAkislariBaslat([]);
     return;
   }
   duvar.innerHTML = kameralar.map(k => {
@@ -1448,41 +1531,15 @@ function kameraDuvariniGuncelle(kameralar) {
   // Pipeline çalışan kameralar için canlı MJPEG akışını başlat (bkz. yukarıdaki
   // _kameraAkisiBaslat) — artık periyodik "anlık görüntü" çekmiyoruz, tek bir
   // bağlantı üzerinden her yeni kare geldiği an ekrana yansıyor.
-  _tumKameraAkislariniDurdur();
+  //
+  // 2026-09-21: akışlar burada KOŞULSUZ başlatılmıyor -- sekme şu an arka
+  // plandaysa (document.hidden) hiç açılmıyor; en son bilinen listeyi
+  // `_sonCanliKameralar`'da tutup gerçek başlatma/durdurma kararını
+  // `_canliAkislariBaslat`'a bırakıyoruz (bkz. yukarıdaki kök neden notu ve
+  // visibilitychange dinleyicisi).
   const canliKameralar = kameralar.filter(k => k.pipeline_calisiyor);
-  if (canliKameralar.length) {
-    canliKameralar.forEach(k => _kameraAkisiBaslat(k.id));
-
-    // Son plaka overlay — 2 sn'de bir güncelle
-    if (_kameraPlakaInterval) clearInterval(_kameraPlakaInterval);
-    const _plakalariGuncelle = () => {
-      canliKameralar.forEach(async k => {
-        try {
-          const token = sessionStorage.getItem("pts_token");
-          const r = await fetch(`/kameralar/${k.id}/son-plaka`, { headers: { Authorization: `Bearer ${token}` } });
-          if (!r.ok) return;
-          const veri = await r.json();
-          const tile = document.getElementById(`tile-${k.id}`);
-          if (!tile) return;
-          let overlay = tile.querySelector(".plaka-overlay");
-          if (veri.tespitler?.length) {
-            const t = veri.tespitler[0];
-            if (!overlay) {
-              overlay = document.createElement("div");
-              overlay.className = "plaka-overlay";
-              tile.appendChild(overlay);
-            }
-            overlay.textContent = `${t.plaka}  ${(t.guven * 100).toFixed(0)}%`;
-            overlay.className = "plaka-overlay";
-            overlay._timeout && clearTimeout(overlay._timeout);
-            overlay._timeout = setTimeout(() => overlay.remove(), 8000);
-          }
-        } catch {}
-      });
-    };
-    _plakalariGuncelle();
-    _kameraPlakaInterval = setInterval(_plakalariGuncelle, 2000);
-  }
+  _sonCanliKameralar = canliKameralar;
+  _canliAkislariBaslat(document.hidden ? [] : canliKameralar);
 }
 
 document.getElementById("kameraForm").addEventListener("submit", async (e) => {
