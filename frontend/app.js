@@ -244,6 +244,22 @@ function buyukGorselAc(imgEl) {
     if (img) img.removeAttribute("src");
   });
 
+  // 2026-09-22: bkz. style.css'teki #gorselBuyutModal z-index notu -- bu
+  // modal olay detayı/plaka geçmişi gibi ZATEN AÇIK olan başka bir modalin
+  // içinden de açılabiliyor. CSS'teki yüksek z-index modalin KENDİSİNİ öne
+  // çıkarır, ama Bootstrap'ın bu modal için oluşturduğu `.modal-backdrop`
+  // AYRI bir elemandır ve varsayılan olarak hâlâ eski (1050) katmanda kalır
+  // -- bu da alttaki (görünür) modalin (1055) üstünü örtemeyeceği anlamına
+  // gelir. `shown.bs.modal` anında (backdrop DOM'a eklendikten SONRA) en son
+  // eklenen backdrop'u (Bootstrap her zaman en sona ekler, yani bu modala
+  // ait olan budur) bulup z-index'ini modalin kendisinin altına ama diğer
+  // TÜM modal/backdrop'ların üstüne çekiyoruz.
+  modalEl.addEventListener("shown.bs.modal", () => {
+    const backdroplar = document.querySelectorAll(".modal-backdrop");
+    const buBackdrop = backdroplar[backdroplar.length - 1];
+    if (buBackdrop) buBackdrop.style.zIndex = "1071";
+  });
+
   document.getElementById("gorselBuyutBtn")?.addEventListener("click", () => gorselZoomAyarla(_gorselZoom + GORSEL_ZOOM_ADIM));
   document.getElementById("gorselKucultBtn")?.addEventListener("click", () => gorselZoomAyarla(_gorselZoom - GORSEL_ZOOM_ADIM));
   document.getElementById("gorselSifirlaBtn")?.addEventListener("click", gorselZoomSifirla);

@@ -246,6 +246,22 @@ body {
 }
 
 /* ---------------------- GÖRSEL BÜYÜTME (ZOOM/PAN) LIGHTBOX ---------------------- */
+/* 2026-09-22 GERÇEK ÜRETİMDE BULUNAN HATA: bu lightbox, olay detayı
+   (#olayDetayModal) veya plaka geçmişi (#plakaAnalizModal) gibi ZATEN AÇIK
+   olan başka bir modalin İÇİNDEKİ bir küçük resme tıklanınca da açılabiliyor
+   (bkz. app.js: .thumb/.zoomable-img). Bootstrap 5, iç içe açılan TÜM
+   modallere (ve TÜM backdrop'larına) aynı sabit z-index'i verir (.modal =
+   1055, .modal-backdrop = 1050); eşit değerlerde DOM SIRASI belirleyici olur
+   -- bu lightbox index.html'de az sayıdaki diğer modalden ÖNCE tanımlı
+   olduğu için, onların içinden açıldığında GÖRSEL OLARAK ARKALARINDA
+   kalıyordu ("büyüttüğümde arka planda açılıyor" şikayeti). Fare
+   tekerleği/zoom olayları da o yüzden bu modala hiç ulaşmıyor, üstte kalan
+   (görünen) modale gidiyordu ("büyütmeden zoom yapmıyor" şikayeti aynı kök
+   nedenin bir başka belirtisi). Bu her zaman en üstte olması gereken tam
+   ekran bir lightbox olduğu için, sabit Bootstrap katmanının ÜZERİNE
+   çıkarılıyor -- kendi backdrop'u da app.js'teki shown.bs.modal
+   dinleyicisinde buna göre yükseltiliyor (bkz. o dosyadaki aynı tarihli not). */
+#gorselBuyutModal { z-index: 1075; }
 #gorselBuyutModal .modal-content { background: #14181f; }
 #gorselBuyutModal .gorsel-buyut-araclar {
   display: flex;
