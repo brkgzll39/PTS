@@ -10,6 +10,21 @@ body {
    kondu -- bkz. index.html'deki auth-panel, frontend/img/tpao-logo.png. */
 .auth-logo { display: block; width: 100%; max-width: 230px; height: auto; margin: 0 auto 1.1rem; }
 .auth-panel h1 { font-size: 1.55rem; margin: .3rem 0 .35rem; }
+/* 2026-09-22 kullanıcı isteği: "Pts yönetim paneline devam etmek için giriş
+   yapın da kalksın güvenli giriş yapın yazısı da kalksın" -- authBaslik/
+   authAciklama normal günlük girişte BOŞ bırakılıyor (bkz. index.html'deki
+   yorum); :empty ile bu durumda hiç yer kaplamadan gizlenirler. İlk kurulum
+   akışında (app.js) bu elemanlara metin atanınca otomatik olarak tekrar
+   görünür/yer kaplar hale gelirler. */
+.auth-panel h1:empty, .auth-panel p:empty { display: none; margin: 0; }
+/* Kullanıcı adı/parola alanlarının "hoş durmuyor" geri bildirimi
+   (2026-09-22) üzerine: her alanın önüne bir ikon eklendi (input-group) ve
+   dikey boşluklar (mb-3, .auth-panel form) düzenli bir aralığa oturtuldu. */
+.auth-panel form { margin-top: .2rem; }
+.auth-panel .input-group-text { background: #f4f8fb; color: #2785ad; border-color: #ced9e2; }
+.auth-panel .form-control { border-color: #ced9e2; }
+.auth-panel .form-control:focus { border-color: #2785ad; box-shadow: 0 0 0 .2rem rgba(39, 133, 173, .15); }
+.auth-panel .btn-primary { margin-top: .3rem; padding: .55rem 0; font-weight: 600; }
 
 .navbar-pts {
   background-color: #30384d;

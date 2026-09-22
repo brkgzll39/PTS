@@ -62,11 +62,32 @@
          önceki jenerik kamera ikonu + "TPAO PTS" metni yerine kurumun gerçek
          logosu kondu (bkz. frontend/img/tpao-logo.png, style.css::.auth-logo). -->
     <img src="/static/img/tpao-logo.png" alt="Türkiye Petrolleri Anonim Ortaklığı" class="auth-logo">
-    <h1 id="authBaslik">Güvenli giriş</h1>
-    <p id="authAciklama" class="text-muted small">PTS yönetim paneline devam etmek için giriş yapın.</p>
+    <!-- 2026-09-22 kullanıcı isteği: "Pts yönetim paneline devam etmek için
+         giriş yapın da kalksın güvenli giriş yapın yazısı da kalksın" --
+         bu iki metin GÜNLÜK giriş ekranında artık gösterilmiyor (aşağıdaki
+         :empty kuralı, bkz. style.css). Elemanların kendisi DOM'dan
+         SİLİNMEDİ çünkü app.js (bkz. authFormGonder ve ilk kurulum
+         kontrolü) ilk kurulumda ("Yönetici hesabı oluştur" / "Bu PTS
+         kurulumu için ilk yönetici hesabını belirleyin" gibi) bu ikisinin
+         textContent'ini DOLDURUYOR -- o özel akış için hâlâ gerekliler,
+         yalnızca normal günlük girişte boş/gizli kalıyorlar. -->
+    <h1 id="authBaslik"></h1>
+    <p id="authAciklama" class="text-muted small"></p>
     <form id="authForm">
-      <label class="form-label small" for="authKullanici">Kullanıcı adı</label><input class="form-control mb-3" id="authKullanici" autocomplete="username" required>
-      <label class="form-label small" for="authParola">Parola</label><input type="password" class="form-control mb-3" id="authParola" autocomplete="current-password" minlength="8" required>
+      <div class="mb-3">
+        <label class="form-label small" for="authKullanici">Kullanıcı adı</label>
+        <div class="input-group">
+          <span class="input-group-text"><i class="bi bi-person-fill"></i></span>
+          <input class="form-control" id="authKullanici" autocomplete="username" required>
+        </div>
+      </div>
+      <div class="mb-3">
+        <label class="form-label small" for="authParola">Parola</label>
+        <div class="input-group">
+          <span class="input-group-text"><i class="bi bi-lock-fill"></i></span>
+          <input type="password" class="form-control" id="authParola" autocomplete="current-password" minlength="8" required>
+        </div>
+      </div>
       <button class="btn btn-primary w-100" type="submit"><i class="bi bi-box-arrow-in-right"></i> <span id="authButon">Giriş yap</span></button>
       <div id="authSonuc" class="small mt-3"></div>
     </form>
