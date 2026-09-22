@@ -31,6 +31,11 @@ _HTML_YOLU = Path(__file__).resolve().parent.parent / "frontend" / "index.html"
 # Kullanıcının "operatör bu alanlara tam erişim sağlayabilmeli" dediği 5 sekme.
 _OPERATOR_GORMELI = {
     "#canli-sekme", "#panel-sekme", "#kayitlar-sekme", "#kisiler-sekme", "#karaliste-sekme",
+    # 2026-09-22 kullanıcı isteği: "Yönetici Profili ve diğer profillerde
+    # Arıza Bildirim ya da iletişim gibi bir sayfa eklemeni istiyorum" --
+    # bu sekmenin data-rol-min'i YOK, yani tüm roller (operatör dahil)
+    # görebilmeli.
+    "#iletisim-sekme",
 }
 # "Yönetim"e dair, operatörden HER giriş noktasından gizlenmesi gereken sekmeler.
 _OPERATOR_GORMEMELI = {

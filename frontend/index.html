@@ -434,6 +434,21 @@
       </table>
     </div>
   </div>
+
+  <!-- 2026-09-22 kullanıcı isteği: sakin (öz-hizmet) kullanıcılar için de
+       aynı arıza/iletişim bilgisi -- bkz. #iletisim-sekme'deki AYNI amaç. -->
+  <div class="card mt-3">
+    <div class="card-header"><i class="bi bi-headset me-1"></i>İletişim / Arıza Bildirim</div>
+    <div class="card-body">
+      <div class="fw-semibold mb-1">TÜRKİYE PETROLLERİ ANONİM ORTAKLIĞI — PTS Sistemi</div>
+      <p class="text-muted small mb-3">Bir arıza veya sorunla karşılaşırsanız Sistem Yöneticisi ile aşağıdaki kanallardan iletişime geçebilirsiniz.</p>
+      <div class="contact-list">
+        <div class="contact-row"><i class="bi bi-telephone-fill"></i><span class="contact-label">İletişim</span><a href="tel:+905372102313">0537 210 2313</a></div>
+        <div class="contact-row"><i class="bi bi-telephone-inbound-fill"></i><span class="contact-label">Dahili İletişim</span><span>0288 427 4864</span></div>
+        <div class="contact-row"><i class="bi bi-envelope-fill"></i><span class="contact-label">E-posta</span><a href="mailto:bguzelel@tpao.gov.tr">bguzelel@tpao.gov.tr</a></div>
+      </div>
+    </div>
+  </div>
 </div>
 
 <div class="app-layout">
@@ -454,6 +469,14 @@
     <button class="side-link" data-target="#kullanicilar-sekme" data-rol-min="yonetici" data-rol-davranis="gizle"><i class="bi bi-person-gear"></i>Kullanıcılar</button>
     <button class="side-link" data-target="#sistem-sekme" data-rol-min="yonetici" data-rol-davranis="gizle"><i class="bi bi-terminal"></i>Sistem / Log</button>
     <button class="side-link" data-target="#denetim-sekme" data-rol-min="yonetici" data-rol-davranis="gizle"><i class="bi bi-journal-check"></i>Denetim Kayıtları</button>
+    <div class="sidebar-section-label">DESTEK</div>
+    <!-- 2026-09-22 kullanıcı isteği: "Bu yazılımı kullanan kişi ve
+         kuruluşların arıza yaşaması durumunda Sistem Yöneticisiyle
+         İletişime geçebilmeleri gerekiyor Yönetici Profili ve diğer
+         profillerde Arıza Bildirim ya da iletişim gibi bir sayfa
+         eklemeni istiyorum" -- data-rol-min YOK: tüm roller (izleyici/
+         operatör/güvenlik/yonetici) bu sekmeyi görebilir. -->
+    <button class="side-link" data-target="#iletisim-sekme"><i class="bi bi-headset"></i>İletişim / Arıza Bildirim</button>
     <div class="sidebar-footer"><span class="status-led"></span> Sistem çevrimiçi<br><small>TPAO PTS · v2.0</small></div>
   </aside>
   <main class="container-fluid app-main">
@@ -473,6 +496,7 @@
     <li class="nav-item" data-rol-min="yonetici" data-rol-davranis="gizle"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#lisans-sekme" type="button"><i class="bi bi-key-fill me-1"></i>Lisans</button></li>
     <li class="nav-item" data-rol-min="yonetici" data-rol-davranis="gizle"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#sistem-sekme" type="button"><i class="bi bi-terminal me-1"></i>Sistem</button></li>
     <li class="nav-item" data-rol-min="yonetici" data-rol-davranis="gizle"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#denetim-sekme" type="button"><i class="bi bi-journal-check me-1"></i>Denetim Kayıtları</button></li>
+    <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#iletisim-sekme" type="button"><i class="bi bi-headset me-1"></i>İletişim</button></li>
   </ul>
 
   <div class="tab-content pt-3">
@@ -1395,6 +1419,25 @@
             <thead class="table-light"><tr><th>Zaman</th><th>Kullanıcı</th><th>Eylem</th><th>Açıklama</th></tr></thead>
             <tbody id="denetimKayitlariTablo"></tbody>
           </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- ================= İLETİŞİM / ARIZA BİLDİRİM ================= -->
+    <!-- 2026-09-22 kullanıcı isteği: sistemi kullanan personelin bir arıza/
+         sorun yaşadığında Sistem Yöneticisi ile iletişime geçebileceği,
+         tüm rollere (data-rol-min yok) açık statik bir bilgi sayfası. -->
+    <div class="tab-pane fade" id="iletisim-sekme">
+      <div class="card contact-card">
+        <div class="card-body text-center py-4">
+          <div class="contact-kurum">TÜRKİYE PETROLLERİ ANONİM ORTAKLIĞI</div>
+          <div class="contact-sistem mb-3">PTS Sistemi</div>
+          <p class="text-muted small mb-4">Bu yazılımı kullanırken bir arıza veya sorunla karşılaşırsanız,<br>Sistem Yöneticisi ile aşağıdaki kanallardan iletişime geçebilirsiniz.</p>
+          <div class="contact-list mx-auto">
+            <div class="contact-row"><i class="bi bi-telephone-fill"></i><span class="contact-label">İletişim</span><a href="tel:+905372102313">0537 210 2313</a></div>
+            <div class="contact-row"><i class="bi bi-telephone-inbound-fill"></i><span class="contact-label">Dahili İletişim</span><span>0288 427 4864</span></div>
+            <div class="contact-row"><i class="bi bi-envelope-fill"></i><span class="contact-label">E-posta</span><a href="mailto:bguzelel@tpao.gov.tr">bguzelel@tpao.gov.tr</a></div>
+          </div>
         </div>
       </div>
     </div>

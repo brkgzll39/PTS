@@ -235,6 +235,19 @@ body {
 .modal-actions { display: flex; gap: .6rem; justify-content: flex-end; margin-top: 1rem; }
 .modal-actions .btn { border-radius: 0; }
 
+/* İletişim / Arıza Bildirim sayfası (2026-09-22 kullanıcı isteği) --
+   #iletisim-sekme ve sakinPaneli'ndeki eşdeğer kartta kullanılır. */
+.contact-card { max-width: 520px; margin: 0 auto; }
+.contact-kurum { font-weight: 700; font-size: 1.05rem; letter-spacing: .02em; }
+.contact-sistem { color: #2785ad; font-weight: 600; }
+.contact-list { max-width: 380px; text-align: left; }
+.contact-row { display: flex; align-items: center; gap: .6rem; padding: .55rem 0; border-bottom: 1px solid #e5eaf0; }
+.contact-row:last-child { border-bottom: 0; }
+.contact-row i { color: #2785ad; font-size: 1.05rem; width: 1.3rem; text-align: center; }
+.contact-label { font-weight: 600; min-width: 130px; color: #46545f; }
+.contact-row a { color: #2785ad; text-decoration: none; }
+.contact-row a:hover { text-decoration: underline; }
+
 .stat-card {
   border-left: 4px solid #1f2937;
 }
