@@ -341,6 +341,48 @@ function korumaliGorselleriYukle(kapsayici) {
   });
 }
 
+// ---------------------- ARANABİLİR KİŞİ SEÇİMİ ----------------------
+// 2026-09-22 kullanıcı isteği: kayıtlı kişi sayısı arttıkça (bkz. ekran
+// görüntüsü, onlarca isim) "kişiye bağla" <select>'i içinde doğru kişiyi
+// bulmak zorlaşıyor -- "kişi ismi yazınca kayıtlı kişilerin ismi öyle
+// gözüksün" istendi. Tarayıcılar native <select>'te "yazarak filtrele"
+// desteği sunmaz (yalnızca ilk harfe atlama yapılır); bu yüzden dört ayrı
+// kişi-seçim <select>'inin (Ziyaretçi Girişi, Manuel Kayıt, Kaydı Düzenle,
+// Yeni Kullanıcı) HİÇBİRİNİ yeniden yazmadan üzerlerine ortak, hafif bir
+// "yazarak filtrele" katmanı ekleniyor: select'in hemen üstüne bir arama
+// kutusu ekleniyor; yazıldıkça <option>'lar DOM'dan KALDIRILMIYOR (bu,
+// zaten seçili bir değeri kaybettirebilir), yalnızca eşleşmeyenler `hidden`
+// yapılıyor (tüm modern tarayıcılar <option hidden> öğesini dropdown'dan
+// gizler) -- select'in kendi value/onchange davranışı ve onu kullanan
+// mevcut kod hiç değişmeden çalışmaya devam eder.
+function aramaliSecimEkle(selectEl) {
+  if (!selectEl) return;
+  let kutu = document.getElementById(selectEl.id + "AramaKutusu");
+  if (!kutu) {
+    kutu = document.createElement("input");
+    kutu.type = "text";
+    kutu.id = selectEl.id + "AramaKutusu";
+    kutu.className = "form-control form-control-sm mb-1";
+    kutu.placeholder = "İsim veya plaka ile ara...";
+    kutu.setAttribute("aria-label", "Kişi ara");
+    kutu.addEventListener("input", () => {
+      const q = kutu.value.trim().toLocaleLowerCase("tr-TR");
+      Array.from(selectEl.options).forEach(o => {
+        // İlk "Kişiye bağlamadan..." / "Eşleştirme yok" seçeneği (value="")
+        // filtreden bağımsız her zaman görünür kalır.
+        o.hidden = !!o.value && q !== "" && !o.textContent.toLocaleLowerCase("tr-TR").includes(q);
+      });
+      // Filtre, o an seçili olan (artık gizlenmiş) bir seçeneği ekrandan
+      // kaldırdıysa, kullanıcının görmediği bir kişiye bağlı kalınmasın diye
+      // seçim boş seçeneğe çekilir.
+      if (selectEl.selectedOptions[0]?.hidden) selectEl.value = "";
+    });
+    selectEl.parentNode.insertBefore(kutu, selectEl);
+  }
+  kutu.value = "";
+  Array.from(selectEl.options).forEach(o => { o.hidden = false; });
+}
+
 function escapeHtml(deger) {
   // Kamera/kullanıcı kaynaklı verileri innerHTML'e basmadan önce kaçış karakterlerine çevirir (XSS önlemi).
   return String(deger ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -937,6 +979,7 @@ async function _ziyaretciGirisiKutusunuAyarla(kayit, nokta) {
       `<option value="${k.id}">${escapeHtml(k.ad_soyad)} (${escapeHtml(k.plaka_no)}${k.daire_departman ? " · " + escapeHtml(k.daire_departman) : ""})</option>`
     ).join("");
   } catch { secim.innerHTML = '<option value="">Kişiye bağlamadan onayla</option>'; }
+  aramaliSecimEkle(secim);
 
   const btn = document.getElementById("ziyaretciGirisiBtn");
   btn.onclick = async () => {
@@ -1347,6 +1390,7 @@ async function ziyaretciBilgileriAc() {
     kisiSecim.innerHTML += kisiler.map(k =>
       `<option value="${k.id}">${escapeHtml(k.ad_soyad)} (${escapeHtml(k.plaka_no)}${k.daire_departman ? " · " + escapeHtml(k.daire_departman) : ""})</option>`
     ).join("");
+    aramaliSecimEkle(kisiSecim);
     const bariyerliNoktalar = noktalar.filter(n => n.aktif && n.bariyer_id);
     noktaSecim.innerHTML += bariyerliNoktalar.map(n =>
       `<option value="${n.id}" data-bariyer-id="${n.bariyer_id}" data-yon="${n.yon}" data-kamera-id="${n.kamera_id || ""}">${escapeHtml(n.ad)} (${n.yon === "giris" ? "Giriş" : "Çıkış"})</option>`
@@ -1851,6 +1895,7 @@ async function kayitDuzenleAc(id) {
     ).join("");
     if (kayit.kisi_id) kisiSecim.value = String(kayit.kisi_id);
   } catch (e) { /* kişi listesi yüklenemezse eşleştirme alanı boş kalır, kritik değil */ }
+  aramaliSecimEkle(kisiSecim);
 
   bootstrap.Modal.getOrCreateInstance(document.getElementById("kayitDuzenleModal")).show();
 }
@@ -2837,6 +2882,7 @@ async function yeniKullaniciRolDegisti() {
       `<option value="${k.id}">${escapeHtml(k.ad_soyad)} (${escapeHtml(k.plaka_no)}${k.daire_departman ? " · " + escapeHtml(k.daire_departman) : ""})</option>`
     ).join("");
   } catch { /* kişi listesi alınamazsa boş bırak, gönderimde 400 ile fark edilir */ }
+  aramaliSecimEkle(secim);
 }
 
 document.getElementById("kullaniciForm")?.addEventListener("submit", async (e) => {
