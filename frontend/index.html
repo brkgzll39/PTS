@@ -57,8 +57,11 @@
 
 <div id="authKapisi" class="auth-gate">
   <div class="auth-panel">
-    <div class="auth-mark"><i class="bi bi-camera-video-fill"></i></div>
-    <div class="auth-kicker">TPAO PTS</div>
+    <!-- 2026-09-22 kullanıcı isteği: "bu görseli güvenli giriş ekranına TPAO
+         PTS VE KAMERA LOGOSU YAZAN YERE LOGO OLARAK EKLEME ŞANSIN VAR MI" --
+         önceki jenerik kamera ikonu + "TPAO PTS" metni yerine kurumun gerçek
+         logosu kondu (bkz. frontend/img/tpao-logo.png, style.css::.auth-logo). -->
+    <img src="/static/img/tpao-logo.png" alt="Türkiye Petrolleri Anonim Ortaklığı" class="auth-logo">
     <h1 id="authBaslik">Güvenli giriş</h1>
     <p id="authAciklama" class="text-muted small">PTS yönetim paneline devam etmek için giriş yapın.</p>
     <form id="authForm">
