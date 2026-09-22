@@ -4155,3 +4155,38 @@ def test_kayit_duzenle_kisi_id_temizlenince_kisi_adi_kaybolur_misafir_adi_kalir(
     assert r3.status_code == 200, r3.text
     assert r3.json()["kisi_adi"] is None
     assert r3.json()["misafir_adi"] == "Yedek İsim"
+
+
+def test_kayit_duzenle_yaniti_liste_uc_noktalariyla_tutarlidir(client, operator_header, yetkili_header):
+    """KÖK NEDEN TESTİ (2026-09-22 kullanıcı geri bildirimi, ekran
+    görüntüleriyle): "bu ekran şimdi not ve isim ekledim ekranı kapatıp
+    açmadan güncellenmiyor". Frontend artık PATCH /kayitlar/{id} yanıtını
+    sonKayitlarCache'e DOĞRUDAN yazıyor (bkz. app.js::
+    _kayitCacheYerindeGuncelle) -- bu yüzden bu uç noktanın yanıtı, GET
+    /kayitlar (liste) yanıtıyla TUTARLI olmalı, yani kisi_adi/vardiya_adi
+    gibi hesaplanan alanları da içermeli. Öncesinde kayit_duzenle çıplak
+    ORM nesnesini dönüyordu ve bu alanlar hep None geliyordu -- kullanıcı
+    aynı kaydı tekrar açana kadar (ya da sayfayı tam yenileyene kadar)
+    kişi eşleştirmesinin adını hiç göremiyordu."""
+    rk = client.post("/kisiler", json={
+        "ad_soyad": "Tutarlılık Testi", "plaka_no": "34 TUT 01", "tip": "abone",
+    }, headers=yetkili_header)
+    kisi_id = rk.json()["id"]
+
+    r = client.post("/kayitlar", json={"plaka_no": "34 TUT 02", "kamera_id": "TEST", "yon": "giris"},
+                     headers=operator_header)
+    kayit_id = r.json()["id"]
+
+    # TEK bir PATCH çağrısında hem kişi eşleştirmesi HEM not/misafir_adi --
+    # yanıt (bir sonraki liste yenilemesini beklemeden) hepsini içermeli.
+    r2 = client.patch(f"/kayitlar/{kayit_id}", json={
+        "kisi_id": kisi_id, "not_metni": "kapıda bekliyor", "misafir_adi": "Yedek İsim",
+    }, headers=operator_header)
+    assert r2.status_code == 200, r2.text
+    veri = r2.json()
+    assert veri["kisi_adi"] == "Tutarlılık Testi", (
+        "PATCH yanıtı kişi eşleştirmesinin adını içermiyor -- kullanıcı "
+        "ekranı kapatıp açana kadar bunu göremez"
+    )
+    assert veri["not_metni"] == "kapıda bekliyor"
+    assert veri["misafir_adi"] == "Yedek İsim"

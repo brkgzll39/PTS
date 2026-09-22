@@ -1018,9 +1018,19 @@ async function _ziyaretciGirisiKutusunuAyarla(kayit, nokta) {
       const notMetni = document.getElementById("olayModalZiyaretciNot").value.trim();
       if (notMetni) govde.not_metni = notMetni;
       if (secim.value) govde.kisi_id = Number(secim.value);
-      await apiCagir(`/kayitlar/${kayit.id}`, {
+      const guncelKayit = await apiCagir(`/kayitlar/${kayit.id}`, {
         method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(govde),
       });
+      // 2026-09-22 KRİTİK HATA DÜZELTMESİ: bkz. _kayitCacheYerindeGuncelle'nin
+      // docstring'i -- panelYenile()/kayitlariYukle(false) YARIŞ DURUMU
+      // yüzünden bu kaydın az önce girilen not/misafir_adi/kişi
+      // eşleştirmesini SİLEBİLİYORDU, kullanıcı aynı olayı (ekranı kapatıp
+      // açmadan) tekrar açtığında eski veriyi görüyordu. Önce önbellek
+      // DOĞRUDAN güncellenir, SONRA hâlâ açık olan bu modal aynı kaydın artık
+      // güncel hâliyle (yeni başlık: "ZİYARETÇİ GİRİŞİ ONAYLANDI", İSİM/NOT
+      // dolu, onay kutusu gizli) YENİDEN ÇİZİLİR -- kullanıcının modali
+      // kapatıp tekrar açmasına gerek kalmaz.
+      _kayitCacheYerindeGuncelle(guncelKayit);
       if (nokta?.bariyer_id) {
         const r = await apiCagir(`/bariyer/${nokta.bariyer_id}/ac`, { method: "POST" });
         sonuc.className = "small mt-1 text-success";
@@ -1033,6 +1043,7 @@ async function _ziyaretciGirisiKutusunuAyarla(kayit, nokta) {
       kutu.classList.add("d-none");
       panelYenile();
       kayitlariYukle(false);
+      await olayDetayAc(guncelKayit.id);
     } catch (err) {
       sonuc.className = "small mt-1 text-danger";
       sonuc.textContent = err.message;
@@ -1890,6 +1901,46 @@ function kayitPdfIndir(id) {
 // düzenleyebilmek için (bkz. main.py::kayit_duzenle). Örn. OCR'ın "39 SU 877"yi
 // tek bir karede "04 SD 377" olarak yanlış okuyup kaydettiği bir vakada,
 // operatör plakayı düzeltebilir ya da kaydı doğrulayabilir/not düşebilir.
+// KÖK NEDEN DÜZELTMESİ (2026-09-22 kullanıcı geri bildirimi -- ekran
+// görüntüleriyle: "BİR DE BU EKRAN ŞİMDİ NOT VE İSİM EKLEDİM EKRANI KAPATIP
+// AÇMADAN GÜNCELLENMİYOR BUNA DA Bİ ÇARE BULALIM"):
+//
+// "Kaydı Düzenle" (kayitDuzenleForm) veya "Ziyaretçi Girişi" onayı (bkz.
+// _ziyaretciGirisiKutusunuAyarla) sonrasında PATCH /kayitlar/{id}'nin yanıtı
+// önceden yalnızca panelYenile()/kayitlariYukle(false) gibi TAM LİSTE
+// yenilemelerine bırakılıyordu. Sorun: panelYenile() `/kayitlar?limit=10`
+// çağırıp sonKayitlarCache'i TAMAMEN DEĞİŞTİRİYOR (bkz. panelYenile), ve bu
+// iki fonksiyon (panelYenile, kayitlariYukle) birbirini AWAIT ETMEDEN eş
+// zamanlı çalıştığı için hangisinin ağ isteğinin daha SON tamamlanacağı bir
+// YARIŞ DURUMU (race condition) -- düzenlenen kayıt panelYenile'nin çektiği
+// "son 10" listesinde değilse (ör. daha eski bir kayıt), o kaydın az önce
+// kaydedilen değişikliği sonKayitlarCache'ten SİLİNEBİLİYORDU. Sonuç:
+// kullanıcı aynı kaydı (aynı olay/satır) tekrar açtığında (olayDetayAc/
+// kayitDuzenleAc, ikisi de sonKayitlarCache'ten okur) ESKİ veriyi görüyordu
+// -- yalnızca SAYFAYI TAMAMEN YENİLEDİĞİNDE (ki bu da aslında aynı yarışı
+// yeniden oynatıyor, arada bir "şans eseri" düzeliyordu) güncel veriyi
+// görebiliyordu.
+//
+// Kalıcı ve YARIŞTAN BAĞIMSIZ çözüm: PATCH'in kendi yanıtı (backend artık
+// bkz. main.py::kayit_duzenle'nin sonundaki kisi_adi/vardiya_adi ekleme
+// notu -- liste uç noktalarıyla TUTARLI, TAM bir KayitCevap döner) HER ZAMAN
+// otoriter kabul edilip sonKayitlarCache'teki karşılığı DERHAL (herhangi bir
+// ağ isteğinin tamamlanmasını beklemeden) güncellenir -- sonraki
+// panelYenile()/kayitlariYukle(false) çağrıları yalnızca YENİ gelen kayıtları
+// veya listedeki BAŞKA değişiklikleri yakalamak için hâlâ çalıştırılır, ama
+// artık bu tek kaydın verisini SİLME riski taşımazlar.
+function _kayitCacheYerindeGuncelle(guncelKayit) {
+  if (!guncelKayit || guncelKayit.id == null) return;
+  const idx = sonKayitlarCache.findIndex(k => k.id === guncelKayit.id);
+  if (idx === -1) {
+    // Kayıt daha önce hiç önbellekte değildi (ör. çok eski bir kayıt) --
+    // yine de eklenir ki bu id ile tekrar açılan bir modal boş dönmesin.
+    sonKayitlarCache.unshift(guncelKayit);
+  } else {
+    sonKayitlarCache[idx] = { ...sonKayitlarCache[idx], ...guncelKayit };
+  }
+}
+
 async function kayitDuzenleAc(id) {
   const kayit = sonKayitlarCache.find(k => k.id === id);
   if (!kayit) return;
@@ -1946,8 +1997,12 @@ document.getElementById("kayitDuzenleForm")?.addEventListener("submit", async (e
     govde.kisi_id_temizle = true;
   }
   try {
-    await apiCagir(`/kayitlar/${id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(govde) });
+    const guncelKayit = await apiCagir(`/kayitlar/${id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(govde) });
     bootstrap.Modal.getInstance(document.getElementById("kayitDuzenleModal"))?.hide();
+    // 2026-09-22 KRİTİK HATA DÜZELTMESİ: "bu ekran şimdi not ve isim
+    // ekledim ekranı kapatıp açmadan güncellenmiyor" -- bkz. aşağıdaki
+    // _kayitCacheYerindeGuncelle'nin docstring'i.
+    _kayitCacheYerindeGuncelle(guncelKayit);
     kayitlariYukle(false);
     panelYenile();
     analizAcikSeAyniPlakayiYenile();

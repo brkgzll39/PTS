@@ -3595,6 +3595,20 @@ def kayit_duzenle(
         logger.info("Kayıt #%d panelden düzenlendi (%s)", kayit_id, kullanici.kullanici_adi)
         db.commit()
         db.refresh(kayit)
+    # KÖK NEDEN DÜZELTMESİ (2026-09-22 kullanıcı geri bildirimi: "bu ekran
+    # şimdi not ve isim ekledim ekranı kapatıp açmadan güncellenmiyor"):
+    # bu uç nokta önceden kisi_adi/vardiya_adi'yı HİÇ doldurmadan çıplak
+    # `kayit`ı dönüyordu (bu iki alan yalnızca kayitlari_listele/olaylari_getir
+    # gibi LİSTE uç noktalarında _kayitlara_kisi_adini_ekle/
+    # _kayitlarin_vardiya_adlarini_ekle ile dolduruluyordu). Frontend artık
+    # (bkz. app.js::kayitDuzenleForm submit ve _ziyaretciGirisiKutusunuAyarla)
+    # bu PATCH yanıtını sonKayitlarCache'e DOĞRUDAN yazıyor -- yanıt eksik
+    # gelirse az önce eşleştirilen kişinin adı (kisi_adi) ekranda BİR SONRAKİ
+    # tam liste yenilemesine kadar boş görünürdü. Tek bir kayıt için de aynı
+    # yardımcılar (liste bekleyen bir parametre olsa da tek elemanlı bir liste
+    # ile) çağrılarak yanıt, liste uç noktalarıyla TUTARLI hale getirildi.
+    _kayitlarin_vardiya_adlarini_ekle([kayit], db)
+    _kayitlara_kisi_adini_ekle([kayit], db)
     return kayit
 
 

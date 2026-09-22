@@ -248,6 +248,11 @@ body {
 .contact-row a { color: #2785ad; text-decoration: none; }
 .contact-row a:hover { text-decoration: underline; }
 
+/* 2026-09-22 kullanıcı isteği: "panelin en alt kısmına Sayfanın tüm
+   hakları gizlidir gibi bir yazı da yazalım" -- ana panelin (.app-layout)
+   ve sakin öz-hizmet portalının (#sakinPaneli) her ikisinin de en altına. */
+.pts-footer { text-align: center; padding: 1rem; color: #8593a1; font-size: .75rem; border-top: 1px solid #d2dae2; background: #fff; }
+
 .stat-card {
   border-left: 4px solid #1f2937;
 }
