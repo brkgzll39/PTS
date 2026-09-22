@@ -233,6 +233,17 @@ class Kayit(Base):
     # (bkz. Kisi.aciklama) ile KARIŞTIRILMAMALI -- bu SADECE bu tekil geçişe
     # aittir.
     not_metni = Column(Text, nullable=True)
+    # Kişiye (Kisi tablosu, kisi_id) bağlı OLMAYAN bir "misafir" geçişinde,
+    # aracı kullanan kişinin ad soyadını serbest metin olarak kaydetmek
+    # içindir (2026-09-22 kullanıcı isteği: "gelen tüm araçların bu ekranda
+    # misafirse de isim soyisimlerini kaydetmek için bir sütun'a daha
+    # ihtiyacım var"). `not_metni` (herhangi bir amaçla kullanılabilen
+    # serbest not) ile KARIŞTIRILMAMALI -- bu alan SADECE kişinin adı
+    # içindir. kisi_id doluysa kişinin gerçek adı zaten Kisi.ad_soyad'dan
+    # gelir (bkz. main.py::kayitlari_listele'nin kisi join'i); bu alan o
+    # durumda genelde boş bırakılır, yalnızca HİÇBİR Kişi kaydına
+    # bağlanmamış (kisi_id IS NULL) bir "misafir" geçişi için doldurulur.
+    misafir_adi = Column(String(100), nullable=True)
     # Bu kayıt panelden elle mi oluşturuldu (görevlinin "Manuel Kayıt Ekle"
     # ile birini elle içeri alması) yoksa kamera pipeline'ından mı geldi.
     manuel_giris = Column(Boolean, default=False)

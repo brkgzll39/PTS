@@ -185,3 +185,73 @@ def test_schemas_dosyasinda_tekrarlanan_sinif_tanimi_yok():
     isimler = [d.name for d in agac.body if isinstance(d, ast.ClassDef)]
     tekrarlananlar = {isim for isim in isimler if isimler.count(isim) > 1}
     assert not tekrarlananlar, f"schemas.py içinde tekrar tanımlanmış sınıflar: {tekrarlananlar}"
+
+
+# ------------------------------------------------------------------
+# misafir_adi / kisi_adi — "Kaydı Düzenle" ekranındaki isim/misafir alanları
+# ------------------------------------------------------------------
+# 2026-09-22 kullanıcı isteği: "gelen tüm araçların bu ekranda misafirse de
+# isim soyisimlerini kaydetmek için bir sütun'a daha ihtiyacım var bir de
+# ... kişi eşleştirmesi Örn: Hasan ÇETİN seçtim fakat herhangi bir yerde
+# gözükmüyor". misafir_adi (models.Kayit'e eklenen gerçek bir sütun, KayitManuel/
+# KayitDuzenle üzerinden yazılabilir) ve kisi_adi (main.py::
+# _kayitlara_kisi_adini_ekle tarafından yanıt döndürülmeden önce sonradan
+# eklenen, GERÇEK bir sütunu OLMAYAN alan) birlikte bu iki isteği karşılar.
+
+def test_kayit_manuel_ve_duzenle_misafir_adi_alanini_icerir():
+    assert "misafir_adi" in schemas.KayitManuel.model_fields
+    assert "misafir_adi" in schemas.KayitDuzenle.model_fields
+
+
+def test_kayit_cevap_misafir_adi_ve_kisi_adi_alanlarini_icerir():
+    alanlar = set(schemas.KayitCevap.model_fields.keys())
+    assert {"misafir_adi", "kisi_adi"} <= alanlar
+    # İkisi de opsiyonel olmalı -- kisi_adi bir ORM sütunu bile değil,
+    # kişiye bağlı olmayan (misafir_adi de girilmemiş) bir kayıt için ikisi
+    # de None kalabilmeli.
+    assert schemas.KayitCevap.model_fields["misafir_adi"].is_required() is False
+    assert schemas.KayitCevap.model_fields["kisi_adi"].is_required() is False
+
+
+def test_kayit_cevap_kisi_adi_from_attributes_ile_sonradan_eklenen_alani_okur():
+    """main.py::_kayitlara_kisi_adini_ekle, bir Kayit ORM nesnesinin üzerine
+    (gerçek bir DB sütunu OLMADAN) doğrudan Python attribute'u olarak
+    kisi_adi ekliyor -- bu test, KayitCevap.model_validate'in
+    (from_attributes=True) bunu gerçek bir SQLAlchemy modeliyle aynı şekilde
+    okuyabildiğini basit bir sahte nesneyle doğrular (fastapi/sqlalchemy
+    gerekmez)."""
+    from datetime import datetime as _dt
+
+    class SahteKayit:
+        id = 1
+        plaka_no = "34 ABC 123"
+        tarih_saat = _dt(2026, 9, 22, 9, 0)
+        kamera_id = "TEST"
+        yon = "giris"
+        goruntu_yolu = None
+        guven_skoru = None
+        ham_plaka_metni = None
+        yetki_durumu = "yetkili"
+        kisi_id = 5
+        kisi_tip_anlik = "abone"
+        dogrulama_kare_sayisi = None
+        farkli_okuma_sayisi = None
+        not_metni = None
+        misafir_adi = None
+        manuel_giris = False
+        duzenleyen = None
+        duzenleme_tarihi = None
+        vardiya_adi = None
+
+    sahte = SahteKayit()
+    sahte.kisi_adi = "Hasan ÇETİN"
+    cevap = schemas.KayitCevap.model_validate(sahte)
+    assert cevap.kisi_adi == "Hasan ÇETİN"
+
+    # Eşleştirme yoksa da (kisi_id None) sorunsuz None dönmeli.
+    sahte.kisi_id = None
+    sahte.kisi_adi = None
+    sahte.misafir_adi = "Ahmet Yılmaz"
+    cevap2 = schemas.KayitCevap.model_validate(sahte)
+    assert cevap2.kisi_adi is None
+    assert cevap2.misafir_adi == "Ahmet Yılmaz"

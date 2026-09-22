@@ -339,6 +339,9 @@ class KayitManuel(BaseModel):
     # Görevlinin bir aracı elle içeri/dışarı aldığında düşebileceği tek
     # seferlik not (ör. "teslimat aracı, güvenlik onayıyla alındı").
     not_metni: Optional[str] = None
+    # Kişiye (Kisi) bağlı olmayan bir misafirin ad soyadı -- bkz.
+    # models.Kayit.misafir_adi'nin docstring'i.
+    misafir_adi: Optional[str] = Field(None, max_length=100)
 
 
 class KayitCevap(BaseModel):
@@ -353,9 +356,14 @@ class KayitCevap(BaseModel):
     yetki_durumu: str
     kisi_id: Optional[int] = None
     kisi_tip_anlik: Optional[str] = None
+    # 2026-09-22 kullanıcı geri bildirimi: "kişi eşleştirmesi ... Hasan ÇETİN
+    # seçtim fakat herhangi bir yerde gözükmüyor" -- bu bir ORM sütunu
+    # DEĞİLDİR, bkz. main.py::_kayitlara_kisi_adini_ekle'nin docstring'i.
+    kisi_adi: Optional[str] = None
     dogrulama_kare_sayisi: Optional[int] = None
     farkli_okuma_sayisi: Optional[int] = None
     not_metni: Optional[str] = None
+    misafir_adi: Optional[str] = None
     manuel_giris: bool = False
     duzenleyen: Optional[str] = None
     duzenleme_tarihi: Optional[datetime] = None
@@ -398,6 +406,7 @@ class KayitDuzenle(BaseModel):
     kisi_id: Optional[int] = None
     kisi_id_temizle: bool = False
     not_metni: Optional[str] = None
+    misafir_adi: Optional[str] = Field(None, max_length=100)
 
 
 class KameraYonGuncelle(BaseModel):

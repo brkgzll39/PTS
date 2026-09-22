@@ -80,7 +80,10 @@
       <div class="card card-body py-2 mt-2 d-none" id="ziyaretciGirisiKutusu" data-rol-min="operatör" data-rol-davranis="gizle">
         <label class="form-label small mb-1" for="olayModalKisiSecim">Ziyaretçi Girişi — kişiye bağla (opsiyonel) ve onayla</label>
         <select class="form-select form-select-sm mb-2" id="olayModalKisiSecim"><option value="">Kişiye bağlamadan onayla</option></select>
-        <input type="text" class="form-control form-control-sm mb-2" id="olayModalZiyaretciNot" placeholder="Not (örn. kargo, misafir, teslimat)" maxlength="500">
+        <!-- 2026-09-22 kullanıcı isteği: yukarıda kişiye bağlanamayan bir
+             misafirin adını da kaydedebilmek için (bkz. models.Kayit.misafir_adi). -->
+        <input type="text" class="form-control form-control-sm mb-2" id="olayModalMisafirAdi" placeholder="Misafir adı soyadı (sistemde kayıtlı değilse)" maxlength="100">
+        <input type="text" class="form-control form-control-sm mb-2" id="olayModalZiyaretciNot" placeholder="Not (örn. kargo, teslimat)" maxlength="500">
         <button type="button" class="btn btn-sm btn-success" id="ziyaretciGirisiBtn"><i class="bi bi-person-check-fill"></i> Ziyaretçi Girişi (onayla + bariyeri aç)</button>
         <div id="ziyaretciGirisiSonuc" class="small mt-1"></div>
       </div>
@@ -231,6 +234,18 @@
           <label class="form-label small" for="duzenleKayitKisi">Kişi eşleştirmesi</label>
           <select class="form-select" id="duzenleKayitKisi"><option value="">Eşleştirme yok</option></select>
         </div>
+        <!-- 2026-09-22 kullanıcı isteği: "gelen tüm araçların bu ekranda
+             misafirse de isim soyisimlerini kaydetmek için bir sütun'a daha
+             ihtiyacım var" -- sistemde kayıtlı bir Kişi'ye BAĞLANAMAYAN
+             (yukarıdaki eşleştirme boş bırakılan) bir misafirin adını da
+             kaydedebilmek için (bkz. models.Kayit.misafir_adi). Kişi
+             eşleştirmesi yapıldıysa bu alanın normalde gereği yoktur (isim
+             zaten Kisi kaydından gelir), o yüzden Kişi eşleştirmesinin HEMEN
+             altında, ikincil bir alan olarak duruyor. -->
+        <div class="mb-2">
+          <label class="form-label small" for="duzenleKayitMisafirAdi">Misafir Adı Soyadı (sistemde kayıtlı değilse)</label>
+          <input type="text" class="form-control" id="duzenleKayitMisafirAdi" maxlength="100" placeholder="Örn. Ahmet Yılmaz">
+        </div>
         <div class="mb-2">
           <label class="form-label small" for="duzenleKayitNot">Not</label>
           <textarea class="form-control" id="duzenleKayitNot" rows="2" placeholder="Örn. görevli tarafından elle içeri alındı, sebep: ..."></textarea>
@@ -310,6 +325,12 @@
       <div class="mb-2">
         <label class="form-label small" for="zbKisiSecim">Kişiye bağla (opsiyonel)</label>
         <select class="form-select" id="zbKisiSecim"><option value="">Kişiye bağlamadan devam et</option></select>
+      </div>
+      <!-- 2026-09-22 kullanıcı isteği: yukarıdaki kişiye bağlanamayan bir
+           misafirin adını da kaydedebilmek için (bkz. models.Kayit.misafir_adi). -->
+      <div class="mb-2">
+        <label class="form-label small" for="zbMisafirAdi">Misafir Adı Soyadı (sistemde kayıtlı değilse)</label>
+        <input type="text" class="form-control" id="zbMisafirAdi" maxlength="100" placeholder="Örn. Ahmet Yılmaz">
       </div>
       <div class="mb-2">
         <label class="form-label small" for="zbNot">Not</label>
@@ -544,7 +565,7 @@
           <div class="table-responsive">
             <table class="table table-hover mb-0 align-middle">
               <thead class="table-light">
-                <tr><th>Görsel</th><th>Plaka</th><th>Tarih/Saat</th><th>Yön</th><th>Durum</th><th>Kişi/Tip</th><th>Vardiya</th></tr>
+                <tr><th>Görsel</th><th>Plaka</th><th>Tarih/Saat</th><th>Yön</th><th>Durum</th><th>Kişi/Tip</th><th>İsim</th><th>Vardiya</th></tr>
               </thead>
               <tbody id="sonKayitlarTablo"></tbody>
             </table>
@@ -648,7 +669,7 @@
           <div class="table-responsive">
             <table class="table table-hover mb-0 align-middle">
               <thead class="table-light">
-                <tr><th>Görsel</th><th>ID</th><th>Plaka</th><th>Tarih/Saat</th><th>Kamera</th><th>Yön</th><th>Durum</th><th>Kişi/Tip</th><th>Vardiya</th><th>Güven</th><th title="Bu okuma kaç farklı karede tekrarlanıp doğrulandı">Doğrulama</th><th></th></tr>
+                <tr><th>Görsel</th><th>ID</th><th>Plaka</th><th>Tarih/Saat</th><th>Kamera</th><th>Yön</th><th>Durum</th><th>Kişi/Tip</th><th>İsim</th><th>Vardiya</th><th>Güven</th><th title="Bu okuma kaç farklı karede tekrarlanıp doğrulandı">Doğrulama</th><th></th></tr>
               </thead>
               <tbody id="kayitlarTablo"></tbody>
             </table>

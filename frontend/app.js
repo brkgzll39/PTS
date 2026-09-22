@@ -415,6 +415,20 @@ function tipRozeti(tip) {
   return `<span class="badge badge-${tip}">${etiketler[tip] || escapeHtml(tip)}</span>`;
 }
 
+// 2026-09-22 GERÇEK KULLANICI GERİ BİLDİRİMİ: "Kaydı Düzenle" ekranındaki
+// "Kişi eşleştirmesi" alanından bir kişi seçilip kaydedildiğinde, kisi_id
+// backend'de doğru güncelleniyordu AMA Kayıtlar/Plaka Analizi tablolarının
+// HİÇBİRİ eşleştirilen kişinin ADINI göstermiyordu -- yalnızca TİPİNİ
+// (tipRozeti, Abone/Personel/Ziyaretçi rozeti) gösteren "Kişi/Tip" sütunu
+// vardı. Bu yardımcı, kayıtta eşleşen bir Kişi varsa onun adını (bkz.
+// backend/main.py::_kayitlara_kisi_adini_ekle'nin doldurduğu kisi_adi),
+// yoksa (sistemde kayıtlı olmayan bir misafirse) misafir_adi'yı (bkz.
+// models.Kayit.misafir_adi) gösterir -- ikisi de yoksa "-" döner.
+function kayitIsimGoster(kayit) {
+  const isim = kayit.kisi_adi || kayit.misafir_adi;
+  return isim ? escapeHtml(isim) : '<span class="text-muted">-</span>';
+}
+
 // Bu okumanın kaç farklı karede tekrarlanıp oy aldığını gösterir (bkz.
 // backend/camera_reader.py::PlakaOyBirikimi.toplam_kare_sayisi ve
 // README.md'deki 2026-09-17 notu). null/undefined: kamera pipeline'ından
@@ -760,9 +774,10 @@ async function panelYenile() {
         <td>${k.yon === "giris" ? "Giriş" : "Çıkış"}</td>
         <td>${durumRozeti(k.yetki_durumu)}</td>
         <td>${tipRozeti(k.kisi_tip_anlik)}</td>
+        <td class="small">${kayitIsimGoster(k)}</td>
         <td>${k.vardiya_adi ? `<span class="badge bg-info text-dark">${escapeHtml(k.vardiya_adi)}</span>` : '<span class="text-muted small">-</span>'}</td>
       </tr>
-    `).join("") || `<tr><td colspan="7" class="text-center text-muted py-3">Henüz kayıt yok</td></tr>`;
+    `).join("") || `<tr><td colspan="8" class="text-center text-muted py-3">Henüz kayıt yok</td></tr>`;
     korumaliGorselleriYukle(tbody);
     if (mevcutRol === "güvenlik") guvenlikVardiyaDurumunuGuncelle();
   } catch (e) {
@@ -896,9 +911,14 @@ async function olayDetayAc(id) {
   document.getElementById("olayModalSite").textContent = siteAdi || "Bağlı site tanımlı değil";
   document.getElementById("olayModalNokta").textContent = nokta?.ad || kayit.kamera_id;
   document.getElementById("olayModalYon").textContent = kayit.yon === "giris" ? "Giriş" : "Çıkış";
-  document.getElementById("olayModalKisi").textContent = detay?.ad_soyad || "Tanımsız araç";
+  // 2026-09-22 kullanıcı isteği: "tanımsız araç dediği yer boş dönüyorsa
+  // onlar güncellensin" -- sistemde kayıtlı bir Kişi'ye (detay) bağlı
+  // OLMAYAN bir kayıt için artık her zaman düz "Tanımsız araç" yerine,
+  // varsa kaydın misafir_adi'sı (bkz. models.Kayit.misafir_adi, "Kaydı
+  // Düzenle"/Ziyaretçi Girişi'nde girilebilir) gösteriliyor.
+  document.getElementById("olayModalKisi").textContent = detay?.ad_soyad || kayit.misafir_adi || "Tanımsız araç";
   document.getElementById("olayModalDaire").textContent = detay?.daire_departman || "-";
-  document.getElementById("olayModalAracTipi").textContent = detay ? (detay.tip === "ziyaretci" ? "Ziyaretçi" : "Tanımlı") : "Tanımsız araç";
+  document.getElementById("olayModalAracTipi").textContent = detay ? (detay.tip === "ziyaretci" ? "Ziyaretçi" : "Tanımlı") : (kayit.misafir_adi ? "Misafir" : "Tanımsız araç");
   // 2026-09-22: kullanıcı isteği -- "OCR güven skoru gibi şeyleri görmeme
   // gerek yok, onların yerine Not yazınca not bilgisi eklensin". GÜVEN
   // SKORU/OCR DÜZELTMESİ alanları (operasyonel personel için anlamsız, teknik
@@ -960,6 +980,7 @@ async function _ziyaretciGirisiKutusunuAyarla(kayit, nokta) {
   const kutu = document.getElementById("ziyaretciGirisiKutusu");
   const zatenOnayli = kayit.yetki_durumu === "yetkili" || kayit.yetki_durumu === "ziyaretci_onayli";
   document.getElementById("ziyaretciGirisiSonuc").textContent = "";
+  document.getElementById("olayModalMisafirAdi").value = "";
   document.getElementById("olayModalZiyaretciNot").value = "";
   if (zatenOnayli || !rolYeterli("operatör")) {
     kutu.classList.add("d-none");
@@ -992,6 +1013,8 @@ async function _ziyaretciGirisiKutusunuAyarla(kayit, nokta) {
     sonuc.textContent = "İşleniyor...";
     try {
       const govde = { yetki_durumu: "ziyaretci_onayli" };
+      const misafirAdi = document.getElementById("olayModalMisafirAdi").value.trim();
+      if (misafirAdi) govde.misafir_adi = misafirAdi;
       const notMetni = document.getElementById("olayModalZiyaretciNot").value.trim();
       if (notMetni) govde.not_metni = notMetni;
       if (secim.value) govde.kisi_id = Number(secim.value);
@@ -1376,6 +1399,7 @@ async function kameraRoiKaldir() {
 // "Ziyaretçi Girişi" notu).
 async function ziyaretciBilgileriAc() {
   document.getElementById("zbPlaka").value = "";
+  document.getElementById("zbMisafirAdi").value = "";
   document.getElementById("zbNot").value = "";
   document.getElementById("zbSonuc").textContent = "";
   const kisiSecim = document.getElementById("zbKisiSecim");
@@ -1429,6 +1453,7 @@ async function ziyaretciBilgileriKaydet() {
   const yon = secilenSecenek.dataset.yon || "giris";
   const kameraId = secilenSecenek.dataset.kameraId || "PANEL-ZIYARETCI";
   const kisiId = document.getElementById("zbKisiSecim").value;
+  const misafirAdi = document.getElementById("zbMisafirAdi").value.trim();
   const notMetni = document.getElementById("zbNot").value.trim();
 
   const btn = document.getElementById("zbKaydetBtn");
@@ -1437,7 +1462,7 @@ async function ziyaretciBilgileriKaydet() {
   try {
     const kayit = await apiCagir("/kayitlar", {
       method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ plaka_no: plaka, kamera_id: kameraId, yon, not_metni: notMetni || null }),
+      body: JSON.stringify({ plaka_no: plaka, kamera_id: kameraId, yon, misafir_adi: misafirAdi || null, not_metni: notMetni || null }),
     });
     const govde = { yetki_durumu: "ziyaretci_onayli" };
     if (kisiId) govde.kisi_id = Number(kisiId);
@@ -1809,6 +1834,7 @@ async function kayitlariYukle(sifirla = true) {
       <td>${k.yon === "giris" ? "Giriş" : "Çıkış"}</td>
       <td>${durumRozeti(k.yetki_durumu)}</td>
       <td>${tipRozeti(k.kisi_tip_anlik)}</td>
+      <td class="small">${kayitIsimGoster(k)}</td>
       <td>${k.vardiya_adi ? `<span class="badge bg-info text-dark">${escapeHtml(k.vardiya_adi)}</span>` : '<span class="text-muted small">-</span>'}</td>
       <td>${k.guven_skoru ? (k.guven_skoru * 100).toFixed(0) + "%" : "-"}</td>
       <td>${dogrulamaRozeti(k.dogrulama_kare_sayisi, k.farkli_okuma_sayisi)}</td>
@@ -1818,7 +1844,7 @@ async function kayitlariYukle(sifirla = true) {
         ${rolYeterli("yonetici") ? `<button class="btn btn-sm btn-outline-secondary ms-1" onclick="kayitSil(${k.id})" title="Kaydı sil" aria-label="Kaydı sil"><i class="bi bi-trash"></i></button>` : ""}
       </td>
     </tr>
-  `).join("") || `<tr><td colspan="12" class="text-center text-muted py-3">Kayıt bulunamadı</td></tr>`;
+  `).join("") || `<tr><td colspan="13" class="text-center text-muted py-3">Kayıt bulunamadı</td></tr>`;
   korumaliGorselleriYukle(tbody);
 
   // Sayfalama kontrolleri
@@ -1871,6 +1897,7 @@ async function kayitDuzenleAc(id) {
   document.getElementById("duzenleKayitPlaka").value = kayit.plaka_no;
   document.getElementById("duzenleKayitYon").value = kayit.yon;
   document.getElementById("duzenleKayitDurum").value = kayit.yetki_durumu;
+  document.getElementById("duzenleKayitMisafirAdi").value = kayit.misafir_adi || "";
   document.getElementById("duzenleKayitNot").value = kayit.not_metni || "";
   if (!kayit.not_metni) {
     // Bu kaydın kendi notu yoksa, aynı plakanın bugün için "son kullanılan
@@ -1910,6 +1937,7 @@ document.getElementById("kayitDuzenleForm")?.addEventListener("submit", async (e
     plaka_no: document.getElementById("duzenleKayitPlaka").value,
     yon: document.getElementById("duzenleKayitYon").value,
     yetki_durumu: document.getElementById("duzenleKayitDurum").value,
+    misafir_adi: document.getElementById("duzenleKayitMisafirAdi").value || null,
     not_metni: document.getElementById("duzenleKayitNot").value || null,
   };
   if (kisiSecim) {
@@ -2442,6 +2470,7 @@ async function plakaAnalizAc(plaka) {
         <td>${k.yon === "giris" ? "Giriş" : "Çıkış"}</td>
         <td>${escapeHtml(k.kamera_id)}</td>
         <td>${durumRozeti(k.yetki_durumu)}</td>
+        <td class="small">${kayitIsimGoster(k)}</td>
         <td>${k.vardiya_adi ? `<span class="badge bg-info text-dark">${escapeHtml(k.vardiya_adi)}</span>` : '<span class="text-muted small">-</span>'}</td>
         <td>${k.guven_skoru ? (k.guven_skoru * 100).toFixed(0) + "%" : "-"}</td>
         <td>${dogrulamaRozeti(k.dogrulama_kare_sayisi, k.farkli_okuma_sayisi)}</td>
@@ -2461,8 +2490,8 @@ async function plakaAnalizAc(plaka) {
       ${v.kara_sebep ? `<div class="alert alert-danger py-2 mb-3">Engel sebebi: ${escapeHtml(v.kara_sebep)}</div>` : ""}
       <div class="table-responsive">
         <table class="table table-sm align-middle">
-          <thead class="table-light"><tr><th>Görsel</th><th>Tarih/Saat</th><th>Yön</th><th>Kamera</th><th>Durum</th><th>Vardiya</th><th>Güven</th><th title="Bu okuma kaç farklı karede doğrulandı">Doğrulama</th><th>Not</th><th></th></tr></thead>
-          <tbody>${satirlar || "<tr><td colspan='10' class='text-center text-muted'>Kayıt yok</td></tr>"}</tbody>
+          <thead class="table-light"><tr><th>Görsel</th><th>Tarih/Saat</th><th>Yön</th><th>Kamera</th><th>Durum</th><th>İsim</th><th>Vardiya</th><th>Güven</th><th title="Bu okuma kaç farklı karede doğrulandı">Doğrulama</th><th>Not</th><th></th></tr></thead>
+          <tbody>${satirlar || "<tr><td colspan='11' class='text-center text-muted'>Kayıt yok</td></tr>"}</tbody>
         </table>
       </div>
       <div class="d-flex gap-2 mt-2 flex-wrap">
@@ -2479,6 +2508,10 @@ async function plakaAnalizAc(plaka) {
                 <option value="giris">Giriş</option>
                 <option value="cikis">Çıkış</option>
               </select>
+            </div>
+            <div class="col">
+              <label class="form-label small mb-0">Misafir Adı Soyadı (opsiyonel)</label>
+              <input type="text" id="analizManuelMisafirAdi" class="form-control form-control-sm" maxlength="100" placeholder="Örn. Ahmet Yılmaz">
             </div>
             <div class="col">
               <label class="form-label small mb-0">Not</label>
@@ -2508,6 +2541,7 @@ async function plakaAnalizAc(plaka) {
             plaka_no: v.plaka_no,
             kamera_id: "PANEL-MANUEL",
             yon: document.getElementById("analizManuelYon").value,
+            misafir_adi: document.getElementById("analizManuelMisafirAdi").value || null,
             not_metni: document.getElementById("analizManuelNot").value || null,
           }),
         });

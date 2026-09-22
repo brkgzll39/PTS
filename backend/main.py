@@ -134,6 +134,11 @@ def _veritabani_migrasyon() -> None:
         f"ALTER TABLE plaka_kayitlari ADD {col_kw}dogrulama_kare_sayisi INTEGER",
         f"ALTER TABLE plaka_kayitlari ADD {col_kw}farkli_okuma_sayisi INTEGER",
         f"ALTER TABLE plaka_kayitlari ADD {col_kw}not_metni {'TEXT' if sqlite_mod else 'NVARCHAR(MAX)'}",
+        # "Misafir Adı Soyadı" (2026-09-22) -- bkz. models.Kayit.misafir_adi'nin
+        # docstring'i. NULL kabul eden, DEFAULT'suz bir metin sütunu olduğu
+        # için (aşağıdaki kisi_id ile aynı gerekçe) burada "WITH VALUES"
+        # ihtiyacı YOK.
+        f"ALTER TABLE plaka_kayitlari ADD {col_kw}misafir_adi VARCHAR(100)",
         f"ALTER TABLE plaka_kayitlari ADD {col_kw}manuel_giris {bool_tip}{bit_sonu}",
         f"ALTER TABLE plaka_kayitlari ADD {col_kw}duzenleyen VARCHAR(80)",
         f"ALTER TABLE plaka_kayitlari ADD {col_kw}duzenleme_tarihi DATETIME",
@@ -1420,6 +1425,42 @@ def _guvenlik_kayit_gorunur_mu(
     else:
         pencereler = _kullanicinin_vardiya_pencereleri(db, kullanici.id, kullanici.vardiya_adi)
     return any(_pencere_icinde_mi(kayit.tarih_saat, baslangic, bitis) for baslangic, bitis in pencereler)
+
+
+def _kayitlara_kisi_adini_ekle(kayitlar: list, db: Session) -> None:
+    """`kayitlar` listesindeki HER kayda, varsa bağlı olduğu Kisi'nin (bkz.
+    Kayit.kisi_id) ad_soyad'ını bellek-içi bir `kisi_adi` özniteliği olarak
+    ekler -- bu bir ORM sütunu DEĞİLDİR, yalnızca bu yanıt için hesaplanıp
+    schemas.KayitCevap.kisi_adi tarafından `from_attributes` ile okunur
+    (öznitelik hiç atanmamış bir Kayit için de alan sorunsuzca varsayılan
+    `None`a düşer).
+
+    2026-09-22 GERÇEK KULLANICI GERİ BİLDİRİMİ: "Kaydı Düzenle" ekranındaki
+    "Kişi eşleştirmesi" alanından bir kişi seçilip kaydedildiğinde,
+    kisi_id/kisi_tip_anlik backend'de doğru güncelleniyordu (bkz.
+    kayit_duzenle) AMA Kayıtlar/Plaka Analizi tablolarının HİÇBİRİ
+    eşleştirilen kişinin ADINI göstermiyordu -- yalnızca TİPİNİ (Abone/
+    Personel/Ziyaretçi rozeti) gösteren "Kişi/Tip" sütunu vardı, bu yüzden
+    kullanıcıya "seçtim ama hiçbir yerde gözükmüyor" gibi görünüyordu; bu
+    yeni alan tam olarak bu boşluğu dolduruyor.
+
+    N+1 sorgudan kaçınmak için (bkz. _kayitlarin_vardiya_adlarini_ekle'deki
+    aynı gerekçe) TÜM ilgili Kişi'ler TEK SEFERDE çekilip bellekte
+    eşleştirilir."""
+    if not kayitlar:
+        return
+    kisi_idler = {k.kisi_id for k in kayitlar if k.kisi_id is not None}
+    if not kisi_idler:
+        for k in kayitlar:
+            k.kisi_adi = None
+        return
+    adlar = dict(
+        db.query(models.Kisi.id, models.Kisi.ad_soyad)
+        .filter(models.Kisi.id.in_(kisi_idler))
+        .all()
+    )
+    for k in kayitlar:
+        k.kisi_adi = adlar.get(k.kisi_id)
 
 
 def _kayitlarin_vardiya_adlarini_ekle(kayitlar: list, db: Session) -> None:
@@ -2909,7 +2950,8 @@ def _kayit_olustur_ve_bildir(db: Session, plaka_no: str, kamera_id: str, yon: st
                               guven_skoru: Optional[float], goruntu_yolu: Optional[str],
                               dogrulama_kare_sayisi: Optional[int] = None,
                               not_metni: Optional[str] = None, manuel_giris: bool = False,
-                              farkli_okuma_sayisi: Optional[int] = None):
+                              farkli_okuma_sayisi: Optional[int] = None,
+                              misafir_adi: Optional[str] = None):
     plaka_no = re.sub(r"[^A-Za-z0-9 ]", "", plaka_no).strip().upper() or "BILINMEYEN"
     kamera_id = re.sub(r"[^A-Za-z0-9 _.\-]", "", str(kamera_id)).strip()[:50] or "KAMERA-1"
 
@@ -2952,6 +2994,7 @@ def _kayit_olustur_ve_bildir(db: Session, plaka_no: str, kamera_id: str, yon: st
     yetki, kisi_id, kisi_tip = _plaka_yetki_kontrol(db, plaka_no)
 
     not_metni_temiz = (not_metni or "").strip() or None
+    misafir_adi_temiz = (misafir_adi or "").strip() or None
     kayit = models.Kayit(
         plaka_no=plaka_no.upper().strip(),
         kamera_id=kamera_id,
@@ -2964,6 +3007,7 @@ def _kayit_olustur_ve_bildir(db: Session, plaka_no: str, kamera_id: str, yon: st
         kisi_tip_anlik=kisi_tip,
         dogrulama_kare_sayisi=dogrulama_kare_sayisi,
         not_metni=not_metni_temiz,
+        misafir_adi=misafir_adi_temiz,
         manuel_giris=manuel_giris,
         farkli_okuma_sayisi=farkli_okuma_sayisi,
     )
@@ -3104,7 +3148,7 @@ def kayit_ekle_manuel(kayit: schemas.KayitManuel, db: Session = Depends(get_db),
     _rol_dogrula(kullanici, ROL_YONETICI, ROL_OPERATOR)
     return _kayit_olustur_ve_bildir(
         db, kayit.plaka_no, kayit.kamera_id, kayit.yon, kayit.guven_skoru, None,
-        not_metni=kayit.not_metni, manuel_giris=True,
+        not_metni=kayit.not_metni, manuel_giris=True, misafir_adi=kayit.misafir_adi,
     )
 
 
@@ -3347,6 +3391,7 @@ def kayitlari_listele(
     # adını(nı) ekler (bkz. _kayitlarin_vardiya_adlarini_ekle) -- bu FİLTREden
     # BAĞIMSIZDIR, filtre uygulanmasa (vardiya_adi=None) bile sütun doludur.
     _kayitlarin_vardiya_adlarini_ekle(kayitlar, db)
+    _kayitlara_kisi_adini_ekle(kayitlar, db)
     return kayitlar
 
 
@@ -3403,6 +3448,7 @@ def olaylari_getir(
     sorgu = _guvenlik_kayit_filtresi_uygula(sorgu, kullanici, db)
     kayitlar = sorgu.order_by(desc(models.Kayit.id)).limit(limit).all()
     _kayitlarin_vardiya_adlarini_ekle(kayitlar, db)
+    _kayitlara_kisi_adini_ekle(kayitlar, db)
     return kayitlar
 
 
@@ -3537,6 +3583,12 @@ def kayit_duzenle(
         if yeni_not:
             _son_not_kaydet(kayit.plaka_no, yeni_not)
 
+    if veri.misafir_adi is not None:
+        yeni_misafir_adi = veri.misafir_adi.strip() or None
+        if yeni_misafir_adi != kayit.misafir_adi:
+            kayit.misafir_adi = yeni_misafir_adi
+            degisti = True
+
     if degisti:
         kayit.duzenleyen = kullanici.kullanici_adi
         kayit.duzenleme_tarihi = datetime.now()
@@ -3663,6 +3715,7 @@ def plaka_analiz(plaka_no: str, db: Session = Depends(get_db), kullanici: models
     # BAĞIMSIZDIR -- etiket yalnızca BİLGİLENDİRME amaçlıdır, hiçbir kaydı
     # gizlemez.
     _kayitlarin_vardiya_adlarini_ekle(kayitlar, db)
+    _kayitlara_kisi_adini_ekle(kayitlar, db)
     kisi = None
     for k in db.query(models.Kisi).filter(models.Kisi.aktif == True).all():  # noqa: E712
         if _plaka_normalize(k.plaka_no) == hedef:
@@ -3701,6 +3754,16 @@ def plaka_analiz(plaka_no: str, db: Session = Depends(get_db), kullanici: models
              "goruntu_yolu": k.goruntu_yolu, "guven_skoru": k.guven_skoru,
              "dogrulama_kare_sayisi": k.dogrulama_kare_sayisi, "farkli_okuma_sayisi": k.farkli_okuma_sayisi,
              "not_metni": k.not_metni,
+             "misafir_adi": k.misafir_adi,
+             # kisi_adi burada da (Kayıtlar tablosundaki gibi) verilmezse
+             # bu ekranın "İsim" sütunu -- _kayitlara_kisi_adini_ekle() bu
+             # kaydın kendisine kisi_adi'yı eklemiş olsa bile -- HER ZAMAN
+             # "-" gösterirdi, çünkü bu dict elle (alan alan) kuruluyor ve
+             # ORM nesnesine sonradan eklenen niteliği burada ayrıca elle
+             # kopyalamak gerekiyor (bkz. kayitIsimGoster() -- 2026-09-22
+             # kullanıcı geri bildirimi: "kişi eşleştirmesi ... seçtim fakat
+             # herhangi bir yerde gözükmüyor").
+             "kisi_adi": getattr(k, "kisi_adi", None),
              "manuel_giris": k.manuel_giris, "kisi_id": k.kisi_id,
              "duzenleyen": k.duzenleyen,
              "duzenleme_tarihi": k.duzenleme_tarihi.isoformat() if k.duzenleme_tarihi else None,

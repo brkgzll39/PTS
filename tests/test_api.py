@@ -4045,3 +4045,113 @@ def test_kisiler_listesinde_ek_plakanin_gecisleri_de_ozete_dahil_olur(client, ye
     assert r3.json()["son_gecis"].startswith("2026-06-01"), (
         "ek plakadan gelen geçiş, geçiş özetine yansımadı"
     )
+
+
+# ------------------------------------------------------------------
+# Misafir adı (misafir_adi) ve kişi eşleştirmesi görünürlüğü (kisi_adi)
+# (2026-09-22 kullanıcı geri bildirimi): "gelen tüm araçların bu ekranda
+# misafirse de isim soyisimlerini kaydetmek için bir sütun'a daha ihtiyacım
+# var bir de bu son eklemiş olduğum patch ile kişi eşleştirmesi Örn: Hasan
+# ÇETİN seçtim fakat herhangi bir yerde gözükmüyor olduğu"
+# ------------------------------------------------------------------
+
+def test_kayit_ekle_misafir_adi_kaydeder_ve_dondurur(client, operator_header):
+    """POST /kayitlar ile gönderilen misafir_adi kalıcı olarak saklanmalı ve
+    KayitCevap içinde geri dönmeli -- kisi_id atanmamış (Kişi tablosuna
+    bağlı olmayan) bir misafir geçişi için tek isim kaynağı budur."""
+    r = client.post("/kayitlar", json={
+        "plaka_no": "34 MSF 01", "kamera_id": "TEST", "yon": "giris",
+        "misafir_adi": "Ahmet Yılmaz",
+    }, headers=operator_header)
+    assert r.status_code == 200, r.text
+    veri = r.json()
+    assert veri["misafir_adi"] == "Ahmet Yılmaz"
+    # Kişiye bağlı olmadığı için kisi_adi bu kayıtta boş kalmalı.
+    assert veri["kisi_adi"] is None
+
+
+def test_kayit_duzenle_misafir_adi_gunceller(client, operator_header):
+    """PATCH /kayitlar/{id} ile misafir_adi, not_metni ile AYNI şekilde
+    (yalnızca gönderildiğinde) güncellenebilmeli."""
+    r = client.post("/kayitlar", json={"plaka_no": "34 MSF 02", "kamera_id": "TEST", "yon": "giris"},
+                     headers=operator_header)
+    assert r.status_code == 200, r.text
+    kayit_id = r.json()["id"]
+    assert r.json()["misafir_adi"] is None
+
+    r2 = client.patch(f"/kayitlar/{kayit_id}", json={"misafir_adi": "Mehmet Demir"}, headers=operator_header)
+    assert r2.status_code == 200, r2.text
+    assert r2.json()["misafir_adi"] == "Mehmet Demir"
+
+    # Boş string gönderilirse (kullanıcı alanı temizlerse) None'a dönmeli --
+    # not_metni'nin aynı davranışıyla tutarlı (bkz. kayit_duzenle'deki
+    # `.strip() or None`).
+    r3 = client.patch(f"/kayitlar/{kayit_id}", json={"misafir_adi": "   "}, headers=operator_header)
+    assert r3.status_code == 200, r3.text
+    assert r3.json()["misafir_adi"] is None
+
+
+def test_kayit_duzenle_kisi_eslestirince_kisi_adi_listede_ve_analizde_gorunur(client, operator_header, yetkili_header):
+    """Kök neden testi -- kullanıcının tam olarak yaşadığı senaryo:
+    "Kayıt Düzenle" ekranından bir kayda "Kişi eşleştirmesi" (kisi_id) ile
+    kayıtlı bir kişi bağlanınca, o kişinin adı (kisi_adi) hem GET /kayitlar
+    (Kayıtlar ana tablosu) hem de GET /kayitlar/analiz/{plaka} (Plaka
+    Analizi geçmiş tablosu) yanıtlarında görünmeli -- daha önce HİÇBİRİNDE
+    görünmüyordu (bkz. main.py::_kayitlara_kisi_adini_ekle)."""
+    rk = client.post("/kisiler", json={
+        "ad_soyad": "Hasan ÇETİN", "plaka_no": "34 HSC 09", "tip": "abone",
+    }, headers=yetkili_header)
+    assert rk.status_code == 200, rk.text
+    kisi_id = rk.json()["id"]
+
+    r = client.post("/kayitlar", json={"plaka_no": "34 MSF 03", "kamera_id": "TEST", "yon": "giris"},
+                     headers=operator_header)
+    assert r.status_code == 200, r.text
+    kayit_id = r.json()["id"]
+    assert r.json()["kisi_adi"] is None
+
+    r2 = client.patch(f"/kayitlar/{kayit_id}", json={"kisi_id": kisi_id}, headers=operator_header)
+    assert r2.status_code == 200, r2.text
+    assert r2.json()["kisi_adi"] == "Hasan ÇETİN"
+
+    # GET /kayitlar (Kayıtlar ana tablosu) -- kişi eşleştirmesi burada da
+    # görünmeli.
+    r3 = client.get("/kayitlar", params={"arama": "34 MSF 03"}, headers=yetkili_header)
+    assert r3.status_code == 200, r3.text
+    kayit_listede = next(k for k in r3.json() if k["id"] == kayit_id)
+    assert kayit_listede["kisi_adi"] == "Hasan ÇETİN", (
+        "Kişi eşleştirmesi yapılan kaydın adı Kayıtlar tablosunda görünmüyor"
+    )
+
+    # GET /kayitlar/analiz/{plaka} (Plaka Analizi geçmiş tablosu) -- aynı
+    # bilgi burada da (son_kayitlar içinde) görünmeli.
+    r4 = client.get("/kayitlar/analiz/34 MSF 03", headers=operator_header)
+    assert r4.status_code == 200, r4.text
+    analiz_kaydi = next(k for k in r4.json()["son_kayitlar"] if k["id"] == kayit_id)
+    assert analiz_kaydi["kisi_adi"] == "Hasan ÇETİN", (
+        "Kişi eşleştirmesi yapılan kaydın adı Plaka Analizi tablosunda görünmüyor"
+    )
+
+
+def test_kayit_duzenle_kisi_id_temizlenince_kisi_adi_kaybolur_misafir_adi_kalir(client, operator_header, yetkili_header):
+    """Bir kayıttaki kişi eşleştirmesi kaldırılırsa (kisi_id_temizle=True),
+    kisi_adi de kaybolmalı -- ama aynı kayda ayrıca girilmiş misafir_adi
+    (varsa) etkilenmemeli, çünkü ikisi ayrı alanlardır."""
+    rk = client.post("/kisiler", json={
+        "ad_soyad": "Geçici Eşleşme", "plaka_no": "34 GEC 10", "tip": "abone",
+    }, headers=yetkili_header)
+    kisi_id = rk.json()["id"]
+
+    r = client.post("/kayitlar", json={
+        "plaka_no": "34 MSF 04", "kamera_id": "TEST", "yon": "giris",
+        "misafir_adi": "Yedek İsim",
+    }, headers=operator_header)
+    kayit_id = r.json()["id"]
+
+    r2 = client.patch(f"/kayitlar/{kayit_id}", json={"kisi_id": kisi_id}, headers=operator_header)
+    assert r2.json()["kisi_adi"] == "Geçici Eşleşme"
+
+    r3 = client.patch(f"/kayitlar/{kayit_id}", json={"kisi_id_temizle": True}, headers=operator_header)
+    assert r3.status_code == 200, r3.text
+    assert r3.json()["kisi_adi"] is None
+    assert r3.json()["misafir_adi"] == "Yedek İsim"
