@@ -3782,6 +3782,94 @@ def test_kayitlar_vardiya_adi_filtresi_dogru_kayitlari_getirir(client, yetkili_h
     del a_header  # yalnızca hesabı oluşturmak için gerekliydi
 
 
+def test_kayitlar_vardiya_adi_filtresi_guvenlik_hesabi_kendi_disindaki_vardiyayi_da_bulur(client, yetkili_header):
+    """GERÇEK ÜRETİMDE BULUNAN HATA (2026-09-22, ekran görüntüleriyle
+    bildirildi): yukarıdaki test (test_kayitlar_vardiya_adi_filtresi_dogru_
+    kayitlari_getirir) bu filtreyi YALNIZCA kısıtlamasız bir `yetkili_header`
+    (yönetici) ile test ediyordu -- bu rol için _guvenlik_kayit_filtresi_
+    uygula zaten no-op olduğundan, testin kendisi asıl üretim hatasını hiç
+    yakalayamıyordu. Gerçek hata SADECE bir GÜVENLİK hesabı KENDİ vardiyası
+    DIŞINDA bir vardiyayı bu filtreyle ararsa ortaya çıkıyordu: kendi vardiya
+    penceresi kısıtlaması ile "Vardiya" filtresi ANDlanıyor, iki farklı
+    vardiyanın pencereleri çakışmadığı için sonuç HER ZAMAN boş dönüyordu --
+    kullanıcı raporu tam olarak buydu ("A" hesabı "D" filtresini seçince
+    "Kayıt bulunamadı", plaka yazsa bile).
+
+    Bu test doğrudan o senaryoyu kurar: "A" vardiyasındaki bir güvenlik
+    hesabı, "D" vardiyasının oturumu SIRASINDA oluşmuş bir kaydı, hem
+    plakasız HEM DE plaka ile (kullanıcının bildirdiği ikinci belirti) "D"
+    filtresiyle bulabilmeli; kendi ("A") vardiyasını filtrelerken ise o
+    kaydı GÖRMEMELİ (çapraz filtre sınırsız bir görünürlük açığına
+    dönüşmemeli, yalnızca SEÇİLEN vardiyayı göstermeli)."""
+    _, a_header = _rbac_guvenlik_kullanici_olustur_vardiyali(client, yetkili_header, "A")
+    _rbac_guvenlik_kullanici_olustur_vardiyali(client, yetkili_header, "D")  # "D" oturumunu açar
+
+    r1 = client.post("/kayitlar/otomatik", data={
+        "plaka_no": "34 XVD 01", "kamera_id": "KAM-1", "yon": "giris", "guven_skoru": 0.99,
+    })
+    assert r1.status_code == 200, r1.text
+
+    # "A" hesabı, "D" filtresiyle (plakasız) bu kaydı bulabilmeli.
+    r_d_plakasiz = client.get("/kayitlar", params={"vardiya_adi": "D"}, headers=a_header)
+    assert r_d_plakasiz.status_code == 200, r_d_plakasiz.text
+    assert any(k["plaka_no"] == "34 XVD 01" for k in r_d_plakasiz.json()), (
+        "güvenlik hesabı KENDİ vardiyası dışındaki bir vardiyayı filtreleyince "
+        "boş dönmemeli -- iki filtre birbirini ANDlamamalı"
+    )
+
+    # AYNI şey plaka filtresiyle BİRLİKTE de çalışmalı (kullanıcının ikinci belirtisi).
+    r_d_plakali = client.get(
+        "/kayitlar", params={"plaka": "34 XVD 01", "vardiya_adi": "D"}, headers=a_header,
+    )
+    assert r_d_plakali.status_code == 200, r_d_plakali.text
+    assert len(r_d_plakali.json()) == 1
+    assert r_d_plakali.json()[0]["vardiya_adi"] == "D"
+
+    # Sayfalama sayacı (/kayitlar/sayfa-bilgisi) da AYNI şekilde tutarlı olmalı.
+    r_sayfa = client.get(
+        "/kayitlar/sayfa-bilgisi", params={"plaka": "34 XVD 01", "vardiya_adi": "D"}, headers=a_header,
+    )
+    assert r_sayfa.status_code == 200, r_sayfa.text
+    assert r_sayfa.json()["toplam"] == 1
+
+    # Sınırsız bir görünürlük açığı DEĞİL: kendi ("A") vardiyasıyla filtrelerken bu kayıt GÖRÜNMEMELİ.
+    r_a = client.get(
+        "/kayitlar", params={"plaka": "34 XVD 01", "vardiya_adi": "A"}, headers=a_header,
+    )
+    assert r_a.status_code == 200, r_a.text
+    assert r_a.json() == []
+
+
+def test_disa_aktar_pdf_kayit_detay_vardiya_adi_filtresiyle_baska_vardiyadan_izin_verir(client, yetkili_header):
+    """İkinci, ilişkili GERÇEK ÜRETİM hatası: yukarıdaki listede "D" filtresiyle
+    görünür hale gelen bir kaydı, kullanıcı satırdaki "PDF indir" düğmesiyle
+    indirmeye çalışınca (bkz. app.js::kayitPdfIndir, artık aynı filtre
+    değerini bu uca da iletiyor) HÂLÂ 403 alıyordu -- çünkü tekil kayıt
+    görünürlüğü (_guvenlik_kayit_gorunur_mu) `vardiya_adi` parametresini hiç
+    bilmiyor, yalnızca kullanıcının KENDİ vardiya penceresine bakıyordu.
+    `test_disa_aktar_pdf_kayit_detay_vardiya_disinda_403_doner` bu ucun
+    varsayılan (parametre olmadan) davranışının BOZULMADIĞINI zaten
+    doğruluyor; bu test yeni `vardiya_adi` parametresinin gerçekten izin
+    verdiğini doğrular."""
+    _, a_header = _rbac_guvenlik_kullanici_olustur_vardiyali(client, yetkili_header, "A")
+    _rbac_guvenlik_kullanici_olustur_vardiyali(client, yetkili_header, "D")
+
+    r1 = client.post("/kayitlar/otomatik", data={
+        "plaka_no": "34 XVD 02", "kamera_id": "KAM-1", "yon": "giris", "guven_skoru": 0.99,
+    })
+    assert r1.status_code == 200, r1.text
+    r2 = client.get("/kayitlar", params={"plaka": "34 XVD 02", "vardiya_adi": "D"}, headers=a_header)
+    kayit_id = r2.json()[0]["id"]
+
+    # `vardiya_adi` OLMADAN hâlâ 403 (varsayılan/eski davranış korunuyor).
+    r3 = client.get(f"/disa-aktar/pdf/kayit/{kayit_id}", headers=a_header)
+    assert r3.status_code == 403, r3.text
+
+    # `vardiya_adi=D` İLE artık izin verilmeli (listede zaten görünüyordu).
+    r4 = client.get(f"/disa-aktar/pdf/kayit/{kayit_id}", params={"vardiya_adi": "D"}, headers=a_header)
+    assert r4.status_code == 200, r4.text
+
+
 def test_plaka_analizinde_vardiya_adi_alani_dolar(client, yetkili_header):
     """"plaka arayınca karşısına kimin vardiyasında girip çıktığı
     gözükebilsin" talebi -- bkz. main.py::plaka_analiz, son_kayitlar[].

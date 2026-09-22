@@ -1304,8 +1304,16 @@ def _vardiya_adi_filtresi_uygula(sorgu, vardiya_adi: Optional[str], db: Session)
     `_guvenlik_kayit_filtresi_uygula`'daki GÖRÜNÜRLÜK kısıtlamasından
     BAĞIMSIZDIR: rol ne olursa olsun (kullanıcı talebi: "Tüm Güvenlik
     Personeli kayıtlar ekranından A B C D Vardiyalarında geçen araçları
-    filtreleyip ... arayabilsin") çağrılabilir, İKİSİ DE (görünürlük +
-    bu filtre) AYNI ANDA uygulanabilir ve birbirini SINIRLAR (AND).
+    filtreleyip ... arayabilsin") çağrılabilir.
+
+    ÖNEMLİ (2026-09-22 düzeltmesi, bkz. _guvenlik_kayit_filtresi_uygula'nın
+    `vardiya_penceresini_atla` parametresinin docstring'i): bu fonksiyon
+    kendisi HER ZAMAN sadece BU filtreyi uygular; çağıran taraf (bkz.
+    kayitlari_listele/kayitlar_sayfa_bilgisi), `vardiya_adi` doluysa
+    `_guvenlik_kayit_filtresi_uygula`'daki KENDİ vardiya penceresi
+    kısıtlamasını AYRICA atlamalıdır -- aksi halde iki filtre birbirini
+    neredeyse her zaman boşa çıkaran bir AND oluşturur (iki farklı vardiyanın
+    pencereleri tanım gereği çakışmaz).
 
     `vardiya_adi` (zaten `_vardiya_adi_normalize` ile normalize edilmiş
     olmalı) boş/None ise sorgu DEĞİŞMEDEN döner. O isimde HİÇ vardiya
@@ -1320,7 +1328,7 @@ def _vardiya_adi_filtresi_uygula(sorgu, vardiya_adi: Optional[str], db: Session)
     return sorgu.filter(_pencerelerden_or_kosulu(pencereler))
 
 
-def _guvenlik_kayit_filtresi_uygula(sorgu, kullanici: models.Kullanici, db: Session):
+def _guvenlik_kayit_filtresi_uygula(sorgu, kullanici: models.Kullanici, db: Session, vardiya_penceresini_atla: bool = False):
     """Verilen SQLAlchemy sorgusuna İKİ BAĞIMSIZ kayıt görünürlüğü
     kısıtlamasını birlikte uygular:
 
@@ -1348,8 +1356,30 @@ def _guvenlik_kayit_filtresi_uygula(sorgu, kullanici: models.Kullanici, db: Sess
 
     İkisi de geçerli değilse (izleyici/operatör/yönetici, kısıtlamasız
     güvenlik) sorgu değişmeden döner.
-    """
-    if kullanici.rol == ROL_GUVENLIK:
+
+    `vardiya_penceresini_atla=True` (2026-09-22 GERÇEK ÜRETİMDE BULUNAN HATA
+    düzeltmesi): çağıran taraf AYRICA açık bir "Vardiya" adı filtresi (bkz.
+    _vardiya_adi_filtresi_uygula) uyguluyorsa, yukarıdaki (1) numaralı KENDİ
+    vardiya penceresi kısıtlaması TAMAMEN ATLANIR. Önceden bu iki filtre HER
+    ZAMAN ANDlanıyordu: "kayıt BENİM vardiya penceremde OLMALI" VE "kayıt
+    filtre olarak seçilen (BAŞKA olabilecek) bir vardiyanın penceresinde
+    OLMALI" -- iki FARKLI adlandırılmış vardiyanın pencereleri (tanım gereği,
+    aynı anda nöbet tutmadıkları sürece) neredeyse hiç çakışmadığından, bu AND
+    neredeyse HER ZAMAN boş sonuç veriyordu. Kullanıcı raporu (2026-09-22,
+    ekran görüntüleriyle): "A" vardiyasındaki bir güvenlik hesabı Kayıtlar
+    ekranındaki "Vardiya" filtresini "D" olarak seçip aratınca (plakasız
+    aratınca bile) "Kayıt bulunamadı" dönüyordu -- oysa gerçekten "D"
+    vardiyasına ait bir kayıt VARDI (kısıtlamasız bir görünümde ya da "D"
+    vardiyasının KENDİ hesabıyla aratılınca doğru görünüyordu). Bu, filtrenin
+    VAR OLMA amacına (yukarıdaki kullanıcı talebi: "Tüm Güvenlik Personeli
+    ... A B C D Vardiyalarında geçen araçları filtreleyip ... arayabilsin")
+    doğrudan aykırıydı -- bu filtrenin amacı TAM OLARAK kendi vardiya
+    kısıtlamasını GEÇİCİ olarak AŞMAKTI, ona ek bir kısıtlama eklemek değil.
+    KAMERA/NOKTA erişim kısıtlaması (2 numaralı madde) bundan ETKİLENMEZ --
+    bu, vardiya zamanlamasından bağımsız gerçek bir fiziksel erişim sınırı
+    olduğu için açık bir vardiya filtresiyle birlikte de HER ZAMAN
+    uygulanmaya devam eder."""
+    if kullanici.rol == ROL_GUVENLIK and not vardiya_penceresini_atla:
         pencereler = _kullanicinin_vardiya_pencereleri(db, kullanici.id, kullanici.vardiya_adi)
         if not pencereler:
             sorgu = sorgu.filter(false())
@@ -1361,17 +1391,34 @@ def _guvenlik_kayit_filtresi_uygula(sorgu, kullanici: models.Kullanici, db: Sess
     return sorgu
 
 
-def _guvenlik_kayit_gorunur_mu(kayit: "models.Kayit", kullanici: models.Kullanici, db: Session) -> bool:
+def _guvenlik_kayit_gorunur_mu(
+    kayit: "models.Kayit", kullanici: models.Kullanici, db: Session, vardiya_adi_filtresi: Optional[str] = None,
+) -> bool:
     """Tek bir Kayit'in (ör. `/disa-aktar/pdf/kayit/{id}` gibi tekil dışa
     aktarma uçlarında) bu kullanıcı için görünür olup olmadığını kontrol eder
     -- `_guvenlik_kayit_filtresi_uygula` ile AYNI iki kısıtlamayı (vardiya
-    penceresi + kamera erişimi) tek bir kayda uygular."""
+    penceresi + kamera erişimi) tek bir kayda uygular.
+
+    `vardiya_adi_filtresi` (zaten normalize edilmiş olmalı -- bkz.
+    _vardiya_adi_normalize): Kayıtlar ekranındaki listede kullanıcı açık bir
+    "Vardiya" filtresiyle (ör. kendi vardiyası DIŞINDA bir vardiyayı) bu
+    kaydı zaten görebiliyorsa, o kaydın tekil PDF indirmesi de aynı gerekçeyle
+    (bkz. _guvenlik_kayit_filtresi_uygula'daki `vardiya_penceresini_atla`
+    notu) izin VERMELİDİR -- aksi halde kullanıcı listede gördüğü bir kaydı
+    tıklayıp indiremez, "Bu kayıt vardiyanıza ait değil" hatası alırdı (liste
+    doğru filtrelendikten SONRA bulunan ikinci bir gerçek üretim hatası).
+    Verilirse KENDİ vardiya penceresi kontrolü yerine, kaydın BU vardiya
+    adının (`vardiya_adi_filtresi`) herhangi bir oturum penceresine denk
+    düşüp düşmediği kontrol edilir."""
     izinli_kameralar = _kullanicinin_izinli_kamera_adlari(kullanici)
     if izinli_kameralar is not None and kayit.kamera_id not in izinli_kameralar:
         return False
     if kullanici.rol != ROL_GUVENLIK:
         return True
-    pencereler = _kullanicinin_vardiya_pencereleri(db, kullanici.id, kullanici.vardiya_adi)
+    if vardiya_adi_filtresi:
+        pencereler = _kullanicinin_vardiya_pencereleri(db, None, vardiya_adi_filtresi)
+    else:
+        pencereler = _kullanicinin_vardiya_pencereleri(db, kullanici.id, kullanici.vardiya_adi)
     return any(_pencere_icinde_mi(kayit.tarih_saat, baslangic, bitis) for baslangic, bitis in pencereler)
 
 
@@ -3191,10 +3238,22 @@ def kayitlari_listele(
         sorgu = sorgu.filter(models.Kayit.tarih_saat <= bitis_siniri)
     # bkz. "GÜVENLİK PERSONELİ VARDİYA FİLTRESİ" notu: güvenlik rolü dışındaki
     # kullanıcılar için bu çağrı sorguyu DEĞİŞTİRMEDEN döner.
-    sorgu = _guvenlik_kayit_filtresi_uygula(sorgu, kullanici, db)
+    #
+    # 2026-09-22 KRİTİK HATA DÜZELTMESİ: `vardiya_adi` (aşağıdaki "Vardiya"
+    # ekran filtresi) doluysa, buradaki KENDİ vardiya penceresi kısıtlaması
+    # ATLANIR (`vardiya_penceresini_atla=True`) -- bkz.
+    # _guvenlik_kayit_filtresi_uygula'nın bu parametreye ait docstring'i. Aksi
+    # halde bir güvenlik hesabı "Vardiya" filtresinden KENDİ vardiyası
+    # DIŞINDA bir vardiya seçtiğinde iki kısıtlama birbirini boşa çıkarıyordu
+    # (gerçek üretim raporu: "A" hesabı "D" filtresini seçince "Kayıt
+    # bulunamadı" dönüyordu, oysa gerçek bir "D" kaydı vardı).
+    normalize_edilmis_vardiya_adi = _vardiya_adi_normalize(vardiya_adi)
+    sorgu = _guvenlik_kayit_filtresi_uygula(
+        sorgu, kullanici, db, vardiya_penceresini_atla=bool(normalize_edilmis_vardiya_adi),
+    )
     # "Vardiya" (A/B/C/D) ekran filtresi (2026-09-21) -- yukarıdaki görünürlük
     # kısıtlamasından BAĞIMSIZ, bkz. _vardiya_adi_filtresi_uygula.
-    sorgu = _vardiya_adi_filtresi_uygula(sorgu, _vardiya_adi_normalize(vardiya_adi), db)
+    sorgu = _vardiya_adi_filtresi_uygula(sorgu, normalize_edilmis_vardiya_adi, db)
     toplam = sorgu.count()
     # NOT (2026-09-20): `limit`/`offset` artık yukarıdaki `Query(ge=..., le=...)`
     # ile FastAPI/Pydantic seviyesinde doğrulanıyor -- önceden burada
@@ -3238,8 +3297,17 @@ def kayitlar_sayfa_bilgisi(
     bitis_siniri = _bitis_tarih_filtresi_sinirini_hesapla(bitis)
     if bitis_siniri is not None:
         sorgu = sorgu.filter(models.Kayit.tarih_saat <= bitis_siniri)
-    sorgu = _guvenlik_kayit_filtresi_uygula(sorgu, kullanici, db)
-    sorgu = _vardiya_adi_filtresi_uygula(sorgu, _vardiya_adi_normalize(vardiya_adi), db)
+    # bkz. kayitlari_listele'deki AYNI başlıklı 2026-09-22 notu -- bu uç nokta
+    # sayfalama sayacını /kayitlar ile AYNI filtrelerden hesapladığı için,
+    # burada da "Vardiya" filtresi verilince kendi vardiya penceresi
+    # kısıtlaması atlanmalı, aksi halde sayaç 0 gösterip liste ile
+    # tutarsızlaşabilirdi (ya da tam tersi, ama bu düzeltmeden önce ikisi de
+    # 0'da tutarlıydı çünkü ikisi de AYNI hatayı taşıyordu).
+    normalize_edilmis_vardiya_adi = _vardiya_adi_normalize(vardiya_adi)
+    sorgu = _guvenlik_kayit_filtresi_uygula(
+        sorgu, kullanici, db, vardiya_penceresini_atla=bool(normalize_edilmis_vardiya_adi),
+    )
+    sorgu = _vardiya_adi_filtresi_uygula(sorgu, normalize_edilmis_vardiya_adi, db)
     toplam = sorgu.count()
     sayfa_sayisi = max(1, -(-toplam // max(1, limit)))
     return {"toplam": toplam, "sayfa_sayisi": sayfa_sayisi, "limit": limit}
@@ -3864,14 +3932,22 @@ def kayitlari_pdf_indir(
 
 @app.get("/disa-aktar/pdf/kayit/{kayit_id}")
 def kayit_detay_pdf_indir(
-    kayit_id: int, db: Session = Depends(get_db),
+    kayit_id: int, vardiya_adi: Optional[str] = None, db: Session = Depends(get_db),
     kullanici: models.Kullanici = Depends(_personel_girisi_gerekli),
 ):
-    """Tek bir kaydı, araç görseliyle birlikte PDF olarak indirir."""
+    """Tek bir kaydı, araç görseliyle birlikte PDF olarak indirir.
+
+    `vardiya_adi` (2026-09-22 düzeltmesi): Kayıtlar ekranındaki "Vardiya"
+    filtresiyle (bkz. kayitlari_listele) bu kaydı görüp "PDF indir"e basan
+    bir güvenlik kullanıcısı, filtre KENDİ vardiyası DIŞINDA bir vardiyaya
+    aitse bu parametre olmadan 403 alırdı -- listede görebildiği bir kaydı
+    indiremiyordu (bkz. _guvenlik_kayit_gorunur_mu'nun `vardiya_adi_filtresi`
+    parametresinin docstring'i). Frontend, o an ekrandaki "Vardiya" filtre
+    değerini buraya da iletir (bkz. app.js::kayitPdfIndir)."""
     kayit = db.query(models.Kayit).filter(models.Kayit.id == kayit_id).first()
     if not kayit:
         raise HTTPException(404, "Kayıt bulunamadı")
-    if not _guvenlik_kayit_gorunur_mu(kayit, kullanici, db):
+    if not _guvenlik_kayit_gorunur_mu(kayit, kullanici, db, vardiya_adi_filtresi=_vardiya_adi_normalize(vardiya_adi)):
         raise HTTPException(403, "Bu kayıt vardiyanıza ait değil")
     dosya_yolu = os.path.join(DISA_AKTAR_KLASORU, f"kayit_{kayit_id}.pdf")
     pdf_export.kayit_detay_pdf_olustur(kayit, dosya_yolu)

@@ -1766,7 +1766,18 @@ function disaAktar(tur) {
 }
 
 function kayitPdfIndir(id) {
-  window.open(indirmeUrlOlustur(`/disa-aktar/pdf/kayit/${id}`), "_blank");
+  // 2026-09-22 KRİTİK HATA DÜZELTMESİ: bu düğme yalnızca Kayıtlar ekranının
+  // ANA tablosunda var, yani ekrandaki "Vardiya" filtresi (#filtreVardiyaAdi)
+  // o an aktifse, bu kayıt kullanıcıya TAM OLARAK o filtre sayesinde
+  // görünüyordur (bkz. backend/main.py::kayit_detay_pdf_indir'in
+  // `vardiya_adi` parametresinin docstring'i) -- bu değer buraya da
+  // iletilmezse, kendi vardiyası DIŞINDA bir vardiyayı filtreleyen bir
+  // güvenlik kullanıcısı listede gördüğü bir kaydı indirmeye çalışınca
+  // "Bu kayıt vardiyanıza ait değil" (403) hatası alıyordu.
+  const params = new URLSearchParams();
+  const vardiyaAdi = document.getElementById("filtreVardiyaAdi")?.value;
+  if (vardiyaAdi) params.set("vardiya_adi", vardiyaAdi);
+  window.open(indirmeUrlOlustur(`/disa-aktar/pdf/kayit/${id}`, params), "_blank");
 }
 
 // Bir geçiş kaydını (plaka, yön, durum, kişi eşleştirmesi, not) panelden tam
