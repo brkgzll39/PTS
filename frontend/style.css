@@ -31,6 +31,11 @@ body {
   min-height: 54px;
   box-shadow: 0 2px 8px rgba(31, 43, 58, .2);
 }
+/* 2026-09-22 kullanıcı isteği: navbar'daki "TPAO PTS Canlı İzleme" metni
+   yerine kurumsal logo -- logo beyaz zeminli olduğu için koyu navbar'da
+   okunaklı kalması için küçük bir beyaz rozet içine alındı. */
+.navbar-logo-rozeti { display: inline-flex; align-items: center; background: #fff; border-radius: 5px; padding: .22rem .6rem; }
+.navbar-logo-rozeti img { height: 42px; width: auto; display: block; }
 
 .app-layout { display: flex; min-height: calc(100vh - 54px); }
 .pts-sidebar { width: 238px; flex: 0 0 238px; background: #fff; border-right: 1px solid #d2dae2; padding: 1rem .75rem; display: flex; flex-direction: column; }
