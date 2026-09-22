@@ -812,6 +812,19 @@ async function alarmOkundu(id) {
 async function olayDetayAc(id) {
   const kayit = sonKayitlarCache.find(item => item.id === id);
   if (!kayit) return;
+  // 2026-09-22 KRİTİK HATA DÜZELTMESİ: bu fonksiyon YENİ bir SSE bildirimine
+  // tıklanınca da çağrılıyor (bkz. sseBaslat içindeki toastGoster(...,
+  // () => olayDetayAc(kayit.id)) çağrısı). #gorselBuyutModal, kendisini
+  // AÇTIĞI modalin (bu modal dahil) önünde görünmesi için bilinçli olarak
+  // her zaman en yüksek z-index'e sahip (bkz. style.css notu, 2026-09-22
+  // önceki düzeltme). Ama bu SABİT yüksek z-index, o lightbox açıkken
+  // SONRADAN gösterilen bu modali de (yeni aracın bilgisiyle güncellenmiş
+  // olsa bile) görsel olarak KAPATIYORDU -- kullanıcı bildirimine tıklamasına
+  // rağmen ekranda eski, artık geçersiz büyütülmüş fotoğraf kalmaya devam
+  // ediyordu, yeni aracı görmek için onu elle kapatması gerekiyordu. Bu
+  // modal her (yeniden) gösterildiğinde, eğer lightbox hâlâ açıksa önce onu
+  // kapatıyoruz ki altındaki (az önce güncellenen) bu modal görünür olsun.
+  bootstrap.Modal.getInstance(document.getElementById("gorselBuyutModal"))?.hide();
   const detay = kayit.kisi_id ? await apiCagir(`/kisiler/${kayit.kisi_id}`).catch(() => null) : null;
   // Kameranın bağlı olduğu erişim noktasını (ve varsa sitesini/bariyerini) bul —
   // kameralar ile siteler/bariyerler arasındaki tek bağlantı Nokta kaydıdır.
@@ -844,12 +857,19 @@ async function olayDetayAc(id) {
   document.getElementById("olayModalKisi").textContent = detay?.ad_soyad || "Tanımsız araç";
   document.getElementById("olayModalDaire").textContent = detay?.daire_departman || "-";
   document.getElementById("olayModalAracTipi").textContent = detay ? (detay.tip === "ziyaretci" ? "Ziyaretçi" : "Tanımlı") : "Tanımsız araç";
-  document.getElementById("olayModalGuven").textContent = kayit.guven_skoru ? `${(kayit.guven_skoru * 100).toFixed(0)}%` : "-";
-  document.getElementById("olayModalDuzeltme").textContent = kayit.ham_plaka_metni
-    ? `${kayit.ham_plaka_metni} → ${kayit.plaka_no} (bilinen plakaya göre düzeltildi)`
-    : "-";
+  // 2026-09-22: kullanıcı isteği -- "OCR güven skoru gibi şeyleri görmeme
+  // gerek yok, onların yerine Not yazınca not bilgisi eklensin". GÜVEN
+  // SKORU/OCR DÜZELTMESİ alanları (operasyonel personel için anlamsız, teknik
+  // OCR ayrıntıları) kaldırıldı; yerine kaydın NOT alanı (Kayit.not_metni)
+  // gösteriliyor. Bu bilgiler tamamen kaybolmuyor -- Excel/PDF dışa aktarımda
+  // ve "Kaydı Düzenle" ekranında hâlâ mevcut, yalnızca bu hızlı-bakış
+  // modalinden çıkarıldı.
+  const notEl = document.getElementById("olayModalNot");
+  notEl.textContent = kayit.not_metni || "-";
+  notEl.title = kayit.not_metni || "";
   _olayModalBariyerButonunuAyarla(nokta);
   _olayModalAnalizButonunuAyarla(kayit);
+  _olayModalNotButonunuAyarla(kayit);
   await _ziyaretciGirisiKutusunuAyarla(kayit, nokta);
   bootstrap.Modal.getOrCreateInstance(document.getElementById("olayDetayModal")).show();
 }
@@ -871,6 +891,22 @@ function _olayModalAnalizButonunuAyarla(kayit) {
   btn.onclick = () => {
     bootstrap.Modal.getInstance(document.getElementById("olayDetayModal"))?.hide();
     plakaAnalizAc(kayit.plaka_no);
+  };
+}
+
+// 2026-09-22: "NOT" alanının yanındaki kalem ikonu -- kaydın notunu (ve
+// gerekirse plaka/yön/durum/kişi eşleştirmesini) tam düzenleyebilmek için
+// zaten var olan "Kaydı Düzenle" ekranına (kayitDuzenleAc, main.py::kayit_duzenle)
+// yönlendirir. Yeni bir düzenleme arayüzü İCAT ETMEK yerine mevcut, zaten
+// rol bazlı (data-rol-min="operatör") kısıtlı ve test edilmiş akış yeniden
+// kullanılıyor -- bkz. _olayModalAnalizButonunuAyarla'daki AYNI "önce bu
+// modali kapat, sonra diğerini aç" deseni.
+function _olayModalNotButonunuAyarla(kayit) {
+  const btn = document.getElementById("olayModalNotDuzenleBtn");
+  if (!btn) return;
+  btn.onclick = () => {
+    bootstrap.Modal.getInstance(document.getElementById("olayDetayModal"))?.hide();
+    kayitDuzenleAc(kayit.id);
   };
 }
 
