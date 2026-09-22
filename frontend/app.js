@@ -122,6 +122,29 @@ document.addEventListener("click", (e) => {
     karaListeyeEkleModal(karaEkleEl.dataset.karaEkle);
     return;
   }
+  // 2026-09-22 GERÇEK ÜRETİMDE BULUNAN HATA: Panel'deki "NİZAMİYE DURUMU"
+  // kartlarına (bkz. nizamiyeSemasiniYukle) tıklayınca "Beklenmeyen bir arayüz
+  // hatası oluştu" toast'ı çıkıyordu. Kök neden, o kartların eskiden
+  // `onclick="document.querySelector('[data-target=\\"#canli-sekme\\"]')...`
+  // biçiminde, JS template literal'i içinde \" ile kaçışlanmış bir inline
+  // onclick üretmesiydi -- bu kaçış YALNIZCA JS string literalleri içinde
+  // geçerlidir, HTML attribute değerleri İÇİNDE \" diye bir kaçış YOKTUR (HTML
+  // bunun yerine &quot; kullanır). `innerHTML` bu diziyi HTML olarak
+  // ayrıştırırken onclick attribute'u backslash'ten HEMEN ÖNCEKİ `"`de
+  // kesiliyor, geriye `document.querySelector('[data-target=` gibi eksik/
+  // sözdizimi hatalı bir JS gövdesi kalıyor -- tıklanınca bu, tam olarak
+  // yakalanmamış bir hata olarak patlıyordu. Bu, dosyanın başındaki (satır
+  // ~102) "kullanıcı/kamera verisini asla onclick="..." içine JS string'i
+  // olarak gömme" uyarısıyla AYNI kök nedenin bir başka görünümü -- burada
+  // gömülen veri kullanıcı girdisi değildi ama kaçışlama yine de HTML'de
+  // GEÇERSİZDİ. Düzeltme: kartlar artık düz bir `data-gate-hedef` attribute'u
+  // taşıyor, hedefe geçiş bu delege edilmiş tık dinleyicisi üzerinden (diğer
+  // data-* örüntüleriyle aynı, güvenli yöntemle) yapılıyor.
+  const gateEl = e.target.closest("[data-gate-hedef]");
+  if (gateEl) {
+    sekmeAc(gateEl.dataset.gateHedef);
+    return;
+  }
   // NOT (2026-09-17): burada eskiden `.thumb[data-goruntu-yolu]` seçiciydi.
   // Ancak korumaliGorselleriYukle() bir tabloyu doldurduktan HEMEN SONRA, o
   // görsel yüklenmeyi bile beklemeden `data-goruntu-yolu` attribute'unu DOM'dan
@@ -630,7 +653,7 @@ async function nizamiyeSemasiniYukle() {
         ikon = "bi-exclamation-triangle-fill";
       }
       const yonler = [...new Set(liste.map(k => k.yon === "giris" ? "Giriş" : "Çıkış"))].join(" + ");
-      return `<button type="button" class="gate-card ${durumSinif}" onclick="document.querySelector('[data-target=\\"#canli-sekme\\"]').click()">
+      return `<button type="button" class="gate-card ${durumSinif}" data-gate-hedef="#canli-sekme">
         <div class="gate-dot"></div>
         <div><strong>${escapeHtml(ad)}</strong><span class="gate-status"><i class="bi ${ikon} me-1"></i>${durumMetni}</span><span class="gate-meta">${liste.length} kamera · ${yonler || "-"}</span></div>
       </button>`;
