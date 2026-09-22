@@ -2400,6 +2400,17 @@ def kisi_ekle(kisi: schemas.KisiOlustur, db: Session = Depends(get_db), kullanic
         _gecmis_kayitlari_kisiye_bagla(db, yeni_kisi, kullanici.kullanici_adi)
     except Exception:
         logger.exception("Kişi eklendikten sonra geçmiş kayıtları bağlama başarısız oldu (kişi id=%s)", yeni_kisi.id)
+    # TUTARLILIK DÜZELTMESİ (2026-09-22 kod incelemesi): kayit_duzenle'deki
+    # AYNI kök nedenle (bkz. o fonksiyonun sonundaki not) bu uç nokta da
+    # response_model=KisiCevap'ın ilk_gecis/son_gecis/son_yetki_durumu/
+    # son_not_metni/son_not_ekleyen alanlarını hiç doldurmadan çıplak ORM
+    # nesnesini dönüyordu -- yalnızca GET /kisiler (liste) bunları
+    # _kisilerin_gecis_ozetini_ekle ile dolduruyordu. Yukarıdaki
+    # _gecmis_kayitlari_kisiye_bagla tam da bu kişiye YENİ geçmiş kayıtlar
+    # bağlamış olabileceğinden, bu özet şimdi doldurulmazsa panelin ilk
+    # gösterdiği veri (bir sonraki tam liste yenilemesine kadar) yanlış/eksik
+    # görünürdü.
+    _kisilerin_gecis_ozetini_ekle(db, [yeni_kisi])
     return yeni_kisi
 
 
@@ -2527,6 +2538,9 @@ def kisi_guncelle(kisi_id: int, degisiklik: schemas.KisiGuncelle, db: Session = 
         _gecmis_kayitlari_kisiye_bagla(db, kisi, kullanici.kullanici_adi)
     except Exception:
         logger.exception("Kişi güncellendikten sonra geçmiş kayıtları bağlama başarısız oldu (kişi id=%s)", kisi.id)
+    # TUTARLILIK DÜZELTMESİ (2026-09-22): bkz. kisi_ekle'nin sonundaki AYNI
+    # notun gerekçesi.
+    _kisilerin_gecis_ozetini_ekle(db, [kisi])
     return kisi
 
 
@@ -2719,13 +2733,35 @@ def _plaka_yetki_kontrol(db: Session, plaka_no: str, referans_zaman: Optional[da
         return "suresi_dolmus", kisi.id, kisi.tip
 
     # Saat kısıtlaması
+    #
+    # GÜVENLİK KÖK NEDEN DÜZELTMESİ (2026-09-22 kod incelemesi): bu blok
+    # (ve aşağıdaki gün kısıtlaması bloğu) önceden `except Exception: pass`
+    # kullanıyordu -- yani kısıtlama HESAPLANIRKEN beklenmedik bir hata
+    # oluşursa (ör. ileride eklenebilecek bir toplu içe aktarma yolunun,
+    # pydantic doğrulamasını atlayıp giris_saati_baslangic'e "25:99" gibi
+    # bozuk bir değer yazması), kod sessizce bu try/except'i atlayıp
+    # fonksiyonun sonundaki `return "yetkili", ...`a düşüyordu. Bu, bir
+    # ERİ�ŞİM KONTROL SİSTEMİ için TAM TERS yönde bir hata: bir kısıtlamayı
+    # DEĞERLENDİREMEMEK asla "izin ver" anlamına gelmemeli, "reddet" anlamına
+    # gelmeli (fail-closed, fail-open değil). Bugünkü giriş yolları (pydantic
+    # `pattern=r"^\d{2}:\d{2}$"` -- bkz. schemas.py::KisiOlustur/KisiGuncelle
+    # -- ve yalnızca rakamları süzen izin_verilen_gunler ayrıştırması) bunu
+    # tetiklemeyi zorlaştırıyor, ama sıfır-sessiz-hata ilkesi gereği bu kod
+    # yolu da düzeltildi: artık hem GÜVENLİ tarafa (yetkisiz) düşer hem de
+    # `pass` yerine bir hata logu bırakır (bkz. _iso_tarih_parametresini_coz
+    # docstring'indeki AYNI ilke).
     try:
         if kisi.giris_saati_baslangic and kisi.giris_saati_bitis:
             simdi_hm = simdi.strftime("%H:%M")
             if not (kisi.giris_saati_baslangic <= simdi_hm <= kisi.giris_saati_bitis):
                 return "yetkisiz", None, None
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.error(
+            "Kişi #%s için saat kısıtlaması değerlendirilemedi (giris_saati_baslangic=%r, "
+            "giris_saati_bitis=%r) -- güvenli taraf gereği YETKİSİZ sayıldı: %s",
+            kisi.id, kisi.giris_saati_baslangic, kisi.giris_saati_bitis, exc,
+        )
+        return "yetkisiz", None, None
 
     # Gün kısıtlaması (0=Pazartesi … 6=Pazar)
     try:
@@ -2733,8 +2769,13 @@ def _plaka_yetki_kontrol(db: Session, plaka_no: str, referans_zaman: Optional[da
             izin = {int(g.strip()) for g in kisi.izin_verilen_gunler.split(",") if g.strip().isdigit()}
             if simdi.weekday() not in izin:
                 return "yetkisiz", None, None
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.error(
+            "Kişi #%s için gün kısıtlaması değerlendirilemedi (izin_verilen_gunler=%r) -- "
+            "güvenli taraf gereği YETKİSİZ sayıldı: %s",
+            kisi.id, kisi.izin_verilen_gunler, exc,
+        )
+        return "yetkisiz", None, None
 
     return "yetkili", kisi.id, kisi.tip
 
@@ -3107,6 +3148,16 @@ def _kayit_olustur_ve_bildir(db: Session, plaka_no: str, kamera_id: str, yon: st
     except RuntimeError:
         pass
 
+    # TUTARLILIK DÜZELTMESİ (2026-09-22 kod incelemesi): kayit_duzenle'deki
+    # AYNI kök nedenle -- bu fonksiyon (POST /kayitlar VE POST /kayitlar/
+    # otomatik'in ikisi de buradan geçer) response_model=KayitCevap'ın
+    # kisi_adi/vardiya_adi alanlarını hiç doldurmadan çıplak `kayit`ı
+    # dönüyordu. Örn. manuel olarak zaten kayıtlı bir kişinin plakasını
+    # girdiğinizde (kisi_id backend'de doğru atanır) yanıttaki kisi_adi
+    # yine de None gelirdi -- GET /kayitlar'ın aynı satır için döneceğinden
+    # farklı, tutarsız bir görünüm.
+    _kayitlarin_vardiya_adlarini_ekle([kayit], db)
+    _kayitlara_kisi_adini_ekle([kayit], db)
     return kayit
 
 

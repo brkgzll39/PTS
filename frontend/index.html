@@ -341,7 +341,20 @@
 <div class="modal fade" id="ziyaretciBilgileriModal" tabindex="-1" aria-hidden="true">
   <div class="modal-dialog modal-dialog-centered"><div class="modal-content">
     <div class="modal-header"><h5 class="modal-title"><i class="bi bi-person-plus-fill me-1"></i>Ziyaretçi Girişi</h5><button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Kapat"></button></div>
-    <div class="modal-body">
+    <!-- 2026-09-22 GÜVENLİK/TUTARLILIK DÜZELTMESİ: bu modal önceden hiçbir
+         data-rol-min taşımıyordu -- yalnızca Panel'deki tek başlatma
+         düğmesi (data-rol-min="operatör" data-rol-davranis="gizle") bir
+         izleyici/sakin'in modali AÇMASINI engelliyordu. Bu, uygulamadaki
+         diğer TÜM operatör-kısıtlı akışların (ör. #ziyaretciGirisiKutusu,
+         kayitDuzenleForm) izlediği "kapsayıcının KENDİSİ de gizlenir/
+         devre dışı bırakılır" desenine aykırıydı -- yalnızca tek bir
+         başlatma noktasına güvenmek yerine SAVUNMA DERİNLİĞİ (defense in
+         depth) sağlanır: ileride bu modali açan başka bir yol eklenirse
+         (ör. bir refactor) bu ikinci katman hâlâ korur. Not: backend zaten
+         bağımsız olarak _rol_dogrula ile bu akışın kullandığı üç uç
+         noktayı da (POST/PATCH /kayitlar, POST /bariyer/{id}/ac) korur --
+         bu yalnızca istemci tarafında tutarlı bir ek katmandır. -->
+    <div class="modal-body" data-rol-min="operatör" data-rol-davranis="gizle">
       <div class="mb-2">
         <label class="form-label small" for="zbPlaka">Plaka</label>
         <input type="text" class="form-control" id="zbPlaka" placeholder="34 ABC 123" required>
@@ -369,7 +382,7 @@
     </div>
     <div class="modal-footer">
       <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Kapat</button>
-      <button type="button" class="btn btn-success" id="zbKaydetBtn" onclick="ziyaretciBilgileriKaydet()"><i class="bi bi-unlock-fill"></i> Kaydet ve Bariyeri Aç</button>
+      <button type="button" class="btn btn-success" id="zbKaydetBtn" data-rol-min="operatör" data-rol-davranis="gizle" onclick="ziyaretciBilgileriKaydet()"><i class="bi bi-unlock-fill"></i> Kaydet ve Bariyeri Aç</button>
     </div>
   </div></div>
 </div>

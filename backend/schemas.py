@@ -332,7 +332,18 @@ class KaraListesiCevap(BaseModel):
 
 
 class KayitManuel(BaseModel):
-    plaka_no: str
+    # GÜVENLİK/KARARLILIK DÜZELTMESİ (2026-09-22 kod incelemesi): bu alan
+    # önceki gibi çıplak `str` bırakılmıştı -- diğer TÜM plaka_no alanlarının
+    # (KisiOlustur, KisiGuncelle, KisiPlakaOlustur, KaraListesiOlustur) aksine
+    # ne bir uzunluk sınırı ne de plaka_normalize() doğrulayıcısı vardı.
+    # main.py'deki manuel `re.sub(...).strip().upper()` temizliği geçersiz
+    # karakterleri atıyor ama ASLA KISALTMIYOR -- gerçek üretim ortamı olan
+    # SQL Server'da (bkz. README, models.py::plaka_no = Column(String(15)))
+    # 15 karakterden uzun bir NVARCHAR(15) INSERT'i, burada YAKALANMAYAN bir
+    # veritabanı hatasıyla 500'e düşer: sıradan bir yapıştırma/yazım hatası,
+    # "kayıt eklenemedi" gibi temiz bir 400 yerine opak bir sunucu hatasına
+    # dönüşürdü. Artık diğer tüm şemalarla AYNI kural uygulanıyor.
+    plaka_no: str = Field(min_length=1, max_length=15)
     kamera_id: str = "KAMERA-1"
     yon: str = "giris"
     guven_skoru: Optional[float] = None
@@ -342,6 +353,23 @@ class KayitManuel(BaseModel):
     # Kişiye (Kisi) bağlı olmayan bir misafirin ad soyadı -- bkz.
     # models.Kayit.misafir_adi'nin docstring'i.
     misafir_adi: Optional[str] = Field(None, max_length=100)
+
+    @field_validator("plaka_no")
+    @classmethod
+    def plaka_buyuk_harf(cls, v):
+        return plaka_normalize(v)
+
+    @field_validator("yon")
+    @classmethod
+    def yon_kontrol(cls, v):
+        # 2026-09-22 kod incelemesi: kayit_duzenle (PATCH) zaten "giris"/
+        # "cikis" dışını reddediyordu (main.py) ama kayıt OLUŞTURMA yolu
+        # (bu şema) hiç doğrulamıyordu -- geçersiz bir yön ("IN" gibi) hatasız
+        # kaydedilip vardiya/rapor/otomatik-bariyer-açma mantığının sessizce
+        # yanlış davranmasına yol açabiliyordu.
+        if v not in ("giris", "cikis"):
+            raise ValueError("yon 'giris' veya 'cikis' olmalı")
+        return v
 
 
 class KayitCevap(BaseModel):
@@ -399,14 +427,26 @@ class KayitDuzenle(BaseModel):
     main.py::kayit_duzenle). Tüm alanlar opsiyoneldir -- sadece gönderilenler
     değiştirilir. `kisi_id_temizle=True` kişi eşleştirmesini kaldırır (aksi
     halde `kisi_id=None` göndermek "değiştirme" anlamına gelir, kaldırma
-    değil -- bu yüzden ayrı bir bayrak gerekiyor)."""
-    plaka_no: Optional[str] = None
+    değil -- bu yüzden ayrı bir bayrak gerekiyor).
+
+    2026-09-22 kod incelemesi: plaka_no artık diğer tüm plaka_no alanlarıyla
+    (KisiOlustur/KisiGuncelle/KisiPlakaOlustur/KayitManuel) TUTARLI şekilde
+    Field(max_length=15) + plaka_normalize() ile doğrulanıyor -- bkz.
+    KayitManuel'in aynı düzeltmeyi açıklayan yorumu. main.py::kayit_duzenle
+    zaten yon/yetki_durumu için kendi doğrulamasını yapıyor, o kısım
+    değiştirilmedi."""
+    plaka_no: Optional[str] = Field(None, min_length=1, max_length=15)
     yon: Optional[str] = None
     yetki_durumu: Optional[str] = None
     kisi_id: Optional[int] = None
     kisi_id_temizle: bool = False
     not_metni: Optional[str] = None
     misafir_adi: Optional[str] = Field(None, max_length=100)
+
+    @field_validator("plaka_no")
+    @classmethod
+    def plaka_buyuk_harf(cls, v):
+        return plaka_normalize(v) if v is not None else v
 
 
 class KameraYonGuncelle(BaseModel):

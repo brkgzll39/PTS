@@ -255,3 +255,42 @@ def test_kayit_cevap_kisi_adi_from_attributes_ile_sonradan_eklenen_alani_okur():
     cevap2 = schemas.KayitCevap.model_validate(sahte)
     assert cevap2.kisi_adi is None
     assert cevap2.misafir_adi == "Ahmet Yılmaz"
+
+
+# ------------------------------------------------------------------
+# plaka_no uzunluk/format doğrulaması (2026-09-22 kod incelemesi): KayitManuel
+# ve KayitDuzenle, diğer TÜM plaka_no alanlarının (KisiOlustur, KisiGuncelle,
+# KisiPlakaOlustur) aksine ne bir uzunluk sınırı ne de plaka_normalize()
+# doğrulayıcısı taşımıyordu -- bu, gerçek üretim ortamı SQL Server'da
+# (NVARCHAR(15)) bir veritabanı hatasıyla 500'e düşme riski taşıyordu.
+# ------------------------------------------------------------------
+
+def test_kayit_manuel_plaka_no_15_karakterden_uzun_olamaz():
+    with pytest.raises(ValidationError):
+        schemas.KayitManuel(plaka_no="A" * 16, kamera_id="TEST", yon="giris")
+
+
+def test_kayit_manuel_plaka_no_normalize_edilir():
+    k = schemas.KayitManuel(plaka_no=" 34 abc 123 ", kamera_id="TEST", yon="giris")
+    assert k.plaka_no == "34 ABC 123"
+
+
+def test_kayit_manuel_gecersiz_yon_reddedilir():
+    """2026-09-22 kod incelemesi: kayit_duzenle (PATCH) zaten yon'u
+    doğruluyordu ama kayıt OLUŞTURMA yolu hiç doğrulamıyordu -- geçersiz bir
+    yön sessizce kaydedilip vardiya/rapor/otomatik-bariyer mantığını
+    bozabilirdi."""
+    with pytest.raises(ValidationError):
+        schemas.KayitManuel(plaka_no="34 ABC 123", kamera_id="TEST", yon="IN")
+
+
+def test_kayit_duzenle_plaka_no_15_karakterden_uzun_olamaz():
+    with pytest.raises(ValidationError):
+        schemas.KayitDuzenle(plaka_no="A" * 16)
+
+
+def test_kayit_duzenle_plaka_no_none_ise_dogrulama_atlanir():
+    """plaka_no gönderilmemişse (None) -- yani bu alan hiç değiştirilmiyorsa
+    -- doğrulayıcı hata FIRLATMAMALI (bkz. KisiGuncelle'deki AYNI desen)."""
+    d = schemas.KayitDuzenle(not_metni="yalnızca not güncelleniyor")
+    assert d.plaka_no is None

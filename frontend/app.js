@@ -762,7 +762,7 @@ async function panelYenile() {
       const olaySatirlari = kayitlar.slice(0, 8).map(k => `<button class="event-row event-button" onclick="olayDetayAc(${k.id})"><div class="event-icon ${k.yetki_durumu === "yetkili" ? "allowed" : "blocked"}"><i class="bi ${k.yon === "giris" ? "bi-box-arrow-in-right" : "bi-box-arrow-right"}"></i></div><div class="event-main"><strong>${escapeHtml(k.plaka_no)}</strong><span>${escapeHtml(k.kamera_id)} · ${k.yon === "giris" ? "Giriş" : "Çıkış"}</span></div><div class="event-time">${tarihFormatla(k.tarih_saat).split(",")[1] || "-"}</div></button>`).join("");
       canliOlaylar.innerHTML = alarmSatirlari + olaySatirlari || '<div class="empty-state">Henüz geçiş kaydı yok</div>';
     }
-    sonKayitlarCache = kayitlar;
+    _kayitCacheBirlestir(kayitlar);
     const canliYenileme = document.getElementById("canliYenileme");
     if (canliYenileme) canliYenileme.textContent = new Date().toLocaleTimeString("tr-TR");
     const tbody = document.getElementById("sonKayitlarTablo");
@@ -862,8 +862,12 @@ async function guvenlikVardiyaDurumunuGuncelle() {
 }
 
 async function alarmOkundu(id) {
-  await apiCagir(`/alarmlar/${id}/okundu`, { method: "PATCH" });
-  panelYenile();
+  try {
+    await apiCagir(`/alarmlar/${id}/okundu`, { method: "PATCH" });
+    panelYenile();
+  } catch (e) {
+    toastGoster(e.message, "hata");
+  }
 }
 
 async function olayDetayAc(id) {
@@ -1708,8 +1712,12 @@ document.getElementById("kameraForm").addEventListener("submit", async (e) => {
 
 async function kameraSil(id) {
   if (!confirm("Bu kamerayı silmek istediğinize emin misiniz?")) return;
-  await apiCagir(`/kameralar/${id}`, { method: "DELETE" });
-  kameralariYukle();
+  try {
+    await apiCagir(`/kameralar/${id}`, { method: "DELETE" });
+    kameralariYukle();
+  } catch (e) {
+    toastGoster(e.message, "hata");
+  }
 }
 async function kameraYenidenBaslat(id) {
   try {
@@ -1831,7 +1839,7 @@ async function kayitlariYukle(sifirla = true) {
     apiCagir(`/kayitlar?${params.toString()}`),
     apiCagir(`/kayitlar/sayfa-bilgisi?${sayfaBilgisiParams.toString()}`),
   ]);
-  sonKayitlarCache = [...sonKayitlarCache.filter(k => !kayitlar.find(n => n.id === k.id)), ...kayitlar];
+  _kayitCacheBirlestir(kayitlar);
   const el = document.getElementById("kayitlarSayac");
   if (el) el.textContent = `${sayfaBilgisi.toplam} kayıt · Sayfa ${_kayitlarSayfa + 1}/${sayfaBilgisi.sayfa_sayisi}`;
   const tbody = document.getElementById("kayitlarTablo");
@@ -1929,6 +1937,28 @@ function kayitPdfIndir(id) {
 // panelYenile()/kayitlariYukle(false) çağrıları yalnızca YENİ gelen kayıtları
 // veya listedeki BAŞKA değişiklikleri yakalamak için hâlâ çalıştırılır, ama
 // artık bu tek kaydın verisini SİLME riski taşımazlar.
+// KÖK NEDEN DÜZELTMESİ, DEVAM (2026-09-22 -- bir önceki düzeltmenin
+// EKSİK olduğu bulundu): panelYenile() önceden `sonKayitlarCache = kayitlar;`
+// ile önbelleği TAMAMEN DEĞİŞTİRİYORDU (yalnızca `/kayitlar?limit=10`'daki
+// SON 10 kayıtla). Bu, _kayitCacheYerindeGuncelle'nin az önce yazdığı
+// güncel veriyi de siliyordu -- çünkü panelYenile HER SSE olayında (bkz.
+// _canliBolumleriTazeleDebounce) otomatik olarak tekrar çalışıyor. Yani:
+// eski bir kaydı düzenleyip kaydettiniz, ekran doğru göründü, AMA bariyerden
+// bir sonraki araç geçer geçmez (birkaç saniye içinde) o düzeltme yeniden
+// "kayboluyordu" -- ilk düzeltme sorunu yalnızca GEÇİCİ OLARAK gizlemişti.
+// Çözüm: kayitlariYukle()'nin zaten kullandığı AYNI "birleştir, değiştirme"
+// deseni tek bir ortak yardımcıya taşındı ve panelYenile de artık BUNU
+// kullanıyor. Sınırsız büyümeyi önlemek için en fazla 500 kayıt tutulur
+// (bkz. _sseKayitAl'daki AYNI sınır, satır ~2397) -- limit aşılırsa en eski
+// kayıtlar (tarih_saat'e göre) atılır.
+function _kayitCacheBirlestir(yeniKayitlar) {
+  sonKayitlarCache = [...sonKayitlarCache.filter(k => !yeniKayitlar.find(n => n.id === k.id)), ...yeniKayitlar];
+  if (sonKayitlarCache.length > 500) {
+    sonKayitlarCache.sort((a, b) => new Date(b.tarih_saat) - new Date(a.tarih_saat));
+    sonKayitlarCache.length = 500;
+  }
+}
+
 function _kayitCacheYerindeGuncelle(guncelKayit) {
   if (!guncelKayit || guncelKayit.id == null) return;
   const idx = sonKayitlarCache.findIndex(k => k.id === guncelKayit.id);
@@ -2015,6 +2045,14 @@ async function kayitSil(id) {
   if (!confirm("Bu geçiş kaydını kalıcı olarak silmek istediğinize emin misiniz? Bu işlem geri alınamaz.")) return;
   try {
     await apiCagir(`/kayitlar/${id}`, { method: "DELETE" });
+    // 2026-09-22: silinen kayıt, bir sonraki TAM liste yenilemesine kadar
+    // (panelYenile()/kayitlariYukle() birer MERGE yaptığı için -- bkz.
+    // _kayitCacheBirlestir -- kendi fetch sonucunda artık hiç dönmeyecek
+    // olsa bile eski önbellek girdisini SİLMEZLER) sonKayitlarCache'te
+    // hayalet olarak kalıyordu; bu da o id'ye tıklayan (ör. eski bir toast,
+    // ikinci bir sekme) bir kullanıcıya artık var olmayan bir kaydı
+    // gösterebiliyordu. Silme başarılı olur olmaz doğrudan çıkarılır.
+    sonKayitlarCache = sonKayitlarCache.filter(k => k.id !== Number(id));
     kayitlariYukle(false);
     panelYenile();
     analizAcikSeAyniPlakayiYenile();
@@ -2118,20 +2156,28 @@ document.getElementById("kisiForm").addEventListener("submit", async (e) => {
 });
 
 async function kisiDurumDegistir(id, yeniDurum) {
-  await apiCagir(`/kisiler/${id}`, {
-    method: "PUT",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ aktif: yeniDurum }),
-  });
-  kisileriYukle();
-  panelYenile();
+  try {
+    await apiCagir(`/kisiler/${id}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ aktif: yeniDurum }),
+    });
+    kisileriYukle();
+    panelYenile();
+  } catch (e) {
+    toastGoster(e.message, "hata");
+  }
 }
 
 async function kisiSil(id) {
   if (!confirm("Bu kişiyi silmek istediğinize emin misiniz?")) return;
-  await apiCagir(`/kisiler/${id}`, { method: "DELETE" });
-  kisileriYukle();
-  panelYenile();
+  try {
+    await apiCagir(`/kisiler/${id}`, { method: "DELETE" });
+    kisileriYukle();
+    panelYenile();
+  } catch (e) {
+    toastGoster(e.message, "hata");
+  }
 }
 
 // 2026-09-18: kullanıcı bildirimi -- bir araç personel/abone olarak
@@ -2643,8 +2689,12 @@ document.getElementById("karaListeForm")?.addEventListener("submit", async (e) =
 
 async function karaListedenCikar(id) {
   if (!confirm("Bu aracı kara listeden çıkarmak istiyor musunuz?")) return;
-  await apiCagir(`/kara-listesi/${id}`, { method: "DELETE" });
-  karaListesiYukle(); panelYenile();
+  try {
+    await apiCagir(`/kara-listesi/${id}`, { method: "DELETE" });
+    karaListesiYukle(); panelYenile();
+  } catch (e) {
+    toastGoster(e.message, "hata");
+  }
 }
 
 function karaListeyeEkleModal(plaka) {
@@ -2707,8 +2757,12 @@ async function bariyerAc(id) {
 
 async function bariyerSil(id) {
   if (!confirm("Bu bariyer kaydını silmek istiyor musunuz?")) return;
-  await apiCagir(`/bariyer/ayarlar/${id}`, { method: "DELETE" });
-  bariyerleriYukle();
+  try {
+    await apiCagir(`/bariyer/ayarlar/${id}`, { method: "DELETE" });
+    bariyerleriYukle();
+  } catch (e) {
+    toastGoster(e.message, "hata");
+  }
 }
 
 // ================================================================
@@ -3364,9 +3418,13 @@ document.addEventListener("dblclick", (e) => {
 // ================================================================
 
 async function alarmHepsiniOku() {
-  const r = await apiCagir("/alarmlar/tumu-okundu", { method: "POST" });
-  toastGoster(`${r.guncellenen} alarm okundu işaretlendi`, "basari");
-  panelYenile();
+  try {
+    const r = await apiCagir("/alarmlar/tumu-okundu", { method: "POST" });
+    toastGoster(`${r.guncellenen} alarm okundu işaretlendi`, "basari");
+    panelYenile();
+  } catch (e) {
+    toastGoster(e.message, "hata");
+  }
 }
 
 // ================================================================

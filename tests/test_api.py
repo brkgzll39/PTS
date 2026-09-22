@@ -4190,3 +4190,122 @@ def test_kayit_duzenle_yaniti_liste_uc_noktalariyla_tutarlidir(client, operator_
     )
     assert veri["not_metni"] == "kapıda bekliyor"
     assert veri["misafir_adi"] == "Yedek İsim"
+
+
+# ------------------------------------------------------------------
+# 2026-09-22 kod incelemesi: proaktif iyileştirme turu -- silme sonrası
+# kalan sorunlar için ek testler.
+# ------------------------------------------------------------------
+
+def test_kayit_plaka_no_15_karakterden_uzunsa_temiz_422_doner(client, operator_header):
+    """KÖK NEDEN TESTİ: KayitManuel.plaka_no önceden uzunluk sınırı
+    taşımıyordu -- gerçek üretim ortamı SQL Server'da (NVARCHAR(15)) bunun
+    yerine opak bir veritabanı hatası (500) oluşurdu. Artık pydantic
+    seviyesinde temiz bir 422 dönmeli."""
+    r = client.post("/kayitlar", json={
+        "plaka_no": "A" * 16, "kamera_id": "TEST", "yon": "giris",
+    }, headers=operator_header)
+    assert r.status_code == 422, r.text
+
+
+def test_kayit_ekle_gecersiz_yon_422_doner(client, operator_header):
+    r = client.post("/kayitlar", json={
+        "plaka_no": "34 ABC 123", "kamera_id": "TEST", "yon": "IN",
+    }, headers=operator_header)
+    assert r.status_code == 422, r.text
+
+
+def test_kayit_duzenle_plaka_no_15_karakterden_uzunsa_temiz_422_doner(client, operator_header):
+    r = client.post("/kayitlar", json={"plaka_no": "34 UZN 01", "kamera_id": "TEST", "yon": "giris"},
+                     headers=operator_header)
+    kayit_id = r.json()["id"]
+    r2 = client.patch(f"/kayitlar/{kayit_id}", json={"plaka_no": "B" * 16}, headers=operator_header)
+    assert r2.status_code == 422, r2.text
+
+
+def test_kayit_ekle_manuel_yaniti_kisi_adini_hemen_icerir(client, operator_header, yetkili_header):
+    """TUTARLILIK TESTİ: bir kişinin plakasıyla manuel kayıt eklendiğinde
+    (kisi_id backend'de otomatik atanır), POST /kayitlar yanıtı GET
+    /kayitlar ile TUTARLI olarak kisi_adi'yı hemen içermeli -- önceden
+    _kayit_olustur_ve_bildir bu alanı hiç doldurmadan çıplak kayıt
+    dönüyordu."""
+    client.post("/kisiler", json={
+        "ad_soyad": "Manuel Kayıt Testi", "plaka_no": "34 MKT 01", "tip": "abone",
+    }, headers=yetkili_header)
+    r = client.post("/kayitlar", json={"plaka_no": "34 MKT 01", "kamera_id": "TEST", "yon": "giris"},
+                     headers=operator_header)
+    assert r.status_code == 200, r.text
+    assert r.json()["kisi_adi"] == "Manuel Kayıt Testi"
+    assert r.json()["yetki_durumu"] == "yetkili"
+
+
+def test_kisi_ekle_ve_guncelle_yaniti_gecis_ozetini_hemen_icerir(client, operator_header, yetkili_header):
+    """TUTARLILIK TESTİ: kisi_ekle/kisi_guncelle de kayit_duzenle'deki AYNI
+    kök nedenle (bkz. _kisilerin_gecis_ozetini_ekle) ilk_gecis/son_gecis
+    gibi hesaplanan alanları önceden hiç doldurmuyordu. Önce geçmiş bir
+    geçiş kaydı (kisi henüz yokken "yetkisiz" olarak) oluşturulup, kişi
+    eklenince _gecmis_kayitlari_kisiye_bagla onu otomatik bağlıyor -- yanıt
+    bunu HEMEN yansıtmalı."""
+    plaka = "34 GOZ 01"
+    client.post("/kayitlar", json={"plaka_no": plaka, "kamera_id": "TEST", "yon": "giris"},
+                headers=operator_header)
+
+    r = client.post("/kisiler", json={
+        "ad_soyad": "Özet Testi", "plaka_no": plaka, "tip": "abone",
+    }, headers=yetkili_header)
+    assert r.status_code == 200, r.text
+    assert r.json()["son_gecis"] is not None, (
+        "POST /kisiler yanıtı geçiş özetini içermiyor -- GET /kisiler ile tutarsız"
+    )
+
+    r2 = client.put(f"/kisiler/{r.json()['id']}", json={"aciklama": "güncellendi"}, headers=yetkili_header)
+    assert r2.status_code == 200, r2.text
+    assert r2.json()["son_gecis"] is not None, (
+        "PUT /kisiler/{id} yanıtı geçiş özetini içermiyor -- GET /kisiler ile tutarsız"
+    )
+
+
+def test_plaka_yetki_kontrol_saat_kisitlamasi_bozuksa_yetkisiz_sayilir(yetkili_header, client):
+    """GÜVENLİK KÖK NEDEN TESTİ (2026-09-22): _plaka_yetki_kontrol'deki saat
+    kısıtlaması değerlendirmesi önceden `except Exception: pass` ile bir
+    hata oluşursa sessizce "yetkili"ye düşüyordu -- bir erişim kontrol
+    sistemi için TERS yönde bir hata (fail-open, "değerlendiremedim" ==
+    "izin ver" gibi davranıyordu).
+
+    Normal API/pydantic yollarıyla giris_saati_baslangic her zaman
+    "^\\d{2}:\\d{2}$" ile doğrulandığından, ADİ bir string karşılaştırması
+    (ör. "bozuk-deger" <= "09:35") Python'da ASLA TypeError fırlatmaz --
+    yalnızca (yanlış ama) sessiz bir sonuç üretir, bu yüzden bu testin
+    "doğru sebeple" geçtiğini garanti etmek için pydantic'i TAMAMEN
+    atlayıp fonksiyonu doğrudan, alanı GERÇEKTEN karşılaştırılamaz bir
+    tipe (int) ayarlanmış bir Kisi nesnesiyle çağırıyoruz -- bu, gerçek bir
+    `'<=' not supported between instances of 'int' and 'str'` TypeError'ı
+    tetikler ve except bloğunun fiilen çalıştığını doğrular (ileride bir
+    toplu içe aktarma/manuel DB düzeltmesi yolunun pydantic'i atlayıp
+    benzer bir tutarsız tip yazması ihtimaline karşı)."""
+    from backend.database import SessionLocal
+    from backend import models
+    from backend.main import _plaka_yetki_kontrol
+
+    plaka = "34 BOZUK1"
+    r = client.post("/kisiler", json={
+        "ad_soyad": "Bozuk Saat Testi", "plaka_no": plaka, "tip": "abone",
+        "giris_saati_baslangic": "08:00", "giris_saati_bitis": "18:00",
+    }, headers=yetkili_header)
+    assert r.status_code == 200, r.text
+    kisi_id = r.json()["id"]
+
+    db = SessionLocal()
+    try:
+        kisi = db.query(models.Kisi).filter(models.Kisi.id == kisi_id).first()
+        # Yalnızca bellek-içi (commit edilmiyor) -- pydantic/DB tip
+        # zorlamasını atlayıp GERÇEK bir karşılaştırma hatası üretmek için.
+        kisi.giris_saati_baslangic = 12345
+        yetki_durumu, _, _ = _plaka_yetki_kontrol(db, plaka)
+        assert yetki_durumu == "yetkisiz", (
+            "Saat kısıtlaması değerlendirilemediğinde (TypeError) sistem "
+            "YANLIŞLIKLA yetkili verdi (fail-open)"
+        )
+    finally:
+        db.rollback()
+        db.close()
