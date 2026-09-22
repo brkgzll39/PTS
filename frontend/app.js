@@ -1607,6 +1607,38 @@ function _tarihSaatDegeriOlustur(tarihId, saatId) {
   return saat ? `${tarih}T${saat}:00` : tarih;
 }
 
+// 2026-09-22 kullanıcı talebi: "Kayıtlar ekranından plaka yazarak arama
+// yaptığımda ve o plaka ile işim bittiği zaman panel ekranına geçiş
+// yapıyorum. Tekrar Kayıtlar ekranına döndüğümde en son aradığım plaka
+// ekranda gözüküyor" -- Bootstrap'ın tab-pane'leri sayfa yüklendiğinden beri
+// DOM'da KALICI tuttuğu için (sekme değişince yalnızca gizleniyor, hiçbir
+// zaman yeniden oluşturulmuyor), `filtrePlaka` alanı kullanıcı elle
+// temizleyene kadar bir önceki aramayı göstermeye devam ediyordu.
+//
+// Kullanıcının Kayıtlar'dan başka bir sekmeye geçmesini "bu plakayla işim
+// bitti" sinyali olarak yorumluyoruz: sekmeden AYRILDIĞI anda (Bootstrap'ın
+// `hidden.bs.tab` olayı -- hem üst menüdeki `data-bs-toggle="tab"`
+// düğmelerinden HEM DE `sekmeAc()` üzerinden `bootstrap.Tab...show()` ile
+// tetiklenen tüm geçişlerde, ör. Panel'deki hızlı erişim/nizamiye kartları,
+// güvenilir biçimde tetiklenir) plaka alanını temizleyip listeyi filtresiz
+// olarak yeniden yüklüyoruz -- böylece Kayıtlar'a her döndüğünde temiz bir
+// liste bulur. Diğer filtreler (tarih aralığı, yetki durumu, vardiya) BİLE
+// İSTE kasıtlı/kalıcı tercihler olabileceği için (ör. bir vardiya boyunca
+// "sadece yetkisiz geçişler" filtresini açık tutmak) buna DOKUNULMUYOR --
+// yalnızca kullanıcının açıkça geçici bir arama olarak tarif ettiği plaka
+// alanı sıfırlanıyor.
+(function () {
+  const kayitlarSekmeDugmesi = document.querySelector('[data-bs-target="#kayitlar-sekme"]');
+  if (!kayitlarSekmeDugmesi) return;
+  kayitlarSekmeDugmesi.addEventListener("hidden.bs.tab", () => {
+    const plakaEl = document.getElementById("filtrePlaka");
+    if (plakaEl && plakaEl.value.trim()) {
+      plakaEl.value = "";
+      kayitlariYukle();
+    }
+  });
+})();
+
 function filtreParametreleri() {
   const params = new URLSearchParams();
   const plaka = document.getElementById("filtrePlaka").value.trim();
