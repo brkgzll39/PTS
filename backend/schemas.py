@@ -293,6 +293,19 @@ class KisiCevap(BaseModel):
     izin_verilen_gunler: Optional[str] = None
     olusturma_tarihi: datetime
     ek_plakalar: List[KisiPlakaCevap] = []
+    # 2026-09-22 kullanıcı isteği: "Kişiler" ekranındaki listeye aracın geçiş
+    # geçmişinden özet bilgi eklendi -- bunlar Kisi tablosunda GERÇEK bir
+    # sütun DEĞİL, main.py::_kisilerin_gecis_ozetini_ekle tarafından bu
+    # kişinin TÜM plakalarıyla (ana + ek_plakalar) eşleşen Kayit satırlarından
+    # (Kayit.kisi_id üzerinden) hesaplanıp yanıt döndürülmeden hemen önce
+    # ORM nesnesine geçici olarak eklenen alanlardır (from_attributes=True
+    # sayesinde burada otomatik okunur). Bu kişiye ait hiç geçiş kaydı yoksa
+    # hepsi None kalır.
+    ilk_gecis: Optional[datetime] = None
+    son_gecis: Optional[datetime] = None
+    son_yetki_durumu: Optional[str] = None
+    son_not_metni: Optional[str] = None
+    son_not_ekleyen: Optional[str] = None
 
     model_config = ConfigDict(from_attributes=True)
 

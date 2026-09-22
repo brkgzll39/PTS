@@ -3926,3 +3926,122 @@ def test_vardiya_otomatik_kapama_8_saati_asan_acik_oturumu_kapatir(client, yetki
         assert oturum2.cikis_zamani is None, "7 saat önce açılmış oturum HENÜZ 8 saati aşmadığı için kapanmamalı"
     finally:
         db.close()
+
+
+# ------------------------------------------------------------------
+# "Kişiler" ekranı — geçiş özeti (ilk/son geçiş, son not, yetkisiz kırmızı)
+# ------------------------------------------------------------------
+# 2026-09-22 kullanıcı isteği: "bu ekrana aracın sisteme kayıtlara ilk giriş
+# tarihi eklensin. son güncel geçiş tarihi ve saati eklensin. Not ekleyen
+# Personel veya vardiyanın da bilgisi yazılsın istiyorum. yetkisiz araç
+# olduğunda kırmızı ile belirtilsin yetkili ve personel araçları mavi olarak
+# kalabilir." (bkz. backend/main.py::_kisilerin_gecis_ozetini_ekle,
+# frontend/app.js::kisileriYukle).
+
+def test_kisiler_listesinde_ilk_son_gecis_ve_not_bilgisi_dogru_hesaplanir(client, yetkili_header):
+    """Bir kişinin BİRDEN FAZLA geçiş kaydı varsa: ilk_gecis en ESKİ kaydın,
+    son_gecis/son_yetki_durumu/son_not_metni/son_not_ekleyen ise en YENİ
+    kaydın (tarih_saat'e göre) bilgilerini yansıtmalı -- oluşturulma sırasına
+    göre değil. Ayrıca son geçişi "yetkisiz" olan bir kişi, panelde kırmızı
+    işaretlenebilsin diye bu durumu (son_yetki_durumu) döndürmeli."""
+    from backend.database import SessionLocal
+    from backend import models
+
+    plaka = "77GECOZET1"
+    r = client.post("/kisiler", json={
+        "ad_soyad": "Geçiş Özeti Testi", "plaka_no": plaka, "tip": "abone",
+    }, headers=yetkili_header)
+    assert r.status_code == 200, r.text
+    kisi_id = r.json()["id"]
+
+    db = SessionLocal()
+    try:
+        # Bilerek TERS sırada ekleniyor (önce "son", sonra "ilk") ki test
+        # yanlışlıkla "en son eklenen satır" gibi bir sıraya değil, GERÇEKTEN
+        # tarih_saat'e göre en yeni/en eski olana baksın.
+        son_kayit = models.Kayit(
+            plaka_no=plaka, kamera_id="TEST-OZET", yon="giris",
+            yetki_durumu="yetkisiz", kisi_id=kisi_id,
+            not_metni="kargo teslimatı", duzenleyen="guvenlik1",
+            tarih_saat=datetime(2026, 9, 22, 9, 35, 0),
+        )
+        ilk_kayit = models.Kayit(
+            plaka_no=plaka, kamera_id="TEST-OZET", yon="giris",
+            yetki_durumu="yetkili", kisi_id=kisi_id,
+            tarih_saat=datetime(2026, 1, 5, 8, 30, 0),
+        )
+        db.add_all([son_kayit, ilk_kayit])
+        db.commit()
+    finally:
+        db.close()
+
+    r2 = client.get("/kisiler", params={"arama": plaka}, headers=yetkili_header)
+    assert r2.status_code == 200, r2.text
+    veri = next(k for k in r2.json() if k["id"] == kisi_id)
+    assert veri["ilk_gecis"].startswith("2026-01-05"), veri["ilk_gecis"]
+    assert veri["son_gecis"].startswith("2026-09-22"), veri["son_gecis"]
+    assert veri["son_yetki_durumu"] == "yetkisiz"
+    assert veri["son_not_metni"] == "kargo teslimatı"
+    assert veri["son_not_ekleyen"] == "guvenlik1"
+
+    # Tekil kayıt uç noktası (GET /kisiler/{id}) da AYNI özeti dönmeli.
+    r3 = client.get(f"/kisiler/{kisi_id}", headers=yetkili_header)
+    assert r3.status_code == 200, r3.text
+    assert r3.json()["son_yetki_durumu"] == "yetkisiz"
+
+
+def test_kisiler_listesinde_gecis_kaydi_olmayan_kisi_icin_ozet_alanlari_none_doner(client, yetkili_header):
+    """Henüz hiç kapıdan geçmemiş (yeni eklenmiş) bir kişi için özet alanları
+    hata fırlatmadan None dönmeli."""
+    r = client.post("/kisiler", json={
+        "ad_soyad": "Hiç Geçmemiş Kişi", "plaka_no": "77HICGECIS", "tip": "abone",
+    }, headers=yetkili_header)
+    assert r.status_code == 200, r.text
+    kisi_id = r.json()["id"]
+
+    r2 = client.get(f"/kisiler/{kisi_id}", headers=yetkili_header)
+    assert r2.status_code == 200, r2.text
+    veri = r2.json()
+    assert veri["ilk_gecis"] is None
+    assert veri["son_gecis"] is None
+    assert veri["son_yetki_durumu"] is None
+    assert veri["son_not_metni"] is None
+    assert veri["son_not_ekleyen"] is None
+
+
+def test_kisiler_listesinde_ek_plakanin_gecisleri_de_ozete_dahil_olur(client, yetkili_header):
+    """Bir kişinin ANA plakası dışında ek plakaları da olabilir (çoklu araç
+    desteği). Kayit.kisi_id, tespit anında kişinin TÜM plakalarıyla eşleşen
+    geçişleri zaten bu foreign key ile bağladığı için (bkz.
+    _yetki_kontrol_et), ek plakadan gelen bir geçiş de İLK/SON GEÇİŞ özetine
+    yansımalı -- yalnızca ana plaka_no ile string eşleştirme yapılıyor
+    olsaydı bu kayıt sessizce atlanırdı."""
+    from backend.database import SessionLocal
+    from backend import models
+
+    r = client.post("/kisiler", json={
+        "ad_soyad": "Çoklu Araç Testi", "plaka_no": "77EKPLAKA1", "tip": "abone",
+    }, headers=yetkili_header)
+    assert r.status_code == 200, r.text
+    kisi_id = r.json()["id"]
+
+    r2 = client.post(f"/kisiler/{kisi_id}/plakalar", json={"plaka_no": "77EKPLAKA2"}, headers=yetkili_header)
+    assert r2.status_code == 200, r2.text
+
+    db = SessionLocal()
+    try:
+        ek_plaka_kaydi = models.Kayit(
+            plaka_no="77EKPLAKA2", kamera_id="TEST-OZET", yon="giris",
+            yetki_durumu="yetkili", kisi_id=kisi_id,
+            tarih_saat=datetime(2026, 6, 1, 12, 0, 0),
+        )
+        db.add(ek_plaka_kaydi)
+        db.commit()
+    finally:
+        db.close()
+
+    r3 = client.get(f"/kisiler/{kisi_id}", headers=yetkili_header)
+    assert r3.status_code == 200, r3.text
+    assert r3.json()["son_gecis"].startswith("2026-06-01"), (
+        "ek plakadan gelen geçiş, geçiş özetine yansımadı"
+    )

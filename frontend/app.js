@@ -1975,14 +1975,29 @@ async function kisileriYukle() {
   if (aktifTipFiltre) params.set("tip", aktifTipFiltre);
   const kisiler = await apiCagir(`/kisiler?${params.toString()}`);
   const tbody = document.getElementById("kisilerTablo");
-  tbody.innerHTML = kisiler.map(k => `
+  // 2026-09-22 kullanıcı isteği: "aracın sisteme kayıtlara ilk giriş tarihi
+  // eklensin. son güncel geçiş tarihi ve saati eklensin. Not ekleyen
+  // Personel ... bilgisi yazılsın ... yetkisiz araç olduğunda kırmızı ile
+  // belirtilsin". Bu üç alan (ilk_gecis/son_gecis/son_not_*) ve
+  // son_yetki_durumu backend/main.py::_kisilerin_gecis_ozetini_ekle
+  // tarafından hesaplanıp GET /kisiler yanıtına eklendi -- burada sadece
+  // gösteriliyor, ayrı bir istek YAPILMIYOR.
+  tbody.innerHTML = kisiler.map(k => {
+    const plakaKirmizi = k.son_yetki_durumu === "yetkisiz";
+    const sonNot = k.son_not_metni
+      ? `${escapeHtml(k.son_not_metni)}${k.son_not_ekleyen ? ` <span class="text-muted small">(${escapeHtml(k.son_not_ekleyen)})</span>` : ""}`
+      : '<span class="text-muted small">-</span>';
+    return `
     <tr>
       <td>${escapeHtml(k.ad_soyad)}</td>
-      <td class="fw-bold"><button class="plate-link" data-plaka-analiz="${escapeHtml(k.plaka_no)}" title="Geçiş geçmişini ve görsellerini gör">${escapeHtml(k.plaka_no)}</button></td>
+      <td class="fw-bold"><button class="plate-link${plakaKirmizi ? " plate-link-yetkisiz" : ""}" data-plaka-analiz="${escapeHtml(k.plaka_no)}" title="${plakaKirmizi ? "Son geçişi YETKİSİZ olarak işaretlendi -- " : ""}Geçiş geçmişini ve görsellerini gör">${escapeHtml(k.plaka_no)}</button></td>
       <td>${tipRozeti(k.tip)}</td>
       <td>${escapeHtml(k.telefon) || "-"}</td>
       <td>${escapeHtml(k.daire_departman) || "-"}</td>
       <td>${k.aktif ? '<span class="badge bg-success">Aktif</span>' : '<span class="badge bg-secondary">Pasif</span>'}</td>
+      <td class="small">${k.ilk_gecis ? tarihFormatla(k.ilk_gecis) : '<span class="text-muted">-</span>'}</td>
+      <td class="small">${k.son_gecis ? tarihFormatla(k.son_gecis) : '<span class="text-muted">-</span>'}</td>
+      <td class="small">${sonNot}</td>
       <td>
         ${rolYeterli("operatör") ? `
         <button class="btn btn-sm btn-outline-primary" onclick="kisiDuzenleAc(${k.id})" title="Düzenle"><i class="bi bi-pencil"></i></button>
@@ -1992,7 +2007,8 @@ async function kisileriYukle() {
         ` : '<span class="text-muted small">-</span>'}
       </td>
     </tr>
-  `).join("") || `<tr><td colspan="7" class="text-center text-muted py-3">Kişi bulunamadı</td></tr>`;
+  `;
+  }).join("") || `<tr><td colspan="10" class="text-center text-muted py-3">Kişi bulunamadı</td></tr>`;
 }
 
 document.getElementById("kisiForm").addEventListener("submit", async (e) => {

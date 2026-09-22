@@ -2362,6 +2362,81 @@ def kisi_ekle(kisi: schemas.KisiOlustur, db: Session = Depends(get_db), kullanic
     return yeni_kisi
 
 
+def _kisilerin_gecis_ozetini_ekle(db: Session, kisiler: List[models.Kisi]) -> None:
+    """Kişiler ekranındaki listeye (frontend/app.js::kisileriYukle) eklenen
+    "İlk Geçiş" / "Son Geçiş" / "Son Not" sütunları ve plaka linkinin
+    yetkisiz/kırmızı renklendirmesi için gereken özeti hesaplayıp `kisiler`
+    listesindeki ORM nesnelerinin üzerine GEÇİCİ (Kisi tablosunda karşılığı
+    olmayan, DB'ye asla yazılmayan) attribute olarak ekler --
+    schemas.KisiCevap bunları `from_attributes=True` sayesinde otomatik okur.
+
+    Kayit.kisi_id, bir kişinin TÜM plakalarıyla (ana plaka_no + ek_plakalar)
+    eşleşen geçişleri tespit anında zaten doğrudan bağladığı için (bkz.
+    _yetki_kontrol_et'teki eşleştirme) burada plaka string'i tekrar
+    eşleştirilmiyor, doğrudan bu foreign key üzerinden gruplanıyor -- yani
+    bu özet, kişinin BİRDEN FAZLA plakası varsa hepsini kapsar.
+
+    2026-09-22 kullanıcı isteği: "aracın sisteme kayıtlara ilk giriş tarihi
+    eklensin. son güncel geçiş tarihi ve saati eklensin. Not ekleyen
+    Personel veya vardiyanın da bilgisi yazılsın ... yetkisiz araç
+    olduğunda kırmızı ile belirtilsin".
+    """
+    for k in kisiler:
+        k.ilk_gecis = None
+        k.son_gecis = None
+        k.son_yetki_durumu = None
+        k.son_not_metni = None
+        k.son_not_ekleyen = None
+    kisi_idler = [k.id for k in kisiler]
+    if not kisi_idler:
+        return
+
+    ilk_gecis_map = dict(
+        db.query(models.Kayit.kisi_id, func.min(models.Kayit.tarih_saat))
+        .filter(models.Kayit.kisi_id.in_(kisi_idler))
+        .group_by(models.Kayit.kisi_id)
+        .all()
+    )
+
+    son_tarih_alt_sorgu = (
+        db.query(
+            models.Kayit.kisi_id.label("kisi_id"),
+            func.max(models.Kayit.tarih_saat).label("son_tarih"),
+        )
+        .filter(models.Kayit.kisi_id.in_(kisi_idler))
+        .group_by(models.Kayit.kisi_id)
+        .subquery()
+    )
+    son_kayitlar = (
+        db.query(models.Kayit)
+        .join(
+            son_tarih_alt_sorgu,
+            and_(
+                models.Kayit.kisi_id == son_tarih_alt_sorgu.c.kisi_id,
+                models.Kayit.tarih_saat == son_tarih_alt_sorgu.c.son_tarih,
+            ),
+        )
+        .all()
+    )
+    # Aynı kişi + aynı ANDA (nadiren, örn. saniye çözünürlüğü nedeniyle) birden
+    # fazla kayıt eşleşirse, en yüksek id'ye (en son EKLENEN) sahip olanı
+    # gerçek "son kayıt" say.
+    son_kayit_map: dict = {}
+    for kayit in son_kayitlar:
+        mevcut = son_kayit_map.get(kayit.kisi_id)
+        if mevcut is None or kayit.id > mevcut.id:
+            son_kayit_map[kayit.kisi_id] = kayit
+
+    for k in kisiler:
+        k.ilk_gecis = ilk_gecis_map.get(k.id)
+        son_kayit = son_kayit_map.get(k.id)
+        if son_kayit:
+            k.son_gecis = son_kayit.tarih_saat
+            k.son_yetki_durumu = son_kayit.yetki_durumu
+            k.son_not_metni = son_kayit.not_metni
+            k.son_not_ekleyen = son_kayit.duzenleyen
+
+
 @app.get("/kisiler", response_model=List[schemas.KisiCevap])
 def kisileri_listele(
     tip: Optional[str] = None,
@@ -2381,7 +2456,9 @@ def kisileri_listele(
             (models.Kisi.ad_soyad.ilike(arama_terimi))
             | (models.Kisi.plaka_no.ilike(arama_terimi))
         )
-    return sorgu.order_by(desc(models.Kisi.olusturma_tarihi)).all()
+    kisiler = sorgu.order_by(desc(models.Kisi.olusturma_tarihi)).all()
+    _kisilerin_gecis_ozetini_ekle(db, kisiler)
+    return kisiler
 
 
 @app.get("/kisiler/{kisi_id}", response_model=schemas.KisiCevap)
@@ -2389,6 +2466,7 @@ def kisi_getir(kisi_id: int, db: Session = Depends(get_db), _: models.Kullanici 
     kisi = db.query(models.Kisi).filter(models.Kisi.id == kisi_id).first()
     if not kisi:
         raise HTTPException(404, "Kişi bulunamadı")
+    _kisilerin_gecis_ozetini_ekle(db, [kisi])
     return kisi
 
 

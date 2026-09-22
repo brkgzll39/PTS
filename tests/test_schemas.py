@@ -35,6 +35,75 @@ def test_kisi_cevap_saat_gun_alanlarini_ve_ek_plakalari_icerir():
     assert {"giris_saati_baslangic", "giris_saati_bitis", "izin_verilen_gunler", "ek_plakalar"} <= alanlar
 
 
+def test_kisi_cevap_gecis_ozeti_alanlarini_icerir():
+    """2026-09-22 kullanıcı isteği: "Kişiler" ekranına ilk/son geçiş tarihi,
+    son not (ekleyen bilgisiyle) ve yetkisiz/kırmızı renklendirme için gereken
+    son_yetki_durumu eklendi (bkz. main.py::_kisilerin_gecis_ozetini_ekle).
+    Bu alanlar Kisi tablosunda GERÇEK birer sütun değil -- yanıt döndürülmeden
+    hemen önce ORM nesnesine geçici olarak eklenir, bu yüzden hepsi Optional
+    olmalı (bu kişiye ait hiç geçiş kaydı yoksa None kalır)."""
+    alanlar = set(schemas.KisiCevap.model_fields.keys())
+    beklenen = {"ilk_gecis", "son_gecis", "son_yetki_durumu", "son_not_metni", "son_not_ekleyen"}
+    assert beklenen <= alanlar
+    for ad in beklenen:
+        assert schemas.KisiCevap.model_fields[ad].is_required() is False, (
+            f"{ad} zorunlu olmamalı -- geçiş kaydı olmayan bir kişi için None dönebilmeli"
+        )
+
+
+def test_kisi_cevap_gecis_ozeti_alanlari_from_attributes_ile_okunur():
+    """main.py::_kisilerin_gecis_ozetini_ekle, bir ORM nesnesinin üzerine
+    (gerçek bir DB sütunu OLMADAN) doğrudan Python attribute'u olarak
+    ilk_gecis/son_gecis/... ekliyor. Bu test, KisiCevap.model_validate'in
+    (from_attributes=True) bu şekilde sonradan eklenen sıradan attribute'ları
+    da gerçek bir SQLAlchemy modeliyle aynı şekilde okuyabildiğini, basit bir
+    sahte nesneyle doğrular (fastapi/sqlalchemy gerekmez)."""
+    from datetime import datetime as _dt
+
+    class SahteKisi:
+        id = 1
+        ad_soyad = "Test Kişi"
+        plaka_no = "34 ABC 123"
+        tip = "abone"
+        telefon = None
+        daire_departman = None
+        aciklama = None
+        aktif = True
+        baslangic_tarihi = None
+        bitis_tarihi = None
+        giris_saati_baslangic = None
+        giris_saati_bitis = None
+        izin_verilen_gunler = None
+        olusturma_tarihi = _dt(2026, 1, 1)
+        ek_plakalar = []
+
+    sahte = SahteKisi()
+    # _kisilerin_gecis_ozetini_ekle'nin yaptığı TAM OLARAK budur: ORM
+    # nesnesine sonradan attribute eklemek.
+    sahte.ilk_gecis = _dt(2026, 1, 5, 8, 30)
+    sahte.son_gecis = _dt(2026, 9, 22, 9, 35)
+    sahte.son_yetki_durumu = "yetkisiz"
+    sahte.son_not_metni = "kargo teslimatı"
+    sahte.son_not_ekleyen = "guvenlik1"
+
+    cevap = schemas.KisiCevap.model_validate(sahte)
+    assert cevap.ilk_gecis == _dt(2026, 1, 5, 8, 30)
+    assert cevap.son_gecis == _dt(2026, 9, 22, 9, 35)
+    assert cevap.son_yetki_durumu == "yetkisiz"
+    assert cevap.son_not_metni == "kargo teslimatı"
+    assert cevap.son_not_ekleyen == "guvenlik1"
+
+    # Hiç geçiş kaydı olmayan bir kişi için de (None) sorunsuz çalışmalı.
+    sahte.ilk_gecis = None
+    sahte.son_gecis = None
+    sahte.son_yetki_durumu = None
+    sahte.son_not_metni = None
+    sahte.son_not_ekleyen = None
+    cevap_bos = schemas.KisiCevap.model_validate(sahte)
+    assert cevap_bos.son_gecis is None
+    assert cevap_bos.son_yetki_durumu is None
+
+
 def test_kullanici_cevap_olusturma_tarihini_icerir():
     assert "olusturma_tarihi" in schemas.KullaniciCevap.model_fields
 

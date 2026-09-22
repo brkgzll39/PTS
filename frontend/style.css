@@ -175,6 +175,12 @@ body {
 .event-button { width: 100%; border: 0; background: #fff; text-align: left; cursor: pointer; }
 .event-button:hover { background: #f1f7fa; }
 .plate-link { border: 0; background: transparent; color: #176a91; font-weight: 700; padding: 0; cursor: pointer; }
+/* 2026-09-22 kullanıcı isteği: "Kişiler" ekranında bir aracın SON geçişi
+   yetkisiz döndüyse plaka linki kırmızı (badge-yetkisiz ile aynı ton),
+   yetkili/personel araçlar ise mevcut mavi (.plate-link'in varsayılanı)
+   renginde kalır -- bkz. app.js::kisileriYukle, backend/main.py::
+   _kisilerin_gecis_ozetini_ekle. */
+.plate-link.plate-link-yetkisiz { color: #dc2626; }
 .event-icon { width: 30px; height: 30px; display: grid; place-items: center; border-radius: 50%; color: #fff; }
 .event-icon.allowed { background: #2b9a68; }
 .event-icon.blocked { background: #d65b55; }
