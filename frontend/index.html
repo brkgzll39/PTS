@@ -558,16 +558,28 @@
       <!-- Yalnızca rol="güvenlik" girişinde görünür (bkz. app.js::uygulamaVerileriniYukle
            içindeki mevcutRol kontrolü) -- "Güvenlik Personeli Vardiya Filtresi"nin
            SESSİZCE liste kısaltması yerine kullanıcıya AÇIKÇA bildirilmesi için
-           (bkz. 2026-09-18 notu, README). -->
+           (bkz. 2026-09-18 notu, README). 2026-09-22: personel bu kutunun ekranda
+           sürekli yer kapladığını bildirdi -- bilgi SİLİNMEDİ (sessiz hata ilkesini
+           bozmamak için), yalnızca varsayılan olarak TEK SATIRA daraltıldı; tam
+           açıklama + saat/oturum teşhisi "Detay" butonuyla istenince açılır. -->
       <div class="alert alert-info d-none py-2 mb-3" id="guvenlikVardiyaBilgisi">
-        <div><i class="bi bi-info-circle-fill me-1"></i>Bu liste yalnızca SİZİN (ya da -- adlandırılmış bir vardiya
-          grubuna atandıysanız, ör. "A" -- farklı bir noktadaki AYNI vardiya grubundaki hesapların da) vardiya
-          penceresine denk gelen kayıtları gösterir. "A B C D Vardiyaları" filtresiyle (yukarıdaki Kayıtlar
-          filtre satırı) tüm vardiyalardaki geçişler de aranabilir.</div>
-        <!-- Teşhis alanı: GET /vardiya-oturumlari/durumum sonucuna göre app.js::guvenlikVardiyaDurumunuGuncelle
-             tarafından doldurulur -- "neden boş görünüyor" sorusunu sessiz bırakmamak için
-             (bkz. 2026-09-18 kullanıcı geri bildirimi notu, README). -->
-        <div id="guvenlikVardiyaDurumu" class="small mt-1"></div>
+        <div class="d-flex justify-content-between align-items-center gap-2">
+          <div><i class="bi bi-info-circle-fill me-1"></i>Kayıt listeniz vardiya penceresine göre daraltılmış olabilir.</div>
+          <button type="button" class="btn btn-sm btn-outline-info py-0 px-2 flex-shrink-0" data-bs-toggle="collapse"
+                  data-bs-target="#guvenlikVardiyaDetay" aria-expanded="false" aria-controls="guvenlikVardiyaDetay">
+            Detay
+          </button>
+        </div>
+        <div class="collapse" id="guvenlikVardiyaDetay">
+          <div class="mt-2">Bu liste yalnızca SİZİN (ya da -- adlandırılmış bir vardiya
+            grubuna atandıysanız, ör. "A" -- farklı bir noktadaki AYNI vardiya grubundaki hesapların da) vardiya
+            penceresine denk gelen kayıtları gösterir. "A B C D Vardiyaları" filtresiyle (yukarıdaki Kayıtlar
+            filtre satırı) tüm vardiyalardaki geçişler de aranabilir.</div>
+          <!-- Teşhis alanı: GET /vardiya-oturumlari/durumum sonucuna göre app.js::guvenlikVardiyaDurumunuGuncelle
+               tarafından doldurulur -- "neden boş görünüyor" sorusunu sessiz bırakmamak için
+               (bkz. 2026-09-18 kullanıcı geri bildirimi notu, README). -->
+          <div id="guvenlikVardiyaDurumu" class="small mt-1"></div>
+        </div>
       </div>
       <div class="card mb-3">
         <div class="card-body">
