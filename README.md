@@ -2806,3 +2806,56 @@ personel ismi ona göre güncellenecek."
   zaten API yanıtında mevcut).
 - Sürücü bilgisi yalnızca YENİ oluşturulan kayıtlara otomatik işlenir; eski
   kayıtlar geriye dönük GÜNCELLENMEZ.
+
+## .env Dosyasının Gerçekten Okunması ve Otomatik Anahtar Üretimi (2026-09-23)
+
+**Bulunan sorun:** `.env.example` dosyası (2026-09-20'de eklendi, bkz. yukarıdaki
+"Daha Profesyonel Neler Yapabilirsin?" Denetimi bölümü) TÜM `PTS_*` ortam
+değişkenlerini tek bir yerde belgeliyordu, ama PTS bu dosyayı **hiçbir zaman
+gerçekten okumuyordu** — `PTS_LICENSE_SECRET`, `PTS_KAMERA_ANAHTARI`,
+`PTS_ARVENTO_ANAHTARI` gibi güvenlik-kritik değişkenler yalnızca GERÇEK bir
+Windows/Linux ortam değişkeni olarak tanımlanırsa işe yarıyordu. Bu, ".env"
+dosyasının varlığının (yaygın "dotenv" kütüphaneleri sayesinde) çoğu
+geliştiricide uyandırdığı beklentinin TAM TERSİYDİ. Sonuç: bu değişkenleri
+ayarlamayı unutan (ya da .env'i doldurmanın yeterli olduğunu düşünen) bir
+kurulum, hiçbir hata almadan güvensiz varsayılanlarla (herkese açık lisans
+secret'ı, kimliksiz kamera/Arvento webhook uç noktaları) sessizce çalışmaya
+devam ederdi — panelin "Güvenlik Uyarıları" bandını fark etmeyen bir
+yönetici için bu süresiz sürebilirdi.
+
+Bu, birden fazla sahaya (ör. farklı otopark noktalarına) kurulum yapma
+planı gündeme gelince fark edildi: her yeni kurulumda bu adımın elle,
+doğru şekilde tekrarlanmasına güvenmek ölçeklenebilir değil.
+
+**Düzeltme:**
+
+- `backend/__init__.py`, PTS'in HERHANGİ BİR modülü (`database`, `main`,
+  `models`, ...) import edilmeden ÖNCE proje kökündeki `.env` dosyasını
+  gerçekten okuyup `os.environ`'a uygular (bkz. dosyanın docstring'i —
+  neden `main.py`'nin içine değil, paketin `__init__.py`'sine konduğu
+  orada ayrıntılı açıklanıyor: `database.py`'nin `PTS_DATABASE_URL`'i
+  MODÜL YÜKLENİRKEN okuması, .env'in ondan ÖNCE uygulanmasını zorunlu
+  kılıyor). Yalnızca standart kütüphane kullanılır — `python-dotenv` gibi
+  yeni bir bağımlılık EKLENMEDİ (bu patch'i uygulayıp bağımlılıkları
+  yeniden kurmayı unutan bir kurulumda uygulamanın hiç açılamaması riskini
+  tamamen ortadan kaldırmak için).
+- `os.environ.setdefault(...)` kullanılır — GERÇEK bir OS ortam değişkeni
+  zaten ayarlıysa `.env` bunun ÜZERİNE YAZMAZ, yalnızca EKSİK olanı
+  tamamlar. Önceden bu değişkenleri gerçek ortam değişkeni olarak ayarlamış
+  mevcut kurulumlar (ör. TPAO'daki üretim makinesi) bu değişiklikten
+  HİÇBİR ŞEKİLDE etkilenmez.
+- `kurulum.bat`, İLK kurulumda (proje kökünde `.env` hiç yoksa)
+  `PTS_LICENSE_SECRET`, `PTS_KAMERA_ANAHTARI` ve `PTS_ARVENTO_ANAHTARI`
+  için PowerShell'in kriptografik rastgele sayı üretecini kullanarak güçlü,
+  benzersiz değerler üretir ve bunları otomatik olarak bir `.env` dosyasına
+  yazar. Zaten bir `.env` varsa (ör. kurulum daha önce yapılmış) DOKUNULMAZ.
+  PowerShell çalışmazsa (çok nadir), `.env` oluşturulmadan devam edilir ve
+  kullanıcıya anahtarları elle ayarlaması gerektiği açıkça söylenir —
+  sessizce geçilmez.
+- `.env.example`'ın üst notu ve `.gitignore`'daki ilgili yorum bu yeni
+  davranışı yansıtacak şekilde güncellendi.
+
+**Kapsam dışı bırakılan (bilinçli):** `PTS_AUTH_SECRET` bu mekanizmaya DAHİL
+EDİLMEDİ — o zaten kendi otomatik üretim/kalıcı saklama mekanizmasına sahip
+(`backend/auth_secret.key`, bkz. ilgili .env.example notu), ayrıca bir işlem
+gerekmiyor.
