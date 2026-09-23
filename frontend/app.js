@@ -1898,27 +1898,38 @@ function _tarihSaatDegeriOlustur(tarihId, saatId) {
 // zaman yeniden oluşturulmuyor), `filtrePlaka` alanı kullanıcı elle
 // temizleyene kadar bir önceki aramayı göstermeye devam ediyordu.
 //
-// Kullanıcının Kayıtlar'dan başka bir sekmeye geçmesini "bu plakayla işim
+// Kullanıcının Kayıtlar'dan başka bir sekmeye geçmesini "bu aramayla işim
 // bitti" sinyali olarak yorumluyoruz: sekmeden AYRILDIĞI anda (Bootstrap'ın
 // `hidden.bs.tab` olayı -- hem üst menüdeki `data-bs-toggle="tab"`
 // düğmelerinden HEM DE `sekmeAc()` üzerinden `bootstrap.Tab...show()` ile
 // tetiklenen tüm geçişlerde, ör. Panel'deki hızlı erişim/nizamiye kartları,
-// güvenilir biçimde tetiklenir) plaka alanını temizleyip listeyi filtresiz
-// olarak yeniden yüklüyoruz -- böylece Kayıtlar'a her döndüğünde temiz bir
-// liste bulur. Diğer filtreler (tarih aralığı, yetki durumu, vardiya) BİLE
-// İSTE kasıtlı/kalıcı tercihler olabileceği için (ör. bir vardiya boyunca
-// "sadece yetkisiz geçişler" filtresini açık tutmak) buna DOKUNULMUYOR --
-// yalnızca kullanıcının açıkça geçici bir arama olarak tarif ettiği plaka
-// alanı sıfırlanıyor.
+// güvenilir biçimde tetiklenir) plaka VE tarih aralığı alanlarını temizleyip
+// listeyi filtresiz olarak yeniden yüklüyoruz -- böylece Kayıtlar'a her
+// döndüğünde temiz bir liste bulur.
+//
+// 2026-09-23 kullanıcı geri bildirimi (birebir): "kayıtlar ekranında tarih
+// filtreleyip kayıt aldığımda başka ekrana geçip tekrar kayıtlar ekranına
+// geçiş yapınca en son filtrelediğim tarih sabit kalıyor ... filtrelemeyi
+// sıfırlamanı istiyorum" -- bu, aşağıdaki tarih aralığı (filtreBaslangic/
+// filtreBaslangicSaat/filtreBitis/filtreBitisSaat) alanlarının da plaka gibi
+// sıfırlanmasını EXPLICIT olarak istedi; önceki sürümde bunlar BİLİNÇLİ
+// olarak dokunulmuyordu ("kalıcı bir tercih olabilir" varsayımıyla) ama
+// kullanıcı bunun kendisi için geçerli olmadığını belirtti. Yetki durumu ve
+// vardiya filtreleri (ör. bir vardiya boyunca "sadece yetkisiz geçişler"i
+// açık tutmak) kullanıcının bahsetmediği, hâlâ makul bir kalıcı tercih
+// olabileceği için DOKUNULMADAN bırakıldı.
 (function () {
   const kayitlarSekmeDugmesi = document.querySelector('[data-bs-target="#kayitlar-sekme"]');
   if (!kayitlarSekmeDugmesi) return;
   kayitlarSekmeDugmesi.addEventListener("hidden.bs.tab", () => {
     const plakaEl = document.getElementById("filtrePlaka");
-    if (plakaEl && plakaEl.value.trim()) {
-      plakaEl.value = "";
-      kayitlariYukle();
-    }
+    const tarihAlanIdleri = ["filtreBaslangic", "filtreBaslangicSaat", "filtreBitis", "filtreBitisSaat"];
+    const doluTarihAlani = tarihAlanIdleri.some(id => document.getElementById(id)?.value);
+    const plakaDoluMu = plakaEl && plakaEl.value.trim();
+    if (!plakaDoluMu && !doluTarihAlani) return;
+    if (plakaEl) plakaEl.value = "";
+    tarihAlanIdleri.forEach(id => { const el = document.getElementById(id); if (el) el.value = ""; });
+    kayitlariYukle();
   });
 })();
 
