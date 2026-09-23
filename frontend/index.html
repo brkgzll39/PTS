@@ -786,7 +786,19 @@
           <div class="table-responsive">
             <table class="table table-hover mb-0 align-middle">
               <thead class="table-light">
-                <tr><th>Görsel</th><th>ID</th><th>Plaka</th><th>Tarih/Saat</th><th>Kamera</th><th>Yön</th><th>Durum</th><th>Kişi/Tip</th><th>İsim</th><th>Vardiya</th><th>Güven</th><th title="Bu okuma kaç farklı karede tekrarlanıp doğrulandı">Doğrulama</th><th></th></tr>
+                <!-- 2026-09-23 kullanıcı isteği: "bu doğrulama sutununa
+                     yönetici dışında kimsenin görmesine gerek yok" -- bu
+                     sütun bir OCR/tespit doğrulama tekniği detayı (kaç
+                     farklı karede tekrarlanıp doğrulandığı, çelişkili okuma
+                     var mı) gösteriyor; operasyonel personel için anlamsız.
+                     Başlık burada (statik HTML) data-rol-min ile
+                     gizleniyor; her satırdaki hücre ise app.js::
+                     kayitlariYukle'de aynı role koşullu olarak hiç
+                     ÜRETİLMİYOR (tablo dinamik olarak sık sık yeniden
+                     çiziliyor, bu yüzden CSS ile gizlemek yerine üretim
+                     anında atlanması tercih edildi -- aksi halde her
+                     yenilemede yeniden gizlenmesi gerekirdi). -->
+                <tr><th>Görsel</th><th>ID</th><th>Plaka</th><th>Tarih/Saat</th><th>Kamera</th><th>Yön</th><th>Durum</th><th>Kişi/Tip</th><th>İsim</th><th>Vardiya</th><th>Güven</th><th title="Bu okuma kaç farklı karede tekrarlanıp doğrulandı" data-rol-min="yonetici" data-rol-davranis="gizle">Doğrulama</th><th></th></tr>
               </thead>
               <tbody id="kayitlarTablo"></tbody>
             </table>

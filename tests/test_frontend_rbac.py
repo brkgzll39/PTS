@@ -178,3 +178,18 @@ def test_anasayfa_hizli_erisim_kutulari_calisma_alani_olanlar_acik():
         kutu = panel.select_one(f'.quick-tile[data-target="{hedef}"]')
         assert kutu is not None, f"Kontrol Merkezi hızlı erişim kutularında {hedef} bulunamadı"
         assert not _yonetici_ile_sinirli_mi(kutu), f"Kontrol Merkezi hızlı erişim kutusu {hedef} operatöre GEREKSİZ yere gizlenmiş"
+
+
+# ------------------------------------------------------------------
+# Kayıtlar tablosundaki "Doğrulama" sütunu -- 2026-09-23 kullanıcı isteği:
+# "bu doğrulama sutununa yönetici dışında kimsenin görmesine gerek yok".
+# Yalnızca başlık (<th>) burada test edilebilir -- satır hücreleri
+# app.js::kayitlariYukle'de rolYeterli("yonetici") koşuluyla dinamik olarak
+# ÜRETİLİYOR (statik HTML'de yer almıyorlar), bu yüzden JS çalıştırmayan bu
+# statik test dosyasıyla doğrulanamazlar.
+# ------------------------------------------------------------------
+
+def test_kayitlar_dogrulama_sutun_basligi_yoneticiyle_sinirli():
+    th = _corba().select_one("#kayitlar-sekme thead th[title*='Bu okuma kaç farklı karede']")
+    assert th is not None, "Kayıtlar tablosunda 'Doğrulama' sütun başlığı bulunamadı"
+    assert _yonetici_ile_sinirli_mi(th), "'Doğrulama' sütun başlığı operatörden gizlenmemiş"

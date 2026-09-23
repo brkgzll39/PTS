@@ -1910,25 +1910,23 @@ function _tarihSaatDegeriOlustur(tarihId, saatId) {
 // 2026-09-23 kullanıcı geri bildirimi (birebir): "kayıtlar ekranında tarih
 // filtreleyip kayıt aldığımda başka ekrana geçip tekrar kayıtlar ekranına
 // geçiş yapınca en son filtrelediğim tarih sabit kalıyor ... filtrelemeyi
-// sıfırlamanı istiyorum" -- bu, aşağıdaki tarih aralığı (filtreBaslangic/
-// filtreBaslangicSaat/filtreBitis/filtreBitisSaat) alanlarının da plaka gibi
-// sıfırlanmasını EXPLICIT olarak istedi; önceki sürümde bunlar BİLİNÇLİ
-// olarak dokunulmuyordu ("kalıcı bir tercih olabilir" varsayımıyla) ama
-// kullanıcı bunun kendisi için geçerli olmadığını belirtti. Yetki durumu ve
-// vardiya filtreleri (ör. bir vardiya boyunca "sadece yetkisiz geçişler"i
-// açık tutmak) kullanıcının bahsetmediği, hâlâ makul bir kalıcı tercih
-// olabileceği için DOKUNULMADAN bırakıldı.
+// sıfırlamanı istiyorum" -- ve hemen ardından aynı oturumda: "vardiya ve
+// yetki durumu da sıfırlansın". Yani plaka, tarih aralığı (filtreBaslangic/
+// filtreBaslangicSaat/filtreBitis/filtreBitisSaat), yetki durumu
+// (filtreDurum) VE vardiya (filtreVardiyaAdi) -- Kayıtlar ekranındaki TÜM
+// filtre alanları -- artık sekmeden ayrılınca sıfırlanıyor. (Önceki bir
+// sürümde yetki durumu/vardiya "bir vardiya boyunca sadece yetkisiz
+// geçişleri açık tutmak" gibi kalıcı bir tercih olabileceği varsayımıyla
+// BİLİNÇLİ olarak dokunulmadan bırakılmıştı; kullanıcı bu varsayımın kendisi
+// için geçerli olmadığını belirtti.)
 (function () {
   const kayitlarSekmeDugmesi = document.querySelector('[data-bs-target="#kayitlar-sekme"]');
   if (!kayitlarSekmeDugmesi) return;
   kayitlarSekmeDugmesi.addEventListener("hidden.bs.tab", () => {
-    const plakaEl = document.getElementById("filtrePlaka");
-    const tarihAlanIdleri = ["filtreBaslangic", "filtreBaslangicSaat", "filtreBitis", "filtreBitisSaat"];
-    const doluTarihAlani = tarihAlanIdleri.some(id => document.getElementById(id)?.value);
-    const plakaDoluMu = plakaEl && plakaEl.value.trim();
-    if (!plakaDoluMu && !doluTarihAlani) return;
-    if (plakaEl) plakaEl.value = "";
-    tarihAlanIdleri.forEach(id => { const el = document.getElementById(id); if (el) el.value = ""; });
+    const metinAlanIdleri = ["filtrePlaka", "filtreBaslangic", "filtreBaslangicSaat", "filtreBitis", "filtreBitisSaat", "filtreDurum", "filtreVardiyaAdi"];
+    const doluAlanVarMi = metinAlanIdleri.some(id => document.getElementById(id)?.value);
+    if (!doluAlanVarMi) return;
+    metinAlanIdleri.forEach(id => { const el = document.getElementById(id); if (el) el.value = ""; });
     kayitlariYukle();
   });
 })();
@@ -1987,7 +1985,7 @@ async function kayitlariYukle(sifirla = true) {
       <td class="small">${kayitIsimGoster(k)}</td>
       <td>${k.vardiya_adi ? `<span class="badge bg-info text-dark">${escapeHtml(k.vardiya_adi)}</span>` : '<span class="text-muted small">-</span>'}</td>
       <td>${k.guven_skoru ? (k.guven_skoru * 100).toFixed(0) + "%" : "-"}</td>
-      <td>${dogrulamaRozeti(k.dogrulama_kare_sayisi, k.farkli_okuma_sayisi)}</td>
+      ${rolYeterli("yonetici") ? `<td>${dogrulamaRozeti(k.dogrulama_kare_sayisi, k.farkli_okuma_sayisi)}</td>` : ""}
       <td class="text-nowrap">
         <button class="btn btn-sm btn-outline-danger" onclick="kayitPdfIndir(${k.id})" title="PDF indir" aria-label="PDF indir"><i class="bi bi-file-earmark-pdf"></i></button>
         ${rolYeterli("operatör") ? `<button class="btn btn-sm btn-outline-primary ms-1" onclick="kayitDuzenleAc(${k.id})" title="Kaydı düzenle" aria-label="Kaydı düzenle"><i class="bi bi-pencil"></i></button>` : ""}
