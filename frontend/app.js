@@ -852,20 +852,21 @@ async function sonGecislerYukle(sifirla = true) {
     _kayitCacheBirlestir(kayitlar);
     const sayacEl = document.getElementById("sonGecislerSayac");
     if (sayacEl) sayacEl.textContent = `${sayfaBilgisi.toplam} geçiş · Sayfa ${_sonGecislerSayfa + 1}/${sayfaBilgisi.sayfa_sayisi}`;
-    const tbody = document.getElementById("sonKayitlarTablo");
-    tbody.innerHTML = kayitlar.map(k => `
-      <tr>
-        <td>${k.goruntu_yolu ? `<img class="thumb" data-goruntu-yolu="${escapeHtml(k.goruntu_yolu)}" role="button" tabindex="0" alt="Geçiş görseli, büyütmek için tıklayın veya Enter'a basın">` : '<span class="text-muted small">Görsel yok</span>'}</td>
-        <td class="fw-bold"><button class="plate-link" onclick="olayDetayAc(${k.id})">${escapeHtml(k.plaka_no)}</button></td>
-        <td>${tarihFormatla(k.tarih_saat)}</td>
-        <td>${k.yon === "giris" ? "Giriş" : "Çıkış"}</td>
-        <td>${durumRozeti(k.yetki_durumu)}</td>
-        <td>${tipRozeti(k.kisi_tip_anlik)}</td>
-        <td class="small">${kayitIsimGoster(k)}</td>
-        <td>${k.vardiya_adi ? `<span class="badge bg-info text-dark">${escapeHtml(k.vardiya_adi)}</span>` : '<span class="text-muted small">-</span>'}</td>
-      </tr>
-    `).join("") || `<tr><td colspan="8" class="text-center text-muted py-3">Henüz kayıt yok</td></tr>`;
-    korumaliGorselleriYukle(tbody);
+
+    // 2026-09-23: bu sayfadaki kayıtlar GİRİŞ/ÇIKIŞ olarak iki ayrı ızgaraya
+    // dağıtılıyor (bkz. index.html'deki yorum ve _gecisKartiOlustur). Sıralama
+    // sunucudan gelen (en yeniden en eskiye) sıra korunarak yapılıyor -- her
+    // ızgara kendi içinde ayrıca sıralanmıyor.
+    const girisGrid = document.getElementById("sonGecislerGirisGrid");
+    const cikisGrid = document.getElementById("sonGecislerCikisGrid");
+    if (girisGrid && cikisGrid) {
+      const girisKayitlari = kayitlar.filter(k => k.yon !== "cikis");
+      const cikisKayitlari = kayitlar.filter(k => k.yon === "cikis");
+      girisGrid.innerHTML = girisKayitlari.map(_gecisKartiOlustur).join("") || '<div class="empty-state">Bu sayfada giriş kaydı yok</div>';
+      cikisGrid.innerHTML = cikisKayitlari.map(_gecisKartiOlustur).join("") || '<div class="empty-state">Bu sayfada çıkış kaydı yok</div>';
+      korumaliGorselleriYukle(girisGrid);
+      korumaliGorselleriYukle(cikisGrid);
+    }
 
     const sayfaEl = document.getElementById("sonGecislerSayfalama");
     if (sayfaEl) {
@@ -886,6 +887,62 @@ async function sonGecislerYukle(sifirla = true) {
 function sonGecislerSayfaDegistir(delta) {
   _sonGecislerSayfa = Math.max(0, _sonGecislerSayfa + delta);
   sonGecislerYukle(false);
+}
+
+// "Son Geçişler" ızgarasındaki TEK bir kartın HTML'i (bkz. sonGecislerYukle).
+// 2026-09-23 kullanıcı isteği (başka bir ANPR panelinden ekran görüntüsüyle):
+// eski tablo satırı yerine, görsel üzerine plaka+tarih bindirilmiş bir kart.
+//
+// Eski tablodaki bilgilerden HİÇBİRİ sessizce kaybolmadı:
+// - "Durum" (yetkili/yetkisiz/kara liste vb.) -- artık kartın SOL KENAR
+//   ŞERİDİNDE (durum-* sınıfı, badge-* ile AYNI renk paletini kullanır, bkz.
+//   style.css) VE görsel üzerindeki rozette (durumRozeti) korunuyor. Bu,
+//   güvenlik personelinin "Yetkisiz araç" gibi durumları tablo sütunu
+//   olmadan da tek bakışta ayırt edebilmesi için bilinçli bir tercih --
+//   yalnızca yön (giriş/çıkış) başlık şeridine göre renklendirseydik bu
+//   kritik bilgi kaybolurdu.
+// - "Kişi/Tip" rozeti (tipRozeti) kartlara TAŞINMADI (kullanıcının kabul
+//   ettiği bilinçli bir sadeleştirme) -- kartın tamamına tıklayınca açılan
+//   olayDetayAc() detay modalında hâlâ "Araç Tipi" olarak gösteriliyor.
+// - "İsim" ve "Vardiya" kart altında küçük, ikincil bir satırda korunuyor.
+//
+// Tıklama davranışı bilinçli olarak İKİYE ayrılmış durumda (kartın tamamına
+// TEK bir onclick eklenmedi): görsel (.thumb sınıfı) mevcut, kartlar arası
+// paylaşılan büyütme/lightbox davranışını (document-level click delegasyonu,
+// bkz. dosyanın üstündeki .thumb/.zoomable-img dinleyicisi) OLDUĞU GİBİ
+// kullanır; plaka/tarih şeridi ve not ikonu ise olayDetayAc(id) ile detay
+// modalini açar. Kartın geneline de bir onclick eklenseydi, görsele
+// tıklandığında olay üst elemana kabarıp (bubbling) HEM lightbox HEM detay
+// modali aynı anda açılmaya çalışırdı.
+function _gecisKartiOlustur(k) {
+  const yonSinifi = k.yon === "giris" ? "yon-giris" : "yon-cikis";
+  const yonEtiketi = k.yon === "giris" ? "GİRİŞ" : "ÇIKIŞ";
+  const isim = kayitIsimGoster(k);
+  const isimBos = isim === '<span class="text-muted">-</span>';
+  // İsim boşsa (kişiye/misafire bağlı değilse) yalnızca "- · A" gibi anlamsız
+  // bir tire kalmasın diye, alt bilgi satırı yalnızca GERÇEKTEN dolu olan
+  // parçalardan (isim, vardiya) kuruluyor.
+  const altBilgiParcalari = [isimBos ? null : isim, k.vardiya_adi ? escapeHtml(k.vardiya_adi) : null].filter(Boolean);
+  return `
+    <div class="gecis-karti durum-${escapeHtml(k.yetki_durumu)} ${yonSinifi}">
+      <div class="gecis-karti-baslik">
+        <span class="gecis-karti-kamera" title="${escapeHtml(k.kamera_id)}">${escapeHtml(k.kamera_id)} - ${yonEtiketi}</span>
+        <button class="gecis-karti-not-btn" onclick="olayDetayAc(${k.id})" title="${k.not_metni ? "Not var, görmek için tıklayın" : "Detay / not ekle"}" aria-label="Detay ve not">
+          <i class="bi ${k.not_metni ? "bi-chat-left-text-fill" : "bi-chat-left-text"}"></i>
+        </button>
+      </div>
+      <div class="gecis-karti-gorsel-wrap">
+        ${k.goruntu_yolu
+          ? `<img class="thumb gecis-karti-gorsel" data-goruntu-yolu="${escapeHtml(k.goruntu_yolu)}" role="button" tabindex="0" alt="${escapeHtml(k.plaka_no)} geçiş görseli, büyütmek için tıklayın veya Enter'a basın">`
+          : `<div class="gecis-karti-gorsel-yok"><i class="bi bi-camera-video-off"></i></div>`}
+        <span class="gecis-karti-durum-rozeti">${durumRozeti(k.yetki_durumu)}</span>
+        <button class="gecis-karti-alt-serit" onclick="olayDetayAc(${k.id})" title="Kaydı görüntüle">
+          <span class="gecis-karti-plaka">${escapeHtml(k.plaka_no)}</span>
+          <span class="gecis-karti-tarih">${tarihFormatla(k.tarih_saat)}</span>
+        </button>
+      </div>
+      ${altBilgiParcalari.length ? `<div class="gecis-karti-footer small text-muted">${altBilgiParcalari.join(" · ")}</div>` : ""}
+    </div>`;
 }
 
 // Güvenlik personeli için teşhis: sunucunun "şu an" bilgisi + kullanıcının

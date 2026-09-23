@@ -354,6 +354,134 @@ body {
 .badge-dogrulama-zayif { background-color: #d97706; }
 .badge-dogrulama-guclu { background-color: #16a34a; }
 
+/* ---------------------- SON GEÇİŞLER KART IZGARASI ---------------------- */
+/* 2026-09-23 kullanıcı isteği (başka bir ANPR panelinden ekran görüntüsüyle):
+   "Son Geçişler" tablosu, GİRİŞ/ÇIKIŞ olarak iki sütuna ayrılan, her geçişi
+   fotoğraf üzerine plaka+tarih bindirmesiyle gösteren bir kart ızgarasıyla
+   değiştirildi (bkz. app.js::_gecisKartiOlustur). */
+.gecis-grid-baslik {
+  font-size: .8rem;
+  font-weight: 700;
+  letter-spacing: .04em;
+  padding: .5rem .75rem;
+  border-radius: 6px 6px 0 0;
+  border: 1px solid #dfe6ec;
+  border-bottom: none;
+}
+.gecis-grid-baslik.yon-giris { background: #eafaf0; color: #166534; }
+.gecis-grid-baslik.yon-cikis { background: #eaf2fb; color: #1e40af; }
+
+.gecis-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: .65rem;
+  padding: .65rem;
+  border: 1px solid #dfe6ec;
+  border-top: none;
+  border-radius: 0 0 6px 6px;
+  background: #f7f9fb;
+  min-height: 3.5rem;
+}
+.gecis-grid .empty-state { grid-column: 1 / -1; padding: 1.2rem .5rem; font-size: .85rem; }
+
+.gecis-karti {
+  background: #fff;
+  border-radius: 8px;
+  border-left: 4px solid #6b7280;
+  box-shadow: 0 1px 4px rgba(15, 30, 45, .08);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+/* Sol kenar şeridi rengi, tablodaki eski "Durum" sütununun (durumRozeti,
+   badge-* sınıfları) AYNI renk paletini kullanır -- bkz. yukarıdaki
+   .badge-yetkili vb. tanımları. Yeni bir renk dili İCAT EDİLMEDİ, kartlar
+   uygulamanın geri kalanıyla tutarlı kalsın diye. */
+.gecis-karti.durum-yetkili { border-left-color: #16a34a; }
+.gecis-karti.durum-yetkisiz { border-left-color: #dc2626; }
+.gecis-karti.durum-suresi_dolmus { border-left-color: #d97706; }
+.gecis-karti.durum-bilinmiyor { border-left-color: #6b7280; }
+.gecis-karti.durum-kara_liste { border-left-color: #111827; }
+.gecis-karti.durum-ziyaretci_onayli { border-left-color: #0d9488; }
+
+.gecis-karti-baslik {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: .4rem;
+  padding: .3rem .5rem;
+  font-size: .72rem;
+  font-weight: 700;
+  letter-spacing: .02em;
+  background: #eef2f5;
+  color: #475569;
+}
+.gecis-karti.yon-giris .gecis-karti-baslik { background: #eafaf0; color: #166534; }
+.gecis-karti.yon-cikis .gecis-karti-baslik { background: #eaf2fb; color: #1e40af; }
+.gecis-karti-kamera { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.gecis-karti-not-btn {
+  flex: 0 0 auto;
+  border: none;
+  background: transparent;
+  color: inherit;
+  opacity: .75;
+  padding: 0 .1rem;
+  line-height: 1;
+}
+.gecis-karti-not-btn:hover { opacity: 1; }
+
+.gecis-karti-gorsel-wrap {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 4 / 3;
+  background: #111827;
+  overflow: hidden;
+}
+.gecis-karti-gorsel.thumb {
+  width: 100%;
+  height: 100%;
+  border-radius: 0;
+}
+.gecis-karti-gorsel-yok {
+  width: 100%;
+  height: 100%;
+  display: grid;
+  place-items: center;
+  color: #6b7280;
+  font-size: 1.8rem;
+}
+.gecis-karti-durum-rozeti { position: absolute; top: .35rem; right: .35rem; }
+/* Araç görselleri gece/gündüz çok farklı parlaklıkta olabilir (koyu gece
+   çekimi, aşırı pozlanmış gündüz vb.) -- rozet (özellikle koyu "Kara Liste"
+   rozeti) koyu bir fotoğrafın üzerinde neredeyse görünmez kalabilir. İnce bir
+   beyaz halka, fotoğrafın parlaklığından bağımsız her zaman okunaklı kalmasını
+   sağlıyor. */
+.gecis-karti-durum-rozeti .badge { font-size: .65rem; box-shadow: 0 0 0 1px rgba(255, 255, 255, .55), 0 1px 3px rgba(0, 0, 0, .5); }
+
+.gecis-karti-alt-serit {
+  position: absolute;
+  left: 0; right: 0; bottom: 0;
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: .4rem;
+  padding: .3rem .5rem;
+  background: linear-gradient(0deg, rgba(0, 0, 0, .72), rgba(0, 0, 0, 0));
+  border: none;
+  width: 100%;
+  text-align: left;
+}
+.gecis-karti-plaka { color: #fff; font-weight: 700; font-size: .85rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.gecis-karti-tarih { color: #e5e7eb; font-size: .68rem; flex: 0 0 auto; }
+
+.gecis-karti-footer {
+  padding: .3rem .5rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  border-top: 1px solid #eef1f4;
+}
+
 /* Alarm satırı */
 .alarm-row { background: #fff8f0; border-left: 3px solid #e0833d; }
 .alarm-row-tiklanabilir { cursor: pointer; }
@@ -381,4 +509,7 @@ table td, table th {
   .camera-tile { min-height: 270px; }
   .nav-tabs { overflow-x: auto; flex-wrap: nowrap; }
   .nav-tabs .nav-link { white-space: nowrap; }
+  /* "Son Geçişler" kart ızgarası: dar ekranda 2 sütun yerine tek sütun, kartlar
+     çok küçülüp okunaksız hale gelmesin diye (bkz. app.js::_gecisKartiOlustur). */
+  .gecis-grid { grid-template-columns: 1fr; }
 }
