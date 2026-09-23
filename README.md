@@ -2915,3 +2915,45 @@ yukarıdaki "Üretim Ortamı (Gerçek Kullanım) Notları" bölümündeki günce
 ortamlarında PRAGMA mantığı gerçek bir SQLite bağlantısı üzerinde ÇALIŞTIRILARAK
 test edilememiştir. Gerçek bir SQLite kurulumunda `PRAGMA journal_mode;`
 çalıştırıp `wal` döndüğünü doğrulamanız önerilir.
+
+## Tespit Alanı (ROI)/Plaka Kutusu/Güven Skoru Bilgilerinin Görsellerden ve Raporlardan Kaldırılması (2026-09-23)
+
+**Kullanıcı isteği:** "kayıtlarda tespit alanı ROI, plaka alanı ve % kaç ile
+okunduğu raporlara/son geçişlere eklenmesin, hatta canlı izlemede bile görüntü
+kirliliği olmasın."
+
+**Bulunan durum:** `camera_reader.py::_kareyi_isle`, işlediği HER karenin bir
+KOPYASI üzerine (varsa) yapılandırılmış ROI sınırının bir çizgisini, HER
+tespit için yeşil/gri bir kutuyu ve `"PLAKA  %XX"` biçiminde bir metni
+`_kare_uzerine_ciz` ile basıyordu. Bu TEK "işaretlenmiş" (annotated) kare hem
+canlı izleme akışına (`/kameralar/{id}/akis`, `/kameralar/{id}/goruntu`) HEM DE
+— oy birikimi oturumuna geçirilerek — nihayetinde KAYDEDİLEN, panelde
+gösterilen ve PDF/Excel'e aktarılan araç fotoğrafının ta kendisi oluyordu.
+Yani hem canlı izlemede hem arşivlenen her kayıtta bu teknik/hata-ayıklama
+bilgileri kalıcı olarak görsele işlenmiş durumdaydı.
+
+**Düzeltme:**
+
+- `_kare_uzerine_ciz` fonksiyonu ve yalnızca onun kullandığı overlay renk
+  sabitleri tamamen kaldırıldı. `_kareyi_isle` artık kareyi HİÇ İŞARETLEMEDEN
+  JPEG'e kodluyor; bu TEK temiz kare hem canlı önizleme akışında hem
+  kaydedilen/rapor edilen görsel olarak kullanılıyor.
+- ROI'nin KENDİSİ (yapılandırılmış tespit alanı) işlevsel olarak
+  DEĞİŞMEDİ -- hangi tespitlerin oy birikimine gireceğini belirlemek için
+  hâlâ hesaplanıp uygulanıyor, yalnızca artık kare üzerine ÇİZİLMİYOR.
+  Kamera kurulumunda ROI'yi tanımlamak için ayrı, isteğe bağlı açılan bir araç
+  (Kameralar ekranındaki "Tespit Alanı (ROI) ayarla" düğmesi) zaten var ve bu
+  tarayıcıda kendi etkileşimli SVG katmanını kullanıyor -- sunucu tarafında
+  kare üzerine hiçbir şey basılmasına ihtiyaç yok.
+- Kayıtlar ve Plaka Analizi tablolarındaki "Güven" (%) sütunu kaldırıldı.
+- Tek-kayıt PDF indirmesindeki ("Kaydı Düzenle" ekranındaki "PDF indir")
+  "Güven Skoru:" satırı kaldırıldı; yerine (panelin tek-kayıt detay
+  modalinde 2026-09-20'de yapılan aynı gerekçeli değişiklikle tutarlı olarak)
+  kaydın Not alanı (`Kayit.not_metni`) geldi. Toplu "GEÇİŞ RAPORU" PDF'inde
+  zaten hiç güven skoru sütunu yoktu, Excel dışa aktarımında da hiç yoktu --
+  ikisinde de değişiklik gerekmedi.
+
+**Kapsam dışı bırakılan (bilinçli):** Sistem Ayarları'ndaki "Min. kayıt güven
+skoru" eşikleri (`otomatik_kayit_min_guven_skoru` vb.) ve Toplu Doğruluk
+Testi aracı DEĞİŞMEDİ -- bunlar birer YÖNETİCİ YAPILANDIRMASI/tanı aracı,
+sıradan kayıt/rapor/son geçiş görüntüleme akışının bir parçası değil.

@@ -156,14 +156,6 @@ def _rtsp_url_maskele(url: str) -> str:
     return urlunsplit((parcalar.scheme, f"{parcalar.username or 'kamera'}:****@{host}",
                         parcalar.path, parcalar.query, parcalar.fragment))
 
-# Plaka overlay stilleri
-_OVERLAY_RENK = (0, 220, 80)       # yeşil kutu / metin
-_OVERLAY_ARKA = (0, 0, 0)          # metin arkaplanı
-_YAZI_OLCEK = 0.8
-_YAZI_KALINLIK = 2
-_ROI_CIZGI_RENK = (0, 220, 255)    # sarı — yapılandırılmış tespit alanı (ROI) sınır çizgisi
-_ROI_DISI_RENK = (140, 140, 140)   # gri — ROI dışında kaldığı için oy birikimine girmeyen tespit
-
 # Aynı plaka için son görülme zamanlarının ne kadar süre saklanacağı (bellek
 # şişmesin diye budama eşiği = tekrar gecikmesinin birkaç katı).
 _PLAKA_HAFIZA_CARPANI = 4
@@ -460,10 +452,16 @@ def _kutu_polygon_icinde_mi(kutu, poligon_piksel: list) -> bool:
 
 def _roi_ciz_bilgisi_hesapla(roi: Optional[dict], genislik: int, yukseklik: int) -> Optional[tuple]:
     """Bir kameranın ROI'sini (dikdörtgen ya da serbest çizim/polygon), o anki
-    karenin piksel boyutuna göre, hem oy-birikimi filtresinin hem de canlı
-    önizleme çiziminin (`_kare_uzerine_ciz`) ORTAK olarak kullanacağı tek bir
-    piksel-şekli tanımına çevirir. Dönüş: `("dikdortgen", (x1,y1,x2,y2))`,
-    `("polygon", [(x,y), ...])` ya da ROI tanımlı değilse `None`."""
+    karenin piksel boyutuna göre, oy-birikimi filtresinin ("bu tespit ROI
+    içinde mi") kullanacağı tek bir piksel-şekli tanımına çevirir. Dönüş:
+    `("dikdortgen", (x1,y1,x2,y2))`, `("polygon", [(x,y), ...])` ya da ROI
+    tanımlı değilse `None`.
+
+    NOT (2026-09-23): bu şekil ÖNCEDEN ayrıca canlı önizleme karesine (artık
+    kaldırılan `_kare_uzerine_ciz`) çizmek için de kullanılıyordu; kullanıcı
+    isteğiyle (bkz. `_kareyi_isle`'deki ilgili not) bu görsel çizim tamamen
+    kaldırıldı -- fonksiyon adı hâlâ "ciz" içeriyor ama artık YALNIZCA filtre
+    hesaplaması için kullanılıyor, hiçbir şey çizmiyor."""
     if not roi:
         return None
     if roi.get("tip") == "polygon":
@@ -481,39 +479,6 @@ def _kutu_roi_ciz_bilgisiyle_icinde_mi(kutu, roi_ciz_bilgisi: Optional[tuple]) -
     if tip == "polygon":
         return _kutu_polygon_icinde_mi(kutu, sekil)
     return _kutu_roi_icinde_mi(kutu, sekil)
-
-
-def _kare_uzerine_ciz(frame, tespitler: list, roi_ciz_bilgisi: Optional[tuple] = None) -> None:
-    """Tespit edilen plakaları ve (varsa) yapılandırılmış tespit alanı (ROI)
-    sınırını kare üzerine in-place çizer. ROI dışında kaldığı için oy
-    birikimine hiç girmeyen tespitler (bkz. `_kareyi_isle`) gri renkte
-    çizilir -- operatör bu sayede kamerayı canlı izlerken ROI'yi
-    ayarlarken/doğrularken hangi araçların filtrelendiğini görsel olarak
-    doğrulayabilir (bkz. README.md'deki ROI/alan sınırı notu).
-
-    `roi_ciz_bilgisi`, `_roi_ciz_bilgisi_hesapla`'nın döndürdüğü
-    `(tip, şekil)` ikilisidir -- dikdörtgen için bir çizgi dörtgeni, serbest
-    çizim (polygon) için kapalı bir çokgen çizilir (2026-09-20)."""
-    if roi_ciz_bilgisi:
-        tip, sekil = roi_ciz_bilgisi
-        if tip == "polygon" and len(sekil) >= 3:
-            noktalar = np.array(sekil, dtype=np.int32).reshape((-1, 1, 2))
-            cv2.polylines(frame, [noktalar], isClosed=True, color=_ROI_CIZGI_RENK, thickness=2)
-        elif tip == "dikdortgen":
-            rx1, ry1, rx2, ry2 = sekil
-            cv2.rectangle(frame, (rx1, ry1), (rx2, ry2), _ROI_CIZGI_RENK, 2)
-    for t in tespitler:
-        renk = _OVERLAY_RENK if t.get("roi_icinde", True) else _ROI_DISI_RENK
-        if t.get("kutu"):
-            x1, y1, x2, y2 = t["kutu"]
-            cv2.rectangle(frame, (x1, y1), (x2, y2), renk, 2)
-        metin = f"{t['plaka']}  {t['guven']:.0%}" + ("" if t.get("roi_icinde", True) else "  (alan dışı)")
-        kutu_x = t["kutu"][0] if t.get("kutu") else 10
-        kutu_y = (t["kutu"][1] - 10) if t.get("kutu") else 30
-        kutu_y = max(kutu_y, 20)
-        (tw, th), _ = cv2.getTextSize(metin, cv2.FONT_HERSHEY_SIMPLEX, _YAZI_OLCEK, _YAZI_KALINLIK)
-        cv2.rectangle(frame, (kutu_x - 3, kutu_y - th - 6), (kutu_x + tw + 3, kutu_y + 4), _OVERLAY_ARKA, -1)
-        cv2.putText(frame, metin, (kutu_x, kutu_y), cv2.FONT_HERSHEY_SIMPLEX, _YAZI_OLCEK, renk, _YAZI_KALINLIK)
 
 
 def _kontrast_iyilestirme_aktif_mi() -> bool:
@@ -535,11 +500,11 @@ def _kontrast_iyilestirmesi_uygula(frame):
     koşullarında tespit oranını artırmak için standart, düşük riskli bir
     ilk-basamak tekniğidir.
 
-    ÖNEMLİ: Bu YALNIZCA dedektöre giden kareyi etkiler. Kaydedilen/panelde
-    gösterilen fotoğraf (bkz. çağıran koddaki `annotated = frame.copy()`)
-    HER ZAMAN orijinal, işlenmemiş kareden üretilir — yani bu ayar kayıtların
-    görünümünü hiç değiştirmez, yalnızca tespit/OCR'ın gördüğü kareyi
-    iyileştirir."""
+    ÖNEMLİ: Bu YALNIZCA dedektöre giden kareyi etkiler. Kaydedilen/panelde/canlı
+    izlemede gösterilen görsel (bkz. çağıran koddaki `_kareyi_isle`'nin
+    `cv2.imencode(".jpg", frame, ...)` satırı) HER ZAMAN orijinal, işlenmemiş
+    kareden üretilir — yani bu ayar kayıtların görünümünü hiç değiştirmez,
+    yalnızca tespit/OCR'ın gördüğü kareyi iyileştirir."""
     try:
         lab = cv2.cvtColor(frame, cv2.COLOR_BGR2LAB)
         l_kanali, a_kanali, b_kanali = cv2.split(lab)
@@ -618,7 +583,8 @@ class KameraPipeline:
         self._gen = 0
         self._gen_kilit = threading.Lock()
 
-        # Son annotated frame (goruntu endpoint'i için)
+        # Son (temiz, işaretlenmemiş) kare -- /kameralar/{id}/goruntu ve
+        # /kameralar/{id}/akis için (bkz. _kareyi_isle'deki 2026-09-23 notu).
         self._goruntu_kilit = threading.Lock()
         self._son_goruntu_jpeg: Optional[bytes] = None
 
@@ -728,10 +694,10 @@ class KameraPipeline:
         tespitler = []
         # PTS_GORUNTU_ON_ISLEME_KONTRAST ayarlıysa, dedektöre ORİJİNAL kare
         # yerine kontrastı iyileştirilmiş bir kopyası verilir (gece/parlama
-        # koşullarında tespit oranını artırmak için) — kaydedilen/panelde
-        # gösterilen görsel her zaman `frame`'in kendisinden üretildiği için
-        # (aşağıdaki `annotated = frame.copy()`) bu, kayıtların görünümünü
-        # etkilemez.
+        # koşullarında tespit oranını artırmak için) — kaydedilen/panelde/canlı
+        # izlemede gösterilen görsel her zaman `frame`'in KENDİSİNDEN, hiç
+        # işaretlenmeden üretildiği için (aşağıdaki `cv2.imencode(".jpg", frame,
+        # ...)`) bu, kayıtların görünümünü etkilemez.
         dedektore_giden_kare = (
             _kontrast_iyilestirmesi_uygula(frame) if _kontrast_iyilestirme_aktif_mi() else frame
         )
@@ -810,9 +776,9 @@ class KameraPipeline:
         # TESPİT ALANI SINIRI (ROI): kameraya bir ROI tanımlıysa (dikdörtgen ya
         # da 2026-09-20'den itibaren serbest çizim/polygon), kare boyutuna göre
         # piksel şeklini hesaplayıp her tespiti "alan içinde mi" diye işaretle.
-        # Bu işaretleme burada (oy birikimine girmeden HEMEN önce) yapılıyor ki
-        # hem `_kare_uzerine_ciz` (canlı önizleme/kalibrasyon) hem aşağıdaki oy
-        # döngüsü AYNI sonucu kullansın.
+        # Bu, SADECE aşağıdaki oy döngüsünde hangi tespitlerin oy birikimine
+        # gireceğini belirlemek için kullanılır (ROI dışı tespitler filtrelenir)
+        # -- artık kare üzerine GÖRSEL olarak ÇİZİLMİYOR, bkz. aşağıdaki not.
         roi_ciz_bilgisi = None
         if self.roi:
             yukseklik, genislik = frame.shape[:2]
@@ -820,12 +786,26 @@ class KameraPipeline:
             for t in tespitler:
                 t["roi_icinde"] = _kutu_roi_ciz_bilgisiyle_icinde_mi(t.get("kutu"), roi_ciz_bilgisi)
 
-        # Kare üstüne tüm tespitleri çiz (overlay kopyası) — bu, oy birikimine
-        # girme eşiğinden bağımsız olarak operatöre HER geçerli-formatlı ham
-        # okumayı gösterir (şeffaflık için). ROI dışında kalanlar gri çizilir.
-        annotated = frame.copy()
-        _kare_uzerine_ciz(annotated, tespitler, roi_ciz_bilgisi)
-        _, buf = cv2.imencode(".jpg", annotated, [cv2.IMWRITE_JPEG_QUALITY, 75])
+        # 2026-09-23 kullanıcı isteği: "kayıtlarda tespit alanı ROI, plaka alanı
+        # ve % kaç ile okunduğu raporlara/son geçişlere eklenmesin, hatta canlı
+        # izlemede bile görüntü kirliliği olmasın." ÖNCEDEN burada `frame`'in bir
+        # KOPYASI üzerine (ROI sınır çizgisi + her tespit için bir kutu + "PLAKA
+        # %XX" metni basılı) bir "annotated" (işaretlenmiş) kare üretiliyordu ve
+        # bu TEK kare hem canlı önizleme akışına (`_son_goruntu_jpeg`, dolayısıyla
+        # Canlı İzleme'ye VE `/kameralar/{id}/goruntu`'ya) HEM DE (aşağıdaki oy
+        # birikimine geçirilerek) KAYDEDİLEN/panelde-gösterilen/rapor edilen
+        # görsele dönüşüyordu -- yani hem canlı izlemede hem arşivlenen her araç
+        # fotoğrafında bu teknik/hata-ayıklama bilgileri kalıcı olarak görünüyordu.
+        # Artık kare HİÇ İŞARETLENMEDEN (temiz haliyle) JPEG'e kodlanıyor ve HEM
+        # canlı önizleme HEM kayıt için aynı temiz kare kullanılıyor -- ROI'nin
+        # KENDİSİ (yukarıdaki `roi_ciz_bilgisi`) hâlâ hesaplanıp tespit
+        # filtrelemesinde kullanılıyor, yalnızca kare üzerine ÇİZİLMİYOR. Kamera
+        # kurulumu sırasında ROI'yi tanımlamak için ayrı, İSTEĞE BAĞLI açılan bir
+        # araç zaten var (bkz. index.html #kameraRoiModal / app.js::kameraRoiAc)
+        # -- kullanıcının orada sürükleyerek çizdiği bölge tarayıcıda kendi SVG
+        # katmanıyla gösteriliyor, kare üzerine sunucu tarafında hiçbir şey
+        # basılmasına gerek yok.
+        _, buf = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 75])
         jpeg_bytes = buf.tobytes()
         with self._goruntu_kilit:
             self._son_goruntu_jpeg = jpeg_bytes

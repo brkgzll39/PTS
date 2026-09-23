@@ -2161,14 +2161,16 @@ def kamera_roi_guncelle(kamera_id: str, veri: schemas.KameraRoiGuncelle, kullani
 
 @app.get("/kameralar/{kamera_id}/goruntu")
 async def kamera_goruntu_al(kamera_id: str, kullanici: models.Kullanici = Depends(_personel_girisi_gerekli)):
-    """Kameradan anlık JPEG kare alır. Pipeline çalışıyorsa cached+annotated frame döner (sıfır gecikme)."""
+    """Kameradan anlık JPEG kare alır. Pipeline çalışıyorsa cached (temiz,
+    işaretlenmemiş -- bkz. camera_reader.py::_kareyi_isle'deki 2026-09-23 notu)
+    frame döner (sıfır gecikme)."""
     if not _kamera_erisimi_var_mi(kullanici, kamera_id):
         raise HTTPException(403, "Bu kameraya erişim yetkiniz yok")
     kamera = next((k for k in _kameralari_oku() if k["id"] == kamera_id), None)
     if not kamera:
         raise HTTPException(404, "Kamera bulunamadı")
 
-    # Pipeline çalışıyorsa son annotated frame'i doğrudan dön (hızlı yol)
+    # Pipeline çalışıyorsa son (temiz) frame'i doğrudan dön (hızlı yol)
     pipeline = _aktif_pipelineler.get(kamera_id)
     if pipeline and pipeline.calisiyor:
         kare = pipeline.son_goruntu_al()

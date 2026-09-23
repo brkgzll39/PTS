@@ -259,14 +259,21 @@ def kayit_detay_pdf_olustur(kayit, dosya_yolu: str) -> str:
     elemanlar.append(Paragraph("Plaka Tanıma Kayıt Detayı", stiller["Title"]))
     elemanlar.append(Spacer(1, 0.5 * cm))
 
-    guven_metni = f"%{kayit.guven_skoru * 100:.1f}" if kayit.guven_skoru else "-"
+    # 2026-09-23 kullanıcı isteği: "kayıtlarda ... % kaç ile okunduğu ...
+    # raporlara ... eklenmesin" -- bu satırda önceden OCR güven skorunu (ör.
+    # "%87.3") gösteren "Güven Skoru:" satırı vardı. Kaldırıldı; yerine (bkz.
+    # app.js::olayDetayAc'ta 2026-09-22'de aynı gerekçeyle yapılan değişikliğin
+    # dediği gibi -- "OCR güven skoru gibi şeyleri görmeme gerek yok, onların
+    # yerine Not yazınca not bilgisi eklensin") operatörün bu kayda özel
+    # yazdığı Not (Kayit.not_metni) geldi -- bu, panelin tek-kayıt detay
+    # modalinde zaten gösterilen bilgiyle PDF'i tutarlı hale getirir.
     bilgi = [
         ["Plaka No:", kayit.plaka_no],
         ["Tarih/Saat:", kayit.tarih_saat.strftime("%d.%m.%Y %H:%M:%S")],
         ["Kamera:", kayit.kamera_id],
         ["Yön:", kayit.yon],
         ["Yetki Durumu:", kayit.yetki_durumu],
-        ["Güven Skoru:", guven_metni],
+        ["Not:", kayit.not_metni or "-"],
         ["Kişi/Tip:", kayit.kisi_tip_anlik or "-"],
     ]
     tablo = Table(bilgi, colWidths=[5 * cm, 10 * cm])

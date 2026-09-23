@@ -312,10 +312,17 @@ def test_kayit_detay_pdf_turkce_karakterler_dogru_render_edilir(tmp_path):
     import pdfplumber
     from types import SimpleNamespace
 
+    # 2026-09-23 kullanıcı isteği: PDF'teki "Güven Skoru:" satırı kaldırılıp
+    # yerine "Not:" (Kayit.not_metni) satırı geldi (bkz. pdf_export.py'nin
+    # kayit_detay_pdf_olustur'undaki aynı tarihli not) -- bu sahte kayıt artık
+    # `not_metni` de taşıyor ki gerçek bir models.Kayit nesnesini doğru
+    # yansıtsın (guven_skoru hâlâ modelde/şemada var, yalnızca bu PDF'te
+    # ARTIK GÖSTERİLMİYOR -- bu yüzden burada tutulmaya devam ediyor).
     kayit = SimpleNamespace(
         plaka_no="34 ABC 123", tarih_saat=datetime(2026, 9, 17, 8, 4, 7),
         kamera_id="KAM-1", yon="giris", yetki_durumu="yetkili",
         guven_skoru=0.98, kisi_tip_anlik="personel", goruntu_yolu=None,
+        not_metni="Görevli tarafından yönlendirildi",
     )
     dosya = tmp_path / "detay.pdf"
     pdf_export.kayit_detay_pdf_olustur(kayit, str(dosya))
@@ -323,5 +330,12 @@ def test_kayit_detay_pdf_turkce_karakterler_dogru_render_edilir(tmp_path):
     with pdfplumber.open(str(dosya)) as pdf:
         tam_metin = "\n".join(sayfa.extract_text() or "" for sayfa in pdf.pages)
 
-    for beklenen in ("Plaka Tanıma Kayıt Detayı", "Kişi/Tip:", "Yön:", "Bu kayıt için görsel bulunmuyor."):
+    for beklenen in ("Plaka Tanıma Kayıt Detayı", "Kişi/Tip:", "Yön:", "Bu kayıt için görsel bulunmuyor.", "Not:", "Görevli tarafından yönlendirildi"):
         assert beklenen in tam_metin, f"'{beklenen}' üretilen PDF'in metninde bulunamadı"
+
+    # Kullanıcının açıkça istediği şey: güven skoru/% bilgisinin PDF'te HİÇ
+    # görünmemesi -- yalnızca eski "Güven Skoru:" etiketinin yokluğunu değil,
+    # oluşabilecek herhangi bir "%98" gibi bir yüzde metninin de yokluğunu
+    # doğrula (etiket değişse bile değer sızmış olabilirdi).
+    assert "Güven Skoru" not in tam_metin
+    assert "%98" not in tam_metin

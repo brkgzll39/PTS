@@ -2042,7 +2042,6 @@ async function kayitlariYukle(sifirla = true) {
       <td class="small">${kayitIsimGoster(k)}</td>
       <td class="small">${k.surucu_adi ? escapeHtml(k.surucu_adi) : '<span class="text-muted">-</span>'}</td>
       <td>${k.vardiya_adi ? `<span class="badge bg-info text-dark">${escapeHtml(k.vardiya_adi)}</span>` : '<span class="text-muted small">-</span>'}</td>
-      <td>${k.guven_skoru ? (k.guven_skoru * 100).toFixed(0) + "%" : "-"}</td>
       ${rolYeterli("yonetici") ? `<td>${dogrulamaRozeti(k.dogrulama_kare_sayisi, k.farkli_okuma_sayisi)}</td>` : ""}
       <td class="text-nowrap">
         <button class="btn btn-sm btn-outline-danger" onclick="kayitPdfIndir(${k.id})" title="PDF indir" aria-label="PDF indir"><i class="bi bi-file-earmark-pdf"></i></button>
@@ -2050,7 +2049,7 @@ async function kayitlariYukle(sifirla = true) {
         ${rolYeterli("yonetici") ? `<button class="btn btn-sm btn-outline-secondary ms-1" onclick="kayitSil(${k.id})" title="Kaydı sil" aria-label="Kaydı sil"><i class="bi bi-trash"></i></button>` : ""}
       </td>
     </tr>
-  `).join("") || `<tr><td colspan="14" class="text-center text-muted py-3">Kayıt bulunamadı</td></tr>`;
+  `).join("") || `<tr><td colspan="13" class="text-center text-muted py-3">Kayıt bulunamadı</td></tr>`;
   korumaliGorselleriYukle(tbody);
 
   // Sayfalama kontrolleri
@@ -2765,7 +2764,6 @@ async function plakaAnalizAc(plaka) {
         <td>${durumRozeti(k.yetki_durumu)}</td>
         <td class="small">${kayitIsimGoster(k)}</td>
         <td>${k.vardiya_adi ? `<span class="badge bg-info text-dark">${escapeHtml(k.vardiya_adi)}</span>` : '<span class="text-muted small">-</span>'}</td>
-        <td>${k.guven_skoru ? (k.guven_skoru * 100).toFixed(0) + "%" : "-"}</td>
         <td>${dogrulamaRozeti(k.dogrulama_kare_sayisi, k.farkli_okuma_sayisi)}</td>
         <td class="small">${k.manuel_giris ? '<span class="badge bg-secondary d-block mb-1">Manuel</span>' : ""}${k.not_metni ? escapeHtml(k.not_metni) : (k.manuel_giris ? "" : '<span class="text-muted">-</span>')}</td>
         <td class="text-nowrap">
@@ -2783,8 +2781,8 @@ async function plakaAnalizAc(plaka) {
       ${v.kara_sebep ? `<div class="alert alert-danger py-2 mb-3">Engel sebebi: ${escapeHtml(v.kara_sebep)}</div>` : ""}
       <div class="table-responsive">
         <table class="table table-sm align-middle">
-          <thead class="table-light"><tr><th>Görsel</th><th>Tarih/Saat</th><th>Yön</th><th>Kamera</th><th>Durum</th><th>İsim</th><th>Vardiya</th><th>Güven</th><th title="Bu okuma kaç farklı karede doğrulandı">Doğrulama</th><th>Not</th><th></th></tr></thead>
-          <tbody>${satirlar || "<tr><td colspan='11' class='text-center text-muted'>Kayıt yok</td></tr>"}</tbody>
+          <thead class="table-light"><tr><th>Görsel</th><th>Tarih/Saat</th><th>Yön</th><th>Kamera</th><th>Durum</th><th>İsim</th><th>Vardiya</th><th title="Bu okuma kaç farklı karede doğrulandı">Doğrulama</th><th>Not</th><th></th></tr></thead>
+          <tbody>${satirlar || "<tr><td colspan='10' class='text-center text-muted'>Kayıt yok</td></tr>"}</tbody>
         </table>
       </div>
       <div class="d-flex gap-2 mt-2 flex-wrap">
