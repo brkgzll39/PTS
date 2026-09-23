@@ -1038,15 +1038,6 @@ async function _ziyaretciGirisiKutusunuAyarla(kayit, nokta) {
     const notEl = document.getElementById("olayModalZiyaretciNot");
     if (oneri && notEl && !notEl.value) notEl.value = oneri;
   });
-  const secim = document.getElementById("olayModalKisiSecim");
-  try {
-    const kisiler = await apiCagir("/kisiler");
-    secim.innerHTML = '<option value="">Kişiye bağlamadan onayla</option>' + kisiler.map(k =>
-      `<option value="${k.id}">${escapeHtml(k.ad_soyad)} (${escapeHtml(k.plaka_no)}${k.daire_departman ? " · " + escapeHtml(k.daire_departman) : ""})</option>`
-    ).join("");
-  } catch { secim.innerHTML = '<option value="">Kişiye bağlamadan onayla</option>'; }
-  aramaliSecimEkle(secim);
-
   const btn = document.getElementById("ziyaretciGirisiBtn");
   btn.onclick = async () => {
     const sonuc = document.getElementById("ziyaretciGirisiSonuc");
@@ -1062,7 +1053,6 @@ async function _ziyaretciGirisiKutusunuAyarla(kayit, nokta) {
       if (misafirAdi) govde.misafir_adi = misafirAdi;
       const notMetni = document.getElementById("olayModalZiyaretciNot").value.trim();
       if (notMetni) govde.not_metni = notMetni;
-      if (secim.value) govde.kisi_id = Number(secim.value);
       const guncelKayit = await apiCagir(`/kayitlar/${kayit.id}`, {
         method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(govde),
       });
