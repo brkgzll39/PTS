@@ -10,7 +10,8 @@ iki kopyası olarak var olmaması (bu depoda daha önce başka dosyalarda görü
 """
 
 
-from typing import Optional
+import re
+from typing import List, Optional
 
 
 def levenshtein_mesafesi(a: str, b: str) -> int:
@@ -93,3 +94,39 @@ def sondan_bir_karakter_eksik_mi(kisa: str, uzun: str) -> bool:
     (dizge uzunluğu aynı kalmadığı için `_sondan_bir_karakter_farkli_mi` gibi
     kullanan çağıran kodun kendisi zaten ayrı bir kontrolle bunu eler)."""
     return len(uzun) == len(kisa) + 1 and uzun.startswith(kisa)
+
+
+def plaka_hucresini_ayir(hucre: Optional[str]) -> List[str]:
+    """Toplu kişi içe aktarma Excel şablonunun 'Plaka No' hücresini, virgül
+    (,) veya noktalı virgülle (;) ayrılmış BİRDEN FAZLA plakaya böler ve her
+    parçayı normalize eder (baş/son boşluk temizlenir, büyük harfe çevrilir,
+    harf/rakam/boşluk DIŞINDAKİ karakterler atılır).
+
+    Bu normalizasyon kuralı schemas.py::plaka_normalize ile BİREBİR AYNIDIR
+    (bkz. o fonksiyonun docstring'i) -- ama bu modül kasıtlı olarak
+    fastapi/sqlalchemy/pydantic'e ihtiyaç duymadığından (bkz. dosya başındaki
+    not) burada bağımsız bir kopyası tutuluyor; ikisini birden değiştirmeden
+    yalnızca birini değiştirmek, iki farklı giriş yolunun (tekil kişi ekleme
+    vs. toplu içe aktarma) aynı plakayı farklı şekilde saklamasına yol açar.
+
+    Kullanıcı isteği (2026-09-23): "çoklu plaka tekrar eden isimler olarak
+    düzenle" -- aynı kişinin (ör. bir departmanın havuz araçları, ya da
+    birden fazla aracı olan bir personelin) artık AYRI satırlar yerine TEK
+    satırda, bu hücreye virgülle ayrılmış birden fazla plaka yazılarak içe
+    aktarılabilmesi için (ör. '34 ABC 123, 34 DEF 456'). Dönen listenin İLK
+    elemanı kişinin ana plaka_no'su, kalanlar main.py::toplu_kisi_import
+    tarafından KisiPlaka (ek_plakalar) olarak eklenir -- panelden Kişiler
+    ekranında "+ Plaka Ekle" ile tek tek eklemekle birebir aynı veri modeli.
+
+    Boş/geçersiz (temizlendikten sonra hiç karakter kalmayan) parçalar
+    sessizce atlanır; aynı hücrede yanlışlıkla tekrarlanan bir plaka
+    (kopyala-yapıştır hatası) tekilleştirilir, ilk görülme sırası korunur.
+    Girdi None/boş ise boş liste döner."""
+    if not hucre:
+        return []
+    sonuc: List[str] = []
+    for parca in re.split(r"[,;]+", hucre):
+        temiz = re.sub(r"[^A-Za-z0-9 ]", "", parca).strip().upper()
+        if temiz and temiz not in sonuc:
+            sonuc.append(temiz)
+    return sonuc

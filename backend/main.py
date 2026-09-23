@@ -39,7 +39,7 @@ from backend import excel_export
 from backend import pdf_export
 from backend import led_panel
 from backend import lisans as lisans_modulu
-from backend.metin_araclari import levenshtein_mesafesi, en_yakin_bilinen_plakayi_bul
+from backend.metin_araclari import levenshtein_mesafesi, en_yakin_bilinen_plakayi_bul, plaka_hucresini_ayir
 
 # ---------------------- KLASÖR AYARLARI ----------------------
 BACKEND_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -5320,6 +5320,16 @@ async def toplu_kisi_import(
     Excel (.xlsx) dosyasından toplu kişi içe aktarır.
     Beklenen sütunlar: ad_soyad, plaka_no, tip, telefon, daire_departman
     İlk satır başlık satırı olmalıdır.
+
+    2026-09-23 kullanıcı isteği: "çoklu plaka tekrar eden isimler olarak
+    düzenle" -- aynı kişinin (ör. bir departmanın havuz araçları, ya da
+    birden fazla aracı olan bir personelin) artık AYRI satırlar yerine TEK
+    satırda, 'plaka_no' hücresine virgül (,) veya noktalı virgülle (;)
+    ayrılmış birden fazla plaka yazılarak içe aktarılabilmesi için (bkz.
+    metin_araclari.py::plaka_hucresini_ayir). Hücredeki İLK plaka kişinin
+    ana plaka_no'su, kalanlar models.KisiPlaka (ek_plakalar) olarak eklenir
+    -- panelden Kişiler ekranında "+ Plaka Ekle" ile tek tek eklemekle
+    birebir aynı veri modeli, tek farkı hepsinin tek adımda yapılabilmesi.
     """
     _rol_dogrula(kullanici, ROL_YONETICI, ROL_OPERATOR)
     if not dosya.filename.endswith((".xlsx", ".xls")):
@@ -5347,6 +5357,7 @@ async def toplu_kisi_import(
         raise HTTPException(400, "Excel başlıklarında 'ad_soyad', 'plaka_no', 'tip' sütunları bulunamadı")
 
     eklendi = 0
+    eklenen_ek_plaka = 0
     hatalar = []
     olusturulan_kisiler = []
     GECERLI_TIPLER = ("abone", "personel", "ziyaretci")
@@ -5354,10 +5365,16 @@ async def toplu_kisi_import(
     for satir_no, satir in enumerate(satirlar[1:], start=2):
         try:
             ad_soyad = str(satir[alan_indeksi["ad_soyad"]] or "").strip()
-            plaka_no = str(satir[alan_indeksi["plaka_no"]] or "").strip().upper()
             tip = str(satir[alan_indeksi["tip"]] or "").strip().lower()
 
-            if not ad_soyad or not plaka_no:
+            # 'plaka_no' hücresi artık virgül/noktalı virgülle ayrılmış
+            # BİRDEN FAZLA plaka içerebilir (bkz. yukarıdaki fonksiyon notu
+            # ve plaka_hucresini_ayir'ın kendi docstring'i) -- her parça
+            # ayrı ayrı temizlenir/normalize edilir, geçersiz/boş olanlar
+            # ve hücre içi tekrarlar sessizce elenir.
+            plakalar = plaka_hucresini_ayir(str(satir[alan_indeksi["plaka_no"]] or ""))
+
+            if not ad_soyad or not plakalar:
                 hatalar.append(f"Satır {satir_no}: ad_soyad veya plaka_no boş")
                 continue
             if tip not in GECERLI_TIPLER:
@@ -5366,17 +5383,18 @@ async def toplu_kisi_import(
             telefon = str(satir[alan_indeksi["telefon"]] or "").strip() if "telefon" in alan_indeksi else None
             daire = str(satir[alan_indeksi["daire_departman"]] or "").strip() if "daire_departman" in alan_indeksi else None
 
-            # Plaka sütunundaki formül enjeksiyon karakterlerini temizle
-            plaka_no = re.sub(r"[^A-Za-z0-9 ]", "", plaka_no)[:15]
-
             yeni = models.Kisi(
                 ad_soyad=ad_soyad[:100],
-                plaka_no=plaka_no,
+                plaka_no=plakalar[0][:15],
                 tip=tip,
                 telefon=telefon[:20] if telefon else None,
                 daire_departman=daire[:50] if daire else None,
             )
             db.add(yeni)
+            db.flush()  # yeni.id'yi almak için -- aşağıdaki KisiPlaka satırları FK olarak buna ihtiyaç duyar
+            for ek_plaka in plakalar[1:]:
+                db.add(models.KisiPlaka(kisi_id=yeni.id, plaka_no=ek_plaka[:15]))
+                eklenen_ek_plaka += 1
             olusturulan_kisiler.append(yeni)
             eklendi += 1
         except Exception as exc:
@@ -5398,7 +5416,7 @@ async def toplu_kisi_import(
                 )
 
     return {
-        "eklendi": eklendi, "hatalar": hatalar[:20],
+        "eklendi": eklendi, "eklenen_ek_plaka": eklenen_ek_plaka, "hatalar": hatalar[:20],
         "guncellenen_gecmis_kayit": guncellenen_gecmis_kayit,
     }
 

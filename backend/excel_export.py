@@ -159,6 +159,11 @@ def kisi_ice_aktarma_sablonu_olustur(dosya_yolu: str) -> str:
     ornek_satirlar = [
         ["ÖRNEK — SİLİP ÜZERİNE YAZINIZ", "34 ABC 123", "personel", "05XX XXX XX XX", "GÜVENLİK ŞEFLİĞİ"],
         ["ÖRNEK — SİLİP ÜZERİNE YAZINIZ", "34 DEF 456", "abone", "05XX XXX XX XX", "A Blok 12"],
+        # 2026-09-23 kullanıcı isteği: "çoklu plaka tekrar eden isimler olarak
+        # düzenle" -- birden fazla aracı olan bir kişi/birim artık TEK satırda,
+        # bu şekilde virgülle ayrılmış birden fazla plakayla içe aktarılabilir
+        # (bkz. metin_araclari.py::plaka_hucresini_ayir, main.py::toplu_kisi_import).
+        ["ÖRNEK — SİLİP ÜZERİNE YAZINIZ (BİRDEN FAZLA ARACI OLAN KİŞİ)", "34 GHI 789, 34 JKL 012", "personel", "05XX XXX XX XX", "ÜRETİM MD."],
     ]
     for satir in ornek_satirlar:
         ws.append(satir)
@@ -190,7 +195,7 @@ def kisi_ice_aktarma_sablonu_olustur(dosya_yolu: str) -> str:
     _baslik_satiri_bicimlendir(aciklama, 3)
     aciklama_satirlari = [
         ("Ad Soyad", "Evet", "Kişinin (personel/abone/ziyaretçi) tam adı."),
-        ("Plaka No", "Evet", "Örn. '34 ABC 123'. Aynı kişinin birden fazla aracı varsa, kaydı ekledikten sonra panelden Kişiler sekmesinden ek plaka eklenebilir."),
+        ("Plaka No", "Evet", "Örn. '34 ABC 123'. Aynı kişinin/birimin birden fazla aracı varsa, bu hücreye plakaları virgülle (,) ayırarak da yazabilirsiniz -- örn. '34 ABC 123, 34 DEF 456'. İlk yazılan plaka ana plaka olur, diğerleri ek araç olarak kaydedilir; içe aktardıktan sonra panelden Kişiler sekmesinden de ek plaka eklenip çıkarılabilir."),
         ("Tip", "Evet", "'abone' (site sakini), 'personel' veya 'ziyaretci' olmalı — açılır listeden seçin. Geçersiz/boş bir değer sessizce 'abone' olarak kaydedilir, bu yüzden dikkatli seçin."),
         ("Telefon", "Hayır", "Boş bırakılabilir."),
         ("Daire Departman", "Hayır", "Abone için daire/blok bilgisi (örn. 'A Blok 12'), personel için departman adı (örn. 'ÜRETİM MÜDÜRLÜĞÜ'). Boş bırakılabilir."),

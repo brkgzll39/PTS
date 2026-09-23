@@ -7,6 +7,7 @@ eşleştirme mantığı burada, DB veya kamera olmadan tam olarak doğrulanabili
 """
 from backend.metin_araclari import (
     levenshtein_mesafesi, en_yakin_bilinen_plakayi_bul, sondan_bir_karakter_eksik_mi,
+    plaka_hucresini_ayir,
 )
 
 
@@ -89,3 +90,52 @@ def test_sondan_bir_karakter_eksik_ortadan_farkliysa_false():
 def test_sondan_bir_karakter_eksik_iki_karakter_farkinda_false():
     """Yalnızca TAM OLARAK bir karakterlik uzunluk farkını hedefler."""
     assert sondan_bir_karakter_eksik_mi("34 AB 1", "34 AB 123") is False
+
+
+# ------------------------------------------------------------------
+# plaka_hucresini_ayir (2026-09-23) -- kullanıcı isteği "çoklu plaka tekrar
+# eden isimler olarak düzenle": toplu içe aktarma şablonunun 'Plaka No'
+# hücresine virgül/noktalı virgülle ayrılmış birden fazla plaka yazılabilmesi
+# (aynı kişinin/birimin birden fazla aracı tek satırda, KisiPlaka olarak).
+# ------------------------------------------------------------------
+
+def test_plaka_hucresi_tek_plaka():
+    assert plaka_hucresini_ayir("34 ABC 123") == ["34 ABC 123"]
+
+
+def test_plaka_hucresi_virgulle_ayrilmis_iki_plaka():
+    assert plaka_hucresini_ayir("34 ABC 123, 34 DEF 456") == ["34 ABC 123", "34 DEF 456"]
+
+
+def test_plaka_hucresi_noktali_virgulle_ayrilmis():
+    assert plaka_hucresini_ayir("34 ABC 123; 34 DEF 456") == ["34 ABC 123", "34 DEF 456"]
+
+
+def test_plaka_hucresi_karisik_ayirici_ve_fazla_bosluk():
+    assert plaka_hucresini_ayir("  34ABC123 ,, 34DEF456 ; ;06XYZ999  ") == ["34ABC123", "34DEF456", "06XYZ999"]
+
+
+def test_plaka_hucresi_kucuk_harf_buyutulur():
+    assert plaka_hucresini_ayir("34 abc 123") == ["34 ABC 123"]
+
+
+def test_plaka_hucresi_gecersiz_karakterler_atilir():
+    """Excel formül enjeksiyonu / özel karakterler (main.py'nin daha önce
+    yaptığı re.sub(r"[^A-Za-z0-9 ]", ...) ile AYNI kural) sessizce atılır."""
+    assert plaka_hucresini_ayir("34-ABC/123") == ["34ABC123"]
+
+
+def test_plaka_hucresi_tekrar_eden_plaka_tekillesir():
+    """Kopyala-yapıştır hatasıyla aynı plaka iki kez yazılırsa, aynı kişiye
+    aynı ek plakadan iki kez eklenmemesi için tekilleştirilir."""
+    assert plaka_hucresini_ayir("34 ABC 123, 34 ABC 123") == ["34 ABC 123"]
+
+
+def test_plaka_hucresi_bos_veya_none_bos_liste_doner():
+    assert plaka_hucresini_ayir("") == []
+    assert plaka_hucresini_ayir(None) == []
+    assert plaka_hucresini_ayir("   ") == []
+
+
+def test_plaka_hucresi_sadece_gecersiz_parca_atlanir_digerleri_kalir():
+    assert plaka_hucresini_ayir("34 ABC 123, ,,, 34 DEF 456") == ["34 ABC 123", "34 DEF 456"]

@@ -168,6 +168,24 @@ def test_ice_aktarma_sablonu_ornek_satirlari_gecerli_tip_kullanir(tmp_path):
         assert satir[tip_idx] in ("abone", "personel", "ziyaretci")
 
 
+def test_ice_aktarma_sablonu_coklu_plaka_ornegi_icerir(tmp_path):
+    """2026-09-23 kullanıcı isteği: birden fazla aracı olan bir kişi/birim
+    TEK satırda virgülle ayrılmış birden fazla plakayla içe aktarılabilmeli
+    -- şablonda bunu gösteren, virgül içeren en az bir örnek satır olmalı ki
+    kullanıcı bu söz dizimini panelden ayrıca sormadan görebilsin (bkz.
+    metin_araclari.py::plaka_hucresini_ayir)."""
+    dosya = tmp_path / "sablon.xlsx"
+    excel_export.kisi_ice_aktarma_sablonu_olustur(str(dosya))
+    wb = openpyxl.load_workbook(str(dosya))
+    ws = wb["Kişiler"]
+    basliklar = [h.value for h in ws[1]]
+    plaka_idx = basliklar.index("Plaka No")
+    plaka_degerleri = [satir[plaka_idx] for satir in ws.iter_rows(min_row=2, values_only=True)]
+    assert any("," in (deger or "") for deger in plaka_degerleri), (
+        "Şablonda çoklu plaka söz dizimini (virgülle ayırma) gösteren bir örnek satır yok"
+    )
+
+
 def test_ice_aktarma_sablonu_aciklama_sayfasi_var(tmp_path):
     dosya = tmp_path / "sablon.xlsx"
     excel_export.kisi_ice_aktarma_sablonu_olustur(str(dosya))
