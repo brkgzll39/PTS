@@ -2537,7 +2537,14 @@ bu doküman yalnızca genel bilgilendirme amaçlıdır.
   şifresiz ağda taşınmamalıdır.
 - **Yedekleme**: SQL Server kullanıyorsanız düzenli veritabanı yedeği (SQL Server Agent
   bakım planı) kurun. SQLite kullanıyorsanız `veritabani/pts.db` dosyasını düzenli
-  olarak yedekleyin.
+  olarak yedekleyin -- **2026-09-23'ten itibaren** (bkz. aşağıdaki "SQLite WAL Modu"
+  bölümü) bu klasörde `pts.db` ile birlikte `pts.db-wal` ve `pts.db-shm` dosyaları da
+  oluşur; yedekleme betiğiniz YALNIZCA `pts.db`yi kopyalarsa, henüz ana dosyaya
+  yazılmamış (`pts.db-wal`de bekleyen) en son işlemleri SESSİZCE KAÇIRABİLİR. Ya PTS
+  kapalıyken/duraklatılmışken (ya da `sqlite3 veritabani/pts.db "PRAGMA
+  wal_checkpoint(TRUNCATE);"` çalıştırıp hemen ardından) klasördeki ÜÇ dosyayı BİRLİKTE
+  kopyalayın, ya da SQLite'ın kendi `.backup` komutunu/API'sini kullanan bir betik
+  tercih edin.
   **2026-09-16:** önceden sistem bu bakım planının GERÇEKTEN çalışıp çalışmadığını
   hiçbir şekilde izlemiyordu — plan hiç kurulmasa ya da sessizce başarısız olmaya
   başlasa bile PTS bunu asla fark etmiyordu. `PTS_SQL_YEDEK_KLASORU` ortam
@@ -2859,3 +2866,52 @@ doğru şekilde tekrarlanmasına güvenmek ölçeklenebilir değil.
 EDİLMEDİ — o zaten kendi otomatik üretim/kalıcı saklama mekanizmasına sahip
 (`backend/auth_secret.key`, bkz. ilgili .env.example notu), ayrıca bir işlem
 gerekmiyor.
+
+## SQLite WAL Modu ve `busy_timeout` (2026-09-23)
+
+**Bulunan sorun:** "sistem nasıl daha sağlıklı/hızlı çalışır" denetiminde,
+SQLite kullanan (SQL Server kurulmamış, çoğunlukla küçük/tek-şubeli sahalardaki
+varsayılan) kurulumların SQLite'ın VARSAYILAN günlükleme modunda ("rollback
+journal") çalıştığı görüldü. Bu modda bir YAZMA işlemi (ör. kamera pipeline'ının
+sürekli yazdığı yeni `Kayit` satırları) TÜM veritabanı dosyasını kilitler — o an
+başka HİÇBİR okuma/yazma yapılamaz. Panel kullanıcıları (Kontrol Merkezi'ndeki
+"Son Geçişler" widget'ı, raporlar vb.) tam da bu sırada okuma yapmaya
+çalışırsa, ara sıra "database is locked" hatasına ya da açıklanamayan kısa
+yavaşlamalara maruz kalabilirler — özellikle geçiş trafiğinin yoğun olduğu
+saatlerde.
+
+**Düzeltme:** `backend/database.py`, veritabanı SQLite ise motora bir
+`connect` olay dinleyicisi ekler ve HER yeni bağlantıda şu iki PRAGMA'yı
+uygular:
+
+- `PRAGMA journal_mode=WAL` — Write-Ahead Logging: okuyucular, bir yazma
+  işlemi sürerken BLOKE OLMADAN eski veriyi okumaya devam edebilir; okuma/yazma
+  eşzamanlılığı büyük ölçüde iyileşir.
+- `PRAGMA busy_timeout=5000` — birden fazla YAZICI aynı anda çakışırsa (WAL
+  modunda bile tek bir yazıcı sırası vardır), SQLite hemen hata vermek yerine
+  5 saniye BEKLEYİP tekrar dener; çoğu geçici çakışma bu sürede kendiliğinden
+  çözülür.
+
+Bu PRAGMA'ların modül yüklenirken BİR KEZ değil de `event.listens_for(engine,
+"connect")` ile HER bağlantı açılışında uygulanması bilinçli bir tercihtir:
+`busy_timeout` bağlantı/oturum bazlıdır — havuzun sonradan açtığı yeni
+bağlantılarda, yalnızca modül yüklenirken bir kez çalıştırılsaydı sessizce
+devre dışı kalırdı.
+
+**Etki alanı:** Yalnızca SQLite kurulumlarını ilgilendirir — `PTS_DATABASE_URL`
+bir SQL Server bağlantısına ayarlıysa (`mssql+pyodbc://...`) bu blok hiç
+çalışmaz, mevcut `pool_pre_ping`/`pool_recycle` davranışı değişmeden kalır.
+
+**Yedekleme üzerindeki etkisi (ÖNEMLİ):** WAL modunda son işlemler bir süre
+ana `pts.db` dosyasına değil, yanında oluşan `pts.db-wal` dosyasına yazılabilir
+— yalnızca `pts.db`yi kopyalayan bir yedekleme betiği bu son işlemleri
+SESSİZCE KAÇIRABİLİR. Ayrıntılı öneri (üç dosyayı birlikte kopyalama ya da
+`wal_checkpoint(TRUNCATE)` / SQLite'ın kendi `.backup` mekanizması) için bkz.
+yukarıdaki "Üretim Ortamı (Gerçek Kullanım) Notları" bölümündeki güncellenmiş
+"Yedekleme" maddesi.
+
+**Doğrulama notu:** Bu değişiklik yalnızca sözdizimsel olarak doğrulanmıştır
+(`py_compile`) — SQLAlchemy'nin kurulu olmadığı bazı geliştirme/test
+ortamlarında PRAGMA mantığı gerçek bir SQLite bağlantısı üzerinde ÇALIŞTIRILARAK
+test edilememiştir. Gerçek bir SQLite kurulumunda `PRAGMA journal_mode;`
+çalıştırıp `wal` döndüğünü doğrulamanız önerilir.
