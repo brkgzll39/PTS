@@ -356,6 +356,9 @@ body {
 
 /* Alarm satırı */
 .alarm-row { background: #fff8f0; border-left: 3px solid #e0833d; }
+.alarm-row-tiklanabilir { cursor: pointer; }
+.alarm-row-tiklanabilir:hover { background: #ffefd9; }
+.alarm-row-tiklanabilir:focus-visible { outline: 2px solid #2785ad; outline-offset: -2px; }
 
 /* Log konteyneri scroll */
 #logKonteyneri { font-family: "Consolas", "Courier New", monospace; white-space: pre-wrap; word-break: break-all; }

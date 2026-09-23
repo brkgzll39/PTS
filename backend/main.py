@@ -3838,6 +3838,41 @@ def plaka_analiz(plaka_no: str, db: Session = Depends(get_db), kullanici: models
     }
 
 
+@app.get("/kayitlar/{kayit_id}", response_model=schemas.KayitCevap)
+def kayit_getir(
+    kayit_id: int, vardiya_adi: Optional[str] = None, db: Session = Depends(get_db),
+    kullanici: models.Kullanici = Depends(_personel_girisi_gerekli),
+):
+    """Tek bir kaydı ID'siyle döner (yalnızca bu kaydı görmeye yetkiliyse).
+
+    2026-09-23 GERÇEK KULLANICI GERİ BİLDİRİMİ ("tüm alarmlar okundu
+    işaretle demeden son giriş yapan araçların ekranı açılmıyor"): Panel'deki
+    "Son Geçişler" widget'ı yalnızca en son 10 kaydı (bkz. panelYenile)
+    `sonKayitlarCache` önbelleğine alıyor. Henüz okundu işaretlenmemiş bir
+    ALARM satırına (ör. "Yetkisiz araç") bağlı kayıt, aradan geçen başka
+    trafik yüzünden bu "son 10" listesinin dışında kalmışsa, frontend'deki
+    olayDetayAc(id) kaydı önbellekte bulamıyor ve (eski davranış) SESSİZCE
+    hiçbir şey yapmıyordu -- kullanıcıya tıklamanın hiç işe yaramadığı
+    izlenimini veriyordu, "tüm alarmlar okundu işaretle"ye basılıp panel
+    yenilenince kayıt tesadüfen tekrar "son 10" içine girdiğinde
+    çalışıyormuş GİBİ görünüyordu. Bu uç nokta, önbellekte YOKSA tek kaydı
+    doğrudan sunucudan çekebilmek için eklendi (bkz. app.js::olayDetayAc'in
+    güncellenmiş sürümü).
+
+    `vardiya_adi` (2026-09-22 düzeltmesindeki AYNI gerekçe, bkz.
+    kayit_detay_pdf_indir): Kayıtlar ekranındaki "Vardiya" filtresiyle bu
+    kaydı zaten görebilen bir güvenlik kullanıcısının bu uç noktadan da
+    403 almaması için."""
+    kayit = db.query(models.Kayit).filter(models.Kayit.id == kayit_id).first()
+    if not kayit:
+        raise HTTPException(404, "Kayıt bulunamadı")
+    if not _guvenlik_kayit_gorunur_mu(kayit, kullanici, db, vardiya_adi_filtresi=_vardiya_adi_normalize(vardiya_adi)):
+        raise HTTPException(403, "Bu kayıt vardiyanıza ait değil")
+    _kayitlarin_vardiya_adlarini_ekle([kayit], db)
+    _kayitlara_kisi_adini_ekle([kayit], db)
+    return kayit
+
+
 @app.get("/olaylar/sse")
 async def sse_baglantisi(request: Request, authorization: Optional[str] = Header(None), db: Session = Depends(get_db)):
     """Server-Sent Events — yeni plaka geçişlerini anlık olarak istemciye iletir."""

@@ -758,7 +758,26 @@ async function panelYenile() {
     const canliOlaylar = document.getElementById("canliOlaylar");
     if (canliOlaylar) {
       const alarmlar = await apiCagir("/alarmlar?sadece_acik=true&limit=4");
-      const alarmSatirlari = alarmlar.map(a => `<div class="event-row alarm-row"><div class="event-icon blocked"><i class="bi bi-exclamation-triangle-fill"></i></div><div class="event-main"><strong>${escapeHtml(a.plaka_no)}</strong><span>${alarmTipiEtiketi(a.alarm_tipi)}</span></div>${rolYeterli("operatör") ? `<button class="btn btn-sm btn-light" title="Okundu işaretle" aria-label="Okundu işaretle" onclick="alarmOkundu(${a.id})"><i class="bi bi-check2"></i></button>` : ""}</div>`).join("");
+      // 2026-09-23 KULLANICI GERİ BİLDİRİMİ (birebir): "şu ekranda son
+      // geçişlerde tüm alarmlar okundu işaretle demeden son giriş yapan
+      // araçların ekranı açılmıyor onları da otomatik yapar mısın" --
+      // alarm satırları (ör. "Yetkisiz araç") önceden yalnızca "okundu
+      // işaretle" düğmesine sahipti, satırın KENDİSİNE tıklamak hiçbir şey
+      // yapmıyordu; kullanıcı aynı geçişin ayrıntısını görebilmek için önce
+      // "tüm alarmlar okundu işaretle"ye basıp alarm satırının kaybolup
+      // yerine (eğer son 8 kayıt içindeyse) tıklanabilir bir "son geçiş"
+      // satırının görünmesini bekliyordu. Artık models.Alarm.kayit_id (bkz.
+      // schemas.AlarmCevap) doluysa satırın kendisi de aynı olayDetayAc(id)
+      // ile açılıyor -- diğer "son geçiş" satırlarıyla BİREBİR aynı davranış.
+      // "Okundu işaretle" düğmesi kendi tıklamasını event.stopPropagation()
+      // ile durdurup yalnızca kendi işlevini yapmaya devam eder.
+      const alarmSatirlari = alarmlar.map(a => {
+        const tiklanabilirMi = a.kayit_id != null;
+        const tiklanabilirOznitelikler = tiklanabilirMi
+          ? ` role="button" tabindex="0" onclick="olayDetayAc(${a.kayit_id})" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();olayDetayAc(${a.kayit_id})}"`
+          : "";
+        return `<div class="event-row alarm-row${tiklanabilirMi ? " alarm-row-tiklanabilir" : ""}"${tiklanabilirOznitelikler}><div class="event-icon blocked"><i class="bi bi-exclamation-triangle-fill"></i></div><div class="event-main"><strong>${escapeHtml(a.plaka_no)}</strong><span>${alarmTipiEtiketi(a.alarm_tipi)}</span></div>${rolYeterli("operatör") ? `<button class="btn btn-sm btn-light" title="Okundu işaretle" aria-label="Okundu işaretle" onclick="event.stopPropagation(); alarmOkundu(${a.id})"><i class="bi bi-check2"></i></button>` : ""}</div>`;
+      }).join("");
       const olaySatirlari = kayitlar.slice(0, 8).map(k => `<button class="event-row event-button" onclick="olayDetayAc(${k.id})"><div class="event-icon ${k.yetki_durumu === "yetkili" ? "allowed" : "blocked"}"><i class="bi ${k.yon === "giris" ? "bi-box-arrow-in-right" : "bi-box-arrow-right"}"></i></div><div class="event-main"><strong>${escapeHtml(k.plaka_no)}</strong><span>${escapeHtml(k.kamera_id)} · ${k.yon === "giris" ? "Giriş" : "Çıkış"}</span></div><div class="event-time">${tarihFormatla(k.tarih_saat).split(",")[1] || "-"}</div></button>`).join("");
       canliOlaylar.innerHTML = alarmSatirlari + olaySatirlari || '<div class="empty-state">Henüz geçiş kaydı yok</div>';
     }
@@ -871,8 +890,30 @@ async function alarmOkundu(id) {
 }
 
 async function olayDetayAc(id) {
-  const kayit = sonKayitlarCache.find(item => item.id === id);
-  if (!kayit) return;
+  let kayit = sonKayitlarCache.find(item => item.id === id);
+  if (!kayit) {
+    // 2026-09-23 KRİTİK HATA DÜZELTMESİ (gerçek kullanıcı geri bildirimi:
+    // "tüm alarmlar okundu işaretle demeden son giriş yapan araçların ekranı
+    // açılmıyor"): sonKayitlarCache yalnızca panelYenile'nin çektiği "son 10"
+    // kaydı tutuyor (bkz. dosyanın başındaki değişkenin tanımı ve
+    // _kayitCacheBirlestir). "Son Geçişler" widget'ındaki bir ALARM satırına
+    // (ör. "Yetkisiz araç") bağlı kayıt, aradan geçen başka trafik yüzünden
+    // bu "son 10" listesinin dışında kalmışsa, önceden bu fonksiyon burada
+    // SESSİZCE `return` ediyordu -- kullanıcı satıra tıklayınca HİÇBİR ŞEY
+    // olmuyordu, tüm alarmlar okundu işaretlenip panel yenilendiğinde kayıt
+    // tesadüfen tekrar "son 10" içine girince çalışıyormuş GİBİ görünüyordu.
+    // Artık önbellekte yoksa kayıt doğrudan sunucudan (GET /kayitlar/{id})
+    // çekilip önbelleğe eklenir; bu da başarısız olursa (kayıt silinmiş,
+    // vardiya/kamera erişimi yetersiz vb.) sessiz kalmak yerine kullanıcıya
+    // AÇIKÇA bir hata bildirilir.
+    try {
+      kayit = await apiCagir(`/kayitlar/${id}`);
+      _kayitCacheYerindeGuncelle(kayit);
+    } catch (e) {
+      toastGoster("Kayıt açılamadı: " + e.message, "hata");
+      return;
+    }
+  }
   // 2026-09-22 KRİTİK HATA DÜZELTMESİ: bu fonksiyon YENİ bir SSE bildirimine
   // tıklanınca da çağrılıyor (bkz. sseBaslat içindeki toastGoster(...,
   // () => olayDetayAc(kayit.id)) çağrısı). #gorselBuyutModal, kendisini

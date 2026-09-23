@@ -4309,3 +4309,68 @@ def test_plaka_yetki_kontrol_saat_kisitlamasi_bozuksa_yetkisiz_sayilir(yetkili_h
     finally:
         db.rollback()
         db.close()
+
+
+# ------------------------------------------------------------------
+# 2026-09-23 kullanıcı geri bildirimi (birebir): "şu ekranda son
+# geçişlerde tüm alarmlar okundu işaretle demeden son giriş yapan
+# araçların ekranı açılmıyor onları da otomatik yapar mısın" -- yeni
+# GET /kayitlar/{id} uç noktası için testler (bkz. main.py::kayit_getir
+# ve app.js::olayDetayAc'in güncellenmiş sürümü).
+# ------------------------------------------------------------------
+
+def test_kayit_getir_tekil_yanit_liste_uc_noktalariyla_tutarlidir(client, operator_header, yetkili_header):
+    """GET /kayitlar/{id} de (GET /kayitlar listesi ve PATCH /kayitlar/{id}
+    gibi) kisi_adi hesaplanan alanını içermeli -- aksi halde frontend'in
+    önbellek-dışı bu yeni geri düşüş (fallback) yolu, sonKayitlarCache
+    içindeki normal girdilerden EKSİK bir obje üretir ve olayDetayAc'teki
+    "İSİM" alanı sessizce '-' gösterir."""
+    rk = client.post("/kisiler", json={
+        "ad_soyad": "Tekil Getir Testi", "plaka_no": "34 TEK 01", "tip": "abone",
+    }, headers=yetkili_header)
+    assert rk.status_code == 200, rk.text
+    kisi_id = rk.json()["id"]
+
+    r = client.post("/kayitlar", json={"plaka_no": "34 TEK 01", "kamera_id": "TEST", "yon": "giris"},
+                     headers=operator_header)
+    assert r.status_code == 200, r.text
+    kayit_id = r.json()["id"]
+
+    r2 = client.get(f"/kayitlar/{kayit_id}", headers=operator_header)
+    assert r2.status_code == 200, r2.text
+    veri = r2.json()
+    assert veri["id"] == kayit_id
+    assert veri["kisi_adi"] == "Tekil Getir Testi", (
+        "GET /kayitlar/{id} yanıtı kişi eşleştirmesinin adını içermiyor -- "
+        "önbellekte olmayan bir kayıt için bu alan hep None gelirdi"
+    )
+
+
+def test_kayit_getir_var_olmayan_kayit_404_doner(client, operator_header):
+    r = client.get("/kayitlar/999999999", headers=operator_header)
+    assert r.status_code == 404, r.text
+
+
+def test_kayit_getir_kamera_erisimi_kisitli_kullanici_icin_403_doner(client, yetkili_header, operator_header, kamera_erisim_test_kameralari):
+    """KÖK NEDEN REGRESYON TESTİ: bu yeni uç nokta da (bkz.
+    test_kamera_erisimi_id_ad_karisikligindan_etkilenmez'deki AYNI gerekçe)
+    _guvenlik_kayit_gorunur_mu'yu kullanmalı -- ham kamera 'id'siyle DEĞİL,
+    kamera 'ad'ıyla karşılaştırmalı, aksi halde kamera erişimi kısıtlı bir
+    kullanıcı asla erişemeyeceği bir kaydı da görebilir/hiçbirini göremez."""
+    lojman_id = kamera_erisim_test_kameralari["lojman"]
+    lojman_ad = kamera_erisim_test_kameralari["lojman_ad"]
+    ana_ad = kamera_erisim_test_kameralari["ana_ad"]
+
+    r1 = client.post("/kayitlar", json={"plaka_no": "34 TEK 02", "kamera_id": lojman_ad, "yon": "giris"}, headers=operator_header)
+    assert r1.status_code == 200, r1.text
+    kayit_id_izinli = r1.json()["id"]
+    r2 = client.post("/kayitlar", json={"plaka_no": "34 TEK 03", "kamera_id": ana_ad, "yon": "giris"}, headers=operator_header)
+    assert r2.status_code == 200, r2.text
+    kayit_id_izinsiz = r2.json()["id"]
+
+    hedef = _rol_ile_kullanici_olustur_ve_giris_yap(client, yetkili_header, "lojman-izleyici-tekil-getir", "izleyici")
+    kid = _kullanici_id_bul(client, yetkili_header, "lojman-izleyici-tekil-getir")
+    client.put(f"/kullanicilar/{kid}", json={"kamera_erisim_listesi": [lojman_id]}, headers=yetkili_header)
+
+    assert client.get(f"/kayitlar/{kayit_id_izinli}", headers=hedef).status_code == 200
+    assert client.get(f"/kayitlar/{kayit_id_izinsiz}", headers=hedef).status_code == 403
