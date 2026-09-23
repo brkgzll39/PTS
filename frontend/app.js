@@ -388,6 +388,40 @@ function escapeHtml(deger) {
   return String(deger ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 }
 
+// 2026-09-23 kullanıcı geri bildirimi (ekran görüntüsüyle): "kişi silmek
+// istediğim zaman üstten böyle localhost:8000 gibi gelmesin normal ana
+// ekrana kişi silinsin mi diye buton eklensin" -- tarayıcının yerleşik
+// confirm() penceresi sitenin adresini ("localhost:8000 web sitesinin
+// mesajı") gösteriyor ve uygulamanın geri kalanıyla görsel olarak hiç
+// tutarlı değil. Bu, uygulamadaki (yalnızca Kişiler değil) TÜM silme/onay
+// akışlarının paylaştığı tek bir sorun sınıfı olduğu için (bkz. aşağıdaki
+// tüm confirm() çağrılarının yerini alan kullanım noktaları) tek, paylaşılan
+// bir uygulama-içi onay modaliyle (index.html #onayModal) değiştirildi.
+//
+// confirm()'in aksine ASENKRON'dur (bir modal animasyonla açılıp kullanıcı
+// bir düğmeye basana kadar beklemek zorunda) -- bu yüzden çağıran taraf
+// `if (!confirm(...)) return;` yerine `if (!(await onayAl(...))) return;`
+// kullanmalı (tüm çağıran fonksiyonlar zaten async'ti, bu değişiklik ek bir
+// async dönüşümü GEREKTİRMEDİ). Modal kapatma/İptal/Esc/backdrop tıklama
+// gibi "onaylanmadı" yollarının HEPSİ `hidden.bs.modal` olayı üzerinden tek
+// bir noktada yakalanır, bu yüzden her kapanma yolunu ayrı ayrı ele almaya
+// gerek yoktur.
+function onayAl(mesaj, secenekler = {}) {
+  return new Promise((resolve) => {
+    const modalEl = document.getElementById("onayModal");
+    const modal = bootstrap.Modal.getOrCreateInstance(modalEl);
+    document.getElementById("onayModalBaslik").textContent = secenekler.baslik || "Emin misiniz?";
+    document.getElementById("onayModalMetin").textContent = mesaj;
+    const onayBtn = document.getElementById("onayModalOnayBtn");
+    onayBtn.textContent = secenekler.onayMetni || "Evet, Onayla";
+    onayBtn.className = `btn ${secenekler.guvenli ? "btn-primary" : "btn-danger"}`;
+    let onaylandi = false;
+    onayBtn.addEventListener("click", () => { onaylandi = true; modal.hide(); }, { once: true });
+    modalEl.addEventListener("hidden.bs.modal", () => resolve(onaylandi), { once: true });
+    modal.show();
+  });
+}
+
 function tarihFormatla(iso) {
   const d = new Date(iso);
   return d.toLocaleString("tr-TR", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" });
@@ -635,7 +669,7 @@ document.getElementById("sakinAracEkleForm")?.addEventListener("submit", async (
 });
 
 async function sakinAracSil(id) {
-  if (!confirm("Bu aracı listenizden kaldırmak istiyor musunuz?")) return;
+  if (!(await onayAl("Bu aracı listenizden kaldırmak istiyor musunuz?"))) return;
   try {
     await apiCagir(`/sakin/arac/${id}`, { method: "DELETE" });
     sakinPaneliYukle();
@@ -1094,7 +1128,7 @@ async function _ziyaretciGirisiKutusunuAyarla(kayit, nokta) {
   const btn = document.getElementById("ziyaretciGirisiBtn");
   btn.onclick = async () => {
     const sonuc = document.getElementById("ziyaretciGirisiSonuc");
-    if (kayit.yetki_durumu === "kara_liste" && !confirm("Bu araç KARA LİSTEDE. Yine de ziyaretçi olarak onaylayıp bariyeri açmak istediğinize emin misiniz? Bu işlem kayda geçer.")) {
+    if (kayit.yetki_durumu === "kara_liste" && !(await onayAl("Bu araç KARA LİSTEDE. Yine de ziyaretçi olarak onaylayıp bariyeri açmak istediğinize emin misiniz? Bu işlem kayda geçer."))) {
       return;
     }
     btn.disabled = true;
@@ -1797,7 +1831,7 @@ document.getElementById("kameraForm").addEventListener("submit", async (e) => {
 });
 
 async function kameraSil(id) {
-  if (!confirm("Bu kamerayı silmek istediğinize emin misiniz?")) return;
+  if (!(await onayAl("Bu kamerayı silmek istediğinize emin misiniz?"))) return;
   try {
     await apiCagir(`/kameralar/${id}`, { method: "DELETE" });
     kameralariYukle();
@@ -2129,7 +2163,7 @@ document.getElementById("kayitDuzenleForm")?.addEventListener("submit", async (e
 });
 
 async function kayitSil(id) {
-  if (!confirm("Bu geçiş kaydını kalıcı olarak silmek istediğinize emin misiniz? Bu işlem geri alınamaz.")) return;
+  if (!(await onayAl("Bu geçiş kaydını kalıcı olarak silmek istediğinize emin misiniz? Bu işlem geri alınamaz."))) return;
   try {
     await apiCagir(`/kayitlar/${id}`, { method: "DELETE" });
     // 2026-09-22: silinen kayıt, bir sonraki TAM liste yenilemesine kadar
@@ -2258,7 +2292,7 @@ async function kisiDurumDegistir(id, yeniDurum) {
 }
 
 async function kisiSil(id) {
-  if (!confirm("Bu kişiyi silmek istediğinize emin misiniz?")) return;
+  if (!(await onayAl("Bu kişiyi silmek istediğinize emin misiniz?"))) return;
   try {
     await apiCagir(`/kisiler/${id}`, { method: "DELETE" });
     kisileriYukle();
@@ -2780,7 +2814,7 @@ document.getElementById("karaListeForm")?.addEventListener("submit", async (e) =
 });
 
 async function karaListedenCikar(id) {
-  if (!confirm("Bu aracı kara listeden çıkarmak istiyor musunuz?")) return;
+  if (!(await onayAl("Bu aracı kara listeden çıkarmak istiyor musunuz?"))) return;
   try {
     await apiCagir(`/kara-listesi/${id}`, { method: "DELETE" });
     karaListesiYukle(); panelYenile();
@@ -2848,7 +2882,7 @@ async function bariyerAc(id) {
 }
 
 async function bariyerSil(id) {
-  if (!confirm("Bu bariyer kaydını silmek istiyor musunuz?")) return;
+  if (!(await onayAl("Bu bariyer kaydını silmek istiyor musunuz?"))) return;
   try {
     await apiCagir(`/bariyer/ayarlar/${id}`, { method: "DELETE" });
     bariyerleriYukle();
@@ -2898,7 +2932,7 @@ document.getElementById("siteForm")?.addEventListener("submit", async (e) => {
 });
 
 async function siteSil(id) {
-  if (!confirm("Bu siteyi ve bağlı tüm erişim noktalarını silmek istiyor musunuz?")) return;
+  if (!(await onayAl("Bu siteyi ve bağlı tüm erişim noktalarını silmek istiyor musunuz?"))) return;
   try {
     await apiCagir(`/siteler/${id}`, { method: "DELETE" });
     siteleriYukle(); noktalariYukle();
@@ -2973,7 +3007,7 @@ document.getElementById("noktaForm")?.addEventListener("submit", async (e) => {
 });
 
 async function noktaSil(id) {
-  if (!confirm("Bu erişim noktasını silmek istiyor musunuz?")) return;
+  if (!(await onayAl("Bu erişim noktasını silmek istiyor musunuz?"))) return;
   try {
     await apiCagir(`/noktalar/${id}`, { method: "DELETE" });
     noktalariYukle();
@@ -3248,7 +3282,7 @@ document.getElementById("kullaniciDuzenleForm")?.addEventListener("submit", asyn
 });
 
 async function kullaniciSil(id) {
-  if (!confirm("Bu kullanıcıyı silmek istediğinize emin misiniz?")) return;
+  if (!(await onayAl("Bu kullanıcıyı silmek istediğinize emin misiniz?"))) return;
   try {
     await apiCagir(`/kullanicilar/${id}`, { method: "DELETE" });
     kullanicilariYukle();
@@ -3293,7 +3327,7 @@ async function vardiyaOturumlariniYukle() {
 }
 
 async function vardiyaOturumunuSonlandir(id) {
-  if (!confirm("Bu vardiya oturumunu şimdi sonlandırmak istediğinize emin misiniz?")) return;
+  if (!(await onayAl("Bu vardiya oturumunu şimdi sonlandırmak istediğinize emin misiniz?"))) return;
   try {
     await apiCagir(`/vardiya-oturumlari/${id}/sonlandir`, { method: "POST" });
     vardiyaOturumlariniYukle();
@@ -3588,7 +3622,7 @@ async function diskBilgisiYukle() {
 
 async function goruntuleriTemizle() {
   const gun = document.getElementById("temizleGun")?.value || 30;
-  if (!confirm(`${gun} günden eski görüntüler silinecek. Emin misiniz?`)) return;
+  if (!(await onayAl(`${gun} günden eski görüntüler silinecek. Emin misiniz?`))) return;
   const r = await apiCagir(`/sistem/goruntu-temizle?gun=${gun}`, { method: "POST" });
   toastGoster(`${r.silinen_goruntu} görüntü silindi`, "basari");
   diskBilgisiYukle();
@@ -3599,7 +3633,7 @@ async function goruntuleriTemizle() {
 // main.py::dusuk_guven_kayitlarini_temizle). Yeni tespitler zaten kayıt
 // oluşturulmadan elenir -- bu düğme yalnızca eski birikmiş kayıtlar içindir.
 async function dusukGuvenliKayitlariTemizle() {
-  if (!confirm("Sistem Ayarları'ndaki eşiğin ALTINDA kalan, elle girilmemiş tüm otomatik tespit kayıtları (ve görselleri) kalıcı olarak silinecek. Emin misiniz?")) return;
+  if (!(await onayAl("Sistem Ayarları'ndaki eşiğin ALTINDA kalan, elle girilmemiş tüm otomatik tespit kayıtları (ve görselleri) kalıcı olarak silinecek. Emin misiniz?"))) return;
   try {
     const r = await apiCagir("/sistem/dusuk-guven-temizle", { method: "POST" });
     toastGoster(`${r.silinen_kayit} kayıt, ${r.silinen_goruntu} görüntü silindi (eşik: %${Math.round(r.esik * 100)})`, "basari");
@@ -3697,7 +3731,7 @@ async function bildirimToggle(id) {
 }
 
 async function bildirimSil(id) {
-  if (!confirm("Bu webhook'u silmek istediğinize emin misiniz?")) return;
+  if (!(await onayAl("Bu webhook'u silmek istediğinize emin misiniz?"))) return;
   await apiCagir(`/bildirim/ayarlar/${id}`, { method: "DELETE" });
   bildirimleriYukle();
 }

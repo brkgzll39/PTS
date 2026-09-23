@@ -394,6 +394,26 @@
   </div></div>
 </div>
 
+<!-- 2026-09-23 kullanıcı geri bildirimi (ekran görüntüsüyle): "kişi silmek
+     istediğim zaman üstten böyle localhost:8000 gibi gelmesin normal ana
+     ekrana kişi silinsin mi diye buton eklensin" -- tarayıcının yerleşik
+     confirm() penceresi sitenin adresini ("localhost:8000 web sitesinin
+     mesajı") gösteriyor ve uygulamanın geri kalanıyla görsel olarak hiç
+     tutarlı değil. Uygulamadaki TÜM silme/onay akışları (yalnızca Kişiler
+     değil -- Kayıtlar, Kameralar, Kara Liste, Bariyer, Site/Nokta,
+     Kullanıcılar, Webhook, vardiya sonlandırma, görüntü temizleme; bkz.
+     app.js::onayAl) artık bu tek, paylaşılan modali kullanıyor. -->
+<div class="modal fade" id="onayModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered"><div class="modal-content">
+    <div class="modal-header"><h5 class="modal-title" id="onayModalBaslik">Emin misiniz?</h5><button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Kapat"></button></div>
+    <div class="modal-body" id="onayModalMetin"></div>
+    <div class="modal-footer">
+      <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">İptal</button>
+      <button type="button" class="btn btn-danger" id="onayModalOnayBtn">Evet, Onayla</button>
+    </div>
+  </div></div>
+</div>
+
 <nav class="navbar navbar-dark navbar-pts px-3">
   <!-- 2026-09-22 kullanıcı isteği: "bu güvenli giriş ekranına uyguladığımız
        logoyu Panelde TPAO PTS CANLI İZLEME Yazan yere yapabilir misin TPAO
