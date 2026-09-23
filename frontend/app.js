@@ -2314,10 +2314,19 @@ async function kisileriYukle() {
     const sonNot = k.son_not_metni
       ? `${escapeHtml(k.son_not_metni)}${k.son_not_ekleyen ? ` <span class="text-muted small">(${escapeHtml(k.son_not_ekleyen)})</span>` : ""}`
       : '<span class="text-muted small">-</span>';
+    // 2026-09-23 kullanıcı isteği: "birden fazla aracı olanların araçlarını
+    // kişiye tıklayınca sıralı bir şekilde görecek şekilde düzenle" -- bu
+    // rozet, listede kaç ek plakası olduğunu tek bakışta gösterir (önceden
+    // hiçbir gösterge yoktu); tam sıralı listeye tıklanınca (kisiDuzenleAc)
+    // Düzenle penceresindeki #duzenleEkPlakalarListe'den ulaşılır.
+    const ekSayisi = (k.ek_plakalar || []).length;
+    const ekRozeti = ekSayisi > 0
+      ? ` <button type="button" class="badge ek-plaka-rozeti border-0" onclick="kisiDuzenleAc(${k.id})" title="${ekSayisi} ek aracı daha var -- tümünü sıralı görmek için tıklayın">+${ekSayisi}</button>`
+      : "";
     return `
     <tr>
       <td>${escapeHtml(k.ad_soyad)}</td>
-      <td class="fw-bold"><button class="plate-link${plakaKirmizi ? " plate-link-yetkisiz" : ""}" data-plaka-analiz="${escapeHtml(k.plaka_no)}" title="${plakaKirmizi ? "Son geçişi YETKİSİZ olarak işaretlendi -- " : ""}Geçiş geçmişini ve görsellerini gör">${escapeHtml(k.plaka_no)}</button></td>
+      <td class="fw-bold"><button class="plate-link${plakaKirmizi ? " plate-link-yetkisiz" : ""}" data-plaka-analiz="${escapeHtml(k.plaka_no)}" title="${plakaKirmizi ? "Son geçişi YETKİSİZ olarak işaretlendi -- " : ""}Geçiş geçmişini ve görsellerini gör">${escapeHtml(k.plaka_no)}</button>${ekRozeti}</td>
       <td>${tipRozeti(k.tip)}</td>
       <td>${escapeHtml(k.telefon) || "-"}</td>
       <td>${escapeHtml(k.daire_departman) || "-"}</td>
@@ -2434,8 +2443,65 @@ async function kisiDuzenleAc(id) {
   document.getElementById("duzenleAciklama").value = kisi.aciklama || "";
   document.getElementById("duzenleBitisTarihi").value = kisi.bitis_tarihi ? kisi.bitis_tarihi.slice(0, 16) : "";
   document.getElementById("duzenleSonuc").textContent = "";
+  document.getElementById("duzenleYeniEkPlaka").value = "";
+  document.getElementById("duzenleEkPlakaSonuc").textContent = "";
+  _duzenleEkPlakalarGoster(kisi.id, kisi.ek_plakalar);
   duzenleZiyaretciAlanGoster();
   bootstrap.Modal.getOrCreateInstance(document.getElementById("kisiDuzenleModal")).show();
+}
+
+// 2026-09-23 kullanıcı isteği: "birden fazla aracı olanların araçlarını
+// kişiye tıklayınca sıralı bir şekilde görecek şekilde düzenle" -- bkz.
+// index.html'deki #duzenleEkPlakalarListe'nin üstündeki not. `ek_plakalar`
+// GET /kisiler/{id} yanıtında ZATEN geliyordu (schemas.KisiCevap.ek_plakalar)
+// -- burada ekstra bir istek YAPILMIYOR, sadece gösteriliyor. Liste <ol>
+// (sıralı/numaralı liste) olduğu için tarayıcı otomatik 1., 2., 3. ...
+// numaralandırır -- kullanıcının istediği "sıralı görünüm" budur.
+function _duzenleEkPlakalarGoster(kisiId, ekPlakalar) {
+  const liste = document.getElementById("duzenleEkPlakalarListe");
+  liste.innerHTML = (ekPlakalar && ekPlakalar.length)
+    ? ekPlakalar.map(p => `
+      <li>
+        <span class="ek-plaka-satiri-ic">
+          <span class="ek-plaka-metin">${escapeHtml(p.plaka_no)}</span>
+          <button type="button" class="btn btn-sm btn-outline-danger" onclick="kisiEkPlakaSil(${kisiId}, ${p.id})" title="Bu ek plakayı kaldır"><i class="bi bi-x-lg"></i></button>
+        </span>
+      </li>`).join("")
+    : `<li class="text-muted small" style="list-style: none;">Bu kişiye ait ek plaka yok</li>`;
+}
+
+async function kisiEkPlakaEkle() {
+  const kisiId = document.getElementById("duzenleId").value;
+  const girdi = document.getElementById("duzenleYeniEkPlaka");
+  const sonuc = document.getElementById("duzenleEkPlakaSonuc");
+  const plaka = girdi.value.trim();
+  if (!plaka) return;
+  try {
+    await apiCagir(`/kisiler/${kisiId}/plakalar`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ plaka_no: plaka }),
+    });
+    girdi.value = "";
+    sonuc.className = "small text-success mt-1"; sonuc.textContent = "Ek plaka eklendi.";
+    const guncelKisi = await apiCagir(`/kisiler/${kisiId}`);
+    _duzenleEkPlakalarGoster(kisiId, guncelKisi.ek_plakalar);
+    kisileriYukle();
+  } catch (err) {
+    sonuc.className = "small text-danger mt-1"; sonuc.textContent = err.message;
+  }
+}
+
+async function kisiEkPlakaSil(kisiId, plakaId) {
+  if (!(await onayAl("Bu ek plakayı kaldırmak istediğinize emin misiniz?"))) return;
+  try {
+    await apiCagir(`/kisiler/${kisiId}/plakalar/${plakaId}`, { method: "DELETE" });
+    const guncelKisi = await apiCagir(`/kisiler/${kisiId}`);
+    _duzenleEkPlakalarGoster(kisiId, guncelKisi.ek_plakalar);
+    kisileriYukle();
+  } catch (err) {
+    toastGoster(err.message, "hata");
+  }
 }
 
 document.getElementById("kisiDuzenleForm").addEventListener("submit", async (e) => {

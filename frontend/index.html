@@ -141,8 +141,26 @@
           <input type="text" class="form-control" id="duzenleAdSoyad" required>
         </div>
         <div class="mb-2">
-          <label class="form-label small" for="duzenlePlaka">Plaka No</label>
+          <label class="form-label small" for="duzenlePlaka">Plaka No (Ana)</label>
           <input type="text" class="form-control" id="duzenlePlaka" required>
+        </div>
+        <!-- 2026-09-23 kullanıcı isteği: "birden fazla aracı olanların
+             araçlarını kişiye tıklayınca sıralı bir şekilde görecek şekilde
+             düzenle" -- toplu içe aktarmadan (bkz. main.py::toplu_kisi_import,
+             2026-09-23 "çoklu plaka" patch'i) ya da tek tek "+ Ekle" ile
+             gelen ek plakaların (models.KisiPlaka) panelden GÖRÜLEBİLECEĞİ
+             hiçbir yer yoktu -- backend zaten destekliyordu (GET/POST/DELETE
+             /kisiler/{id}/plakalar) ama admin panelinde hiç kullanılmıyordu.
+             Bu liste, kisiDuzenleAc() tarafından numaralı/sıralı olarak
+             doldurulur (bkz. app.js::_duzenleEkPlakalarGoster). -->
+        <div class="mb-2">
+          <label class="form-label small">Ek Plakalar (Birden Fazla Aracı Varsa)</label>
+          <ol id="duzenleEkPlakalarListe" class="ek-plaka-listesi"></ol>
+          <div class="input-group input-group-sm">
+            <input type="text" class="form-control" id="duzenleYeniEkPlaka" placeholder="Örn. 34 DEF 456">
+            <button type="button" class="btn btn-outline-primary" onclick="kisiEkPlakaEkle()"><i class="bi bi-plus-circle"></i> Ekle</button>
+          </div>
+          <div id="duzenleEkPlakaSonuc" class="small mt-1"></div>
         </div>
         <div class="mb-2">
           <label class="form-label small" for="duzenleTelefon">Telefon</label>

@@ -495,6 +495,41 @@ table td, table th {
   vertical-align: middle;
 }
 
+/* 2026-09-23 kullanıcı isteği: "birden fazla aracı olanların araçlarını
+   kişiye tıklayınca sıralı bir şekilde görecek şekilde düzenle" -- Kişiler
+   listesindeki "+N ek araç" rozeti (bkz. app.js::kisileriYukle) ve Kişiyi
+   Düzenle penceresindeki sıralı/numaralı ek plaka listesi (bkz.
+   app.js::_duzenleEkPlakalarGoster). */
+.ek-plaka-rozeti {
+  background: #e7f1ff;
+  color: #2785ad;
+  font-weight: 600;
+  cursor: pointer;
+  vertical-align: middle;
+}
+.ek-plaka-rozeti:hover { background: #d7e9ff; }
+
+.ek-plaka-listesi {
+  list-style: decimal;
+  padding-left: 1.4rem;
+  margin-bottom: .5rem;
+  max-height: 160px;
+  overflow-y: auto;
+}
+/* Numara (::marker) yalnızca <li>'nin varsayılan `display: list-item`
+   değeri korunursa görünür -- satırı hizalamak için <li>'nin KENDİSİNİ
+   `display: flex` yapmak numarayı tarayıcıda sessizce KAYBEDER (bilinen bir
+   CSS tuzağı). Bu yüzden flex, iç sarmalayıcı bir <span>'e uygulanıyor;
+   <li> varsayılan display'ini koruyor. */
+.ek-plaka-satiri-ic {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: .5rem;
+  padding: .2rem 0;
+}
+.ek-plaka-metin { font-weight: 600; }
+
 @media (max-width: 768px) {
   .pts-sidebar { width: 62px; flex-basis: 62px; padding-left: .4rem; padding-right: .4rem; }
   .sidebar-section-label, .side-link { font-size: 0; }
