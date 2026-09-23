@@ -36,6 +36,13 @@ _OPERATOR_GORMELI = {
     # bu sekmenin data-rol-min'i YOK, yani tüm roller (operatör dahil)
     # görebilmeli.
     "#iletisim-sekme",
+    # 2026-09-23 kullanıcı isteği: eski tek "Panel" (#panel-sekme) sekmesi
+    # ikiye ayrıldı -- istatistik/grafik/nizamiye durumu içeriği bu yeni
+    # "Kontrol Merkezi" sekmesine taşındı (bkz. index.html, app.js::
+    # sonGecislerYukle'nin üstündeki not). Eski #panel-sekme'nin data-rol-min'i
+    # HİÇ olmadığı (operatöre açık) için bu yeni sekme de aynı şekilde açık
+    # kalmalı -- yalnızca içerik taşındı, yetki modeli DEĞİŞMEDİ.
+    "#kontrol-sekme",
 }
 # "Yönetim"e dair, operatörden HER giriş noktasından gizlenmesi gereken sekmeler.
 _OPERATOR_GORMEMELI = {
@@ -142,27 +149,32 @@ def test_navtabs_tum_hedefler_kategorize_edilmis():
 
 
 # ------------------------------------------------------------------
-# Ana Sayfa'daki (`#panel-sekme`) hızlı erişim kutucukları (`.quick-tile`)
-# -- KÖK NEDEN (bu özellik eklenirken bulundu): bu kutucuklar sidebar/navtabs
-# ile AYNI data-target mekanizmasını kullanıyor ama TAMAMEN AYRI bir DOM
-# konumunda duruyorlar -- sidebar'ı gizlemek bunları GİZLEMEZ, ayrı ayrı
-# işaretlenmeleri gerekiyordu (Kamera Yönetimi + Lisans kutucukları).
+# Kontrol Merkezi'ndeki (`#kontrol-sekme`) hızlı erişim kutucukları
+# (`.quick-tile`) -- KÖK NEDEN (bu özellik eklenirken bulundu): bu kutucuklar
+# sidebar/navtabs ile AYNI data-target mekanizmasını kullanıyor ama TAMAMEN
+# AYRI bir DOM konumunda duruyorlar -- sidebar'ı gizlemek bunları GİZLEMEZ,
+# ayrı ayrı işaretlenmeleri gerekiyordu (Kamera Yönetimi + Lisans kutucukları).
+#
+# 2026-09-23: bu kutucuklar, eski tek "Panel" (#panel-sekme) sekmesi ikiye
+# ayrılırken (bkz. index.html, app.js::sonGecislerYukle'nin üstündeki not)
+# değişmeden yeni "Kontrol Merkezi" (#kontrol-sekme) sekmesine taşındı --
+# bu testler de o taşınmayı takip ediyor.
 # ------------------------------------------------------------------
 
 def test_anasayfa_hizli_erisim_kutulari_yonetime_gidenler_gizli():
-    panel = _corba().select_one("#panel-sekme")
+    panel = _corba().select_one("#kontrol-sekme")
     assert panel is not None
     yonetime_giden = {"#kamera-sekme", "#lisans-sekme"}
     for hedef in yonetime_giden:
         kutu = panel.select_one(f'.quick-tile[data-target="{hedef}"]')
-        assert kutu is not None, f"Ana Sayfa hızlı erişim kutularında {hedef} bulunamadı"
-        assert _yonetici_ile_sinirli_mi(kutu), f"Ana Sayfa hızlı erişim kutusu {hedef} operatörden gizlenmemiş"
+        assert kutu is not None, f"Kontrol Merkezi hızlı erişim kutularında {hedef} bulunamadı"
+        assert _yonetici_ile_sinirli_mi(kutu), f"Kontrol Merkezi hızlı erişim kutusu {hedef} operatörden gizlenmemiş"
 
 
 def test_anasayfa_hizli_erisim_kutulari_calisma_alani_olanlar_acik():
-    panel = _corba().select_one("#panel-sekme")
+    panel = _corba().select_one("#kontrol-sekme")
     calisma_alani = {"#canli-sekme", "#kayitlar-sekme", "#kisiler-sekme"}
     for hedef in calisma_alani:
         kutu = panel.select_one(f'.quick-tile[data-target="{hedef}"]')
-        assert kutu is not None, f"Ana Sayfa hızlı erişim kutularında {hedef} bulunamadı"
-        assert not _yonetici_ile_sinirli_mi(kutu), f"Ana Sayfa hızlı erişim kutusu {hedef} operatöre GEREKSİZ yere gizlenmiş"
+        assert kutu is not None, f"Kontrol Merkezi hızlı erişim kutularında {hedef} bulunamadı"
+        assert not _yonetici_ile_sinirli_mi(kutu), f"Kontrol Merkezi hızlı erişim kutusu {hedef} operatöre GEREKSİZ yere gizlenmiş"

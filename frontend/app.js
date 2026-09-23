@@ -537,7 +537,7 @@ function authBasarili(kullanici) {
 }
 
 async function uygulamaVerileriniYukle() {
-  panelYenile(); kayitlariYukle(); kisileriYukle(); ledAyarlariYukle(); lisansYukle(); kameralariYukle();
+  panelYenile(); sonGecislerYukle(); kayitlariYukle(); kisileriYukle(); ledAyarlariYukle(); lisansYukle(); kameralariYukle();
   grafikYukle(); karaListesiYukle(); bariyerleriYukle(); kullanicilariYukle(); sistemSagliginiYukle();
   bildirimleriYukle(); vardiyaOturumlariniYukle();
   await siteleriYukle(); noktalariYukle();
@@ -784,6 +784,40 @@ async function panelYenile() {
     _kayitCacheBirlestir(kayitlar);
     const canliYenileme = document.getElementById("canliYenileme");
     if (canliYenileme) canliYenileme.textContent = new Date().toLocaleTimeString("tr-TR");
+    if (mevcutRol === "güvenlik") guvenlikVardiyaDurumunuGuncelle();
+  } catch (e) {
+    console.error(e);
+  }
+}
+
+// ---------------------- SON GEÇİŞLER (sınırsız, sayfalama destekli) ----------------------
+// 2026-09-23 kullanıcı isteği: "Panel ekranında sadece Son geçişleri görmek
+// istiyorum bir de son geçişler sınırlı olmasın sayfa geçişleri de olmasını
+// istiyorum" -- Panel sekmesindeki eski "Son Kayıtlar" kutusu (bkz. yukarıdaki
+// panelYenile'nin ESKİ sürümü) her zaman yalnızca en son 10 kaydı gösteriyordu
+// ve önceki/sonraki sayfa GEZİNMESİ YOKTU. Panel artık YALNIZCA bu bölümü
+// içeriyor (istatistik/grafik/nizamiye durumu gibi diğer her şey, kullanıcının
+// tercihiyle, ayrı bir "Kontrol Merkezi" sekmesine taşındı, bkz. index.html).
+// Bu fonksiyon, Kayıtlar sekmesindeki kayitlariYukle/sayfaDegistir ile AYNI
+// sayfalama desenini (limit/offset + /kayitlar/sayfa-bilgisi) kullanır, ama
+// FİLTRE alanları olmadan -- bu ekranın tek amacı ham, kesintisiz bir geçiş
+// akışı sunmak.
+let _sonGecislerSayfa = 0;
+const _sonGecislerLimit = 25;
+
+async function sonGecislerYukle(sifirla = true) {
+  if (sifirla) _sonGecislerSayfa = 0;
+  const params = new URLSearchParams({ limit: _sonGecislerLimit, offset: _sonGecislerSayfa * _sonGecislerLimit });
+  const sayfaBilgisiParams = new URLSearchParams(params);
+  sayfaBilgisiParams.delete("offset");
+  try {
+    const [kayitlar, sayfaBilgisi] = await Promise.all([
+      apiCagir(`/kayitlar?${params.toString()}`),
+      apiCagir(`/kayitlar/sayfa-bilgisi?${sayfaBilgisiParams.toString()}`),
+    ]);
+    _kayitCacheBirlestir(kayitlar);
+    const sayacEl = document.getElementById("sonGecislerSayac");
+    if (sayacEl) sayacEl.textContent = `${sayfaBilgisi.toplam} geçiş · Sayfa ${_sonGecislerSayfa + 1}/${sayfaBilgisi.sayfa_sayisi}`;
     const tbody = document.getElementById("sonKayitlarTablo");
     tbody.innerHTML = kayitlar.map(k => `
       <tr>
@@ -798,10 +832,26 @@ async function panelYenile() {
       </tr>
     `).join("") || `<tr><td colspan="8" class="text-center text-muted py-3">Henüz kayıt yok</td></tr>`;
     korumaliGorselleriYukle(tbody);
-    if (mevcutRol === "güvenlik") guvenlikVardiyaDurumunuGuncelle();
+
+    const sayfaEl = document.getElementById("sonGecislerSayfalama");
+    if (sayfaEl) {
+      const onceki = _sonGecislerSayfa > 0;
+      const sonraki = _sonGecislerSayfa < sayfaBilgisi.sayfa_sayisi - 1;
+      sayfaEl.innerHTML = `
+        <div class="d-flex gap-2">
+          <button class="btn btn-sm btn-outline-secondary" ${!onceki ? "disabled" : ""} onclick="sonGecislerSayfaDegistir(-1)"><i class="bi bi-chevron-left"></i> Önceki</button>
+          <button class="btn btn-sm btn-outline-secondary" ${!sonraki ? "disabled" : ""} onclick="sonGecislerSayfaDegistir(1)">Sonraki <i class="bi bi-chevron-right"></i></button>
+        </div>
+        <span class="small text-muted">${sayfaBilgisi.toplam ? `${_sonGecislerSayfa * _sonGecislerLimit + 1}–${Math.min((_sonGecislerSayfa + 1) * _sonGecislerLimit, sayfaBilgisi.toplam)} / ${sayfaBilgisi.toplam}` : ""}</span>`;
+    }
   } catch (e) {
-    console.error(e);
+    console.error("Son Geçişler yüklenemedi:", e);
   }
+}
+
+function sonGecislerSayfaDegistir(delta) {
+  _sonGecislerSayfa = Math.max(0, _sonGecislerSayfa + delta);
+  sonGecislerYukle(false);
 }
 
 // Güvenlik personeli için teşhis: sunucunun "şu an" bilgisi + kullanıcının
@@ -811,8 +861,11 @@ async function panelYenile() {
 // rağmen canlı geçişlerin Kayıtlar sekmesinde görünmediği bildirilmişti --
 // bu, filtrenin NEDEN boş kaldığını sunucu/istemci saat karşılaştırmasıyla
 // teşhis etmeye yarar; aynı gerekçe öz-hizmet sistemi için de geçerli.
-// Panel sekmesindeki vardiya durum şeridi (bkz. index.html #vardiyaHeroSeridi,
-// "benzersiz ana sayfa" isteği, 2026-09-21). Ayrı bir uç nokta çağırmaz --
+// Kontrol Merkezi sekmesindeki vardiya durum şeridi (bkz. index.html
+// #vardiyaHeroSeridi, "benzersiz ana sayfa" isteği, 2026-09-21; 2026-09-23'te
+// bu şerit -- Panel sekmesinin geri kalanıyla birlikte -- Panel'den ayrı bir
+// "Kontrol Merkezi" sekmesine taşındı, bkz. sonGecislerYukle'nin üstündeki
+// not). Ayrı bir uç nokta çağırmaz --
 // guvenlikVardiyaDurumunuGuncelle'nin ZATEN çektiği /vardiya-oturumlari/durumum
 // yanıtını (d) yeniden kullanır, bu yüzden bu fonksiyon o fonksiyonun İÇİNDEN
 // çağrılır, ayrı bir async akış olarak DEĞİL.
@@ -1077,6 +1130,7 @@ async function _ziyaretciGirisiKutusunuAyarla(kayit, nokta) {
       toastGoster("Ziyaretçi girişi onaylandı: " + kayit.plaka_no, "basari");
       kutu.classList.add("d-none");
       panelYenile();
+      sonGecislerYukle(false);
       kayitlariYukle(false);
       await olayDetayAc(guncelKayit.id);
     } catch (err) {
@@ -1520,6 +1574,7 @@ async function ziyaretciBilgileriKaydet() {
     sonuc.className = "small text-success";
     sonuc.textContent = r.mesaj;
     panelYenile();
+    sonGecislerYukle(false);
     kayitlariYukle(false);
     setTimeout(() => bootstrap.Modal.getInstance(document.getElementById("ziyaretciBilgileriModal"))?.hide(), 900);
   } catch (err) {
@@ -2066,6 +2121,7 @@ document.getElementById("kayitDuzenleForm")?.addEventListener("submit", async (e
     _kayitCacheYerindeGuncelle(guncelKayit);
     kayitlariYukle(false);
     panelYenile();
+    sonGecislerYukle(false);
     analizAcikSeAyniPlakayiYenile();
   } catch (err) {
     sonuc.className = "small text-danger"; sonuc.textContent = err.message;
@@ -2086,6 +2142,7 @@ async function kayitSil(id) {
     sonKayitlarCache = sonKayitlarCache.filter(k => k.id !== Number(id));
     kayitlariYukle(false);
     panelYenile();
+    sonGecislerYukle(false);
     analizAcikSeAyniPlakayiYenile();
   } catch (e) {
     alert(e.message);
@@ -2354,6 +2411,7 @@ document.getElementById("testKayitForm").addEventListener("submit", async (e) =>
       </div>`;
     document.getElementById("testKayitForm").reset();
     panelYenile();
+    sonGecislerYukle(false);
   } catch (err) {
     alert("Hata: " + err.message);
   }
@@ -2371,6 +2429,7 @@ authBaslat().then(() => {
   setInterval(() => {
     if (sessionStorage.getItem("pts_token") && !_sseAktif) {
       panelYenile();
+      sonGecislerYukle(false);
       if (!_kayitlarFiltresiDuzenleniyorMu()) kayitlariYukle(false);
     }
   }, 15000);
@@ -2516,6 +2575,7 @@ function _canliBolumleriTazeleDebounce() {
   _canliYenilemeZamanlayici = setTimeout(async () => {
     _canliYenilemeZamanlayici = null;
     try { await panelYenile(); } catch (e) { console.error("Panel otomatik yenileme hatası:", e); }
+    try { await sonGecislerYukle(false); } catch (e) { console.error("Son Geçişler otomatik yenileme hatası:", e); }
     if (!_kayitlarFiltresiDuzenleniyorMu()) {
       try { await kayitlariYukle(false); } catch (e) { console.error("Kayıtlar otomatik yenileme hatası:", e); }
     }
@@ -2678,6 +2738,7 @@ async function plakaAnalizAc(plaka) {
           }),
         });
         panelYenile();
+        sonGecislerYukle(false);
         kayitlariYukle(false);
         plakaAnalizAc(v.plaka_no);
       } catch (err) {

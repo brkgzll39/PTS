@@ -483,7 +483,15 @@
   <aside class="pts-sidebar">
     <div class="sidebar-section-label">ÇALIŞMA ALANI</div>
     <button class="side-link active" data-target="#canli-sekme"><i class="bi bi-display"></i>Canlı İzleme</button>
-    <button class="side-link" data-target="#panel-sekme"><i class="bi bi-house-door"></i>Anasayfa</button>
+    <!-- 2026-09-23 kullanıcı isteği: "Panel ekranında sadece Son geçişleri
+         görmek istiyorum bir de son geçişler sınırlı olmasın sayfa geçişleri
+         de olmasını istiyorum" -- eski tek "Anasayfa" (#panel-sekme) sekmesi
+         ikiye ayrıldı: istatistik/grafik/nizamiye durumu gibi özet içerik
+         yeni "Kontrol Merkezi" (#kontrol-sekme) sekmesine taşındı, #panel-sekme
+         artık YALNIZCA sınırsız/sayfalanabilir Son Geçişler listesini
+         gösteriyor (bkz. app.js::sonGecislerYukle). -->
+    <button class="side-link" data-target="#kontrol-sekme"><i class="bi bi-house-door"></i>Kontrol Merkezi</button>
+    <button class="side-link" data-target="#panel-sekme"><i class="bi bi-clock-history"></i>Son Geçişler</button>
     <button class="side-link" data-target="#kayitlar-sekme"><i class="bi bi-list-ul"></i>Geçiş Kayıtları</button>
     <button class="side-link" data-target="#kisiler-sekme"><i class="bi bi-people"></i>Aboneler ve Kişiler</button>
     <button class="side-link" data-target="#karaliste-sekme"><i class="bi bi-slash-circle"></i>Kara Liste</button>
@@ -510,7 +518,8 @@
   <main class="container-fluid app-main">
   <ul class="nav nav-tabs" id="anaSekme" role="tablist">
     <li class="nav-item"><button class="nav-link active" data-bs-toggle="tab" data-bs-target="#canli-sekme" type="button"><i class="bi bi-grid-3x3-gap-fill me-1"></i>Canlı</button></li>
-    <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#panel-sekme" type="button"><i class="bi bi-speedometer2 me-1"></i>Panel</button></li>
+    <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#kontrol-sekme" type="button"><i class="bi bi-speedometer2 me-1"></i>Kontrol Merkezi</button></li>
+    <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#panel-sekme" type="button"><i class="bi bi-clock-history me-1"></i>Son Geçişler</button></li>
     <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#kayitlar-sekme" type="button"><i class="bi bi-list-columns-reverse me-1"></i>Kayıtlar</button></li>
     <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#kisiler-sekme" type="button"><i class="bi bi-people-fill me-1"></i>Kişiler</button></li>
     <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#karaliste-sekme" type="button"><i class="bi bi-slash-circle me-1"></i>Kara Liste</button></li>
@@ -548,8 +557,14 @@
       </div>
     </div>
 
-    <!-- ================= PANEL (DASHBOARD) ================= -->
-    <div class="tab-pane fade" id="panel-sekme">
+    <!-- ================= KONTROL MERKEZİ (DASHBOARD) ================= -->
+    <!-- 2026-09-23 kullanıcı isteği: "bu ekrandaki şu alan için farklı bir
+         sayfa oluşturalım Panel ekranında sadece Son geçişleri görmek
+         istiyorum" -- eski tek "Panel" sekmesi burada ikiye ayrıldı: bu
+         sekme (istatistik/grafik/nizamiye durumu/hızlı erişim) özet/dashboard
+         içeriğini taşır, sınırsız/sayfalanabilir geçiş listesi ise ayrı
+         #panel-sekme'ye (sidebar'da "Son Geçişler") taşındı. -->
+    <div class="tab-pane fade" id="kontrol-sekme">
       <div class="dashboard-heading"><div><span class="eyebrow">GENEL BAKIŞ</span><h1>Kontrol Merkezi</h1><p>Plaka hareketleri ve sistem durumunu tek ekrandan yönetin.</p></div><div class="d-flex gap-2"><button class="btn btn-success" onclick="ziyaretciBilgileriAc()" data-rol-min="operatör" data-rol-davranis="gizle"><i class="bi bi-person-plus-fill"></i> Ziyaretçi Girişi</button><button class="btn btn-outline-secondary" onclick="panelYenile()"><i class="bi bi-arrow-clockwise"></i> Yenile</button></div></div>
 
       <!-- Vardiya durum şeridi (2026-09-21, "benzersiz ana sayfa" isteği): yalnızca
@@ -631,11 +646,16 @@
           <div class="card-body d-flex justify-content-center"><canvas id="yetkiPie" height="180" width="180"></canvas></div></div>
         </div>
       </div>
+    </div>
+
+    <!-- ================= SON GEÇİŞLER (sınırsız, sayfalanabilir) ================= -->
+    <div class="tab-pane fade" id="panel-sekme">
+      <div class="dashboard-heading"><div><span class="eyebrow">GEÇİŞ AKIŞI</span><h1>Son Geçişler</h1><p>Tüm araç giriş/çıkışlarını, en yeniden en eskiye doğru sayfalayarak inceleyin.</p></div><div class="d-flex gap-2"><button class="btn btn-success" onclick="ziyaretciBilgileriAc()" data-rol-min="operatör" data-rol-davranis="gizle"><i class="bi bi-person-plus-fill"></i> Ziyaretçi Girişi</button><button class="btn btn-outline-secondary" onclick="sonGecislerYukle()"><i class="bi bi-arrow-clockwise"></i> Yenile</button></div></div>
 
       <div class="card">
         <div class="card-header d-flex justify-content-between align-items-center">
-          <span><i class="bi bi-clock-history me-1"></i>Son Kayıtlar</span>
-          <button class="btn btn-sm btn-outline-secondary" onclick="panelYenile()"><i class="bi bi-arrow-clockwise"></i> Yenile</button>
+          <span><i class="bi bi-clock-history me-1"></i>Son Geçişler</span>
+          <span class="small text-muted" id="sonGecislerSayac">-</span>
         </div>
         <div class="card-body p-0">
           <div class="table-responsive">
@@ -646,6 +666,7 @@
               <tbody id="sonKayitlarTablo"></tbody>
             </table>
           </div>
+          <div id="sonGecislerSayfalama" class="d-flex justify-content-between align-items-center px-3 py-2 border-top"></div>
         </div>
       </div>
     </div>
