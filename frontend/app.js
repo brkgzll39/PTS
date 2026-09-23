@@ -1988,6 +1988,24 @@ function _tarihSaatDegeriOlustur(tarihId, saatId) {
   });
 })();
 
+// 2026-09-23 kullanıcı geri bildirimi: "son geçişler de başka sayfaya
+// geçiyorum geri döndüğümde en son baktığım sayfada kalıyor görüntü" --
+// yukarıdaki Kayıtlar sekmesindeki AYNI davranış sınıfının bir başka örneği:
+// sekmeden ayrılınca sayfa numarası (_sonGecislerSayfa) sıfırlanmıyordu, bu
+// yüzden ör. 3. sayfadayken başka bir sekmeye geçip geri dönünce hâlâ 3.
+// sayfadaydı -- yeni gelen geçişleri görmek için elle "Önceki"ye basmak
+// gerekiyordu, "Son Geçişler" adının vaat ettiğinin tam tersi bir deneyim.
+// Aynı `hidden.bs.tab` deseni kullanılıyor (hem üst nav-tabs hem sidebar
+// üzerinden gelen geçişlerde güvenilir biçimde tetiklenir).
+(function () {
+  const panelSekmeDugmesi = document.querySelector('[data-bs-target="#panel-sekme"]');
+  if (!panelSekmeDugmesi) return;
+  panelSekmeDugmesi.addEventListener("hidden.bs.tab", () => {
+    if (_sonGecislerSayfa === 0) return;  // zaten 1. sayfadaysa gereksiz bir yeniden yükleme yapma
+    sonGecislerYukle();  // varsayılan sifirla=true -- 1. sayfaya döner
+  });
+})();
+
 function filtreParametreleri() {
   const params = new URLSearchParams();
   const plaka = document.getElementById("filtrePlaka").value.trim();

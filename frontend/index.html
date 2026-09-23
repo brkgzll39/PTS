@@ -692,7 +692,19 @@
           <span class="small text-muted" id="sonGecislerSayac">-</span>
         </div>
         <div class="card-body">
-          <div class="row g-3">
+          <!-- 2026-09-23 kullanıcı geri bildirimi (ekran görüntüsüyle): "geçişler
+               olmasına rağmen bazı ekranlarda böyle boş gözüküyor" -- Bootstrap'ın
+               `.row`'u varsayılan olarak flex `align-items: stretch` kullanır, yani
+               giriş/çıkış sütunlarından biri diğerinden çok daha KISAYSA (o an o
+               yönde az geçiş varsa, tamamen normal bir durum), kısa sütunun DIŞ
+               kutusu (bu col-lg-6) uzun sütunla AYNI yüksekliğe zorla gerdiriliyor,
+               ama İÇİNDEKİ kartlar kendi doğal yüksekliğinde kalıp üstte kalıyordu
+               -- geri kalan büyük boşluk kullanıcıya "kayıtlar kayboldu/ekran
+               bozuldu" gibi görünüyordu. `align-items-start`, sütunları birbirine
+               eşitlemek yerine HER BİRİNİN kendi içeriği kadar kısa kalmasını
+               sağlıyor -- az geçiş varsa sütun kısa görünür (doğru), ama altında
+               yanıltıcı bir boşluk kalmaz. -->
+          <div class="row g-3 align-items-start">
             <div class="col-lg-6">
               <div class="gecis-grid-baslik yon-giris"><i class="bi bi-box-arrow-in-right me-1"></i>GİRİŞ KAYITLARI</div>
               <div id="sonGecislerGirisGrid" class="gecis-grid"></div>
