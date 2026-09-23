@@ -139,6 +139,11 @@ def _veritabani_migrasyon() -> None:
         # için (aşağıdaki kisi_id ile aynı gerekçe) burada "WITH VALUES"
         # ihtiyacı YOK.
         f"ALTER TABLE plaka_kayitlari ADD {col_kw}misafir_adi VARCHAR(100)",
+        # "Arvento Sürücü Kimliği Entegrasyonu" (2026-09-23) -- bkz.
+        # models.Kayit.surucu_adi'nin docstring'i. NULL kabul eden,
+        # DEFAULT'suz bir metin sütunu olduğu için (misafir_adi ile AYNI
+        # gerekçe) burada da "WITH VALUES" ihtiyacı YOK.
+        f"ALTER TABLE plaka_kayitlari ADD {col_kw}surucu_adi VARCHAR(100)",
         f"ALTER TABLE plaka_kayitlari ADD {col_kw}manuel_giris {bool_tip}{bit_sonu}",
         f"ALTER TABLE plaka_kayitlari ADD {col_kw}duzenleyen VARCHAR(80)",
         f"ALTER TABLE plaka_kayitlari ADD {col_kw}duzenleme_tarihi DATETIME",
@@ -754,6 +759,12 @@ _hiz_sinir_giris = _hiz_siniri_olustur(limit=20, pencere_sn=60)
 # arızalanıp saniyede yüzlerce istek göndermesi ya da kötü niyetli akış) engellenir.
 _hiz_sinir_otomatik_kayit = _hiz_siniri_olustur(limit=120, pencere_sn=60)
 
+# Arvento'nun sürücü-atama webhook'u için -- normal kullanımda araç/kart
+# başına günde birkaç olay yeterlidir; limit kamera uç noktasınınkinden daha
+# düşük tutulup yine de olası bir hatalı/aşırı-istekli entegrasyonu
+# durdurabilecek kadar geniş bırakıldı.
+_hiz_sinir_arvento_webhook = _hiz_siniri_olustur(limit=60, pencere_sn=60)
+
 
 def _kamera_anahtari_degeri() -> Optional[str]:
     """PTS_KAMERA_ANAHTARI'nı okur ve .strip() uygular.
@@ -788,6 +799,33 @@ def _kamera_anahtari_uyarisi() -> None:
 
 
 _kamera_anahtari_uyarisi()
+
+
+def _arvento_anahtari_degeri() -> Optional[str]:
+    """PTS_ARVENTO_ANAHTARI'nı okur ve .strip() uygular -- bkz.
+    _kamera_anahtari_degeri'nin docstring'indeki AYNI kök neden notu (Windows'ta
+    .env düzenlenirken görünmez satır sonu karışması); iki tarafın da (burası
+    ve Arvento'nun isteği göndermesi) .strip() uygulaması gerekiyor."""
+    return (os.getenv("PTS_ARVENTO_ANAHTARI") or "").strip() or None
+
+
+def _arvento_anahtari_uyarisi() -> None:
+    """PTS_ARVENTO_ANAHTARI ayarlanmamışsa `/entegrasyonlar/arvento/webhook`
+    uç noktası TAMAMEN kimliksizdir -- bkz. _kamera_anahtari_uyarisi'nin AYNI
+    deseni. Zorunlu KILINMIYOR (bu entegrasyon opsiyoneldir, Arvento henüz
+    kendi kimlik doğrulama şemasını bildirmediyse kullanıcı önce anahtarsız
+    test edebilir), ama sessizce geçilmemesi gerekir."""
+    if not _arvento_anahtari_degeri():
+        logger.warning(
+            "PTS_ARVENTO_ANAHTARI ayarlanmamış — /entegrasyonlar/arvento/webhook uç noktası "
+            "TAMAMEN kimliksiz (rate-limit dışında hiçbir koruması yok). Arvento'nun webhook "
+            "isteklerini güvenilmeyen bir ağdan/internetten göndermesi ihtimaline karşı bu "
+            "değişkeni ayarlayıp Arvento tarafında X-Arvento-Anahtari başlığıyla göndermeniz "
+            "önerilir (bkz. README.md'deki 'Arvento Sürücü Kimliği Entegrasyonu' bölümü)."
+        )
+
+
+_arvento_anahtari_uyarisi()
 
 # /kayitlar/otomatik'e yüklenen görsel için üst sınır — sınırsız boyutlu bir
 # dosya kabul edip diske olduğu gibi yazmak (eski davranış), kimliksiz bir uç
@@ -2987,6 +3025,58 @@ def _capraz_kamera_kisa_sureli_tekrar_mi(db: Session, plaka_no: str, kamera_id: 
     )
 
 
+# ================================================================
+# ARVENTO ENTEGRASYONU (harici sürücü-kimlik sistemi) -- 2026-09-23
+# ================================================================
+# Kullanıcı isteği: "Arvento Sisteminde kimlik kartı ile aracın çalıştıran
+# personelin, arvento tarafından gelen araç kullanan bilgisi pts sistemine
+# entegre edilmesini istiyorum ... o araç plaka tanıma sisteminden geçiş
+# yaptığında direkt olarak aracı kullanan personel ismi ona göre
+# güncellenecek." Arvento'nun webhook gövdesinin TAM biçimi bu yazılırken
+# bilinmiyordu (kullanıcı: "bu konuyu arvento ile konuşmam gerekiyor") --
+# bu yüzden aşağıdaki `_arvento_alan_bul` yaygın alan adı varyasyonlarını
+# (Türkçe/İngilizce, snake_case/camelCase) tolere eder ve HİÇBİRİ
+# bulunamazsa net bir 422 hatasıyla hangi anahtarların beklendiğini bildirir
+# -- gerçek Arvento gövdesi farklı bir isim kullanıyorsa, bu sessizce
+# yutulan bir eşleşme hatası yerine panelin/loglar'ın hemen fark edeceği bir
+# hata olarak görünür.
+_ARVENTO_PLAKA_ALANLARI = ["plaka", "plaka_no", "plate", "plateNo", "vehicle_plate", "vehiclePlate", "arac_plaka"]
+_ARVENTO_SURUCU_ALANLARI = [
+    "surucu_adi", "surucu", "surucuAdi", "driver_name", "driverName", "driver",
+    "personel_adi", "personelAdi", "kullanici_adi", "employee_name", "employeeName",
+]
+_ARVENTO_KART_ALANLARI = ["kart_no", "kartNo", "card_no", "cardNo", "card_id", "rfid", "personel_no", "sicil_no", "employee_id", "employeeId"]
+_ARVENTO_ZAMAN_ALANLARI = ["olay_zamani", "olayZamani", "zaman", "timestamp", "event_time", "eventTime", "time"]
+
+
+def _arvento_alan_bul(veri: dict, anahtarlar: list) -> Optional[str]:
+    """`veri` sözlüğünde `anahtarlar` listesindeki adlardan (büyük/küçük harf
+    duyarsız) ilk DOLU olanı bulup döner; hiçbiri yoksa/boşsa None döner."""
+    kucuk_harfli = {str(k).lower(): v for k, v in veri.items()}
+    for anahtar in anahtarlar:
+        deger = kucuk_harfli.get(anahtar.lower())
+        if deger is not None and str(deger).strip():
+            return str(deger).strip()
+    return None
+
+
+def _arvento_surucu_bul(db: Session, plaka_no: str) -> Optional[str]:
+    """Verilen (normalize edilmiş) plaka için Arvento'dan gelen EN GÜNCEL
+    sürücü atamasını döner -- bkz. models.ArventoSuruculuOlay'ın docstring'i
+    (neden `alinma_zamani`ya göre sıralandığı orada açıklanıyor). Hiç olay
+    yoksa (Arvento entegrasyonu kullanılmıyor veya bu plaka için henüz bir
+    olay gelmediyse) None döner ve models.Kayit.surucu_adi boş kalır --
+    bu SESSİZ bir hata değildir, bu entegrasyonun kullanılmadığı/plakanın
+    henüz bilinmediği normal durumdur."""
+    olay = (
+        db.query(models.ArventoSuruculuOlay)
+        .filter(models.ArventoSuruculuOlay.plaka_no == plaka_no)
+        .order_by(desc(models.ArventoSuruculuOlay.alinma_zamani))
+        .first()
+    )
+    return olay.surucu_adi if olay else None
+
+
 def _kayit_olustur_ve_bildir(db: Session, plaka_no: str, kamera_id: str, yon: str,
                               guven_skoru: Optional[float], goruntu_yolu: Optional[str],
                               dogrulama_kare_sayisi: Optional[int] = None,
@@ -3036,6 +3126,13 @@ def _kayit_olustur_ve_bildir(db: Session, plaka_no: str, kamera_id: str, yon: st
 
     not_metni_temiz = (not_metni or "").strip() or None
     misafir_adi_temiz = (misafir_adi or "").strip() or None
+    # Arvento entegrasyonu (2026-09-23): "o araç plaka tanıma sisteminden
+    # geçiş yaptığında direkt olarak aracı kullanan personel ismi ona göre
+    # güncellenecek" -- bkz. _arvento_surucu_bul'un docstring'i. Hem kamera
+    # pipeline'ından (kayit_ekle_otomatik) hem manuel eklemeden
+    # (kayit_ekle_manuel) gelen TÜM kayıtlar bu TEK fonksiyondan geçtiği için
+    # arama burada, tek bir yerde yapılır.
+    surucu_adi = _arvento_surucu_bul(db, plaka_no)
     kayit = models.Kayit(
         plaka_no=plaka_no.upper().strip(),
         kamera_id=kamera_id,
@@ -3049,6 +3146,7 @@ def _kayit_olustur_ve_bildir(db: Session, plaka_no: str, kamera_id: str, yon: st
         dogrulama_kare_sayisi=dogrulama_kare_sayisi,
         not_metni=not_metni_temiz,
         misafir_adi=misafir_adi_temiz,
+        surucu_adi=surucu_adi,
         manuel_giris=manuel_giris,
         farkli_okuma_sayisi=farkli_okuma_sayisi,
     )
@@ -3382,6 +3480,99 @@ def _bitis_tarih_filtresi_sinirini_hesapla(bitis: Optional[str]) -> Optional[dat
     if "T" not in bitis:
         bitis_dt = bitis_dt + timedelta(days=1)
     return bitis_dt
+
+
+@app.post("/entegrasyonlar/arvento/webhook", response_model=schemas.ArventoWebhookCevap,
+          dependencies=[Depends(_hiz_sinir_arvento_webhook)])
+async def arvento_webhook(istek: Request, x_arvento_anahtari: Optional[str] = Header(None), db: Session = Depends(get_db)):
+    """Arvento'nun "bu plakayı şu an kim kullanıyor" olaylarını aldığı uç
+    nokta (2026-09-23 kullanıcı isteği: "Arvento Sisteminde kimlik kartı ile
+    aracın çalıştıran personelin ... bilgisi pts sistemine entegre
+    edilmesini istiyorum ... o araç plaka tanıma sisteminden geçiş
+    yaptığında direkt olarak aracı kullanan personel ismi ona göre
+    güncellenecek"). Kullanıcı oturumu gerektirmez (Arvento giriş yapamaz);
+    bunun yerine PTS_ARVENTO_ANAHTARI ortam değişkeni ayarlıysa
+    X-Arvento-Anahtari başlığıyla eşleşmesi zorunlu tutulur -- bkz.
+    _arvento_anahtari_degeri'nin docstring'i, /kayitlar/otomatik'teki AYNI
+    desen.
+
+    ÖNEMLİ (kimlik doğrulama): Arvento'nun KENDİ webhook doğrulama şeması
+    (imza/HMAC, farklı bir başlık adı, IP allowlist vb.) olabilir --
+    kullanıcı bunu henüz Arvento ile netleştirmedi ("bu konuyu arvento ile
+    konuşmam gerekiyor fakat kendi webhook doğrulama şemaları olduğunu
+    düşünüyorum"). Bu uç nokta bilinçli olarak EN BASİT/en yaygın yöntemi
+    (paylaşılan gizli anahtar + özel başlık) uygular; gerçek şema netleşince
+    yalnızca yukarıdaki kontrol (birkaç satır) değiştirilmesi yeterli olur,
+    geri kalan eşleştirme/kayıt mantığına dokunulmaz.
+
+    Gövde biçimi de KESİN değildir -- bkz. _arvento_alan_bul ve üstündeki
+    _ARVENTO_*_ALANLARI listeleri: yaygın alternatif alan adları
+    (Türkçe/İngilizce, snake_case/camelCase) denenir. Gerçek Arvento
+    gövdesinde bunların DIŞINDA bir alan adı kullanılıyorsa, buradaki 422
+    hata mesajı hangi adların denendiğini açıkça listeler -- yeni bir alan
+    adı eklemek tek satırlık bir değişikliktir (bkz. yukarıdaki listeler).
+    """
+    beklenen_anahtar = _arvento_anahtari_degeri()
+    if beklenen_anahtar and (x_arvento_anahtari or "").strip() != beklenen_anahtar:
+        raise HTTPException(401, "Geçersiz Arvento anahtarı")
+
+    try:
+        veri = await istek.json()
+    except Exception:
+        raise HTTPException(400, "Geçersiz JSON gövdesi")
+    if not isinstance(veri, dict):
+        raise HTTPException(400, "Geçersiz JSON gövdesi (bir nesne/obje bekleniyor)")
+
+    plaka_ham = _arvento_alan_bul(veri, _ARVENTO_PLAKA_ALANLARI)
+    if not plaka_ham:
+        raise HTTPException(
+            422,
+            "Gövdede plaka alanı bulunamadı (denenen anahtarlar: " + ", ".join(_ARVENTO_PLAKA_ALANLARI) + ")",
+        )
+    surucu_ham = _arvento_alan_bul(veri, _ARVENTO_SURUCU_ALANLARI)
+    if not surucu_ham:
+        raise HTTPException(
+            422,
+            "Gövdede sürücü adı alanı bulunamadı (denenen anahtarlar: " + ", ".join(_ARVENTO_SURUCU_ALANLARI) + ")",
+        )
+
+    plaka_no = re.sub(r"[^A-Za-z0-9 ]", "", plaka_ham).strip().upper()
+    if not plaka_no:
+        raise HTTPException(422, "Plaka alanı geçersiz/boş")
+    surucu_adi = surucu_ham[:100]
+
+    kart_no_ham = _arvento_alan_bul(veri, _ARVENTO_KART_ALANLARI)
+    kart_no = kart_no_ham[:50] if kart_no_ham else None
+
+    olay_zamani = None
+    zaman_ham = _arvento_alan_bul(veri, _ARVENTO_ZAMAN_ALANLARI)
+    if zaman_ham:
+        try:
+            olay_zamani = datetime.fromisoformat(zaman_ham.replace("Z", "+00:00"))
+        except (ValueError, TypeError):
+            # Ayrıştırılamayan bir zaman damgası SESSİZCE yutulur --
+            # eşleştirme zaten alinma_zamani'ya göre sıralanıyor (bkz.
+            # models.ArventoSuruculuOlay'ın docstring'i), bu yüzden
+            # olay_zamani salt bilgi/denetim amaçlıdır, eşleşme mantığını
+            # etkilemez.
+            olay_zamani = None
+
+    try:
+        ham_veri_json = json.dumps(veri, ensure_ascii=False)[:4000]
+    except (TypeError, ValueError):
+        ham_veri_json = None
+
+    olay = models.ArventoSuruculuOlay(
+        plaka_no=plaka_no,
+        surucu_adi=surucu_adi,
+        kart_no=kart_no,
+        olay_zamani=olay_zamani,
+        ham_veri=ham_veri_json,
+    )
+    db.add(olay)
+    db.commit()
+    logger.info("Arvento sürücü ataması alındı: plaka=%s, sürücü=%s", plaka_no, surucu_adi)
+    return {"durum": "ok", "plaka_no": plaka_no, "surucu_adi": surucu_adi}
 
 
 @app.get("/kayitlar", response_model=List[schemas.KayitCevap])
@@ -3820,6 +4011,11 @@ def plaka_analiz(plaka_no: str, db: Session = Depends(get_db), kullanici: models
              "dogrulama_kare_sayisi": k.dogrulama_kare_sayisi, "farkli_okuma_sayisi": k.farkli_okuma_sayisi,
              "not_metni": k.not_metni,
              "misafir_adi": k.misafir_adi,
+             # Arvento entegrasyonu (2026-09-23) -- bu dict elle kurulduğu
+             # için (yukarıdaki kisi_adi notundaki AYNI kök neden) bu sütunu
+             # eklemeyi unutmak, ORM sütunu olmasına rağmen bu ekranda
+             # sessizce boş görünmesine yol açardı.
+             "surucu_adi": k.surucu_adi,
              # kisi_adi burada da (Kayıtlar tablosundaki gibi) verilmezse
              # bu ekranın "İsim" sütunu -- _kayitlara_kisi_adini_ekle() bu
              # kaydın kendisine kisi_adi'yı eklemiş olsa bile -- HER ZAMAN
@@ -4687,7 +4883,7 @@ def _son_yedek_bilgisini_al() -> dict:
         return {"izleniyor": True, "son_yedek_zamani": None, "yedek_gecikmis": None}
 
 
-def _guvenlik_uyarilarini_topla() -> dict:
+def _guvenlik_uyarilarini_topla(db: Session) -> dict:
     """Yalnızca başlangıçta BİR KEZ log dosyasına yazılan (bkz.
     `_kamera_anahtari_uyarisi`, `_cors_origin_listesi`, `lisans.secret_al`)
     "varsayılan/güvensiz ayar kullanılıyor" uyarılarının aynısını, kimsenin
@@ -4699,7 +4895,7 @@ def _guvenlik_uyarilarini_topla() -> dict:
     env değişkenlerini okuyoruz) -- bu uç nokta periyodik olarak (panel
     yenilemesinde) çağrıldığı için, aksi halde her çağrıda log spam'ine yol
     açardı."""
-    return {
+    uyarilar = {
         # .strip(): sadece boşluk/satır sonundan oluşan bir değer de
         # "ayarlanmamış" sayılmalı -- bkz. _kamera_anahtari_degeri'nin kök
         # neden notu (aynı sınıf hata, burada yalnızca DOĞRU/YANLIŞ göstergesi
@@ -4709,6 +4905,21 @@ def _guvenlik_uyarilarini_topla() -> dict:
         "kamera_anahtari_ayarli_mi": bool(_kamera_anahtari_degeri()),
         "cors_tum_originlere_acik": os.getenv("PTS_CORS_ORIGINS", "").strip() == "*",
     }
+    # Arvento entegrasyonu (2026-09-23): kamera anahtarının aksine bu
+    # entegrasyon OPSİYONELDİR -- çoğu kurulum hiç kullanmayacak. Anahtar
+    # ayarlanmamışsa HER kurulumda uyarmak (kamera_anahtari_ayarli_mi gibi
+    # koşulsuz) gereksiz gürültü olurdu; bu yüzden yalnızca entegrasyon
+    # GERÇEKTEN kullanılıyorsa (en az bir Arvento olayı alınmışsa) VE anahtar
+    # yoksa bu anahtar eklenir -- kullanılmayan bir özellik için sahte bir
+    # güvenlik uyarısı göstermemek ile gerçekten kullanılan ama korumasız
+    # bırakılan bir entegrasyonu sessizce geçmemek arasındaki denge budur.
+    try:
+        arvento_kullaniliyor = db.query(models.ArventoSuruculuOlay.id).first() is not None
+    except Exception:
+        arvento_kullaniliyor = False
+    if arvento_kullaniliyor and not _arvento_anahtari_degeri():
+        uyarilar["arvento_anahtari_ayarli_mi"] = False
+    return uyarilar
 
 
 @app.get("/sistem/saglik")
@@ -4749,7 +4960,7 @@ async def sistem_sagligi(db: Session = Depends(get_db), _: models.Kullanici = De
             "klasor": _klasor_izleyici.kok_klasor if _klasor_izleyici else None,
         },
         "anpr_dedektor_esigi": _anpr_dedektor_esigi_bilgisi_al(),
-        "guvenlik_uyarilari": _guvenlik_uyarilarini_topla(),
+        "guvenlik_uyarilari": _guvenlik_uyarilarini_topla(db),
     }
 
 

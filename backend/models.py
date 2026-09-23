@@ -244,6 +244,29 @@ class Kayit(Base):
     # durumda genelde boş bırakılır, yalnızca HİÇBİR Kişi kaydına
     # bağlanmamış (kisi_id IS NULL) bir "misafir" geçişi için doldurulur.
     misafir_adi = Column(String(100), nullable=True)
+    # ARVENTO ENTEGRASYONU (2026-09-23 kullanıcı isteği): "Arvento Sisteminde
+    # kimlik kartı ile aracın çalıştıran personelin ... bilgisi pts sistemine
+    # entegre edilmesini istiyorum ... o araç plaka tanıma sisteminden geçiş
+    # yaptığında direkt olarak aracı kullanan personel ismi ona göre
+    # güncellenecek." Arvento'nun harici webhook'undan (bkz.
+    # main.py::arvento_webhook) gelen "bu plakayı şu an kim kullanıyor"
+    # bilgisinin, bu kayıt OLUŞTURULDUĞU ANDA bilinen en güncel halidir (bkz.
+    # main.py::_arvento_surucu_bul, _kayit_olustur_ve_bildir içinde
+    # çağrılıyor). BİLİNÇLİ OLARAK misafir_adi'DAN AYRI bir alandır:
+    # misafir_adi kişi tarafından/görevli tarafından ELLE girilen, kisi_id'ye
+    # BAĞLI OLMAYAN bir misafir adıdır; surucu_adi ise OTOMATİK, Arvento
+    # kaynaklı ve kisi_id'den TAMAMEN BAĞIMSIZDIR (araç örn. bir abonenin
+    # üzerine kayıtlı olabilir ama o gün başka bir personel kullanıyor
+    # olabilir — ikisi çelişmez, ikisi de aynı anda dolu olabilir). Kullanıcı
+    # açıkça "sadece isim olarak gösterilsin, PTS Kişi kayıtlarıyla
+    # eşleştirme yapılmasın" dediği için PTS'teki Kisi tablosuyla HİÇBİR
+    # otomatik bağ kurulmaz — bu yalnızca serbest metin bir görüntüleme
+    # alanıdır. Sistem tarafından otomatik dolduğundan panelden ELLE
+    # düzenlenebilir bir alan OLARAK SUNULMAZ (bkz. schemas.KayitDuzenle'nin
+    # bu alanı içermemesi) — yanlış eşleşen bir kaydı düzeltmenin yolu,
+    # Arvento'dan doğru olayın tekrar gelmesini beklemek ya da (ileride
+    # istenirse) ayrı bir düzeltme uç noktası eklemektir.
+    surucu_adi = Column(String(100), nullable=True)
     # Bu kayıt panelden elle mi oluşturuldu (görevlinin "Manuel Kayıt Ekle"
     # ile birini elle içeri alması) yoksa kamera pipeline'ından mı geldi.
     manuel_giris = Column(Boolean, default=False)
@@ -254,6 +277,43 @@ class Kayit(Base):
     olusturma_tarihi = Column(DateTime, default=datetime.now)
 
     kisi = relationship("Kisi", back_populates="kayitlar")
+
+
+class ArventoSuruculuOlay(Base):
+    """Arvento'nun harici webhook'undan alınan her "bu plakayı şu an kim
+    kullanıyor" olayının HAM KAYDI (2026-09-23 kullanıcı isteği, bkz.
+    main.py::arvento_webhook). BİLİNÇLİ OLARAK "son atama" alanını doğrudan
+    Kisi/Kayit üzerinde TUTMAK yerine (tek satırlık, üzerine yazılan bir
+    durum) her olay AYRI bir satır olarak eklenir (append-only günlük):
+
+    1) Denetlenebilirlik/hata ayıklama: Arvento'nun gerçek webhook gövde
+       biçimi bu entegrasyon yazılırken KESİN olarak bilinmiyordu (kullanıcı
+       "bu konuyu arvento ile konuşmam gerekiyor" dedi) -- alan adları
+       tahminle eşleştiriliyor (bkz. main.py::_ARVENTO_PLAKA_ALANLARI vb.).
+       Gerçek üretimde bir eşleşme sorunu çıkarsa `ham_veri`daki tam JSON
+       gövdesi olmadan kök nedeni bulmak imkansız olurdu.
+    2) `alinma_zamani` (sunucunun olayı ALDIĞI an, HER ZAMAN dolu) ile
+       `olay_zamani` (Arvento'nun gövdede bildirdiği zaman, opsiyonel/
+       ayrıştırılamazsa None) kasıtlı olarak AYRI tutulur -- eşleştirme
+       (bkz. main.py::_arvento_surucu_bul) `alinma_zamani`ya göre sıralar,
+       çünkü bu değer HER ZAMAN doğru ve monoton artandır; Arvento'nun kendi
+       saatine güvenmek (saat senkronizasyon sorunu / farklı biçim/dilim
+       ihtimali) sessiz bir sıralama hatasına yol açabilirdi.
+    """
+    __tablename__ = "arvento_surucu_olaylari"
+
+    id = Column(Integer, primary_key=True, index=True)
+    plaka_no = Column(String(15), nullable=False, index=True)
+    surucu_adi = Column(String(100), nullable=False)
+    # Arvento'nun kimlik kartı/sicil no bilgisi -- yalnızca referans/hata
+    # ayıklama amaçlı saklanır, kullanıcının açık isteği doğrultusunda
+    # ("sadece isim olarak gösterilsin") PTS Kişi kayıtlarıyla eşleştirmede
+    # KULLANILMAZ.
+    kart_no = Column(String(50), nullable=True)
+    olay_zamani = Column(DateTime, nullable=True)
+    alinma_zamani = Column(DateTime, default=datetime.now, index=True)
+    # Ham JSON gövdesi (hata ayıklama/denetim amaçlı, bkz. sınıf docstring'i).
+    ham_veri = Column(Text, nullable=True)
 
 
 class KaraListesi(Base):

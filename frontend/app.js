@@ -1983,6 +1983,7 @@ async function kayitlariYukle(sifirla = true) {
       <td>${durumRozeti(k.yetki_durumu)}</td>
       <td>${tipRozeti(k.kisi_tip_anlik)}</td>
       <td class="small">${kayitIsimGoster(k)}</td>
+      <td class="small">${k.surucu_adi ? escapeHtml(k.surucu_adi) : '<span class="text-muted">-</span>'}</td>
       <td>${k.vardiya_adi ? `<span class="badge bg-info text-dark">${escapeHtml(k.vardiya_adi)}</span>` : '<span class="text-muted small">-</span>'}</td>
       <td>${k.guven_skoru ? (k.guven_skoru * 100).toFixed(0) + "%" : "-"}</td>
       ${rolYeterli("yonetici") ? `<td>${dogrulamaRozeti(k.dogrulama_kare_sayisi, k.farkli_okuma_sayisi)}</td>` : ""}
@@ -1992,7 +1993,7 @@ async function kayitlariYukle(sifirla = true) {
         ${rolYeterli("yonetici") ? `<button class="btn btn-sm btn-outline-secondary ms-1" onclick="kayitSil(${k.id})" title="Kaydı sil" aria-label="Kaydı sil"><i class="bi bi-trash"></i></button>` : ""}
       </td>
     </tr>
-  `).join("") || `<tr><td colspan="13" class="text-center text-muted py-3">Kayıt bulunamadı</td></tr>`;
+  `).join("") || `<tr><td colspan="14" class="text-center text-muted py-3">Kayıt bulunamadı</td></tr>`;
   korumaliGorselleriYukle(tbody);
 
   // Sayfalama kontrolleri
@@ -3418,6 +3419,13 @@ function _guvenlikUyarilariniGoster(uyarilar) {
   }
   if (uyarilar.cors_tum_originlere_acik) {
     maddeler.push("PTS_CORS_ORIGINS='*' — tüm origin'lerden çapraz kaynak isteklerine izin veriliyor, üretimde önerilmez.");
+  }
+  // arvento_anahtari_ayarli_mi alanı yalnızca entegrasyon GERÇEKTEN
+  // kullanılıyorsa (en az bir Arvento olayı alındıysa) gönderilir -- bkz.
+  // main.py::_guvenlik_uyarilarini_topla. Bu yüzden `=== false` ile kontrol
+  // edilir (undefined/olmayan alan hiçbir uyarı üretmez).
+  if (uyarilar.arvento_anahtari_ayarli_mi === false) {
+    maddeler.push("PTS_ARVENTO_ANAHTARI ayarlanmamış — /entegrasyonlar/arvento/webhook uç noktası tamamen kimliksiz (yalnızca hız sınırlaması var). Arvento güvenilmeyen bir ağdan/internetten istek gönderiyorsa bu değişkeni ayarlayın.");
   }
   if (maddeler.length === 0) {
     alan.classList.add("d-none");

@@ -2739,3 +2739,70 @@ izleme uçları hâlâ eski, id bazlı `_kullanicinin_izinli_kameralari`'yı
 kullanmaya devam ediyor — kısıtlamanın PANELDEKİ/API'DEKİ biçimi (id
 listesi) hiç değişmedi, yalnızca Kayıt kayıtlarıyla karşılaştırılırken
 doğru alana çevriliyor.
+
+## Arvento Sürücü Kimliği Entegrasyonu (2026-09-23)
+
+**Kullanıcı isteği:** "Arvento Sisteminde kimlik kartı ile aracın çalıştıran
+personelin, arvento tarafından gelen araç kullanan bilgisi pts sistemine
+entegre edilmesini istiyorum. Arvento tarafından bana gönderilen kayıtlar
+pts sistemine ekleyeceğim webhook link'i ile tespit edilecek ve o araç
+plaka tanıma sisteminden geçiş yaptığında direkt olarak aracı kullanan
+personel ismi ona göre güncellenecek."
+
+### Nasıl çalışır
+
+1. Arvento, "bu plakayı şu an kim kullanıyor" bilgisini her değiştiğinde
+   PTS'e şu adrese bir `POST` isteği gönderir:
+
+   ```
+   POST http://<pts-sunucu-adresi>:8000/entegrasyonlar/arvento/webhook
+   Content-Type: application/json
+   X-Arvento-Anahtari: <PTS_ARVENTO_ANAHTARI ile aynı değer>
+
+   { "plaka": "34 ABC 123", "surucu_adi": "Ahmet Yılmaz" }
+   ```
+
+2. PTS bu olayı `arvento_surucu_olaylari` tablosuna kaydeder (geçmiş, denetim
+   ve hata ayıklama için — bkz. `backend/models.py::ArventoSuruculuOlay`).
+3. O plaka bir kamera tarafından (veya elle) tekrar okunup yeni bir geçiş
+   kaydı oluşturulduğunda, PTS o an için bilinen EN GÜNCEL Arvento sürücüsünü
+   otomatik olarak bu yeni kayda ekler — Kayıtlar ekranındaki yeni "Sürücü"
+   sütununda görünür.
+
+### Kurulum
+
+1. `.env` dosyanıza güçlü, rastgele bir `PTS_ARVENTO_ANAHTARI` değeri
+   ekleyin (bkz. `.env.example`) ve PTS'i yeniden başlatın.
+2. Arvento tarafında (veya Arvento entegrasyon ekibiyle görüşerek) webhook
+   hedefini yukarıdaki adrese, `X-Arvento-Anahtari` başlığını da AYNI
+   değerle ayarlatın.
+
+### Bilinçli sınırlamalar / açık noktalar
+
+- **Kimlik doğrulama şeması KESİNLEŞMEDİ.** Bu entegrasyon yazılırken
+  Arvento'nun webhook isteklerini nasıl doğruladığı (paylaşılan anahtar mı,
+  imza/HMAC mı, IP allowlist mi) bilinmiyordu. Şu an en basit/yaygın yöntem
+  (özel bir HTTP başlığında paylaşılan gizli anahtar) uygulanıyor —
+  `PTS_KAMERA_ANAHTARI`/`/kayitlar/otomatik` ile BİREBİR aynı desen. Arvento
+  ile görüşüldükten sonra gerçek şema farklıysa, `backend/main.py::
+  arvento_webhook` fonksiyonundaki kimlik doğrulama kontrolü (birkaç satır)
+  güncellenmesi yeterlidir, geri kalan mantığa dokunulmaz.
+- **Gövde alan adları KESİNLEŞMEDİ.** Yukarıdaki `plaka`/`surucu_adi` örnek
+  alan adlarıdır — uç nokta ayrıca `plaka_no`, `plate`, `driver_name`,
+  `surucu`, `personel_adi` gibi yaygın alternatifleri de otomatik dener (bkz.
+  `backend/main.py::_ARVENTO_PLAKA_ALANLARI`/`_ARVENTO_SURUCU_ALANLARI`).
+  Gerçek Arvento gövdesi bunların dışında bir alan adı kullanıyorsa, PTS
+  buna net bir `422` hatasıyla (hangi alan adlarının denendiğini listeleyerek)
+  cevap verir — bu listelere yeni bir alan adı eklemek tek satırlık bir
+  değişikliktir.
+- **Kişi kayıtlarıyla eşleştirme YAPILMAZ** (kullanıcının açık tercihi):
+  Arvento'dan gelen sürücü adı PTS'teki "Kişi" (abone/personel) kayıtlarıyla
+  otomatik ilişkilendirilmez, yalnızca serbest metin olarak gösterilir. Araç
+  sahibi/abone bilgisi (mevcut "Kişi" sütunu) bundan ETKİLENMEZ — ikisi aynı
+  kayıtta bağımsız olarak bir arada görünebilir.
+- **Sürücü sütunu şu an yalnızca Kayıtlar ekranında** gösteriliyor; "Son
+  Geçişler" paneli ve Plaka Analizi ekranındaki geçmiş listesi bu sütunu
+  henüz göstermiyor (istenirse ayrı bir değişiklikle eklenebilir — veri
+  zaten API yanıtında mevcut).
+- Sürücü bilgisi yalnızca YENİ oluşturulan kayıtlara otomatik işlenir; eski
+  kayıtlar geriye dönük GÜNCELLENMEZ.

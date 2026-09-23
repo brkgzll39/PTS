@@ -392,6 +392,11 @@ class KayitCevap(BaseModel):
     farkli_okuma_sayisi: Optional[int] = None
     not_metni: Optional[str] = None
     misafir_adi: Optional[str] = None
+    # Arvento entegrasyonu (2026-09-23) -- bkz. models.Kayit.surucu_adi'nin
+    # docstring'i. Bu ALAN, misafir_adi/kisi_adi'nin aksine, panelden ELLE
+    # DEĞİL yalnızca Arvento webhook'undan otomatik doldurulur; bu yüzden
+    # KayitManuel/KayitDuzenle şemalarında YOKTUR (kasıtlı).
+    surucu_adi: Optional[str] = None
     manuel_giris: bool = False
     duzenleyen: Optional[str] = None
     duzenleme_tarihi: Optional[datetime] = None
@@ -533,6 +538,19 @@ class DenetimKaydiCevap(BaseModel):
     kullanici_adi: str
     eylem: str
     aciklama: str
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class ArventoWebhookCevap(BaseModel):
+    """POST /entegrasyonlar/arvento/webhook başarılı yanıtı — bkz.
+    main.py::arvento_webhook. İstek gövdesi Arvento'nun tam biçimi henüz
+    kesinleşmediği için (bkz. main.py'deki ilgili not) sabit bir Pydantic
+    şemasıyla DOĞRULANMIYOR; bunun yerine main.py esnek anahtar eşleştirmesi
+    yapıp bu şemayla yanıt döner."""
+    durum: str
+    plaka_no: str
+    surucu_adi: str
 
     model_config = ConfigDict(from_attributes=True)
 

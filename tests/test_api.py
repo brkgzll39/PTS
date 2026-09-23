@@ -4374,3 +4374,125 @@ def test_kayit_getir_kamera_erisimi_kisitli_kullanici_icin_403_doner(client, yet
 
     assert client.get(f"/kayitlar/{kayit_id_izinli}", headers=hedef).status_code == 200
     assert client.get(f"/kayitlar/{kayit_id_izinsiz}", headers=hedef).status_code == 403
+
+
+# ------------------------------------------------------------------
+# /entegrasyonlar/arvento/webhook -- Arvento sürücü kimliği entegrasyonu
+# (2026-09-23 kullanıcı isteği: "Arvento Sisteminde kimlik kartı ile aracın
+# çalıştıran personelin ... bilgisi pts sistemine entegre edilmesini
+# istiyorum ... o araç plaka tanıma sisteminden geçiş yaptığında direkt
+# olarak aracı kullanan personel ismi ona göre güncellenecek.")
+#
+# NOT: bu dosya bu sandbox'ta fastapi/sqlalchemy KURULU OLMADIĞI için
+# ÇALIŞTIRILAMIYOR (yalnızca py_compile ile sözdizimi doğrulanabiliyor) --
+# bkz. oturumun standart notu. Testler yine de gerçek davranışı belgelemek
+# ve ileride (gerçek ortamda) regresyona karşı koruma sağlamak için
+# yazılıyor.
+# ------------------------------------------------------------------
+
+def test_arvento_webhook_anahtar_ayarliyken_basliksiz_401_doner(client, monkeypatch):
+    monkeypatch.setenv("PTS_ARVENTO_ANAHTARI", "gizli-arvento-anahtari")
+    r = client.post("/entegrasyonlar/arvento/webhook", json={"plaka": "34 ARV 01", "surucu_adi": "Test Sürücü"})
+    assert r.status_code == 401, r.text
+
+
+def test_arvento_webhook_dogru_basliktan_kabul_edilir(client, monkeypatch):
+    monkeypatch.setenv("PTS_ARVENTO_ANAHTARI", "gizli-arvento-anahtari")
+    r = client.post(
+        "/entegrasyonlar/arvento/webhook",
+        json={"plaka": "34 ARV 02", "surucu_adi": "Ahmet Yılmaz"},
+        headers={"X-Arvento-Anahtari": "gizli-arvento-anahtari"},
+    )
+    assert r.status_code == 200, r.text
+    assert r.json() == {"durum": "ok", "plaka_no": "34 ARV 02", "surucu_adi": "Ahmet Yılmaz"}
+
+
+def test_arvento_webhook_anahtar_ayarli_degilse_basliksiz_de_kabul_edilir(client):
+    """PTS_KAMERA_ANAHTARI ile AYNI desen: entegrasyon opsiyoneldir, anahtar
+    ayarlanmadıysa uç nokta kimliksiz çalışmaya devam eder (bilinçli, bkz.
+    main.py::_arvento_anahtari_uyarisi)."""
+    r = client.post("/entegrasyonlar/arvento/webhook", json={"plaka": "34 ARV 03", "surucu_adi": "Test Sürücü"})
+    assert r.status_code == 200, r.text
+
+
+def test_arvento_webhook_plaka_alani_eksikse_422_doner(client):
+    r = client.post("/entegrasyonlar/arvento/webhook", json={"surucu_adi": "Test Sürücü"})
+    assert r.status_code == 422, r.text
+    assert "plaka" in r.json()["detail"].lower()
+
+
+def test_arvento_webhook_surucu_alani_eksikse_422_doner(client):
+    r = client.post("/entegrasyonlar/arvento/webhook", json={"plaka": "34 ARV 04"})
+    assert r.status_code == 422, r.text
+
+
+def test_arvento_webhook_liste_govdesi_400_doner(client):
+    """Gövde bir JSON nesnesi/obje değilse (ör. Arvento yanlışlıkla bir dizi
+    gönderirse) net bir 400 dönmeli, sunucu hatasına düşmemeli."""
+    r = client.post("/entegrasyonlar/arvento/webhook", json=[{"plaka": "34 ARV 05"}])
+    assert r.status_code == 400, r.text
+
+
+def test_arvento_webhook_alternatif_alan_adlarini_kabul_eder(client):
+    """Arvento'nun gerçek gövde biçimi netleşmediği için yaygın alternatif
+    alan adları da (İngilizce, camelCase) denenir -- bkz.
+    main.py::_ARVENTO_PLAKA_ALANLARI/_ARVENTO_SURUCU_ALANLARI."""
+    r = client.post("/entegrasyonlar/arvento/webhook", json={"plate": "34 ARV 06", "driverName": "Alt Alan Testi"})
+    assert r.status_code == 200, r.text
+    assert r.json() == {"durum": "ok", "plaka_no": "34 ARV 06", "surucu_adi": "Alt Alan Testi"}
+
+
+def test_arvento_webhook_sonrasi_yeni_kayit_surucu_adini_otomatik_alir(client, operator_header):
+    """ASIL ÖZELLİK: Arvento'dan gelen sürücü ataması, bu plaka için
+    OLUŞTURULACAK BİR SONRAKİ geçiş kaydına otomatik işlenmeli -- kullanıcı
+    isteğinin tam karşılığı."""
+    r_webhook = client.post("/entegrasyonlar/arvento/webhook", json={"plaka": "34 ARV 07", "surucu_adi": "Mehmet Demir"})
+    assert r_webhook.status_code == 200, r_webhook.text
+
+    r_kayit = client.post("/kayitlar", json={"plaka_no": "34 ARV 07", "kamera_id": "TEST-ARVENTO", "yon": "giris"}, headers=operator_header)
+    assert r_kayit.status_code == 200, r_kayit.text
+    assert r_kayit.json()["surucu_adi"] == "Mehmet Demir"
+
+
+def test_arvento_webhook_farkli_plakayi_etkilemez(client, operator_header):
+    """Bir plaka için gelen Arvento ataması, BAŞKA bir plakanın kaydına
+    sızmamalı."""
+    r_webhook = client.post("/entegrasyonlar/arvento/webhook", json={"plaka": "34 ARV 08", "surucu_adi": "Yanlış Eşleşmemeli"})
+    assert r_webhook.status_code == 200, r_webhook.text
+
+    r_kayit = client.post("/kayitlar", json={"plaka_no": "34 ARV 09", "kamera_id": "TEST-ARVENTO-DIGER", "yon": "giris"}, headers=operator_header)
+    assert r_kayit.status_code == 200, r_kayit.text
+    assert r_kayit.json()["surucu_adi"] is None
+
+
+def test_arvento_webhook_en_son_olay_kazanir(client, operator_header):
+    """Aynı plaka için birden fazla Arvento olayı gelirse (ör. vardiya
+    değişimi), bir sonraki geçiş kaydına EN SON gelen sürücü işlenmeli --
+    bkz. models.ArventoSuruculuOlay'ın docstring'i (alinma_zamani'ya göre
+    sıralama)."""
+    plaka = "34 ARV 10"
+    r1 = client.post("/entegrasyonlar/arvento/webhook", json={"plaka": plaka, "surucu_adi": "İlk Sürücü"})
+    assert r1.status_code == 200, r1.text
+    r2 = client.post("/entegrasyonlar/arvento/webhook", json={"plaka": plaka, "surucu_adi": "İkinci Sürücü"})
+    assert r2.status_code == 200, r2.text
+
+    r_kayit = client.post("/kayitlar", json={"plaka_no": plaka, "kamera_id": "TEST-ARVENTO-SIRA", "yon": "giris"}, headers=operator_header)
+    assert r_kayit.status_code == 200, r_kayit.text
+    assert r_kayit.json()["surucu_adi"] == "İkinci Sürücü"
+
+
+def test_arvento_webhook_surucu_adi_olmayan_kayit_disaktarma_listesinde_none_doner(client, operator_header):
+    """Plaka Analizi ekranının (main.py::plaka_analiz) elle kurulan
+    'son_kayitlar' sözlüğü de surucu_adi'yi içermeli -- kisi_adi ile daha
+    önce yaşanan AYNI sınıf 'ORM sütunu var ama elle kurulan dict'te
+    unutuldu' hatasının tekrarlanmadığını doğrular."""
+    plaka = "34 ARV 11"
+    client.post("/entegrasyonlar/arvento/webhook", json={"plaka": plaka, "surucu_adi": "Plaka Analizi Testi"})
+    r_kayit = client.post("/kayitlar", json={"plaka_no": plaka, "kamera_id": "TEST-ARVENTO-ANALIZ", "yon": "giris"}, headers=operator_header)
+    assert r_kayit.status_code == 200, r_kayit.text
+
+    r_analiz = client.get(f"/kayitlar/analiz/{plaka}", headers=operator_header)
+    assert r_analiz.status_code == 200, r_analiz.text
+    son_kayitlar = r_analiz.json()["son_kayitlar"]
+    assert son_kayitlar, "son_kayitlar boş dönmemeli"
+    assert son_kayitlar[0]["surucu_adi"] == "Plaka Analizi Testi"
