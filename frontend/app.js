@@ -1166,7 +1166,6 @@ async function olayDetayAc(id) {
   const notEl = document.getElementById("olayModalNot");
   notEl.textContent = kayit.not_metni || "-";
   notEl.title = kayit.not_metni || "";
-  _olayModalBariyerButonunuAyarla(nokta);
   _olayModalAnalizButonunuAyarla(kayit);
   _olayModalNotButonunuAyarla(kayit);
   await _ziyaretciGirisiKutusunuAyarla(kayit, nokta);
@@ -1281,33 +1280,16 @@ async function _ziyaretciGirisiKutusunuAyarla(kayit, nokta) {
   };
 }
 
-function _olayModalBariyerButonunuAyarla(nokta) {
-  const btn = document.getElementById("bariyerAcBtn");
-  btn.onclick = null;
-  if (!rolYeterli("operatör")) {
-    btn.disabled = true;
-    btn.title = "Bu işlem için yetkiniz yok";
-    return;
-  }
-  if (!nokta || !nokta.bariyer_id) {
-    btn.disabled = true;
-    btn.title = "Bu kameraya bağlı tanımlı bir bariyer yok (Site/Nokta Yönetimi'nden bağlayın)";
-    return;
-  }
-  btn.disabled = false;
-  btn.title = "Bariyeri aç";
-  btn.onclick = async () => {
-    btn.disabled = true;
-    try {
-      const r = await apiCagir(`/bariyer/${nokta.bariyer_id}/ac`, { method: "POST" });
-      toastGoster(r.mesaj, "basari");
-    } catch (err) {
-      toastGoster(err.message, "hata");
-    } finally {
-      btn.disabled = false;
-    }
-  };
-}
+// 2026-09-24 kullanıcı isteği: "araçlarda bariyer aç kısmını kaldıralım,
+// kayıtsız olan araçlarda da sadece ziyaretçi giriş diye bir buton
+// ekleyelim bariyer aç butonu gereksiz" -- olayDetayModal'daki koşulsuz,
+// ayrı "Bariyer Aç" düğmesi (#bariyerAcBtn) ve onu yöneten bu fonksiyon
+// KALDIRILDI (bkz. index.html'deki aynı tarihli yorum). Bariyer açma artık
+// yalnızca _ziyaretciGirisiKutusunuAyarla'nın kurduğu "Ziyaretçi Girişi"
+// akışı üzerinden yapılıyor; "yetkili" araçlar için zaten backend'de
+// otomatik açılıyor (bkz. main.py). Genel bariyer test/yönetim paneli
+// (bariyerAc(id), aşağıda) bundan ETKİLENMEDİ -- o donanım kurulum/test
+// amaçlı ayrı bir ekran.
 
 async function lisansYukle() {
   try {

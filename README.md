@@ -3074,3 +3074,53 @@ bilgileri kalıcı olarak görsele işlenmiş durumdaydı.
 skoru" eşikleri (`otomatik_kayit_min_guven_skoru` vb.) ve Toplu Doğruluk
 Testi aracı DEĞİŞMEDİ -- bunlar birer YÖNETİCİ YAPILANDIRMASI/tanı aracı,
 sıradan kayıt/rapor/son geçiş görüntüleme akışının bir parçası değil.
+
+## Olay Detayındaki Ayrı "Bariyer Aç" Düğmesinin Kaldırılması (2026-09-24)
+
+**Kullanıcı isteği:** "araçlarda bariyer aç kısmını kaldıralım, kayıtsız
+olan araçlarda da sadece ziyaretçi giriş diye bir buton ekleyelim bariyer aç
+butonu gereksiz."
+
+**Bulunan durum:** Bir geçiş kaydına tıklanınca açılan tekil olay detayı
+modalinde (`#olayDetayModal`, `olayDetayAc`), bariyeri açmanın İKİ AYRI yolu
+aynı anda vardı:
+
+1. Koşulsuz görünen, bağımsız bir **"Bariyer Aç"** düğmesi (`#bariyerAcBtn`,
+   `_olayModalBariyerButonunuAyarla`) -- kaydın yetki durumundan bağımsız
+   olarak her zaman gösteriliyordu (yalnızca ilgili noktaya bariyer
+   tanımlı değilse veya rol yetersizse devre dışı bırakılıyordu).
+2. **"Ziyaretçi Girişi (onayla + bariyeri aç)"** kutusu
+   (`#ziyaretciGirisiKutusu`, `_ziyaretciGirisiKutusunuAyarla`, 2026-09-17'de
+   eklendi) -- yalnızca kayıt HENÜZ onaylı değilse (`yetkili` veya
+   `ziyaretci_onayli` DEĞİLSE) görünüyor, onaylama adımıyla BİRLİKTE aynı
+   `/bariyer/{id}/ac` uç noktasını çağırıyordu.
+
+Bu, kullanıcı için kafa karıştırıcı bir fazlalıktı: zaten "yetkili" (tanımlı)
+bir araç için bariyer otomatik açılıyor (bkz. `main.py::
+_kayit_olustur_ve_bildir` içindeki "Yetkili araç girişinde otomatik bariyer
+açma"), yani ayrı "Bariyer Aç" düğmesine pratikte ancak (a) tanımsız/
+kayıtsız bir aracı, ziyaretçi olarak KAYDETMEDEN sadece bariyeri açmak
+istendiğinde -- ki bu, aracın kim/ne olduğu hiç kayda geçmeden bariyerin
+açılabildiği, denetim izi bırakmayan bir arka kapıydı -- ya da (b) zaten
+onaylı bir aracı manuel olarak tekrar açmak istendiğinde ihtiyaç
+duyuluyordu; ikisi de nadir ve asıl "Ziyaretçi Girişi" akışının zaten
+kapsadığı veya olmaması gereken durumlardı.
+
+**Yapılan değişiklik:** `#bariyerAcBtn` düğmesi ve onu yöneten
+`_olayModalBariyerButonunuAyarla` fonksiyonu tamamen kaldırıldı
+(`frontend/index.html`, `frontend/app.js`). Artık modalde bariyer açmanın
+TEK yolu "Ziyaretçi Girişi" kutusu -- ki bu zaten yalnızca kayıtsız/onaysız
+araçlar için görünüyor, tam olarak kullanıcının istediği "kayıtsız olan
+araçlarda sadece ziyaretçi giriş butonu" davranışı. `/bariyer/{id}/ac`
+backend uç noktası KALDIRILMADI -- hem bu "Ziyaretçi Girişi" akışı hem de
+ayrı, donanım kurulum/test amaçlı "Bariyer Kontrolü" yönetim paneli
+(`#bariyer-sekme`, `bariyerAc(id)`) hâlâ onu kullanıyor; bu değişiklik
+YALNIZCA olay detayı modalindeki gereksiz/kafa karıştırıcı ikinci düğmeyi
+kaldırdı.
+
+**Doğrulama:** Playwright ile modal, kayıtsız (`yetki_durumu: "yetkisiz"`)
+sahte bir kayıtla açılıp `#bariyerAcBtn`'in artık DOM'da hiç bulunmadığı ve
+"Ziyaretçi Girişi" kutusunun beklendiği gibi görünür olduğu doğrulandı.
+`tests/test_olay_detay_plaka_analiz.py` ve `tests/test_frontend_rbac.py`
+dahil tüm mevcut testler (230 test) değişiklikten etkilenmeden geçmeye
+devam ediyor -- hiçbiri kaldırılan düğmeye bağımlı değildi.

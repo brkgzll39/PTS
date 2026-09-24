@@ -118,7 +118,24 @@
         <button type="button" class="btn btn-sm btn-success" id="ziyaretciGirisiBtn"><i class="bi bi-person-check-fill"></i> Ziyaretçi Girişi (onayla + bariyeri aç)</button>
         <div id="ziyaretciGirisiSonuc" class="small mt-1"></div>
       </div>
-      <div class="modal-actions"><button class="btn btn-success" id="bariyerAcBtn"><i class="bi bi-unlock-fill"></i> Bariyer Aç</button><button class="btn btn-outline-primary" id="olayModalAnalizBtn" title="Bu plakanın tüm geçiş geçmişini gör, ziyaretçi/kişi bilgisi ekle, manuel kayıt gir"><i class="bi bi-clock-history"></i> Plaka Geçmişi / Manuel Kayıt</button><button class="btn btn-outline-secondary" data-bs-dismiss="modal">Kapat</button></div></div></div></div>
+      <!-- 2026-09-24 kullanıcı isteği: "araçlarda bariyer aç kısmını
+           kaldıralım, kayıtsız olan araçlarda da sadece ziyaretçi giriş diye
+           bir buton ekleyelim bariyer aç butonu gereksiz" -- ayrı, koşulsuz
+           görünen "Bariyer Aç" düğmesi (eski adıyla #bariyerAcBtn, bkz. app.js
+           git geçmişindeki eski _olayModalBariyerButonunuAyarla) KALDIRILDI.
+           Bariyer açma artık YALNIZCA yukarıdaki "Ziyaretçi Girişi" kutusu
+           üzerinden, onayla adımıyla BİRLİKTE yapılıyor (zaten kayıtsız/
+           onaysız araçlar için otomatik görünen tek kutu buydu) -- bkz.
+           _ziyaretciGirisiKutusunuAyarla. Zaten "yetkili" (tanımlı) bir araç
+           için bariyer otomatik açılıyor (bkz. main.py::_kayit_olustur_ve_bildir
+           içindeki "Yetkili araç girişinde otomatik bariyer açma"), bu yüzden
+           bu modalde ayrıca elle bariyer açmaya hiçbir durumda gerek yoktu --
+           ya araç zaten yetkiliydi (bariyer otomatik açılmıştı) ya da
+           kayıtsızdı (Ziyaretçi Girişi kutusu zaten bariyeri açıyor). Genel
+           bariyer test/yönetim ekranı ("Bariyer Kontrolü" sekmesi, #bariyer-
+           sekme) bu değişiklikten ETKİLENMEDİ, o ayrı bir donanım kurulum/test
+           aracı. -->
+      <div class="modal-actions"><button class="btn btn-outline-primary" id="olayModalAnalizBtn" title="Bu plakanın tüm geçiş geçmişini gör, ziyaretçi/kişi bilgisi ekle, manuel kayıt gir"><i class="bi bi-clock-history"></i> Plaka Geçmişi / Manuel Kayıt</button><button class="btn btn-outline-secondary" data-bs-dismiss="modal">Kapat</button></div></div></div></div>
   </div></div>
 </div>
 
