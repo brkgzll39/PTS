@@ -437,10 +437,28 @@ body {
   background: #111827;
   overflow: hidden;
 }
-.gecis-karti-gorsel.thumb {
+/* 2026-09-24 kullanıcı isteği: "son geçişlerde direkt araç resmine
+   tıkladığımda büyük ekranda araç görüntüsü açılmasın not ekleme sayfası
+   gelsin" -- bu görsel eskiden `.thumb` sınıfını da taşıyordu (bkz. app.js
+   üstündeki genel `.thumb, .zoomable-img` tıklama/büyütme delegasyonu),
+   tıklanınca lightbox açılıyordu. Artık `.thumb` sınıfı YOK -- görsel kendi
+   onclick'iyle doğrudan olayDetayAc(id)'yi (detay/not modalini) açıyor, bu
+   yüzden gerekli GÖRSEL stil burada, `.thumb`'a bağlı kalmadan, doğrudan
+   tanımlanıyor (bkz. app.js::_gecisKartiOlustur). Kartın "büyütmek için
+   tıklayın" davranışı KALMADI; büyük/yakınlaştırılmış görseli görmek isteyen
+   kullanıcı artık açılan detay modalindeki görsele tıklayabilir (o hâlâ
+   `.zoomable-img`, bkz. #olayModalGorsel). */
+.gecis-karti-gorsel {
   width: 100%;
   height: 100%;
+  object-fit: cover;
   border-radius: 0;
+  cursor: pointer;
+  transition: transform .12s ease, box-shadow .12s ease;
+}
+.gecis-karti-gorsel:hover {
+  transform: scale(1.06);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, .25);
 }
 .gecis-karti-gorsel-yok {
   width: 100%;

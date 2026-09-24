@@ -954,14 +954,21 @@ function sonGecislerSayfaDegistir(delta) {
 //   olayDetayAc() detay modalında hâlâ "Araç Tipi" olarak gösteriliyor.
 // - "İsim" ve "Vardiya" kart altında küçük, ikincil bir satırda korunuyor.
 //
-// Tıklama davranışı bilinçli olarak İKİYE ayrılmış durumda (kartın tamamına
-// TEK bir onclick eklenmedi): görsel (.thumb sınıfı) mevcut, kartlar arası
-// paylaşılan büyütme/lightbox davranışını (document-level click delegasyonu,
-// bkz. dosyanın üstündeki .thumb/.zoomable-img dinleyicisi) OLDUĞU GİBİ
-// kullanır; plaka/tarih şeridi ve not ikonu ise olayDetayAc(id) ile detay
-// modalini açar. Kartın geneline de bir onclick eklenseydi, görsele
-// tıklandığında olay üst elemana kabarıp (bubbling) HEM lightbox HEM detay
-// modali aynı anda açılmaya çalışırdı.
+// 2026-09-24 kullanıcı isteği: "son geçişlerde direkt araç resmine
+// tıkladığımda büyük ekranda araç görüntüsü açılmasın not ekleme sayfası
+// gelsin". ESKİ davranış: tıklama İKİYE ayrılmıştı -- görsel `.thumb`
+// sınıfını taşıyordu ve dosyanın üstündeki paylaşılan `.thumb`/`.zoomable-img`
+// document-level tıklama delegasyonu üzerinden büyütme/lightbox
+// (buyukGorselAc) açıyordu; yalnızca plaka/tarih şeridi ve not ikonu
+// olayDetayAc(id) ile detay/not modalini açıyordu. Artık görsel `.thumb`
+// sınıfını TAŞIMIYOR (bkz. style.css::.gecis-karti-gorsel notu) -- bunun
+// yerine kartın HER ÜÇ tıklanabilir alanı da (görsel, plaka/tarih şeridi,
+// not ikonu) AYNI olayDetayAc(id) detay/not modalini açıyor. Görsel yine de
+// kendi onclick/onkeydown'ını taşıyor (kartın TAMAMINA tek bir onclick
+// eklenmedi) -- salt erişilebilirlik/tutarlılık için, üç alan da birbirinden
+// bağımsız ayrı düğmeler gibi davranmaya devam ediyor. Büyük/yakınlaştırılmış
+// görseli görmek isteyen kullanıcı artık açılan detay modalindeki görsele
+// tıklayabilir (o hâlâ `.zoomable-img`, bkz. #olayModalGorsel).
 function _gecisKartiOlustur(k) {
   const yonSinifi = k.yon === "giris" ? "yon-giris" : "yon-cikis";
   const yonEtiketi = k.yon === "giris" ? "GİRİŞ" : "ÇIKIŞ";
@@ -981,7 +988,7 @@ function _gecisKartiOlustur(k) {
       </div>
       <div class="gecis-karti-gorsel-wrap">
         ${k.goruntu_yolu
-          ? `<img class="thumb gecis-karti-gorsel" data-goruntu-yolu="${escapeHtml(k.goruntu_yolu)}" role="button" tabindex="0" alt="${escapeHtml(k.plaka_no)} geçiş görseli, büyütmek için tıklayın veya Enter'a basın">`
+          ? `<img class="gecis-karti-gorsel" data-goruntu-yolu="${escapeHtml(k.goruntu_yolu)}" role="button" tabindex="0" onclick="olayDetayAc(${k.id})" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();olayDetayAc(${k.id})}" alt="${escapeHtml(k.plaka_no)} geçiş görseli, detay ve not eklemek için tıklayın veya Enter'a basın">`
           : `<div class="gecis-karti-gorsel-yok"><i class="bi bi-camera-video-off"></i></div>`}
         <span class="gecis-karti-durum-rozeti">${durumRozeti(k.yetki_durumu)}</span>
         <button class="gecis-karti-alt-serit" onclick="olayDetayAc(${k.id})" title="Kaydı görüntüle">
@@ -1168,7 +1175,7 @@ async function olayDetayAc(id) {
   notEl.title = kayit.not_metni || "";
   _olayModalAnalizButonunuAyarla(kayit);
   _olayModalNotButonunuAyarla(kayit);
-  await _ziyaretciGirisiKutusunuAyarla(kayit, nokta);
+  await _ziyaretciGirisiKutusunuAyarla(kayit);
   bootstrap.Modal.getOrCreateInstance(document.getElementById("olayDetayModal")).show();
 }
 
@@ -1209,10 +1216,16 @@ function _olayModalNotButonunuAyarla(kayit) {
 }
 
 // "Ziyaretçi Girişi" hızlı onay kutusu: bir tespiti tek tuşla bir kişiye/
-// daireye bağlayıp (opsiyonel) AYNI ANDA bariyeri açan akış. Mevcut iki uç
-// noktayı (kayıt düzenle + bariyer aç) birleştirir, yeni bir backend uç
-// noktası GEREKMEZ (bkz. README'deki 2026-09-17 "Ziyaretçi Girişi" notu).
-async function _ziyaretciGirisiKutusunuAyarla(kayit, nokta) {
+// daireye bağlayıp yetki_durumu="ziyaretci_onayli" yapan akış (PATCH
+// /kayitlar/{id}, yeni bir backend uç noktası GEREKMEZ -- bkz. README'deki
+// 2026-09-17 "Ziyaretçi Girişi" notu). 2026-09-24 kullanıcı isteği:
+// "ziyaretçi giriş onayla + bariyer aç kısmınıda düzelt sadece ziyaretçi
+// giriş onayla kalsın" -- bu akış eskiden AYNI ANDA bariyeri de açıyordu
+// (POST /bariyer/{id}/ac), artık YALNIZCA onaylıyor, bariyer açmıyor (bkz.
+// index.html'deki aynı tarihli yorum ve README). "Bağımsız Ziyaretçi
+// Girişi" formu (ziyaretciBilgileriAc, aşağıda) BUNDAN ETKİLENMEDİ -- o
+// akışta kamera tespiti hiç yok, bariyeri açmak formun TEK amacı.
+async function _ziyaretciGirisiKutusunuAyarla(kayit) {
   const kutu = document.getElementById("ziyaretciGirisiKutusu");
   const zatenOnayli = kayit.yetki_durumu === "yetkili" || kayit.yetki_durumu === "ziyaretci_onayli";
   document.getElementById("ziyaretciGirisiSonuc").textContent = "";
@@ -1232,7 +1245,7 @@ async function _ziyaretciGirisiKutusunuAyarla(kayit, nokta) {
   const btn = document.getElementById("ziyaretciGirisiBtn");
   btn.onclick = async () => {
     const sonuc = document.getElementById("ziyaretciGirisiSonuc");
-    if (kayit.yetki_durumu === "kara_liste" && !(await onayAl("Bu araç KARA LİSTEDE. Yine de ziyaretçi olarak onaylayıp bariyeri açmak istediğinize emin misiniz? Bu işlem kayda geçer."))) {
+    if (kayit.yetki_durumu === "kara_liste" && !(await onayAl("Bu araç KARA LİSTEDE. Yine de ziyaretçi olarak onaylamak istediğinize emin misiniz? Bu işlem kayda geçer."))) {
       return;
     }
     btn.disabled = true;
@@ -1257,14 +1270,8 @@ async function _ziyaretciGirisiKutusunuAyarla(kayit, nokta) {
       // dolu, onay kutusu gizli) YENİDEN ÇİZİLİR -- kullanıcının modali
       // kapatıp tekrar açmasına gerek kalmaz.
       _kayitCacheYerindeGuncelle(guncelKayit);
-      if (nokta?.bariyer_id) {
-        const r = await apiCagir(`/bariyer/${nokta.bariyer_id}/ac`, { method: "POST" });
-        sonuc.className = "small mt-1 text-success";
-        sonuc.textContent = `Ziyaretçi girişi onaylandı, bariyer açıldı: ${r.mesaj}`;
-      } else {
-        sonuc.className = "small mt-1 text-success";
-        sonuc.textContent = "Ziyaretçi girişi onaylandı (bu noktaya bağlı bariyer tanımlı değil).";
-      }
+      sonuc.className = "small mt-1 text-success";
+      sonuc.textContent = "Ziyaretçi girişi onaylandı.";
       toastGoster("Ziyaretçi girişi onaylandı: " + kayit.plaka_no, "basari");
       kutu.classList.add("d-none");
       panelYenile();

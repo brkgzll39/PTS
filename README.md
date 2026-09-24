@@ -3124,3 +3124,67 @@ sahte bir kayıtla açılıp `#bariyerAcBtn`'in artık DOM'da hiç bulunmadığ�
 `tests/test_olay_detay_plaka_analiz.py` ve `tests/test_frontend_rbac.py`
 dahil tüm mevcut testler (230 test) değişiklikten etkilenmeden geçmeye
 devam ediyor -- hiçbiri kaldırılan düğmeye bağımlı değildi.
+
+## "Ziyaretçi Girişi" Onayından Bariyer Açma Adımının Kaldırılması + Son Geçişler Kartında Görsele Tıklamanın Artık Not/Detay Ekranını Açması (2026-09-24, devam)
+
+Aynı gün yukarıdaki değişikliğin hemen ardından, kullanıcı iki ilgili ince
+ayar daha istedi: "ziyaretçi giriş onayla + bariyer aç kısmınıda düzelt
+sadece ziyaretçi giriş onayla kalsın, bir de son geçişlerde direkt araç
+resmine tıkladığımda büyük ekranda araç görüntüsü açılmasın not ekleme
+sayfası gelsin."
+
+**1) "Ziyaretçi Girişi" onayından bariyer açma kaldırıldı.** Olay detayı
+modalindeki "Ziyaretçi Girişi" kutusu (`_ziyaretciGirisiKutusunuAyarla`,
+yukarıdaki bölümde tek kalan bariyer açma yolu olarak tarif edilmişti),
+onaylarken AYNI ANDA `POST /bariyer/{id}/ac` çağırarak bariyeri de
+açıyordu. Bu çağrı tamamen kaldırıldı -- düğme artık yalnızca kaydı
+`yetki_durumu="ziyaretci_onayli"` yapıyor, bariyerle ilgili hiçbir işlem
+yapmıyor. Düğme metni de "Ziyaretçi Girişi (onayla + bariyeri aç)"'den
+"Ziyaretçi Girişi Onayla"ya güncellendi ki arayüz artık yapmadığı bir şeyi
+vaat etmesin. Sonuç olarak olay detayı modalinde -- bir önceki bölümdeki
+"Bariyer Aç" düğmesinin kaldırılmasıyla birlikte -- artık HİÇBİR bariyer
+açma eylemi kalmadı; kayıtsız/ziyaretçi bir araç için bariyerin fiilen
+açılması artık uygulamanın bu ekranının kapsamı dışında.
+
+Bilinçli olarak DOKUNULMAYANLAR: `/bariyer/{id}/ac` backend uç noktası
+(hâlâ diğer iki akış tarafından kullanılıyor); kamera tespitine hiç bağlı
+olmayan, plakayı önceden bilinmeyen bir ziyaretçi için elle giren
+"Bağımsız Ziyaretçi Girişi" formu (`ziyaretciBilgileriAc`) -- bu formda
+bariyer açmak zaten TEK amaç, kamera tespiti hiç yok; ve "Bariyer
+Kontrolü" yönetim paneli (`#bariyer-sekme`) -- donanım kurulum/test aracı.
+
+**2) Son Geçişler kartında görsele tıklama artık detay/not ekranını
+açıyor, büyük resim lightbox'ını DEĞİL.** `_gecisKartiOlustur`'ün
+oluşturduğu kart görseli (`.gecis-karti-gorsel`) eskiden AYRICA `.thumb`
+sınıfını da taşıyordu; bu, dosyanın üst kısmındaki paylaşılan, TÜM
+uygulamada (Panel, Kayıtlar, Plaka Analizi, olay detayının kendi görseli)
+ortak kullanılan `.thumb`/`.zoomable-img` document-level tıklama
+delegasyonuna (bkz. `buyukGorselAc`) yakalanıyor ve yakınlaştırma/pan
+destekli büyük görsel lightbox'ını açıyordu. Kullanıcı, kartın plaka/tarih
+şeridine veya not ikonuna tıklarsa açılan (`olayDetayAc`) detay/not
+modalinin, görsele tıklandığında da açılmasını istedi.
+
+Görselden `.thumb` sınıfı kaldırıldı (artık genel lightbox delegasyonuna
+yakalanmıyor) ve görsele doğrudan kendi `onclick`/`onkeydown`'ı eklendi --
+kartın diğer iki tıklanabilir alanıyla (not ikonu, plaka/tarih şeridi)
+AYNI şekilde `olayDetayAc(k.id)`'yi çağırıyor. Görselin GÖRSEL stili
+(boyut, `object-fit`, hover büyütme efekti), artık var olmayan
+`.gecis-karti-gorsel.thumb` bileşik seçicisine bağlı kalmadan, doğrudan
+`.gecis-karti-gorsel` üzerinde tanımlandı (`frontend/style.css`).
+
+**Kapsam (bilinçli):** yalnızca Son Geçişler kartlarındaki görsel
+etkilendi. Kayıtlar/Plaka Analizi tablolarındaki küçük resimler ve olay
+detayı modalinin kendi ana görseli (`#olayModalGorsel`) hâlâ `.thumb`/
+`.zoomable-img` taşıyor ve eskisi gibi tıklanınca büyüyor -- kullanıcı
+büyük/yakınlaştırılmış görseli görmek isterse artık Son Geçişler'den önce
+detay modalini açıp (görsele veya plaka/tarih şeridine tıklayarak),
+SONRA modal içindeki görsele tıklayarak ulaşabiliyor.
+
+**Testler:** İki değişiklik de saf frontend (HTML/CSS/JS) olduğu için
+Playwright ile doğrulandı: (a) "Ziyaretçi Girişi Onayla" düğmesine
+tıklandığında `apiCagir`'in hiçbir `/bariyer/` isteği YAPMADIĞI ve düğme
+metninin güncellendiği; (b) Son Geçişler kart görselinin artık `.thumb`
+sınıfını taşımadığı, tıklandığında `olayDetayAc(id)`'nin çağrıldığı ve
+büyük görsel lightbox'ının (`#gorselBuyutModal`) AÇILMADIĞI doğrulandı.
+`node --check frontend/app.js` ve mevcut 230 test (hiçbiri bu iki
+davranışa bağımlı değildi) değişiklikten etkilenmeden geçmeye devam ediyor.

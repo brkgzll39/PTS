@@ -98,9 +98,14 @@
     <div class="modal-header" id="olayModalBaslik"><h5 class="modal-title" id="olayModalTur">TANIMLI ARAÇ</h5><button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Kapat"></button></div>
     <div class="modal-body"><div class="row g-3"><div class="col-lg-8"><div class="event-image-wrap"><img id="olayModalGorsel" class="zoomable-img" role="button" tabindex="0" alt="Araç geçiş görseli, büyütmek için tıklayın veya Enter'a basın"><div id="olayModalGorselYok" class="empty-state">Bu kayıt için görsel bulunmuyor</div></div><div class="detail-table mt-3"><div><b>TARİH</b><span id="olayModalTarih">-</span></div><div><b>SAAT</b><span id="olayModalSaat">-</span></div><div><b>SİTE</b><span id="olayModalSite">-</span></div><div><b>NOKTA</b><span id="olayModalNokta">-</span></div><div><b>YÖN</b><span id="olayModalYon">-</span></div></div></div><div class="col-lg-4"><div class="plate-display" id="olayModalPlaka">-</div><div class="vehicle-facts"><div><b>ARAÇ TİPİ</b><span id="olayModalAracTipi">-</span></div></div><div class="vehicle-facts person-facts"><div><b>İSİM</b><span id="olayModalKisi">-</span></div><div><b>DAİRE / BLOK</b><span id="olayModalDaire">-</span></div><div><b>NOT <button type="button" class="btn btn-sm btn-link p-0 align-baseline" id="olayModalNotDuzenleBtn" data-rol-min="operatör" data-rol-davranis="gizle" title="Notu düzenle"><i class="bi bi-pencil-square"></i></button></b><span id="olayModalNot">-</span></div></div>
       <!-- Ziyaretçi Girişi: tanımsız/yetkisiz bir tespiti tek adımda bir kişiye/daireye
-           bağlayıp aynı anda bariyeri açan hızlı onay bölümü (bkz. app.js::ziyaretciGirisiOnayla,
-           main.py::kayit_duzenle + bariyer_ac'ın birleşimi). README'deki 2026-09-17
-           "Ziyaretçi Girişi" notuna bakınız. -->
+           bağlayıp yetki_durumu="ziyaretci_onayli" yapan hızlı onay bölümü
+           (bkz. app.js::_ziyaretciGirisiKutusunuAyarla, main.py::kayit_duzenle).
+           README'deki 2026-09-17 "Ziyaretçi Girişi" notuna bakınız.
+           2026-09-24 kullanıcı isteği ("ziyaretçi giriş onayla + bariyer aç
+           kısmınıda düzelt sadece ziyaretçi giriş onayla kalsın"): bu kutu
+           eskiden onaylarken AYNI ANDA bariyeri de açıyordu (POST
+           /bariyer/{id}/ac) -- artık YALNIZCA onaylıyor, bariyer açma adımı
+           tamamen kaldırıldı (bkz. aşağıdaki düğme metni ve README). -->
       <div class="card card-body py-2 mt-2 d-none" id="ziyaretciGirisiKutusu" data-rol-min="operatör" data-rol-davranis="gizle">
         <label class="form-label small mb-1">Ziyaretçi Girişi — onayla</label>
         <!-- 2026-09-23 kullanıcı isteği: "bu alan pek kullanışlı değil bunu
@@ -115,7 +120,7 @@
              misafirin adını da kaydedebilmek için (bkz. models.Kayit.misafir_adi). -->
         <input type="text" class="form-control form-control-sm mb-2" id="olayModalMisafirAdi" placeholder="Misafir adı soyadı (sistemde kayıtlı değilse)" maxlength="100">
         <input type="text" class="form-control form-control-sm mb-2" id="olayModalZiyaretciNot" placeholder="Not (örn. kargo, teslimat)" maxlength="500">
-        <button type="button" class="btn btn-sm btn-success" id="ziyaretciGirisiBtn"><i class="bi bi-person-check-fill"></i> Ziyaretçi Girişi (onayla + bariyeri aç)</button>
+        <button type="button" class="btn btn-sm btn-success" id="ziyaretciGirisiBtn"><i class="bi bi-person-check-fill"></i> Ziyaretçi Girişi Onayla</button>
         <div id="ziyaretciGirisiSonuc" class="small mt-1"></div>
       </div>
       <!-- 2026-09-24 kullanıcı isteği: "araçlarda bariyer aç kısmını
@@ -123,18 +128,20 @@
            bir buton ekleyelim bariyer aç butonu gereksiz" -- ayrı, koşulsuz
            görünen "Bariyer Aç" düğmesi (eski adıyla #bariyerAcBtn, bkz. app.js
            git geçmişindeki eski _olayModalBariyerButonunuAyarla) KALDIRILDI.
-           Bariyer açma artık YALNIZCA yukarıdaki "Ziyaretçi Girişi" kutusu
-           üzerinden, onayla adımıyla BİRLİKTE yapılıyor (zaten kayıtsız/
-           onaysız araçlar için otomatik görünen tek kutu buydu) -- bkz.
-           _ziyaretciGirisiKutusunuAyarla. Zaten "yetkili" (tanımlı) bir araç
-           için bariyer otomatik açılıyor (bkz. main.py::_kayit_olustur_ve_bildir
-           içindeki "Yetkili araç girişinde otomatik bariyer açma"), bu yüzden
-           bu modalde ayrıca elle bariyer açmaya hiçbir durumda gerek yoktu --
-           ya araç zaten yetkiliydi (bariyer otomatik açılmıştı) ya da
-           kayıtsızdı (Ziyaretçi Girişi kutusu zaten bariyeri açıyor). Genel
-           bariyer test/yönetim ekranı ("Bariyer Kontrolü" sekmesi, #bariyer-
-           sekme) bu değişiklikten ETKİLENMEDİ, o ayrı bir donanım kurulum/test
-           aracı. -->
+           Aynı gün, ikinci bir istekle ("ziyaretçi giriş onayla + bariyer aç
+           kısmınıda düzelt sadece ziyaretçi giriş onayla kalsın") yukarıdaki
+           "Ziyaretçi Girişi" kutusunun onaylarken AYNI ANDA bariyer açma
+           adımı da kaldırıldı -- yani bu modalde artık HİÇBİR bariyer açma
+           eylemi yok, yalnızca kaydı onaylıyor/görüntülüyor. Zaten "yetkili"
+           (tanımlı) bir araç için bariyer backend'de otomatik açılıyor (bkz.
+           main.py::_kayit_olustur_ve_bildir içindeki "Yetkili araç girişinde
+           otomatik bariyer açma"); kayıtsız/ziyaretçi araçlar için bariyeri
+           fiilen açmak artık görevlinin kendi takdirine (fiziksel/harici
+           kontrol) bırakılmış durumda. Genel bariyer test/yönetim ekranı
+           ("Bariyer Kontrolü" sekmesi, #bariyer-sekme) ve kamera tespitine
+           bağlı OLMAYAN "Bağımsız Ziyaretçi Girişi" formu (ziyaretciBilgileriAc)
+           bu değişikliklerden ETKİLENMEDİ -- ikisi de ayrı, kasıtlı bariyer
+           açma araçları. -->
       <div class="modal-actions"><button class="btn btn-outline-primary" id="olayModalAnalizBtn" title="Bu plakanın tüm geçiş geçmişini gör, ziyaretçi/kişi bilgisi ekle, manuel kayıt gir"><i class="bi bi-clock-history"></i> Plaka Geçmişi / Manuel Kayıt</button><button class="btn btn-outline-secondary" data-bs-dismiss="modal">Kapat</button></div></div></div></div>
   </div></div>
 </div>
