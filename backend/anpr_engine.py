@@ -40,7 +40,19 @@ DEDEKTOR_MODELI_BILGILERI: dict[str, dict] = {
     "yolo-v9-t-640-license-plate-end2end": {"boyut": 640, "recall": 0.896, "mAP50": 0.958},
     "yolo-v9-s-608-license-plate-end2end": {"boyut": 608, "recall": 0.917, "mAP50": 0.966},
 }
-DEDEKTOR_MODELI_VARSAYILAN = "yolo-v9-t-384-license-plate-end2end"
+# 2026-09-24 kullanıcı sorusu ("yolo-v9-t-384... en güvenilir çözüm bu mu?"):
+# HAYIR -- README'deki 2026-09-17 tarihli saha ölçümü (kullanıcının paylaştığı,
+# NVR'ın kendi ANPR'ının doğru okuduğu 7 gerçek plaka fotoğrafıyla) bunu zaten
+# somut olarak kanıtlamıştı: `-384-` modeline küçültülünce plakalar ~16-48px
+# genişliğe düşüyor (bir "tiny" YOLO için gerçekten zorlayıcı), `-608-` modelde
+# ise ~%60 daha büyük (~54-76px) kalıyor -- tablodaki en yüksek recall (0.917)
+# ve mAP50 (0.966) değerleriyle de tutarlı. O tarihte bu yalnızca
+# PTS_ANPR_DETECTOR_MODEL ortam değişkeniyle OPT-IN bir öneriydi; kullanıcı
+# doğrudan "daha güvenilir çözüme nasıl ulaşırız" diye sorunca, zaten
+# ölçümle kanıtlanmış bu iyileştirmeyi elle ayarlanması gereken bir öneri
+# olarak bırakmak yerine PTS'nin gerçek varsayılanı yapmak daha doğru --
+# bkz. README'deki "2026-09-24" başlıklı bölüm.
+DEDEKTOR_MODELI_VARSAYILAN = "yolo-v9-s-608-license-plate-end2end"
 
 
 @dataclass

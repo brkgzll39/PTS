@@ -1900,12 +1900,14 @@ değil, muhtemelen **dedektörün giriş çözünürlüğü** olduğunu gösteri
 FastALPR'ın kullandığı dedektör (`open_image_models` projesinden), önüne
 verilen KARENİN TAMAMINI kendi sabit giriş boyutuna (model ismindeki sayı,
 örn. `-384-`) küçültüp öyle işler. Kamera 1920x1080 gibi geniş bir görüş
-alanı çekiyorsa ve şu an kullanılan `yolo-v9-t-384-license-plate-end2end`
+alanı çekiyorsa ve o tarihte kullanılan `yolo-v9-t-384-license-plate-end2end`
 modeli bu koca sahneyi yalnızca 384x384 piksele sıkıştırıyorsa, plaka insan
 gözüne "büyük ve net" görünse bile modelin GERÇEKTEN gördüğü küçültülmüş
 karede birkaç piksele düşüp fark edilemez hale gelebilir — bu, eşiği ne
 kadar düşürürseniz düşürün değişmeyen bir sınırlamadır (dedektör hiçbir
-aday üretmiyorsa, eşik onu zaten aşağı çekemez).
+aday üretmiyorsa, eşik onu zaten aşağı çekemez). **(2026-09-24 güncellemesi:
+bu bölümdeki `-384-` artık PTS'nin varsayılanı DEĞİL -- aşağıdaki
+"2026-09-24" başlıklı bölüme bakın.)**
 
 `open_image_models` projesi AYNI kütüphanenin (yani `pip install fast-alpr`
 ile zaten kurulu olanın) İÇİNDE, farklı çözünürlüklerde birden fazla model
@@ -1917,14 +1919,17 @@ değişikliği gerekmiyor.** Kaynak: https://github.com/ankandrew/open-image-mod
 | Model | Giriş boyutu | Recall (kaçırmama oranı) | mAP50 |
 |---|---|---|---|
 | `yolo-v9-t-256-license-plate-end2end` | 256px | 0.797 | 0.858 |
-| `yolo-v9-t-384-license-plate-end2end` (PTS'nin **önceki** varsayılanı) | 384px | 0.863 | 0.920 |
+| `yolo-v9-t-384-license-plate-end2end` (PTS'nin 2026-09-24'e kadar varsayılanı idi) | 384px | 0.863 | 0.920 |
 | `yolo-v9-t-416-license-plate-end2end` | 416px | 0.894 | 0.940 |
 | `yolo-v9-t-512-license-plate-end2end` | 512px | 0.901 | 0.948 |
 | `yolo-v9-t-640-license-plate-end2end` | 640px | 0.896 | 0.958 |
-| **`yolo-v9-s-608-license-plate-end2end`** (en iyi recall + mAP50) | 608px | **0.917** | **0.966** |
+| **`yolo-v9-s-608-license-plate-end2end`** (en iyi recall + mAP50 — **2026-09-24'ten itibaren PTS'nin varsayılanı**) | 608px | **0.917** | **0.966** |
 
 `recall` sütunu tam olarak aradığımız metrik: kaçırma oranının tersi. En
-yüksek recall'a sahip `yolo-v9-s-608-license-plate-end2end`'i denemek için:
+yüksek recall'a sahip `yolo-v9-s-608-license-plate-end2end`, 2026-09-24'ten
+itibaren PTS'nin kendi varsayılanı (aşağıdaki `setx` artık gerekli DEĞİL --
+yalnızca BUNUN DIŞINDA bir modele geçmek isterseniz kullanılır, bkz. altındaki
+"2026-09-24" bölümü). O tarihten önceki bir PTS sürümünü elle denemek için:
 
 ```
 setx PTS_ANPR_DETECTOR_MODEL yolo-v9-s-608-license-plate-end2end
@@ -1957,6 +1962,39 @@ düşüyor (bazı araçlarda 16x9px kadar küçük) — bir "tiny" YOLO modeli i
 gerçekten zorlayıcı bir boyut. Aynı plakalar `-608-` modelde yaklaşık
 **54-76x22-25px**'e (yaklaşık %60 daha büyük) çıkıyor. Bu, README'nin
 yukarısındaki tavsiyeyi (yolo-v9-s-608'e geçiş) somut verilerle doğruluyor.
+
+**2026-09-24 — `yolo-v9-s-608-license-plate-end2end` artık PTS'nin
+kod-içi varsayılanı, opt-in bir öneri olmaktan çıktı:** kullanıcı sorusu:
+"yolo-v9-t-384-license-plate-end2end en güvenilir çözüm bu dedektör modeli
+mi, şu anda daha güvenilir çözüme nasıl ulaşabiliriz". Yukarıdaki iki
+2026-09-17 tarihli bölümde CEVAP zaten somut ölçümle verilmişti (`-608-`
+modelde plakalar ~%60 daha büyük kalıyor, recall 0.863→0.917) — ama o
+düzeltme yalnızca `PTS_ANPR_DETECTOR_MODEL` ortam değişkenini ELLE
+ayarlayana kadar devreye girmeyen bir "öneri" olarak kalmıştı; hiçbir yerde
+bu değişkenin fiilen ayarlandığına dair bir onay/iz yoktu. Kullanıcı
+doğrudan "en güvenilir çözüm bu mu" diye sorunca, zaten kanıtlanmış bu
+iyileştirmeyi bir daha unutulabilecek/elle uygulanması gereken bir öneri
+olarak bırakmak yerine `backend/anpr_engine.py::DEDEKTOR_MODELI_VARSAYILAN`
+doğrudan `yolo-v9-s-608-license-plate-end2end` yapıldı -- artık PTS_ANPR_
+DETECTOR_MODEL ayarlanmasa bile YENİ kurulumlar ve bu patch'i uygulayan
+mevcut kurulum otomatik olarak bu modeli kullanır.
+
+**Bilinmesi gerekenler:**
+- **İlk açılışta internet gerekir:** `-608-` modeli daha önce hiç
+  indirilmediyse (bu makinede ilk kez kullanılıyorsa), FastALPR onu ilk
+  açılışta otomatik indirir (birkaç MB). PTS'nin çalıştığı makinenin İLK
+  YENİDEN BAŞLATMADA internete çıkabildiğinden emin olun; sonrasında yerel
+  önbellekten çalışır, internet gerekmez.
+- **Biraz daha yavaş çıkarım:** 608px giriş, 384px'den daha büyük bir kare
+  işler -- birkaç kamera için GPU/DirectML ile tipik olarak sorun
+  yaratmaz (bkz. yukarıdaki "Ödünleşim" notu); performans sorunu
+  gözlemlenirse `PTS_ANPR_PROVIDERS=cpu` ile karşılaştırılabilir.
+- **Eski/daha hafif bir modele dönmek isterseniz** artık `PTS_ANPR_
+  DETECTOR_MODEL` ortam değişkenini bu YÖNDE (ör. tekrar `yolo-v9-t-384-
+  license-plate-end2end`'e) ayarlamanız yeterli -- mekanizma değişmedi,
+  sadece hangi yönde "override" olduğu değişti.
+- Panelin Sistem sekmesindeki "Dedektör Modeli" satırından, PTS'nin
+  gerçekten hangi modeli kullandığı her zaman doğrulanabilir.
 
 **⚠️ 2026-09-18 — dışa aktarma uç noktalarında kimlik doğrulama eksikliği
 bulundu ve düzeltildi:** Kayıtlar raporu biçimini kullanıcının paylaştığı
