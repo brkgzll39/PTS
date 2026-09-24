@@ -273,6 +273,119 @@ def test_zorla_kapatma_bekelemeden_kazanani_dondurur():
     assert len(bitmis) == 1 and bitmis[0]["plaka"] == "34 ABC 123"
 
 
+def test_bitmis_oturum_kapanma_nedenini_dogru_raporlar():
+    """`kapanma_nedeni` alanı, KameraPipeline'ın "araç hâlâ orada mı yoksa
+    gerçekten mi ayrıldı" ayrımını yapabilmesi için doğru işaretlenmeli (bkz.
+    aşağıdaki "duran araç" testleri)."""
+    sessiz = camera_reader.PlakaOturumTakipcisi(oturum_kapanma_sn=1.0, max_oturum_sure_sn=100.0)
+    sessiz.guncelle("34 ABC 123", 0.9, simdi=0.0)
+    assert sessiz.bitmis_oturumlari_al(simdi=2.0)[0]["kapanma_nedeni"] == "sessizlik"
+
+    max_sure = camera_reader.PlakaOturumTakipcisi(oturum_kapanma_sn=100.0, max_oturum_sure_sn=1.0)
+    max_sure.guncelle("34 ABC 123", 0.9, simdi=0.0)
+    assert max_sure.bitmis_oturumlari_al(simdi=2.0)[0]["kapanma_nedeni"] == "max_sure"
+
+    zorla = camera_reader.PlakaOturumTakipcisi(oturum_kapanma_sn=100.0, max_oturum_sure_sn=100.0)
+    zorla.guncelle("34 ABC 123", 0.9, simdi=0.0)
+    assert zorla.bitmis_oturumlari_al(simdi=0.01, zorla=True)[0]["kapanma_nedeni"] == "zorla"
+
+
+# ------------------------------------------------------------------
+# Bekleyen/duran araç için tekrar tekrar kayıt üretilmemesi (2026-09-24
+# kullanıcı geri bildirimi: "bu plakayı neden 3 dakika içinde 3 defa çekmiş"
+# -- bir araç bariyerde/nöbetçi kontrolünde birkaç dakika beklerse, ESKİ kod
+# OTURUM_MAX_SURE_SN (8 sn) yüzünden her seferinde YENİ bir "geçiş" kaydı
+# üretiyordu. Bkz. KameraPipeline._oturum_gonderilmeli_mi'nin docstring'i.
+# ------------------------------------------------------------------
+
+def _sahte_pipeline(sahte_api, tekrar_gecikme_sn=30):
+    """Gerçek video/thread hiç başlatmadan, yalnızca `_oturum_gonderilmeli_mi`
+    ve `_suregelen_plakalar` mantığını test etmek için hafif bir KameraPipeline
+    örneği kurar (sahte_engine fixture'ı ANPREngine'i mock'ladığı için gerçek
+    ONNX/GPU'ya hiç dokunmaz -- diğer pipeline testleriyle aynı desen)."""
+    return camera_reader.KameraPipeline(
+        video_kaynagi="kullanilmiyor",
+        api_url=sahte_api.url,
+        kamera_id="TEST-DURAN-ARAC",
+        tekrar_gecikme_sn=tekrar_gecikme_sn,
+    )
+
+
+_ORNEK_OTURUM = {"plaka": "34 DUR 001", "guven": 0.9, "farkli_okuma_sayisi": 1,
+                  "toplam_kare_sayisi": 5, "toplam_oy": 4.5, "jpeg": b"x",
+                  "uzun_varyant_tercih_edildi": False}
+
+
+def test_duran_arac_max_sure_kapanislarinda_tekrar_kayit_uretmez(sahte_engine, sahte_api):
+    """KÖK NEDEN regresyonu: bir araç bariyerde durup kameradan HİÇ ayrılmazsa,
+    oturum OTURUM_MAX_SURE_SN yüzünden defalarca zorla kapanabilir -- ama
+    bunların YALNIZCA İLKİ yeni bir kayıt olarak gönderilmeli, sonrakiler aynı
+    kesintisiz görünümün devamı olarak sessizce atlanmalı (aradan
+    tekrar_gecikme_sn'den çok daha uzun süre geçmiş olsa bile -- eski kodun
+    tam olarak düştüğü tuzak buydu)."""
+    pipeline = _sahte_pipeline(sahte_api, tekrar_gecikme_sn=5)  # kısa pencere, eski hatayı görünür kılar
+
+    assert pipeline._oturum_gonderilmeli_mi({**_ORNEK_OTURUM, "kapanma_nedeni": "max_sure"}, simdi=8.0) is True
+    assert pipeline._oturum_gonderilmeli_mi({**_ORNEK_OTURUM, "kapanma_nedeni": "max_sure"}, simdi=16.0) is False
+    assert pipeline._oturum_gonderilmeli_mi({**_ORNEK_OTURUM, "kapanma_nedeni": "max_sure"}, simdi=40.0) is False
+    assert pipeline._oturum_gonderilmeli_mi({**_ORNEK_OTURUM, "kapanma_nedeni": "max_sure"}, simdi=90.0) is False
+
+
+def test_duran_arac_sonunda_ayrilinca_ikinci_kayit_uretmez_ama_bayragi_temizler(sahte_engine, sahte_api):
+    """Araç NİHAYET kareden ayrılıp gerçek bir 'sessizlik' kapanışı oluşunca,
+    bu son kapanış İKİNCİ bir kayıt OLUŞTURMAMALI (zaten max_sure ile
+    bildirilmişti) -- ama sonraki, GERÇEKTEN AYRI bir görünüş (araç geri
+    dönüp tekrar geçerse) yeniden yeni bir geçiş sayılabilmeli."""
+    pipeline = _sahte_pipeline(sahte_api, tekrar_gecikme_sn=5)
+    oturum = {**_ORNEK_OTURUM, "plaka": "34 DUR 002"}
+
+    assert pipeline._oturum_gonderilmeli_mi({**oturum, "kapanma_nedeni": "max_sure"}, simdi=8.0) is True
+    assert pipeline._oturum_gonderilmeli_mi({**oturum, "kapanma_nedeni": "sessizlik"}, simdi=16.0) is False
+    assert "34 DUR 002" not in pipeline._suregelen_plakalar, "Akış bittiği için bayrak temizlenmeliydi"
+
+    # Çok sonra AYNI plaka GERÇEKTEN yeni bir geçiş yapıyor -- normal şekilde gönderilmeli.
+    assert pipeline._oturum_gonderilmeli_mi({**oturum, "kapanma_nedeni": "sessizlik"}, simdi=100.0) is True
+
+
+def test_normal_gecen_arac_davranisi_degismedi(sahte_engine, sahte_api):
+    """Rejim testi: aracın kamerada HİÇ 8 saniyeden uzun kalmadığı (max_sure'a
+    hiç takılmadığı) normal/hızlı bir geçiş için davranış ESKİSİYLE AYNI
+    kalmalı -- tek bir 'sessizlik' kapanışı, normal tekrar_gecikme_sn kuralına
+    tabi olarak gönderilmeli."""
+    pipeline = _sahte_pipeline(sahte_api, tekrar_gecikme_sn=30)
+    oturum = {**_ORNEK_OTURUM, "plaka": "34 HIZLI 1", "kapanma_nedeni": "sessizlik"}
+
+    assert pipeline._oturum_gonderilmeli_mi(oturum, simdi=1.0) is True
+    # Aynı plaka, tekrar_gecikme_sn içinde tekrar -- eskisi gibi bastırılmalı.
+    assert pipeline._oturum_gonderilmeli_mi(oturum, simdi=5.0) is False
+    # Pencere dışında -- eskisi gibi yeni bir geçiş sayılmalı.
+    assert pipeline._oturum_gonderilmeli_mi(oturum, simdi=32.0) is True
+
+
+def test_suregelen_plaka_guvenlik_zaman_asimiyla_temizlenir(sahte_engine, sahte_api):
+    """Bir araç tam bir 'max_sure' kapanışından hemen sonra (yeni bir oturum
+    hiç açılmadan) kareden ayrılırsa, hiçbir 'sessizlik' kapanışı hiç oluşmaz
+    -- bu durumda `_suregelen_plakalar` GÜVENLİK AMAÇLI zaman aşımıyla
+    (_SUREGELEN_PLAKA_ZAMAN_ASIMI_SN) temizlenmeli, aksi halde o plakanın
+    GERÇEKTEN AYRI bir sonraki gelişi sessizce hiç kaydedilmezdi (bkz.
+    `_suregelen_plakalari_buda`'nın docstring'i)."""
+    pipeline = _sahte_pipeline(sahte_api, tekrar_gecikme_sn=5)
+    simdi = time.time()
+    pipeline._suregelen_plakalar["34 TERK 001"] = simdi  # az önce bir max_sure kapanışıyla eklendi
+
+    # Zaman aşımından ÖNCE: hâlâ "muhtemelen orada" sayılıp temizlenmemeli.
+    pipeline._plaka_hafizasini_buda()
+    assert "34 TERK 001" in pipeline._suregelen_plakalar
+
+    # Zaman aşımı kadar zaman "geçmiş" gibi girdiyi geriye tarihlendiriyoruz
+    # (gerçekten o kadar beklemek yerine).
+    pipeline._suregelen_plakalar["34 TERK 001"] = simdi - camera_reader._SUREGELEN_PLAKA_ZAMAN_ASIMI_SN - 1
+    pipeline._plaka_hafizasini_buda()
+    assert "34 TERK 001" not in pipeline._suregelen_plakalar, (
+        "Güvenlik zaman aşımı devreye girmedi -- kalıcı sessiz kayıp riski"
+    )
+
+
 # ------------------------------------------------------------------
 # "Sondan karakter eksik" düzeltmesi + kazanan-varyanta-özel güven (2026-09-18)
 # ------------------------------------------------------------------

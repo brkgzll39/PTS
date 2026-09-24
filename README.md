@@ -1427,6 +1427,85 @@ kapandığını ve manuel kayıtların HİÇ etkilenmediğini doğrulayan) -- bu
 fastapi/sqlalchemy'ye ihtiyaç duyduğu için bu sandbox'ta çalıştırılamadı,
 yalnızca `py_compile` ile sözdizimi doğrulandı (bkz. depodaki genel not).
 
+## Bariyerde Bekleyen (Duran) Aracın Tekrar Tekrar Kayıt Oluşturması (2026-09-24)
+
+Kullanıcı talebi: "bu plakayı neden 3 dakika içinde 3 defa çekmiş" -- Kayıtlar
+panelinde, aynı plakanın (`39 AAY 008`), aynı kameradan (`Nizamiye Giriş`),
+~90 saniye içinde 3 AYRI kayıt olarak göründüğü bir örnek paylaşıldı. Bu,
+görevlinin kimlik/izin kontrolü için bariyerde birkaç dakika bekleyen sıradan
+bir araçtı -- yani plaka gerçekten sürekli kamera görüş alanındaydı, sahte
+bir tespit veya farklı bir araç değildi.
+
+**Kök neden:** `PlakaOturumTakipcisi` (oy biriktirme/oturum mekanizması,
+bkz. `camera_reader.py`), bir aracın plakasını art arda gelen karelerde
+"aynı geçiş" olarak biriktirip TEK bir kazanan okuma üretmek için, bir
+oturumun ne zaman "bittiğini" üç ayrı koşulla belirliyor:
+
+1. `OTURUM_KAPANMA_SN` (1.2 sn) -- plaka bir süre hiç görülmezse (araç
+   gerçekten ayrılmıştır),
+2. `OTURUM_MAX_SURE_SN` (8.0 sn) -- plaka KESİNTİSİZ görülmeye devam etse
+   bile, sürüklenen/yanlış OCR birikimini önlemek için oturum yine de
+   zorla kapatılır (bu güvenlik sınırı, oy biriktirme mekanizmasının ilk
+   eklendiği `cacf478` işlemesinden beri vardı),
+3. `zorla=True` -- pipeline kapanırken bekleyen oturumları temizlemek için.
+
+Sorun şuydu: `bitmis_oturumlari_al()`, bu üç kapanış nedenini birbirinden
+AYIRT ETMİYORDU -- hepsi aynı şekilde "kazanan" üretiyordu. Bariyerde 8
+saniyeden uzun bekleyen bir araç için oturum `max_sure` nedeniyle zorla
+kapanıyor, kazanan API'ye gönderiliyor, HEMEN ARDINDAN yeni bir oturum
+açılıyor (plaka hâlâ kamerada), 8 saniye sonra o da `max_sure` ile kapanıp
+tekrar gönderiliyordu -- ve `KameraPipeline.tekrar_gecikme_sn` (varsayılan
+30 sn) bunu engellemiyordu, çünkü her kapanış arası zaten 30 saniyeden uzun
+sürüyordu (30 sn'lik bekleme her seferinde yeniden dolduruluyordu). Sonuç:
+bariyerde bekleyen bir araç için görevlinin işlemi ne kadar sürerse sürsün,
+~30+ saniyede bir yepyeni bir "geçiş" kaydı oluşuyordu.
+
+**Neden basitçe `tekrar_gecikme_sn`'yi büyütmek çözüm değildi:** bu, sorunu
+gizlemek olurdu, çözmek değil -- hem gereksiz yere UZUN bir süre boyunca
+GERÇEKTEN farklı bir aracın aynı plakayla (çok nadir ama mümkün, örn. plaka
+okuma hatası) tekrar tespitini de bastırırdı, hem de "araç ne kadar süre
+beklerse beklesin asla ikinci kayıt oluşmaz" garantisini vermezdi (sadece
+eşiği büyütürdü, sorunu ortadan kaldırmazdı).
+
+**Uygulanan çözüm:** `bitmis_oturumlari_al()` artık her kazanana bir
+`kapanma_nedeni` alanı ekliyor (`"sessizlik"` / `"max_sure"` / `"zorla"`,
+bu sırayla önceliklendirilir). Yeni `KameraPipeline._oturum_gonderilmeli_mi()`
+metodu, `kapanma_nedeni == "max_sure"` olan bir kazananı, aynı plaka için
+DAHA ÖNCE de bir `max_sure` kapanışı yaşanmışsa (yani araç hâlâ oradaysa)
+SESSİZCE atlar -- yeni bir `_suregelen_plakalar` sözlüğü bu "plaka şu an
+sürüp gidiyor" durumunu izler. Araç sonunda gerçekten ayrıldığında (oturum
+`sessizlik` nedeniyle kapanır), eğer bu akış için zaten bir kayıt
+gönderilmişse o SON kapanış da tekrar kayıt üretmez (böylece aracın
+bariyerdeki TÜM bekleme süresi için toplamda tam olarak BİR kayıt oluşur),
+ama bayrak temizlenir ki aynı plaka GERÇEKTEN daha sonra tekrar gelirse
+(normal `tekrar_gecikme_sn` kuralına tabi olarak) yeniden kayıt
+oluşturabilsin.
+
+**Kenar durum (kasıtlı olarak ele alındı):** bir araç, `max_sure`
+kapanışından hemen sonra -- yeni oturum hiç açılmadan -- aniden ayrılırsa,
+`_suregelen_plakalar`'da o plaka için bir bayrak kalır ama onu temizleyecek
+bir `sessizlik` kapanışı asla gelmez; bu, plakanın GELECEKTE tekrar
+gelişinin sessizce bastırılmasına yol açabilirdi. Bunu önlemek için yeni
+`_SUREGELEN_PLAKA_ZAMAN_ASIMI_SN` (= `OTURUM_MAX_SURE_SN * 2.5` = 20 sn)
+sabiti ile `_plaka_hafizasini_buda()` içinden çağrılan
+`_suregelen_plakalari_buda()`, bu bayrakları zaman aşımıyla güvenlik ağı
+olarak temizliyor.
+
+**Kapsam:** yalnızca aynı kameranın KENDİ tespit akışını etkiler --
+`_capraz_kamera_kisa_sureli_tekrar_mi` (yukarıdaki bölüm) ile aynı katmanda
+DEĞİL, ondan önceki bir aşamada (oturum kapanışı seviyesinde) çalışır ve
+onun yerine değil yanına eklendi.
+
+**Testler:** `tests/test_camera_reader.py`'ye 5 yeni test eklendi:
+`kapanma_nedeni`'nin üç senaryoda da doğru raporlandığı, bariyerde bekleyen
+bir aracın tekrarlanan `max_sure` kapanışlarının ikinci bir kayıt
+ÜRETMEDİĞİ (kullanıcının bildirdiği tam senaryonun regresyonu), aracın
+sonunda ayrılmasının da ikinci bir kayıt üretmediği ama bayrağı doğru
+temizlediği (ve çok sonra gelen GERÇEKTEN yeni bir geçişin yine de
+kaydedildiği), normal/hızlı geçen bir aracın davranışının HİÇ
+değişmediği (regresyon), ve güvenlik-ağı zaman aşımının stuck bayrağı
+doğru şekilde temizlediği. Toplam: 230 test geçiyor (225 önceki + 5 yeni).
+
 ## "Son Geçişler" Panelinden Plaka Geçmişine/Manuel Kayda Erişim (2026-09-18)
 
 Kullanıcı talebi: "bu ekranda son geçişlerde gözüken plakalara da

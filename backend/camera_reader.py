@@ -180,6 +180,24 @@ OTURUM_BENZERLIK_ESIGI = 2   # aynı oturuma dahil edilecek okumalar arası azam
 OTURUM_MAX_SURE_SN = 8.0     # bir oturum en fazla bu kadar açık kalır (çok yavaş/duran araç için emniyet)
 VARSAYILAN_MIN_GUVEN_SKORU = 0.4  # bu eşiğin altındaki OCR sonuçları oylamaya hiç girmez
 
+# 2026-09-24 kullanıcı geri bildirimi ("bu plakayı neden 3 dakika içinde 3
+# defa çekmiş"): bir araç bariyerde/nöbetçi kontrolünde OTURUM_MAX_SURE_SN
+# (8 sn) üzerinde beklerse, oturum -- araç kareden HİÇ ayrılmamış olsa bile --
+# güvenlik amaçlı süre sınırı yüzünden zorla kapatılıp YENİ bir kayıt
+# gönderiliyordu; araç beklemeye devam ettikçe bu birkaç dakika boyunca
+# tekrar tekrar oluyordu (bkz. KameraPipeline._kareyi_isle'deki
+# "_suregelen_plakalar" mekanizması -- aynı kesintisiz görünüm için İKİNCİ
+# bir kayıt üretilmesini engeller). Bu zaman aşımı, o mekanizmanın
+# GÜVENLİK AĞIDIR: bir plaka _suregelen_plakalar'da bu süreden uzun süredir
+# tazelenmediyse (ne 'max_sure' ne 'sessizlik' kapanışıyla), araç GERÇEKTEN
+# ayrılmış sayılır ve kayıt serbest bırakılır (bkz.
+# KameraPipeline._suregelen_plakalari_buda'nın docstring'i, kök neden
+# açıklaması için). OTURUM_MAX_SURE_SN'in birkaç katı olacak şekilde
+# seçildi -- araç kesintisiz beklerken kapanışlar arası en kötü aralık
+# yaklaşık OTURUM_MAX_SURE_SN kadardır, bu yüzden geniş bir emniyet payı
+# bırakılıyor.
+_SUREGELEN_PLAKA_ZAMAN_ASIMI_SN = OTURUM_MAX_SURE_SN * 2.5  # = 20.0 sn
+
 # ------------------------------------------------------------------
 # "SONDAN KARAKTER EKSİK" DÜZELTMESİ (2026-09-18)
 # ------------------------------------------------------------------
@@ -354,13 +372,32 @@ class PlakaOturumTakipcisi:
             self._acik[plaka] = PlakaOyBirikimi(plaka, guven, simdi, jpeg)
 
     def bitmis_oturumlari_al(self, simdi: float, zorla: bool = False) -> list:
+        """Kapanmış oturumların kazananlarını döner -- her sözlüğe ayrıca bir
+        `kapanma_nedeni` alanı eklenir ("sessizlik" | "max_sure" | "zorla"),
+        çünkü ÇAĞIRAN taraf (bkz. KameraPipeline._kareyi_isle'deki
+        "_suregelen_plakalar" mantığı) bunlara AYNI şekilde davranamaz:
+        "sessizlik" aracın kareden GERÇEKTEN ayrıldığı anlamına gelir; "max_sure"
+        ise araç HÂLÂ kareden ayrılmamışken yalnızca güvenlik amaçlı süre sınırı
+        yüzünden zorla kapatıldığı anlamına gelir (bkz. 2026-09-24 notu,
+        OTURUM_MAX_SURE_SN'in tanımlandığı yer) -- ikisini ayırt etmezsek,
+        bariyerde bekleyen bir araç için her birkaç saniyede bir "yeni geçiş"
+        kaydı üretilir.
+        """
         bitmisler = []
         for anahtar in list(self._acik.keys()):
             birikim = self._acik[anahtar]
             sessiz_kaldi = simdi - birikim.son_gorulme > self.oturum_kapanma_sn
             cok_uzun_surdu = simdi - birikim.ilk_gorulme > self.max_oturum_sure_sn
             if zorla or sessiz_kaldi or cok_uzun_surdu:
-                bitmisler.append(birikim.kazanan())
+                kazanan = birikim.kazanan()
+                # Sıralama bilinçli: "sessizlik" (araç gerçekten ayrıldı) en
+                # anlamlı/eyleme geçirilebilir sinyal olduğu için, ikisi aynı anda
+                # doğru olsa bile önceliklidir; `zorla` (pipeline durduruluyor)
+                # yalnızca ikisi de geçerli değilse etiket olarak kullanılır.
+                kazanan["kapanma_nedeni"] = (
+                    "sessizlik" if sessiz_kaldi else "max_sure" if cok_uzun_surdu else "zorla"
+                )
+                bitmisler.append(kazanan)
                 del self._acik[anahtar]
         return bitmisler
 
@@ -560,6 +597,14 @@ class KameraPipeline:
         self.motor = _paylasilan_motoru_al()
         self.calisiyor = False
         self.son_plaka_zamani: dict = {}
+        # 2026-09-24: bir plaka, DAHA ÖNCE bildirilmiş, KESİNTİSİZ bir görünümün
+        # (oturumun OTURUM_MAX_SURE_SN yüzünden zorla kapatılıp kapatılmadığına
+        # bakılmaksızın araç kareden hiç ayrılmamışken) devamındaysa burada tutulur
+        # -- bkz. `_kareyi_isle`'deki kullanım ve `_suregelen_plakalari_buda`'nın
+        # docstring'i (kök neden: "bu plakayı neden 3 dakika içinde 3 defa
+        # çekmiş" kullanıcı geri bildirimi). Değer = plakanın en son bir kapanış
+        # olayıyla (max_sure ya da henüz kapanmamış sessizlik) görüldüğü zaman.
+        self._suregelen_plakalar: dict = {}
         # GÖZLEMLENEBİLİRLİK: dedektör hiçbir plaka bulamazsa (sonuc listesi
         # tamamen boşsa) bunu HER karede loglamak günlük dosyasını gereksiz
         # şişirir (boş yol/trafiksiz an normaldir); ama hiç loglamamak da
@@ -855,11 +900,9 @@ class KameraPipeline:
 
         gonderilenler = []
         for oturum in bitmis_oturumlar:
-            plaka = oturum["plaka"]
-            if (plaka in self.son_plaka_zamani and
-                    simdi - self.son_plaka_zamani[plaka] < self.tekrar_gecikme_sn):
+            if not self._oturum_gonderilmeli_mi(oturum, simdi):
                 continue
-            self.son_plaka_zamani[plaka] = simdi
+            plaka = oturum["plaka"]
 
             gonderilecek_jpeg = oturum["jpeg"] or jpeg_bytes
             gecici = os.path.join(tempfile.gettempdir(), f"{plaka.replace(' ', '')}_{int(simdi)}.jpg")
@@ -950,6 +993,53 @@ class KameraPipeline:
         self._plaka_hafizasini_buda()
         return gonderilenler
 
+    def _oturum_gonderilmeli_mi(self, oturum: dict, simdi: float) -> bool:
+        """Kapanmış bir oturumun (bkz. PlakaOturumTakipcisi.bitmis_oturumlari_al)
+        gerçekten YENİ bir Kayit olarak API'ye gönderilip gönderilmeyeceğine
+        karar verir; kararla tutarlı biçimde `self._suregelen_plakalar` ve
+        `self.son_plaka_zamani`yı da günceller (bu yüzden saf/yan etkisiz bir
+        fonksiyon DEĞİLDİR -- her kapanmış oturum için TAM OLARAK BİR kez,
+        sırayla çağrılmalıdır).
+
+        2026-09-24 KÖK NEDEN DÜZELTMESİ (kullanıcı geri bildirimi: "bu plakayı
+        neden 3 dakika içinde 3 defa çekmiş" -- bir araç bariyerde/nöbetçi
+        kontrolünde birkaç dakika beklerse, ESKİ kod her ~tekrar_gecikme_sn'de
+        (varsayılan 30 sn) bir "yeni geçiş" kaydı üretiyordu, çünkü
+        OTURUM_MAX_SURE_SN (8 sn) her seferinde oturumu -- araç kareden hiç
+        ayrılmamışken -- zorla kapatıp yeni bir "kazanan" döndürüyordu.
+        Aşağıdaki ayrım, "araç hâlâ orada duruyor" (max_sure) ile "araç
+        gerçekten gitti" (sessizlik) durumlarını birbirinden ayırır."""
+        plaka = oturum["plaka"]
+        kapanma_nedeni = oturum.get("kapanma_nedeni")
+
+        if kapanma_nedeni == "max_sure":
+            # Araç HÂLÂ kareden ayrılmadı. Bu plaka için bu KESİNTİSİZ
+            # görünüm boyunca DAHA ÖNCE zaten bir kayıt gönderildiyse
+            # (_suregelen_plakalar'da varsa), bu yalnızca aynı aracın
+            # kamerada beklemeye devam etmesidir -- YENİ bir geçiş değil,
+            # sessizce atla (zaman damgasını TAZELE ki `_suregelen_plakalari_buda`
+            # onu erken silmesin).
+            if plaka in self._suregelen_plakalar:
+                self._suregelen_plakalar[plaka] = simdi
+                return False
+            self._suregelen_plakalar[plaka] = simdi
+        else:
+            # "sessizlik" (araç GERÇEKTEN kareden ayrıldı) ya da "zorla"
+            # (pipeline durduruluyor, elimizdeki en iyi tahmini kaybetmeyelim).
+            # Bu plaka DAHA ÖNCE (bir max_sure kapanışıyla) zaten bildirildiyse,
+            # bunu "akış bitti" olarak işaretleyip (aracın BİR SONRAKİ, gerçekten
+            # ayrı görünüşü yeniden yeni bir geçiş sayılabilsin diye) devamında
+            # ikinci bir kayıt OLUŞTURMA -- oylar zaten ilk kayıtta gönderilmişti.
+            daha_once_bu_akis_icin_bildirilmis = self._suregelen_plakalar.pop(plaka, None) is not None
+            if kapanma_nedeni == "sessizlik" and daha_once_bu_akis_icin_bildirilmis:
+                return False
+
+        if (plaka in self.son_plaka_zamani and
+                simdi - self.son_plaka_zamani[plaka] < self.tekrar_gecikme_sn):
+            return False
+        self.son_plaka_zamani[plaka] = simdi
+        return True
+
     def _ham_kareyi_kaydet_gerekirse(self, frame, simdi_mono: float, dizin: str) -> None:
         """PTS_HAM_KARE_KAYIT_DIZINI ayarlıysa, dedektörün hiçbir aday bulamadığı
         (yani "boş tespit" logunu tetikleyen) ham kareyi bu dizine kaydeder —
@@ -983,13 +1073,37 @@ class KameraPipeline:
             pass
 
     def _plaka_hafizasini_buda(self) -> None:
-        """son_plaka_zamani sözlüğü süresiz büyümesin diye eski girdileri temizler."""
-        if len(self.son_plaka_zamani) < 200:
+        """son_plaka_zamani sözlüğü süresiz büyümesin diye eski girdileri temizler
+        -- ve `_suregelen_plakalar`ı da (bkz. `_suregelen_plakalari_buda`'nın
+        docstring'i) güvenlik amaçlı zaman aşımıyla budar."""
+        if len(self.son_plaka_zamani) >= 200:
+            esik = time.time() - (self.tekrar_gecikme_sn * _PLAKA_HAFIZA_CARPANI)
+            eskiler = [p for p, t in self.son_plaka_zamani.items() if t < esik]
+            for p in eskiler:
+                self.son_plaka_zamani.pop(p, None)
+        self._suregelen_plakalari_buda()
+
+    def _suregelen_plakalari_buda(self) -> None:
+        """`_suregelen_plakalar` içindeki bir plaka -- normalde, aracın kareden
+        GERÇEKTEN ayrıldığı 'sessizlik' kapanışında zaten temizlenir (bkz.
+        `_kareyi_isle`) -- eğer `_SUREGELEN_PLAKA_ZAMAN_ASIMI_SN` boyunca HİÇBİR
+        kapanış olayıyla (ne 'max_sure' ne 'sessizlik') tazelenmediyse burada da
+        GÜVENLİK AMAÇLI temizlenir.
+
+        NEDEN GEREKLİ: bir araç, tam bir 'max_sure' kapanışından HEMEN sonra --
+        yeni bir oturum hiç açılmadan -- kareden ayrılırsa, o plaka için bir daha
+        HİÇBİR kapanış olayı (dolayısıyla 'sessizlik' temizliği) oluşmaz, çünkü
+        PlakaOturumTakipcisi yalnızca AÇIK bir oturumu kapatabilir, hiç açılmamış
+        birini değil. Bu zaman aşımı olmasaydı, o plaka `_suregelen_plakalar`'da
+        SONSUZA KADAR takılı kalır ve aracın GERÇEKTEN AYRI, meşru bir sonraki
+        gelişi sessizce hiç kaydedilmezdi -- tam da bu depoda özenle kaçınılan
+        "sessiz kayıp" hata sınıfının bir örneği olurdu."""
+        if not self._suregelen_plakalar:
             return
-        esik = time.time() - (self.tekrar_gecikme_sn * _PLAKA_HAFIZA_CARPANI)
-        eskiler = [p for p, t in self.son_plaka_zamani.items() if t < esik]
+        esik = time.time() - _SUREGELEN_PLAKA_ZAMAN_ASIMI_SN
+        eskiler = [p for p, t in self._suregelen_plakalar.items() if t < esik]
         for p in eskiler:
-            self.son_plaka_zamani.pop(p, None)
+            self._suregelen_plakalar.pop(p, None)
 
     def _cap_ac(self):
         os.environ.setdefault("OPENCV_FFMPEG_LOGLEVEL", "quiet")
