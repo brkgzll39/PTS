@@ -836,32 +836,79 @@ async function panelYenile() {
 // sayfalama desenini (limit/offset + /kayitlar/sayfa-bilgisi) kullanır, ama
 // FİLTRE alanları olmadan -- bu ekranın tek amacı ham, kesintisiz bir geçiş
 // akışı sunmak.
+//
+// 2026-09-24 kullanıcı geri bildirimi: "sol taraf 16 araç gösterirken 1.
+// sayfada sağ taraf 10 tane araç kaydı gösteriyor, sayfa geçişi yaptığımda
+// eksik yansımalar oluyor". İKİ AYRI kök neden bulunup ikisi de düzeltildi:
+//
+// 1) DENGESİZ SÜTUNLAR: önceden TEK bir karma sorgu (`/kayitlar?limit=25`,
+//    yön filtresi YOK) çekilip GİRİŞ/ÇIKIŞ'a istemci tarafında ayrılıyordu.
+//    Öz-hizmet giriş/çıkış modelinde (bkz. 2026-09-20 notu) iki yön eşit
+//    sıklıkta olmadığından, paylaşılan 25'lik pencere neredeyse HER ZAMAN
+//    dengesiz bölünüyordu (ör. 16 giriş / 10 çıkış toplamı bile 25'i geçebilir
+//    -- otomatik yenilemeler arada yeni kayıt eklediği için iki çağrı arasında
+//    kaymalar da olabiliyordu). DAHA KÖTÜSÜ: bir yönün kaydı seyrekse, o
+//    yönün ızgarası sayfalar boyu "kayıt yok" gösterip aslında var olan
+//    kayıtlara ulaşmak için gereksiz yere çok sayfa tıklamak gerekiyordu --
+//    "daha verimli olsun" isteğinin karşılığı budur. ÇÖZÜM: backend'e eklenen
+//    `yon` filtresiyle (bkz. main.py::kayitlari_listele) artık GİRİŞ ve ÇIKIŞ
+//    ayrı ayrı, HER BİRİ KENDİ limit/offset'iyle çekiliyor -- her ızgara,
+//    kendi türünden yeterince kayıt olduğu sürece HER SAYFADA dolu (25 kart)
+//    görünür; sayfa sayısı iki yönden UZUN olanına göre belirlenir (kısa olan
+//    yön biterse -- bu artık GERÇEKTEN son sayfasına gelindiği anlamına gelir,
+//    rastgele bir bölünme kazası değil).
+//
+// 2) "EKSİK YANSIMALAR" (sayfa geçişken): bu fonksiyon hem "Önceki/Sonraki"
+//    tıklamasıyla HEM DE otomatik yenilemelerle (SSE debounce'u, 15sn'lik
+//    kalp atışı) `sifirla=false` ile çağrılıyor -- yani AYNI ANDA birden
+//    fazla çağrı iç içe geçebiliyordu. Önceki kod, `await` sonrasında sayfa
+//    numarasını (_sonGecislerSayfa) TEKRAR OKUYUP etiketi/butonları ona göre
+//    çiziyordu -- ama o ana kadar kullanıcı "Sonraki"ye bir kez daha basmışsa
+//    bu değişken artık İLERİ gitmiş oluyordu. Sonuç: yavaş/geç dönen ESKİ bir
+//    isteğin verisi, YENİ sayfa numarasının etiketiyle ekrana yazılıyordu
+//    (veya ağ sırası tersine döndüyse eski istek yeni isteğin ÜZERİNE yazıp
+//    doğru veriyi siliyordu) -- kullanıcının "eksik yansımalar" dediği tam
+//    olarak budur. ÇÖZÜM: her çağrıya artan bir "istek numarası" veriliyor;
+//    yanıt geldiğinde hâlâ EN SON başlatılan istek DEĞİLSE (araya başka bir
+//    çağrı girmişse) sonuç sessizce atılıyor, DOM'a hiç dokunulmuyor -- ekranda
+//    her zaman yalnızca en son istenen sayfa görünür.
 let _sonGecislerSayfa = 0;
 const _sonGecislerLimit = 25;
+let _sonGecislerIstekNo = 0;
 
 async function sonGecislerYukle(sifirla = true) {
   if (sifirla) _sonGecislerSayfa = 0;
-  const params = new URLSearchParams({ limit: _sonGecislerLimit, offset: _sonGecislerSayfa * _sonGecislerLimit });
-  const sayfaBilgisiParams = new URLSearchParams(params);
-  sayfaBilgisiParams.delete("offset");
+  const istekNo = ++_sonGecislerIstekNo;
+  const sayfa = _sonGecislerSayfa; // bu isteğin ait olduğu sayfa -- await sonrası tekrar okunmaz (bkz. yukarıdaki 2. madde)
+  const ortakParams = { limit: _sonGecislerLimit, offset: sayfa * _sonGecislerLimit };
   try {
-    const [kayitlar, sayfaBilgisi] = await Promise.all([
-      apiCagir(`/kayitlar?${params.toString()}`),
-      apiCagir(`/kayitlar/sayfa-bilgisi?${sayfaBilgisiParams.toString()}`),
+    const [girisKayitlari, cikisKayitlari, girisSayfaBilgisi, cikisSayfaBilgisi] = await Promise.all([
+      apiCagir(`/kayitlar?${new URLSearchParams({ ...ortakParams, yon: "giris" }).toString()}`),
+      apiCagir(`/kayitlar?${new URLSearchParams({ ...ortakParams, yon: "cikis" }).toString()}`),
+      apiCagir(`/kayitlar/sayfa-bilgisi?${new URLSearchParams({ limit: _sonGecislerLimit, yon: "giris" }).toString()}`),
+      apiCagir(`/kayitlar/sayfa-bilgisi?${new URLSearchParams({ limit: _sonGecislerLimit, yon: "cikis" }).toString()}`),
     ]);
-    _kayitCacheBirlestir(kayitlar);
-    const sayacEl = document.getElementById("sonGecislerSayac");
-    if (sayacEl) sayacEl.textContent = `${sayfaBilgisi.toplam} geçiş · Sayfa ${_sonGecislerSayfa + 1}/${sayfaBilgisi.sayfa_sayisi}`;
+    // Araya (bu istek başladıktan SONRA) başka bir sonGecislerYukle çağrısı
+    // girdiyse -- ör. kullanıcı "Sonraki"ye tekrar bastı veya bir SSE olayı
+    // arka planda yeniden yükleme tetikledi -- bu artık BAYAT bir yanıt: DOM'a
+    // hiç dokunma, en son (daha yeni) çağrının kendi yanıtı ekranı zaten
+    // güncelleyecek/güncelledi.
+    if (istekNo !== _sonGecislerIstekNo) return;
 
-    // 2026-09-23: bu sayfadaki kayıtlar GİRİŞ/ÇIKIŞ olarak iki ayrı ızgaraya
-    // dağıtılıyor (bkz. index.html'deki yorum ve _gecisKartiOlustur). Sıralama
-    // sunucudan gelen (en yeniden en eskiye) sıra korunarak yapılıyor -- her
-    // ızgara kendi içinde ayrıca sıralanmıyor.
+    _kayitCacheBirlestir(girisKayitlari);
+    _kayitCacheBirlestir(cikisKayitlari);
+
+    const toplam = girisSayfaBilgisi.toplam + cikisSayfaBilgisi.toplam;
+    const sayfaSayisi = Math.max(1, girisSayfaBilgisi.sayfa_sayisi, cikisSayfaBilgisi.sayfa_sayisi);
+    const sayacEl = document.getElementById("sonGecislerSayac");
+    if (sayacEl) sayacEl.textContent = `${toplam} geçiş · Sayfa ${sayfa + 1}/${sayfaSayisi}`;
+
+    // Artık her ızgara KENDİ yönünden gelen, kendi limit/offset'iyle çekilmiş
+    // kayıtları gösteriyor -- bkz. yukarıdaki 1. madde. Sunucudan gelen sıra
+    // (en yeniden en eskiye) korunuyor.
     const girisGrid = document.getElementById("sonGecislerGirisGrid");
     const cikisGrid = document.getElementById("sonGecislerCikisGrid");
     if (girisGrid && cikisGrid) {
-      const girisKayitlari = kayitlar.filter(k => k.yon !== "cikis");
-      const cikisKayitlari = kayitlar.filter(k => k.yon === "cikis");
       girisGrid.innerHTML = girisKayitlari.map(_gecisKartiOlustur).join("") || '<div class="empty-state">Bu sayfada giriş kaydı yok</div>';
       cikisGrid.innerHTML = cikisKayitlari.map(_gecisKartiOlustur).join("") || '<div class="empty-state">Bu sayfada çıkış kaydı yok</div>';
       korumaliGorselleriYukle(girisGrid);
@@ -870,16 +917,17 @@ async function sonGecislerYukle(sifirla = true) {
 
     const sayfaEl = document.getElementById("sonGecislerSayfalama");
     if (sayfaEl) {
-      const onceki = _sonGecislerSayfa > 0;
-      const sonraki = _sonGecislerSayfa < sayfaBilgisi.sayfa_sayisi - 1;
+      const onceki = sayfa > 0;
+      const sonraki = sayfa < sayfaSayisi - 1;
       sayfaEl.innerHTML = `
         <div class="d-flex gap-2">
           <button class="btn btn-sm btn-outline-secondary" ${!onceki ? "disabled" : ""} onclick="sonGecislerSayfaDegistir(-1)"><i class="bi bi-chevron-left"></i> Önceki</button>
           <button class="btn btn-sm btn-outline-secondary" ${!sonraki ? "disabled" : ""} onclick="sonGecislerSayfaDegistir(1)">Sonraki <i class="bi bi-chevron-right"></i></button>
         </div>
-        <span class="small text-muted">${sayfaBilgisi.toplam ? `${_sonGecislerSayfa * _sonGecislerLimit + 1}–${Math.min((_sonGecislerSayfa + 1) * _sonGecislerLimit, sayfaBilgisi.toplam)} / ${sayfaBilgisi.toplam}` : ""}</span>`;
+        <span class="small text-muted">${girisKayitlari.length + cikisKayitlari.length ? `Sayfa başına en fazla ${_sonGecislerLimit} giriş + ${_sonGecislerLimit} çıkış · toplam ${toplam}` : ""}</span>`;
     }
   } catch (e) {
+    if (istekNo !== _sonGecislerIstekNo) return; // bayat bir isteğin hatası -- yok say
     console.error("Son Geçişler yüklenemedi:", e);
   }
 }

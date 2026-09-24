@@ -1076,6 +1076,46 @@ def test_kayitlar_sayfa_bilgisi_saat_araligini_kayitlar_ile_tutarli_sayar(client
     assert r2.json()["toplam"] == 2
 
 
+def test_kayitlar_yon_filtresi_giris_cikisi_ayirir(client, yetkili_header):
+    """2026-09-24 kullanıcı geri bildirimi: "Son Geçişler" ekranında GİRİŞ/ÇIKIŞ
+    ızgaraları, yön filtresi OLMAYAN tek bir karma sayfadan istemci tarafında
+    ayrılıyordu -- iki yön eşit sıklıkta olmadığından (öz-hizmet giriş/çıkış
+    modeli) bu neredeyse her zaman dengesiz bir bölünmeye yol açıyordu (bkz.
+    frontend/app.js::sonGecislerYukle'nin bu tarihli notu). Yeni `yon`
+    filtresi, her ızgaranın KENDİ türünden kayıtları bağımsız çekebilmesini
+    sağlıyor -- burada hem /kayitlar hem /kayitlar/sayfa-bilgisi'nin bu
+    filtreyi doğru uyguladığı doğrulanıyor."""
+    from backend.database import SessionLocal
+    from backend import models
+
+    on_ek = "34 YON01"
+    db = SessionLocal()
+    try:
+        db.add_all([
+            models.Kayit(plaka_no=f"{on_ek} A", kamera_id="TEST", yon="giris", tarih_saat=datetime(2026, 2, 1, 9, 0, 0)),
+            models.Kayit(plaka_no=f"{on_ek} B", kamera_id="TEST", yon="giris", tarih_saat=datetime(2026, 2, 1, 9, 5, 0)),
+            models.Kayit(plaka_no=f"{on_ek} C", kamera_id="TEST", yon="giris", tarih_saat=datetime(2026, 2, 1, 9, 10, 0)),
+            models.Kayit(plaka_no=f"{on_ek} D", kamera_id="TEST", yon="cikis", tarih_saat=datetime(2026, 2, 1, 9, 15, 0)),
+        ])
+        db.commit()
+    finally:
+        db.close()
+
+    r_giris = client.get("/kayitlar", params={"plaka": on_ek, "yon": "giris"}, headers=yetkili_header)
+    r_cikis = client.get("/kayitlar", params={"plaka": on_ek, "yon": "cikis"}, headers=yetkili_header)
+    assert r_giris.status_code == 200, r_giris.text
+    assert r_cikis.status_code == 200, r_cikis.text
+    assert len(r_giris.json()) == 3
+    assert all(k["yon"] == "giris" for k in r_giris.json())
+    assert len(r_cikis.json()) == 1
+    assert all(k["yon"] == "cikis" for k in r_cikis.json())
+
+    sb_giris = client.get("/kayitlar/sayfa-bilgisi", params={"plaka": on_ek, "yon": "giris"}, headers=yetkili_header)
+    sb_cikis = client.get("/kayitlar/sayfa-bilgisi", params={"plaka": on_ek, "yon": "cikis"}, headers=yetkili_header)
+    assert sb_giris.json()["toplam"] == 3
+    assert sb_cikis.json()["toplam"] == 1
+
+
 def test_guvenlik_baslikları_her_yanitta_var(client):
     """2026-09-20: her yanıta clickjacking/MIME-sniffing'e karşı ek bir
     savunma katmanı ekleyen standart güvenlik başlıkları eklendi (bkz.

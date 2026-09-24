@@ -3585,6 +3585,7 @@ def kayitlari_listele(
     yetki_durumu: Optional[str] = None,
     kamera_id: Optional[str] = None,
     vardiya_adi: Optional[str] = None,
+    yon: Optional[str] = None,
     limit: int = Query(50, ge=1, le=500),
     offset: int = Query(0, ge=0),
     db: Session = Depends(get_db),
@@ -3597,6 +3598,13 @@ def kayitlari_listele(
         sorgu = sorgu.filter(models.Kayit.yetki_durumu == yetki_durumu)
     if kamera_id:
         sorgu = sorgu.filter(models.Kayit.kamera_id.ilike(f"%{kamera_id}%"))
+    # 2026-09-24 kullanıcı geri bildirimi: "Son Geçişler" ekranında GİRİŞ/ÇIKIŞ
+    # ızgaraları, TEK bir karma (yön filtresi olmayan) sayfadan istemci
+    # tarafında ikiye ayrılıyordu -- bkz. bu parametrenin frontend/app.js
+    # ::sonGecislerYukle'deki kullanım notu. Burada eklenen `yon` filtresi,
+    # her ızgaranın kendi sayfasını/offsetini bağımsız çekebilmesini sağlar.
+    if yon:
+        sorgu = sorgu.filter(models.Kayit.yon == yon)
     if baslangic:
         sorgu = sorgu.filter(models.Kayit.tarih_saat >= _iso_tarih_parametresini_coz(baslangic, "baslangic"))
     bitis_siniri = _bitis_tarih_filtresi_sinirini_hesapla(bitis)
@@ -3647,6 +3655,7 @@ def kayitlar_sayfa_bilgisi(
     yetki_durumu: Optional[str] = None,
     kamera_id: Optional[str] = None,
     vardiya_adi: Optional[str] = None,
+    yon: Optional[str] = None,
     limit: int = Query(50, ge=1, le=500),
     db: Session = Depends(get_db),
     kullanici: models.Kullanici = Depends(_personel_girisi_gerekli),
@@ -3659,6 +3668,9 @@ def kayitlar_sayfa_bilgisi(
         sorgu = sorgu.filter(models.Kayit.yetki_durumu == yetki_durumu)
     if kamera_id:
         sorgu = sorgu.filter(models.Kayit.kamera_id.ilike(f"%{kamera_id}%"))
+    # bkz. kayitlari_listele'deki AYNI başlıklı 2026-09-24 notu.
+    if yon:
+        sorgu = sorgu.filter(models.Kayit.yon == yon)
     if baslangic:
         sorgu = sorgu.filter(models.Kayit.tarih_saat >= _iso_tarih_parametresini_coz(baslangic, "baslangic"))
     bitis_siniri = _bitis_tarih_filtresi_sinirini_hesapla(bitis)
