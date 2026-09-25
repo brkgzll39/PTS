@@ -1576,7 +1576,17 @@ async function kameralariYukle() {
       const adDuzenleBtn = rolYeterli("operatör")
         ? `<button type="button" class="btn btn-sm btn-link p-0 ms-1 align-baseline" title="Kamera adını değiştir" aria-label="Kamera adını değiştir" onclick="kameraAdDuzenleAc('${k.id}')"><i class="bi bi-pencil-square"></i></button>`
         : "";
-      return `<tr><td><strong>${escapeHtml(k.ad)}</strong>${adDuzenleBtn}${roiRozeti}</td><td>${yonSecim}</td><td class="text-muted small text-truncate" style="max-width: 180px">${escapeHtml(k.rtsp_url)}</td><td>${durum}${yenidenBaglanmaBadge}</td><td>${tcpBadge}</td><td class="text-nowrap">${silBtn}${yenidenBtn}${roiBtn}</td></tr>`;
+      // 2026-09-25: kameranın kendi plaka okuması (Dahua) -- bkz. kameraDahuaAc.
+      const dahuaAyar = k.dahua_anpr || {};
+      const dahuaRozeti = dahuaAyar.aktif
+        ? (k.dahua && k.dahua.bagli
+          ? `<span class="badge bg-success-subtle text-success-emphasis ms-1" title="Kameranın kendi plaka okuması PTS'e aktarılıyor${k.dahua.son_plaka ? " — son: " + escapeHtml(k.dahua.son_plaka) : ""}"><i class="bi bi-broadcast"></i> Kamera ANPR</span>`
+          : `<span class="badge bg-danger-subtle text-danger-emphasis ms-1" title="${escapeHtml((k.dahua && k.dahua.son_hata) || "Kameranın olay akışına bağlanılamadı")}"><i class="bi bi-broadcast"></i> Kamera ANPR bağlı değil</span>`)
+        : "";
+      const dahuaBtn = rolYeterli("yonetici")
+        ? `<button class="btn btn-sm btn-outline-info ms-1" title="Kameranın kendi plaka okumasını (Dahua) PTS'e aktar" onclick="kameraDahuaAc('${k.id}')"><i class="bi bi-broadcast"></i></button>`
+        : "";
+      return `<tr><td><strong>${escapeHtml(k.ad)}</strong>${adDuzenleBtn}${roiRozeti}${dahuaRozeti}</td><td>${yonSecim}</td><td class="text-muted small text-truncate" style="max-width: 180px">${escapeHtml(k.rtsp_url)}</td><td>${durum}${yenidenBaglanmaBadge}</td><td>${tcpBadge}</td><td class="text-nowrap">${silBtn}${yenidenBtn}${roiBtn}${dahuaBtn}</td></tr>`;
     }).join("") || '<tr><td colspan="6" class="text-center text-muted py-4">Henüz kamera tanımlanmadı</td></tr>';
     kameraDuvariniGuncelle(kameralar);
   } catch (err) { _yuklemeHatasi("Kamera listesi", err); }
@@ -1656,6 +1666,98 @@ document.getElementById("kameraAdDuzenleGirdi")?.addEventListener("keydown", (e)
   if (e.key === "Enter") {
     e.preventDefault();
     kameraAdDuzenleKaydet();
+  }
+});
+
+// ---------------------- KAMERANIN KENDİ PLAKA OKUMASI (Dahua, 2026-09-25) ----------------------
+let _kameraDahuaId = null;
+
+function _dahuaFormGovdesi() {
+  const port = document.getElementById("kameraDahuaPort").value.trim();
+  const govde = {
+    aktif: document.getElementById("kameraDahuaAktif").checked,
+    olaylar: document.getElementById("kameraDahuaOlaylar").value.trim() || null,
+  };
+  if (port) govde.http_port = parseInt(port, 10);
+  return govde;
+}
+
+async function _kameraDahuaDurumunuGoster() {
+  const el = document.getElementById("kameraDahuaDurum");
+  if (!el || !_kameraDahuaId) return;
+  try {
+    const v = await apiCagir(`/kameralar/${encodeURIComponent(_kameraDahuaId)}/dahua-durum`);
+    const d = v.durum;
+    if (!v.ayar || !v.ayar.aktif) { el.innerHTML = '<span class="text-muted">Kapalı — PTS yalnızca kendi okumasını kullanıyor.</span>'; return; }
+    if (!d) { el.innerHTML = '<span class="text-warning">Açık, ancak kamera pipeline\'ı çalışmıyor (kamera pasif ya da kütüphaneler eksik).</span>'; return; }
+    const zaman = t => t ? new Date(t * 1000).toLocaleString("tr-TR") : "—";
+    const ham = (d.ham_ornekler || []).slice(-5).reverse().map(o => `<pre class="small bg-light p-2 mb-1" style="white-space:pre-wrap">${escapeHtml(o.metin)}</pre>`).join("");
+    el.innerHTML = `
+      <div><strong>Durum:</strong> ${d.bagli ? '<span class="text-success">Bağlı</span>' : '<span class="text-danger">Bağlı değil</span>'}
+        · Adres: ${escapeHtml(d.adres || "—")} · Olay: <code>${escapeHtml(d.olaylar || "")}</code></div>
+      <div>Alınan plaka olayı: ${d.olay_sayisi} · Son: ${escapeHtml(d.son_plaka || "—")} (${zaman(d.son_olay)}) · Kalp atışı: ${d.kalp_atisi_sayisi}</div>
+      ${d.son_hata ? `<div class="text-danger">Son hata: ${escapeHtml(d.son_hata)}</div>` : ""}
+      ${ham ? `<details class="mt-2"><summary>Kameradan gelen son ham mesajlar (teşhis)</summary>${ham}</details>` : ""}`;
+  } catch (e) {
+    el.innerHTML = `<span class="text-danger">Durum alınamadı: ${escapeHtml(e.message)}</span>`;
+  }
+}
+
+function kameraDahuaAc(id) {
+  const kamera = (_kameralarCache || []).find(k => k.id === id);
+  if (!kamera) return;
+  _kameraDahuaId = id;
+  const ayar = kamera.dahua_anpr || {};
+  document.getElementById("kameraDahuaAd").textContent = kamera.ad;
+  document.getElementById("kameraDahuaAktif").checked = !!ayar.aktif;
+  document.getElementById("kameraDahuaOlaylar").value = ayar.olaylar || "";
+  document.getElementById("kameraDahuaPort").value = ayar.http_port || "";
+  document.getElementById("kameraDahuaTestSonuc").innerHTML = "";
+  document.getElementById("kameraDahuaDurum").innerHTML = '<span class="text-muted">Yükleniyor…</span>';
+  bootstrap.Modal.getOrCreateInstance(document.getElementById("kameraDahuaModal")).show();
+  _kameraDahuaDurumunuGoster();
+}
+
+document.getElementById("kameraDahuaTestBtn")?.addEventListener("click", async () => {
+  const btn = document.getElementById("kameraDahuaTestBtn");
+  const el = document.getElementById("kameraDahuaTestSonuc");
+  btn.disabled = true;
+  el.innerHTML = '<div class="text-muted small"><span class="spinner-border spinner-border-sm"></span> Kameraya bağlanılıyor ve 8 sn dinleniyor…</div>';
+  try {
+    const r = await apiCagir(`/kameralar/${encodeURIComponent(_kameraDahuaId)}/dahua-test`, {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(_dahuaFormGovdesi()),
+    });
+    const olaylar = (r.olaylar || []).map(o => `<li><strong>${escapeHtml(o.plaka)}</strong> (${escapeHtml(o.kod || "?")}${o.fotograf ? ", fotoğraflı" : ""})</li>`).join("");
+    const ham = (r.ham_ornekler || []).map(m => `<pre class="small bg-light p-2 mb-1" style="white-space:pre-wrap">${escapeHtml(m)}</pre>`).join("");
+    el.innerHTML = `
+      <div class="alert ${r.basarili ? "alert-success" : "alert-danger"} py-2 small mb-2">
+        ${r.basarili ? "Bağlantı başarılı: kamera olay akışı geliyor." : escapeHtml(r.hata || "Bağlantı başarısız")}
+        <div class="text-muted">Adres: ${escapeHtml(r.adres || "—")} · HTTP: ${r.http_durum ?? "—"} · Kalp atışı: ${r.kalp_atisi_sayisi}</div>
+      </div>
+      ${olaylar ? `<div class="small">Bu sürede okunan plakalar:<ul class="mb-1">${olaylar}</ul></div>` : (r.basarili ? '<div class="small text-muted">Bu 8 saniyede kameranın önünden araç geçmedi (normal). Kaydedip açtıktan sonra gelen plakalar aşağıdaki durumda görünür.</div>' : "")}
+      ${ham ? `<details><summary class="small">Ham mesajlar (teşhis)</summary>${ham}</details>` : ""}`;
+  } catch (e) {
+    el.innerHTML = `<div class="alert alert-danger py-2 small">${escapeHtml(e.message)}</div>`;
+  } finally {
+    btn.disabled = false;
+  }
+});
+
+document.getElementById("kameraDahuaKaydetBtn")?.addEventListener("click", async () => {
+  const btn = document.getElementById("kameraDahuaKaydetBtn");
+  btn.disabled = true;
+  try {
+    await apiCagir(`/kameralar/${encodeURIComponent(_kameraDahuaId)}/dahua`, {
+      method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(_dahuaFormGovdesi()),
+    });
+    toastGoster("Kamera ayarı kaydedildi; kamera yeniden başlatıldı.", "basari");
+    kameralariYukle();
+    // Dinleyicinin bağlanması birkaç saniye sürer.
+    setTimeout(_kameraDahuaDurumunuGoster, 3000);
+  } catch (e) {
+    toastGoster("Kaydedilemedi: " + e.message, "hata");
+  } finally {
+    btn.disabled = false;
   }
 });
 

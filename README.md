@@ -3827,3 +3827,64 @@ kaydediliyor.
 önünden iki kez biri geçmesi (eski kodda 2 kayıt, yenide 1), 65 sn boyunca
 yalnızca düşük güvenli okumalar (eski kodda 2, yenide 1), aracın gerçekten
 gidip dönmesi (her iki kodda da 2). İlk ikisi eski kodda başarısız oluyor.
+
+## Kameranın Kendi Plaka Okumasını PTS'e Aktarma (Dahua ANPR, 2026-09-25, kullanıcı isteği)
+
+Kullanıcı: "Dahua ITC413 ... PTS'e aktaran bir bağlantı ekler misin, nasıl
+olacak deneyelim". Dahua ITC413-PW4D gibi giriş-çıkış ANPR kameraları
+plakayı kendileri de okur (üretici: tanıma ≥%98). Bu sürümle PTS, kameranın
+okumasını da alıp kendi okumasıyla birleştiriyor.
+
+**Nasıl çalışır:**
+- PTS, kameranın HTTP olay akışına bağlanır (Dahua HTTP API:
+  `snapManager.cgi?action=attachFileProc&Flags[0]=Event&Events=[TrafficJunction]`,
+  Digest kimlik doğrulama). Kullanıcı adı/parola ve IP, kameranın PTS'te
+  zaten kayıtlı RTSP adresinden alınır; ayrıca girilmez.
+- Kamera her plaka okuduğunda olay metnini (`...TrafficCar.PlateNumber=...`)
+  ve fotoğrafını gönderir. PTS bu okumayı kendi çok kareli oylamasına
+  **güçlü bir oy** olarak ekler (tek başına ~5 iyi kareye denk):
+  - iki okuma aynıysa kayıt daha güvenilir olur;
+  - PTS'in modeli okuyamasa bile (gece, parlama) kameranın okuması tek
+    başına kaydı oluşturur (kaydedilen güven %98);
+  - çelişkide kameranın okuması ağır basar (ör. PTS "39 AES 146", kamera
+    "39 AES 145" → "39 AES 145").
+  Aynı araç için tekrar kayıt koruması (bekleyen araç, çapraz kamera) bu
+  okumalar için de aynen geçerli; kayıt yine tek kayıttır.
+- Kameranın bağlantısı koparsa PTS artan beklemeyle (en fazla 60 sn) yeniden
+  bağlanır; bağlantı yoksa PTS kendi okumasıyla eskisi gibi çalışmaya
+  devam eder.
+
+**Açmak için:** Kameralar sekmesi → kamera satırındaki yayın simgesi
+(yalnızca yönetici). Önce "Bağlantıyı Test Et" (8 sn dinler; HTTP durumu,
+kalp atışı ve bu sürede okunan plakaları gösterir), sonra "Kameranın kendi
+plaka okumasını kullan" → Kaydet. Kamera satırında "Kamera ANPR" rozeti
+bağlantı durumunu gösterir; penceredeki durum bölümünde alınan olay sayısı,
+son plaka, son hata ve kameradan gelen ham mesajlar (teşhis için) görünür.
+Her açma/kapama Denetim Kayıtları'na yazılır.
+
+**Kamerada yapılması gerekenler:** kameranın web arayüzünde ANPR/plaka
+tanıma açık olmalı, ülke Türkiye seçilmeli, çekim çizgisi (Snapshot
+Triggering Line) aracın durduğu yere konmalı. RTSP adresinde kullanıcı
+adı/parola bulunmalı (`rtsp://kullanici:parola@ip:554/...`). Kameranın web
+portu 80 değilse pencerede belirtilmeli.
+
+**Bilinen belirsizlik:** Dahua'nın farklı yazılım sürümleri olay metnini
+farklı biçimde ve farklı olay adlarıyla gönderebiliyor. Plaka hem
+`...PlateNumber=` satırlarından hem JSON'daki `"PlateNumber"` alanından
+okunuyor; olay adı pencereden değiştirilebiliyor (ör.
+`TrafficJunction,TrafficParkingSpace`). Test olay getirmiyorsa, penceredeki
+ham mesajlar sahadaki gerçek biçimi gösterir.
+
+**Testler (gerçekten çalıştırıldı):** `tests/test_dahua_olay.py` — Dahua'nın
+API belgesindeki yanıt biçimini taklit eden yerel bir sahte kamera
+sunucusuyla (gerçek Digest kimlik doğrulaması dahil): RTSP adresinden
+bağlantı bilgisi, olay adı doğrulaması (URL enjeksiyonu), anahtar=değer ve
+JSON biçimlerinden plaka çıkarma, parça parça gelen akışın doğru
+ayrıştırılması ve fotoğrafla eşleştirilmesi, dinleyicinin plakayı ve
+fotoğrafı alması, parolanın durum bilgisinde görünmemesi, bağlantı testi
+(başarılı / yanlış parola / ulaşılamayan kamera). `tests/test_camera_reader.py`
+— PTS okuyamasa da kameranın okumasıyla kayıt oluşması, çelişkide kameranın
+okumasının ağır basması, dinleyicinin pipeline ile başlayıp durması.
+`tests/test_api.py` (CI) — aç/kapat, kimliksiz RTSP'de 400, yetki, olay adı
+doğrulaması, durum ve test uçları, denetim kaydı. Panel penceresi
+Playwright ile doğrulandı.

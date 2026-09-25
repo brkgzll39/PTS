@@ -1328,3 +1328,86 @@ def test_arac_gercekten_gidip_donerse_yeni_kayit_olusur(monkeypatch, sahte_api):
     _KontrolluEngine.gorunur = False
     _kareleri_isle(pipeline, saat, 3104.5, 3108)
     assert len(sahte_api.alinan_istekler) == 2
+
+
+# ------------------------------------------------------------------
+# 2026-09-25: kameranın KENDİ ANPR okuması (Dahua) oylamaya güçlü oy olarak
+# katılır -- bkz. KameraPipeline.harici_okuma_ekle, backend/dahua_olay.py.
+# ------------------------------------------------------------------
+
+def _gonderilenleri_topla(pipeline, saat, bas, bit, adim=0.5):
+    kare = np.full((240, 320, 3), 60, dtype=np.uint8)
+    gonderilen = []
+    t = bas
+    while t <= bit:
+        saat[0] = t
+        gonderilen += pipeline._kareyi_isle(kare) or []
+        t += adim
+    return gonderilen
+
+
+def test_kameranin_kendi_okumasi_pts_okuyamasa_da_kayit_olusturur(monkeypatch, sahte_api):
+    saat = [5000.0]
+    pipeline = _saat_ile_pipeline(monkeypatch, sahte_api, saat)
+    _KontrolluEngine.gorunur = False                     # PTS'in modeli plakayı hiç okuyamıyor (gece)
+    pipeline.harici_okuma_ekle("39AES145", b"\xff\xd8kamera-fotosu\xff\xd9")
+    pipeline.harici_okuma_ekle("PLAKASIZ")               # biçime uymayan -> atlanır
+    gonderilen = _gonderilenleri_topla(pipeline, saat, 5000, 5004)
+    assert gonderilen == ["39 AES 145"]
+    assert len(sahte_api.alinan_istekler) == 1
+
+
+def test_celiskide_kameranin_okumasi_agir_basar(monkeypatch, sahte_api):
+    saat = [6000.0]
+    pipeline = _saat_ile_pipeline(monkeypatch, sahte_api, saat)
+
+    class _YanlisOkuyan(_KontrolluEngine):
+        def tahmin_et(self, frame):
+            return [_SahteSonuc("39AES146", 0.95)]       # PTS son haneyi yanlış okuyor
+
+    pipeline.motor.__class__ = _YanlisOkuyan
+    saat[0] = 6000.0
+    pipeline.harici_okuma_ekle("39AES145")               # kamera doğru okudu
+    gonderilen = _gonderilenleri_topla(pipeline, saat, 6000, 6001.5)   # 4 kare PTS okuması
+    _KontrolluEngine.gorunur = False
+    pipeline.motor.__class__ = _KontrolluEngine
+    gonderilen += _gonderilenleri_topla(pipeline, saat, 6002, 6004)
+    assert gonderilen == ["39 AES 145"]
+
+
+def test_dahua_ayari_aciksa_pipeline_dinleyiciyi_baslatir_ve_durdurur(monkeypatch, sahte_api):
+    baslatilan = []
+
+    class _SahteDinleyici:
+        def __init__(self, rtsp, ad, geri_cagri, olaylar=None, http_port=None):
+            baslatilan.append({"rtsp": rtsp, "olaylar": olaylar, "port": http_port})
+            self.durduruldu = False
+
+        def baslat(self):
+            pass
+
+        def durdur(self):
+            self.durduruldu = True
+
+        def durum(self):
+            return {"bagli": True}
+
+    from backend import dahua_olay
+    monkeypatch.setattr(dahua_olay, "DahuaOlayDinleyici", _SahteDinleyici)
+    monkeypatch.setattr(camera_reader, "ANPREngine", _SahteEngine)
+    monkeypatch.setattr(camera_reader, "_paylasilan_motor", None)
+    p = camera_reader.KameraPipeline(
+        video_kaynagi="rtsp://admin:x@10.0.0.9/cam", api_url=sahte_api.url, kamera_id="DAHUA-TEST",
+        dahua_ayarlari={"aktif": True, "olaylar": "TrafficJunction", "http_port": 8080},
+    )
+    p.baslat()
+    try:
+        assert baslatilan == [{"rtsp": "rtsp://admin:x@10.0.0.9/cam", "olaylar": "TrafficJunction", "port": 8080}]
+        assert p.durum_bilgisi()["dahua"] == {"bagli": True}
+    finally:
+        p.durdur()
+    assert p._dahua_dinleyici.durduruldu is True
+
+    kapali = camera_reader.KameraPipeline(video_kaynagi="x", api_url=sahte_api.url, kamera_id="K2",
+                                          dahua_ayarlari={"aktif": False})
+    assert kapali._dahua_ayarlari is None and kapali.dahua_durumu() is None

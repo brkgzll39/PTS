@@ -5254,3 +5254,57 @@ def test_anpr_modelleri_listesi(client, yetkili_header, izleyici_header):
 def test_dogruluk_testi_model_adi_yol_iceremez(client, operator_header):
     r = client.post("/sistem/dogruluk-testi", json={"klasor": "/tmp", "ocr_modeli": "../../etc/passwd"}, headers=operator_header)
     assert r.status_code == 422
+
+
+# ------------------------------------------------------------------
+# KAMERANIN KENDİ PLAKA OKUMASI (Dahua) -- 2026-09-25, Patch #109
+# ------------------------------------------------------------------
+
+def test_dahua_rtsp_adresinde_kimlik_yoksa_acilamaz(client, yetkili_header, roi_test_kamera_id):
+    r = client.patch(f"/kameralar/{roi_test_kamera_id}/dahua", json={"aktif": True}, headers=yetkili_header)
+    assert r.status_code == 400
+    assert "kullanıcı adı" in r.json()["detail"]
+
+
+def test_dahua_ac_kapat_durum_ve_test(client, yetkili_header, operator_header, roi_test_kamera_id):
+    r = client.post("/kameralar", json={
+        "ad": "Dahua Test Kamerası", "rtsp_url": "rtsp://admin:gizli@127.0.0.1:554/cam", "yon": "giris",
+    }, headers=yetkili_header)
+    assert r.status_code == 200, r.text
+    kid = r.json()["id"]
+    try:
+        r = client.patch(f"/kameralar/{kid}/dahua", json={"aktif": True, "olaylar": "TrafficJunction", "http_port": 1},
+                         headers=yetkili_header)
+        assert r.status_code == 200, r.text
+        assert r.json()["dahua_anpr"] == {"aktif": True, "olaylar": "TrafficJunction", "http_port": 1}
+        assert "gizli" not in r.text, "Parola yanıtta görünmemeli"
+
+        liste = next(k for k in client.get("/kameralar", headers=yetkili_header).json() if k["id"] == kid)
+        assert liste["dahua_anpr"]["aktif"] is True
+
+        durum = client.get(f"/kameralar/{kid}/dahua-durum", headers=operator_header).json()
+        assert durum["ayar"]["aktif"] is True
+
+        # Port 1'de kamera yok: test anlaşılır bir hatayla başarısız olmalı (çökmemeli).
+        t = client.post(f"/kameralar/{kid}/dahua-test", json={"aktif": True, "http_port": 1}, headers=yetkili_header)
+        assert t.status_code == 200, t.text
+        assert t.json()["basarili"] is False and "bağlanılamadı" in t.json()["hata"]
+
+        d = client.get("/denetim-kayitlari", params={"eylem": "kamera_dahua_anpr"}, headers=yetkili_header).json()
+        assert any("Dahua Test Kamerası" in k["aciklama"] for k in d)
+
+        r = client.patch(f"/kameralar/{kid}/dahua", json={"aktif": False}, headers=yetkili_header)
+        assert r.json()["dahua_anpr"]["aktif"] is False
+    finally:
+        client.delete(f"/kameralar/{kid}", headers=yetkili_header)
+
+
+def test_dahua_yetki_ve_olay_adi_dogrulamasi(client, yetkili_header, operator_header, roi_test_kamera_id):
+    assert client.patch(f"/kameralar/{roi_test_kamera_id}/dahua", json={"aktif": False},
+                        headers=operator_header).status_code == 403
+    assert client.post(f"/kameralar/{roi_test_kamera_id}/dahua-test", json={"aktif": True},
+                       headers=operator_header).status_code == 403
+    r = client.patch(f"/kameralar/{roi_test_kamera_id}/dahua", json={"aktif": False, "olaylar": "Traffic]&x=1"},
+                     headers=yetkili_header)
+    assert r.status_code == 422
+    assert client.patch("/kameralar/olmayan-id/dahua", json={"aktif": False}, headers=yetkili_header).status_code == 404

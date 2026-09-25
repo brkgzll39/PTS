@@ -468,6 +468,17 @@ class KameraAdGuncelle(BaseModel):
     ad: str
 
 
+class KameraDahuaGuncelle(BaseModel):
+    """Kameranın KENDİ ANPR okumasını PTS'e aktarma ayarı (2026-09-25, bkz.
+    backend/dahua_olay.py, main.py::kamera_dahua_guncelle). Kimlik bilgileri
+    kameranın kayıtlı RTSP adresinden alınır, burada girilmez."""
+    aktif: bool
+    # Virgülle ayrılmış Dahua olay adları; boş = varsayılan (TrafficJunction).
+    olaylar: Optional[str] = Field(None, max_length=200, pattern=r"^[A-Za-z0-9_, ]*$")
+    # Kameranın web/HTTP portu; boş = 80.
+    http_port: Optional[int] = Field(None, ge=1, le=65535)
+
+
 class KameraRoiNoktasi(BaseModel):
     """Serbest çizim (polygon) ROI'nin tek bir köşe noktası -- kare
     genişliğinin/yüksekliğinin YÜZDESİ (0-100) cinsinden."""

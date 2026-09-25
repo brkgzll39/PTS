@@ -47,7 +47,7 @@ import tempfile
 import time
 import threading
 import logging
-from collections import Counter
+from collections import Counter, deque
 from typing import Optional
 from urllib.parse import urlsplit, urlunsplit
 
@@ -243,6 +243,14 @@ _SUREGELEN_PLAKA_ZAMAN_ASIMI_SN = OTURUM_MAX_SURE_SN * 2.5  # = 20.0 sn
 # devamıdır ve aynı görünüm için en fazla BİR kayıt oluşturulur.
 ARAC_AYRILMA_MIN_SN = 60.0
 
+# Kameranın KENDİ ANPR okuması (Dahua, bkz. backend/dahua_olay.py): oylamada
+# kaç iyi kareye denk sayılacağı ve kaydedilecek güveni. Üretici tanıma
+# oranını ≥%98 veriyor; güven, panelin varsayılan kayıt eşiğinin (%97)
+# üstünde tutuldu ki kameranın tek başına okuduğu (PTS modelinin okuyamadığı)
+# bir araç da kayda düşebilsin.
+HARICI_OKUMA_OY_AGIRLIGI = 5.0
+HARICI_OKUMA_GUVENI = 0.98
+
 # ------------------------------------------------------------------
 # "SONDAN KARAKTER EKSİK" DÜZELTMESİ (2026-09-18)
 # ------------------------------------------------------------------
@@ -323,8 +331,13 @@ class PlakaOyBirikimi:
         "en_iyi_jpeg", "_en_iyi_jpeg_guveni", "toplam_kare_sayisi",
     )
 
-    def __init__(self, plaka: str, guven: float, simdi: float, jpeg: Optional[bytes] = None):
-        self.oylar: "Counter[str]" = Counter({plaka: guven})
+    def __init__(self, plaka: str, guven: float, simdi: float, jpeg: Optional[bytes] = None,
+                 agirlik: float = 1.0):
+        # `agirlik` (2026-09-25): oya katkı çarpanı -- kameranın KENDİ ANPR
+        # okuması (bkz. KameraPipeline.harici_okuma_ekle) birkaç iyi kareye
+        # denk sayılır. Kaydedilen güven (`_varyant_maks_guven`) ağırlıktan
+        # BAĞIMSIZ kalır (0-1 aralığında gerçek güven).
+        self.oylar: "Counter[str]" = Counter({plaka: guven * agirlik})
         self._varyant_maks_guven: dict[str, float] = {plaka: guven}
         self.ilk_gorulme = simdi
         self.son_gorulme = simdi
@@ -332,8 +345,9 @@ class PlakaOyBirikimi:
         self._en_iyi_jpeg_guveni = guven
         self.toplam_kare_sayisi = 1
 
-    def ekle(self, plaka: str, guven: float, simdi: float, jpeg: Optional[bytes] = None) -> None:
-        self.oylar[plaka] += guven
+    def ekle(self, plaka: str, guven: float, simdi: float, jpeg: Optional[bytes] = None,
+             agirlik: float = 1.0) -> None:
+        self.oylar[plaka] += guven * agirlik
         if guven > self._varyant_maks_guven.get(plaka, -1.0):
             self._varyant_maks_guven[plaka] = guven
         self.son_gorulme = simdi
@@ -406,7 +420,8 @@ class PlakaOturumTakipcisi:
         self.benzerlik_esigi = benzerlik_esigi
         self.max_oturum_sure_sn = max_oturum_sure_sn
 
-    def guncelle(self, plaka: str, guven: float, simdi: float, jpeg: Optional[bytes] = None) -> None:
+    def guncelle(self, plaka: str, guven: float, simdi: float, jpeg: Optional[bytes] = None,
+                 agirlik: float = 1.0) -> None:
         en_yakin_anahtar = None
         en_yakin_mesafe = None
         for anahtar, birikim in self._acik.items():
@@ -416,9 +431,9 @@ class PlakaOturumTakipcisi:
             if mesafe <= self.benzerlik_esigi and (en_yakin_mesafe is None or mesafe < en_yakin_mesafe):
                 en_yakin_anahtar, en_yakin_mesafe = anahtar, mesafe
         if en_yakin_anahtar is not None:
-            self._acik[en_yakin_anahtar].ekle(plaka, guven, simdi, jpeg)
+            self._acik[en_yakin_anahtar].ekle(plaka, guven, simdi, jpeg, agirlik)
         else:
-            self._acik[plaka] = PlakaOyBirikimi(plaka, guven, simdi, jpeg)
+            self._acik[plaka] = PlakaOyBirikimi(plaka, guven, simdi, jpeg, agirlik)
 
     def bitmis_oturumlari_al(self, simdi: float, zorla: bool = False) -> list:
         """Kapanmış oturumların kazananlarını döner -- her sözlüğe ayrıca bir
@@ -608,7 +623,7 @@ class KameraPipeline:
                  kamera_id: str = "KAMERA-1", tekrar_gecikme_sn: int = 30, yon: str = "giris",
                  baglanti_zaman_asimi_sn: float = 8.0, donma_esigi_sn: float = 10.0,
                  min_guven_skoru: float = VARSAYILAN_MIN_GUVEN_SKORU,
-                 roi: Optional[dict] = None):
+                 roi: Optional[dict] = None, dahua_ayarlari: Optional[dict] = None):
         if not KUTUPHANELER_MEVCUT:
             raise RuntimeError(
                 "Gerekli kütüphaneler kurulu değil. "
@@ -657,6 +672,13 @@ class KameraPipeline:
         # plaka metni -> {"son": son okunma zamanı, "bildirildi": bu kesintisiz
         # görünüm için kayıt gönderildi mi} -- bkz. ARAC_AYRILMA_MIN_SN notu.
         self._gorunumler: dict = {}
+        # Kameranın kendi ANPR okumaları (bkz. harici_okuma_ekle): olay
+        # dinleyici thread'i buraya ekler, pipeline thread'i `_kareyi_isle`
+        # başında boşaltır -- oturum takipçisine tek thread'den erişilir.
+        self._harici_okumalar: deque = deque(maxlen=50)
+        self._harici_kilit = threading.Lock()
+        self._dahua_ayarlari = dahua_ayarlari if (dahua_ayarlari or {}).get("aktif") else None
+        self._dahua_dinleyici = None
         # GÖZLEMLENEBİLİRLİK: dedektör hiçbir plaka bulamazsa (sonuc listesi
         # tamamen boşsa) bunu HER karede loglamak günlük dosyasını gereksiz
         # şişirir (boş yol/trafiksiz an normaldir); ama hiç loglamamak da
@@ -728,7 +750,30 @@ class KameraPipeline:
             "donmus": donmus,
             "yeniden_baglanma_sayisi": self._yeniden_baglanma_sayisi,
             "calisma_suresi_sn": round(calisma_suresi, 0),
+            "dahua": self.dahua_durumu(),
         }
+
+    def dahua_durumu(self) -> Optional[dict]:
+        """Kameranın kendi plaka okuması (Dahua) açıksa bağlantı durumu."""
+        if self._dahua_dinleyici is None:
+            return None
+        try:
+            return self._dahua_dinleyici.durum()
+        except Exception:
+            return None
+
+    def harici_okuma_ekle(self, plaka_ham: str, jpeg: Optional[bytes] = None) -> None:
+        """Kameranın KENDİ ANPR'ının okuduğu plakayı (bkz. backend/dahua_olay.py)
+        bir sonraki karede oylamaya eklenmek üzere sıraya koyar. Thread-safe.
+        Türk plaka biçimine uymayan okumalar (plakasız araç, yabancı plaka)
+        loglanıp atlanır."""
+        plaka = plaka_dogrula(re.sub(r"[^A-Za-z0-9]", "", plaka_ham or "").upper())
+        if plaka is None:
+            logger.info("[%s] Kameranın okuduğu plaka Türk plaka biçimine uymadı, atlandı: %r",
+                        self.kamera_id, plaka_ham)
+            return
+        with self._harici_kilit:
+            self._harici_okumalar.append((plaka, jpeg))
 
     # ------------------------------------------------------------------
     # Pipeline kontrolü
@@ -740,9 +785,26 @@ class KameraPipeline:
         self._dongu_thread = threading.Thread(target=self._dongu, daemon=True, name=f"pts-pipeline-{self.kamera_id}")
         self._dongu_thread.start()
         logger.info("Kamera pipeline başlatıldı: %s (%s)", self.kamera_id, _rtsp_url_maskele(self.video_kaynagi))
+        if self._dahua_ayarlari:
+            try:
+                try:
+                    from backend.dahua_olay import DahuaOlayDinleyici
+                except ImportError:
+                    from dahua_olay import DahuaOlayDinleyici
+                self._dahua_dinleyici = DahuaOlayDinleyici(
+                    self.video_kaynagi, self.kamera_id, self.harici_okuma_ekle,
+                    olaylar=self._dahua_ayarlari.get("olaylar"), http_port=self._dahua_ayarlari.get("http_port"),
+                )
+                self._dahua_dinleyici.baslat()
+            except Exception as exc:
+                # Kameranın kendi okuması yalnızca EK bir kaynak -- başlatılamazsa
+                # PTS'in kendi okuması eskisi gibi çalışmaya devam eder.
+                logger.error("[%s] Kameranın kendi plaka okuması (Dahua) başlatılamadı: %s", self.kamera_id, exc)
 
     def durdur(self) -> None:
         self.calisiyor = False
+        if self._dahua_dinleyici is not None:
+            self._dahua_dinleyici.durdur()
         # Okuyucu/döngü thread'lerinin kendi kendine çıkması için nesli geçersiz kıl.
         with self._gen_kilit:
             self._gen += 1
@@ -941,6 +1003,16 @@ class KameraPipeline:
         # tam da bu depoda daha önce görülen "sessiz üzerine yazma" hata
         # sınıfının bir başka biçimi olurdu.
         bitmis_oturumlar = self._oturum_takipcisi.bitmis_oturumlari_al(simdi)
+
+        # Kameranın kendi ANPR okumaları (varsa): güçlü bir oy olarak ekle.
+        with self._harici_kilit:
+            harici = list(self._harici_okumalar)
+            self._harici_okumalar.clear()
+        for plaka, harici_jpeg in harici:
+            self._gorunumu_tazele(plaka, simdi)
+            self._oturum_takipcisi.guncelle(
+                plaka, HARICI_OKUMA_GUVENI, simdi, harici_jpeg or jpeg_bytes, agirlik=HARICI_OKUMA_OY_AGIRLIGI,
+            )
 
         for t in tespitler:
             if self.roi and not t.get("roi_icinde", True):

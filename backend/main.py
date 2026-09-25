@@ -345,6 +345,10 @@ def _pipeline_baslat(kamera: dict) -> bool:
                 min_guven_skoru=min_guven,
                 roi=kamera.get("roi"),
                 tekrar_gecikme_sn=max(0, tekrar_gecikme_sn),
+                # 2026-09-25: kameranın kendi ANPR okuması (Dahua) açıksa
+                # pipeline onu da dinleyip oylamaya ekler -- bkz.
+                # backend/dahua_olay.py.
+                dahua_ayarlari=kamera.get("dahua_anpr"),
             )
             p.baslat()
             _aktif_pipelineler[kid] = p
@@ -2243,6 +2247,10 @@ def kameralari_getir(kullanici: models.Kullanici = Depends(_personel_girisi_gere
         gorunum["kutuphaneler_mevcut"] = _CAM_LIBS
         if p is not None:
             gorunum.update({k2: v2 for k2, v2 in p.durum_bilgisi().items() if k2 != "calisiyor"})
+            if isinstance(gorunum.get("dahua"), dict):
+                # Ham olay metinleri yalnızca teşhis ekranında (dahua-durum,
+                # yönetici/operatör) gösterilir; bu sık çağrılan listede değil.
+                gorunum["dahua"] = {k3: v3 for k3, v3 in gorunum["dahua"].items() if k3 != "ham_ornekler"}
         else:
             gorunum.update({"son_kare_yasi_sn": None, "donmus": False,
                              "yeniden_baglanma_sayisi": 0, "calisma_suresi_sn": 0})
@@ -2479,6 +2487,73 @@ def kamera_roi_guncelle(kamera_id: str, veri: schemas.KameraRoiGuncelle, kullani
         time.sleep(0.3)
         _pipeline_baslat(kamera)
     return _kamera_guvenli_gorunum(kamera)
+
+
+# ------------------------------------------------------------------
+# KAMERANIN KENDİ PLAKA OKUMASI (Dahua ANPR) -- 2026-09-25, kullanıcı:
+# "Dahua ITC413 ... PTS'e aktaran bir bağlantı ekler misin, deneyelim".
+# Bkz. backend/dahua_olay.py'nin docstring'i.
+# ------------------------------------------------------------------
+
+@app.patch("/kameralar/{kamera_id}/dahua")
+def kamera_dahua_guncelle(kamera_id: str, veri: schemas.KameraDahuaGuncelle, db: Session = Depends(get_db),
+                          kullanici: models.Kullanici = Depends(_personel_girisi_gerekli)):
+    """Kameranın kendi ANPR okumasını PTS'e aktarmayı açar/kapatır. Kamera
+    etkinse pipeline yeniden başlatılır (dinleyici onunla birlikte başlar)."""
+    _rol_dogrula(kullanici, ROL_YONETICI)
+    from backend.dahua_olay import olaylari_dogrula, rtsp_adresinden_baglanti
+    with _kamera_dosya_kilit:
+        kameralar = _kameralari_oku()
+        kamera = next((k for k in kameralar if k["id"] == kamera_id), None)
+        if not kamera:
+            raise HTTPException(404, "Kamera bulunamadı")
+        try:
+            olaylar = olaylari_dogrula(veri.olaylar)
+            if veri.aktif:
+                # Açmadan ÖNCE RTSP adresinden kimlik bilgisi çıkarılabildiğini
+                # doğrula -- aksi halde "açık" görünüp sessizce hiç bağlanmazdı.
+                rtsp_adresinden_baglanti(kamera.get("rtsp_url", ""), veri.http_port)
+        except ValueError as exc:
+            raise HTTPException(400, str(exc))
+        kamera["dahua_anpr"] = {"aktif": veri.aktif, "olaylar": olaylar, "http_port": veri.http_port}
+        _kameralari_yaz(kameralar)
+    _denetim_kaydet(
+        db, kullanici.kullanici_adi, "kamera_dahua_anpr",
+        f"kamera={kamera.get('ad')!r}, aktif={veri.aktif}, olaylar={olaylar}, http_port={veri.http_port}",
+    )
+    if kamera.get("aktif", True):
+        _pipeline_durdur(kamera_id)
+        time.sleep(0.3)
+        _pipeline_baslat(kamera)
+    return _kamera_guvenli_gorunum(kamera)
+
+
+@app.post("/kameralar/{kamera_id}/dahua-test")
+async def kamera_dahua_test(kamera_id: str, veri: schemas.KameraDahuaGuncelle,
+                            kullanici: models.Kullanici = Depends(_personel_girisi_gerekli)):
+    """Kameraya bir kez bağlanıp ~8 sn dinler ve sonucu (HTTP durumu, kalp
+    atışı, gelen plaka olayları, HAM mesaj örnekleri) döner. Hiçbir ayarı
+    değiştirmez, hiçbir kayıt oluşturmaz. `aktif` alanı yok sayılır."""
+    _rol_dogrula(kullanici, ROL_YONETICI)
+    kamera = next((k for k in _kameralari_oku() if k["id"] == kamera_id), None)
+    if not kamera:
+        raise HTTPException(404, "Kamera bulunamadı")
+    from backend.dahua_olay import baglanti_testi
+    return await asyncio.get_event_loop().run_in_executor(
+        None, lambda: baglanti_testi(kamera.get("rtsp_url", ""), veri.olaylar, veri.http_port),
+    )
+
+
+@app.get("/kameralar/{kamera_id}/dahua-durum")
+def kamera_dahua_durum(kamera_id: str, kullanici: models.Kullanici = Depends(_personel_girisi_gerekli)):
+    _rol_dogrula(kullanici, ROL_YONETICI, ROL_OPERATOR)
+    kamera = next((k for k in _kameralari_oku() if k["id"] == kamera_id), None)
+    if not kamera:
+        raise HTTPException(404, "Kamera bulunamadı")
+    ayar = kamera.get("dahua_anpr") or {"aktif": False}
+    p = _aktif_pipelineler.get(kamera_id)
+    durum = p.dahua_durumu() if p is not None and hasattr(p, "dahua_durumu") else None
+    return {"ayar": ayar, "durum": durum}
 
 
 @app.get("/kameralar/okuma-kalitesi")
