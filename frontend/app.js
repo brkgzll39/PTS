@@ -3148,28 +3148,37 @@ function bariyerModDegisti() {
   document.getElementById("bariyerHttpAlani").classList.toggle("d-none", mod !== "http");
 }
 
+let _bariyerlerCache = [];
+
 async function bariyerleriYukle() {
   try {
     const bariyerler = await apiCagir("/bariyer/ayarlar");
+    _bariyerlerCache = bariyerler;
     const el = document.getElementById("bariyerTablo");
     if (!el) return;
     el.innerHTML = bariyerler.map(b => `<tr>
       <td><strong>${escapeHtml(b.ad)}</strong></td>
       <td><span class="badge bg-secondary">${escapeHtml(b.mod)}</span></td>
       <td class="text-muted small text-truncate" style="max-width:150px">${escapeHtml(b.http_url || "-")}</td>
+      <td>${b.auto_ac
+        ? '<span class="badge bg-success">Açık</span>'
+        : '<span class="badge bg-secondary">Kapalı</span>'}</td>
       <td>
         ${rolYeterli("operatör") ? `
         <button class="btn btn-sm btn-success" onclick="bariyerAc(${b.id})" title="Bariyeri aç"><i class="bi bi-unlock-fill"></i> Aç</button>
+        <button class="btn btn-sm btn-outline-secondary ms-1" onclick="bariyerDuzenleAc(${b.id})" title="Ayarları düzenle"><i class="bi bi-pencil-square"></i></button>
         <button class="btn btn-sm btn-outline-danger ms-1" onclick="bariyerSil(${b.id})"><i class="bi bi-trash"></i></button>
         ` : '<span class="text-muted small">-</span>'}
       </td>
-    </tr>`).join("") || `<tr><td colspan="4" class="text-center text-muted py-3">Bariyer tanımlanmadı</td></tr>`;
+    </tr>`).join("") || `<tr><td colspan="5" class="text-center text-muted py-3">Bariyer tanımlanmadı</td></tr>`;
   } catch (e) { console.error(e); }
 }
 
 document.getElementById("bariyerForm")?.addEventListener("submit", async (e) => {
   e.preventDefault();
   const sonuc = document.getElementById("bariyerSonuc");
+  const btn = e.target.querySelector('button[type="submit"]');
+  if (btn) btn.disabled = true;  // çift gönderimi önle (bkz. kameraAdDuzenle'deki aynı desen)
   try {
     await apiCagir("/bariyer/ayarlar", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({
       ad: document.getElementById("bariyerAd").value,
@@ -3181,7 +3190,70 @@ document.getElementById("bariyerForm")?.addEventListener("submit", async (e) => 
     })});
     sonuc.className = "small mt-2 text-success"; sonuc.textContent = "Bariyer kaydedildi.";
     e.target.reset(); bariyerleriYukle();
-  } catch (err) { sonuc.className = "small mt-2 text-danger"; sonuc.textContent = err.message; }
+  } catch (err) {
+    sonuc.className = "small mt-2 text-danger"; sonuc.textContent = err.message;
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+});
+
+// DÜZELTME (2026-09-25, sistem taraması): bariyer_ekle'nin isteğin "auto_ac"
+// alanını hiç okumaması (bkz. main.py'deki docstring) yüzünden, panelde
+// "Yetkili araç girişinde otomatik aç" kutusunu işaretlemenin ÖNCEDEN HİÇBİR
+// ETKİSİ yoktu -- yeni eklenen bariyer her zaman auto_ac=False ile
+// oluşuyordu. Backend artık bu alanı okuyor VE var olan bir bariyeri
+// silmeden düzenleyebilmek için PATCH /bariyer/ayarlar/{id} eklendi; bu
+// düzenleme penceresi o uç noktayı kullanır.
+function bariyerDuzenleModDegisti() {
+  const mod = document.getElementById("bariyerDuzenleMod").value;
+  document.getElementById("bariyerDuzenleHttpAlani").classList.toggle("d-none", mod !== "http");
+}
+
+let _bariyerDuzenleId = null;
+
+function bariyerDuzenleAc(id) {
+  const bariyer = (_bariyerlerCache || []).find(b => b.id === id);
+  if (!bariyer) return;
+  _bariyerDuzenleId = id;
+  document.getElementById("bariyerDuzenleAd").value = bariyer.ad || "";
+  document.getElementById("bariyerDuzenleMod").value = bariyer.mod === "http" ? "http" : "simulate";
+  document.getElementById("bariyerDuzenleUrl").value = bariyer.http_url || "";
+  document.getElementById("bariyerDuzenleMetot").value = bariyer.http_metot || "GET";
+  document.getElementById("bariyerDuzenleGovde").value = bariyer.http_govde || "";
+  document.getElementById("bariyerDuzenleAutoAc").checked = !!bariyer.auto_ac;
+  bariyerDuzenleModDegisti();
+  document.getElementById("bariyerDuzenleSonuc").textContent = "";
+  bootstrap.Modal.getOrCreateInstance(document.getElementById("bariyerDuzenleModal")).show();
+}
+
+document.getElementById("bariyerDuzenleKaydetBtn")?.addEventListener("click", async () => {
+  const sonuc = document.getElementById("bariyerDuzenleSonuc");
+  const btn = document.getElementById("bariyerDuzenleKaydetBtn");
+  btn.disabled = true;
+  sonuc.className = "small mt-2";
+  sonuc.textContent = "Kaydediliyor...";
+  try {
+    const mod = document.getElementById("bariyerDuzenleMod").value;
+    await apiCagir(`/bariyer/ayarlar/${_bariyerDuzenleId}`, {
+      method: "PATCH", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        ad: document.getElementById("bariyerDuzenleAd").value,
+        mod,
+        http_url: mod === "http" ? (document.getElementById("bariyerDuzenleUrl").value || null) : null,
+        http_metot: document.getElementById("bariyerDuzenleMetot").value,
+        http_govde: document.getElementById("bariyerDuzenleGovde").value || null,
+        auto_ac: document.getElementById("bariyerDuzenleAutoAc").checked,
+      }),
+    });
+    toastGoster("Bariyer ayarları güncellendi.", "basari");
+    bootstrap.Modal.getInstance(document.getElementById("bariyerDuzenleModal"))?.hide();
+    bariyerleriYukle();
+  } catch (err) {
+    sonuc.className = "small mt-2 text-danger";
+    sonuc.textContent = err.message;
+  } finally {
+    btn.disabled = false;
+  }
 });
 
 async function bariyerAc(id) {

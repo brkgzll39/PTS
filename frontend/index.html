@@ -1270,13 +1270,52 @@
             <div class="card-header"><i class="bi bi-door-open-fill me-1"></i>Tanımlı Bariyerler</div>
             <div class="card-body p-0">
               <table class="table table-hover mb-0 align-middle">
-                <thead class="table-light"><tr><th>Ad</th><th>Mod</th><th>URL</th><th></th></tr></thead>
+                <thead class="table-light"><tr><th>Ad</th><th>Mod</th><th>URL</th><th>Otomatik Aç</th><th></th></tr></thead>
                 <tbody id="bariyerTablo"></tbody>
               </table>
             </div>
           </div>
         </div>
       </div>
+    </div>
+
+    <!-- DÜZELTME (2026-09-25, sistem taraması): bir bariyerin ayarlarını
+         (özellikle "auto_ac" -- yetkili girişte otomatik açma) değiştirmenin
+         önceden HİÇBİR yolu yoktu; bariyer_ekle bu alanı isteğe bile
+         eklemiyordu ve panelde sil-yeniden-ekle dışında bir düzenleme
+         seçeneği yoktu (ki bu da o bariyere bağlı Nokta kayıtlarını
+         kırardı). Bkz. main.py::bariyer_guncelle (yeni PATCH uç noktası). -->
+    <div class="modal fade" id="bariyerDuzenleModal" tabindex="-1" aria-hidden="true">
+      <div class="modal-dialog modal-dialog-centered"><div class="modal-content">
+        <div class="modal-header"><h5 class="modal-title">Bariyer Ayarlarını Düzenle</h5><button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Kapat"></button></div>
+        <div class="modal-body">
+          <div class="mb-2"><label class="form-label small" for="bariyerDuzenleAd">Ad</label>
+            <input type="text" class="form-control" id="bariyerDuzenleAd" maxlength="80"></div>
+          <div class="mb-2"><label class="form-label small" for="bariyerDuzenleMod">Mod</label>
+            <select class="form-select" id="bariyerDuzenleMod" onchange="bariyerDuzenleModDegisti()">
+              <option value="simulate">Simülasyon</option>
+              <option value="http">HTTP Webhook</option>
+            </select>
+          </div>
+          <div id="bariyerDuzenleHttpAlani" class="d-none">
+            <div class="mb-2"><label class="form-label small" for="bariyerDuzenleUrl">URL</label>
+              <input type="text" class="form-control" id="bariyerDuzenleUrl" placeholder="http://192.168.1.x/open"></div>
+            <div class="mb-2"><label class="form-label small" for="bariyerDuzenleMetot">HTTP Metot</label>
+              <select class="form-select" id="bariyerDuzenleMetot"><option>GET</option><option>POST</option></select></div>
+            <div class="mb-2"><label class="form-label small" for="bariyerDuzenleGovde">Gövde (JSON, opsiyonel)</label>
+              <input type="text" class="form-control" id="bariyerDuzenleGovde" placeholder='{"cmd":"open"}'></div>
+          </div>
+          <div class="form-check mb-2">
+            <input class="form-check-input" type="checkbox" id="bariyerDuzenleAutoAc">
+            <label class="form-check-label small" for="bariyerDuzenleAutoAc">Yetkili araç girişinde otomatik aç</label>
+          </div>
+          <div id="bariyerDuzenleSonuc" class="small mt-2"></div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">İptal</button>
+          <button type="button" class="btn btn-primary" id="bariyerDuzenleKaydetBtn">Kaydet</button>
+        </div>
+      </div></div>
     </div>
 
     <!-- ================= KULLANICI YÖNETİMİ ================= -->

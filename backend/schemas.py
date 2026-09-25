@@ -528,12 +528,21 @@ class BariyerAyarlariCevap(BaseModel):
 
 
 class BariyerAyarlariGuncelle(BaseModel):
+    """DÜZELTME (2026-09-25, sistem taraması): bu şema önceden hiçbir uç
+    noktada kullanılmıyordu -- bariyer ayarlarını değiştirmenin TEK yolu
+    silip yeniden eklemekti, bu da o bariyere atanmış her `Nokta.bariyer_id`
+    referansının kırılmasına yol açardı. Artık `PATCH /bariyer/ayarlar/{id}`
+    tarafından kullanılıyor (bkz. main.py::bariyer_guncelle, kamera_yon_degistir'in
+    aynı gerekçesiyle). `auto_ac` de eklendi -- bkz. bariyer_ekle'nin
+    docstring'indeki "otomatik aç" kutucuğunun önceden hiç kaydedilmemesi
+    hatası."""
     ad: Optional[str] = None
     mod: Optional[str] = None
     http_url: Optional[str] = None
     http_metot: Optional[str] = None
     http_govde: Optional[str] = None
     gpio_pin: Optional[int] = None
+    auto_ac: Optional[bool] = None
     aktif: Optional[bool] = None
 
 

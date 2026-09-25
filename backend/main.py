@@ -9,6 +9,7 @@ import re
 import hashlib
 import hmac
 import json
+import tempfile
 import logging
 from logging.handlers import RotatingFileHandler
 import secrets
@@ -278,6 +279,22 @@ except Exception:
 _aktif_pipelineler: dict = {}  # cameras.json id -> KameraPipeline
 _pipeline_kilit = threading.Lock()
 
+# DÜZELTME (2026-09-25, sistem taraması): cameras.json'a yapılan TÜM
+# "oku -> değiştir -> yaz" işlemleri (kamera ekleme/silme/yeniden adlandırma/
+# yön-ROI-aktiflik değiştirme) önceden hiçbir kilit olmadan çalışıyordu.
+# FastAPI senkron `def` uç noktaları bir iş parçacığı havuzunda çalıştığı için
+# bu GERÇEK bir yarış durumuydu: iki admin/operatör aynı anda farklı
+# kameraları düzenlerse (ör. biri kamera A'yı yeniden adlandırırken diğeri
+# kamera B'yi aktif/pasif yapıyor), ikinci yazan birincinin değişikliğini
+# sessizce silebiliyordu; kamera ekleme tarafında ise lisans kamera limiti
+# kontrolü de aynı yarışa açıktı (iki eşzamanlı POST /kameralar isteği,
+# limite çok yakınken ikisi de kontrolü geçip limiti aşabiliyordu). Bu kilit,
+# ilgili her uç noktanın "oku -> değiştir -> yaz" bloğunu tek seferde bir
+# istekle sınırlar. _kameralari_yaz'daki atomik yazma (temp dosya + os.replace)
+# ise BU kilitten bağımsız olarak, kilidin dışındaki salt-okuma çağrılarının
+# (ör. GET /kameralar) yazma sırasında yarım/bozuk bir JSON okumasını önler.
+_kamera_dosya_kilit = threading.Lock()
+
 
 def _pipeline_baslat(kamera: dict) -> bool:
     if not _CAM_LIBS or _KameraPipeline is None:
@@ -288,7 +305,18 @@ def _pipeline_baslat(kamera: dict) -> bool:
             return True
         try:
             ayarlar = _sistem_ayarlari_oku()
-            min_guven = float(ayarlar.get("min_tanima_guveni", 0.4) or 0.0)
+            # DÜZELTME (2026-09-25): PUT /sistem/ayarlar artık bu değeri
+            # yazarken doğruluyor (bkz. _AYAR_DOGRULAYICILAR), ama disk
+            # üzerindeki ayar dosyasına doğrulama eklenmeden ÖNCE elle/başka
+            # bir yolla bozuk bir değer yazılmış olabileceği ihtimaline karşı
+            # burada da (tekrar_gecikme_sn'deki gibi) savunmacı bir try/except
+            # bırakılıyor -- amaç, bozuk bir ayar TÜM kameraların 20 sn'de bir
+            # sürekli çökmesine değil, en fazla varsayılana geri dönmesine
+            # yol açsın.
+            try:
+                min_guven = float(ayarlar.get("min_tanima_guveni", 0.4) or 0.0)
+            except (TypeError, ValueError):
+                min_guven = 0.4
             min_guven = max(0.0, min(1.0, min_guven))  # ayar dosyasından gelen değeri emniyete al
             # DÜZELTME (2026-09-18): bu ayar ÖNCEDEN _pipeline_baslat'a hiç
             # geçirilmiyordu -- panelden değiştirilse bile KameraPipeline
@@ -1983,8 +2011,23 @@ def _kamera_id_listesini_dogrula(id_listesi: list) -> list:
 
 
 def _kameralari_yaz(kameralar: list) -> None:
-    with open(KAMERA_DOSYASI, "w", encoding="utf-8") as dosya:
-        json.dump(kameralar, dosya, ensure_ascii=False, indent=2)
+    """DÜZELTME (2026-09-25): önceden dosya doğrudan "w" modunda açılıp
+    üzerine yazılıyordu -- bu, `_kameralari_oku`'yu AYNI ANDA çağıran başka
+    bir istek (ör. bir okuma isteği kilit dışında çalışıyorsa) json.dump
+    henüz bitmeden dosyayı yarım/kesik okuyup `json.JSONDecodeError`'a
+    (ve dolayısıyla sessizce boş kamera listesi dönmesine, bkz.
+    _kameralari_oku'nun except bloğu) düşmesine yol açabiliyordu. Artık önce
+    aynı dizinde geçici bir dosyaya tam olarak yazılıp, ardından işletim
+    sisteminin ATOMİK `os.replace` işlemiyle asıl dosyanın yerine konuyor --
+    bir okuyucu her zaman ya eski ya da yeni içeriğin TAMAMINI görür, hiçbir
+    zaman yarısını görmez."""
+    dizin = os.path.dirname(os.path.abspath(KAMERA_DOSYASI)) or "."
+    with tempfile.NamedTemporaryFile(
+        mode="w", encoding="utf-8", dir=dizin, prefix=".cameras_tmp_", suffix=".json", delete=False
+    ) as gecici:
+        json.dump(kameralar, gecici, ensure_ascii=False, indent=2)
+        gecici_yol = gecici.name
+    os.replace(gecici_yol, KAMERA_DOSYASI)
 
 
 def _kamera_guvenli_gorunum(kamera: dict) -> dict:
@@ -2039,12 +2082,13 @@ def kamera_yeniden_baslat(kamera_id: str, kullanici: models.Kullanici = Depends(
 @app.patch("/kameralar/{kamera_id}/aktif")
 def kamera_aktif_toggle(kamera_id: str, kullanici: models.Kullanici = Depends(_personel_girisi_gerekli)):
     _rol_dogrula(kullanici, ROL_YONETICI, ROL_OPERATOR)
-    kameralar = _kameralari_oku()
-    kamera = next((k for k in kameralar if k["id"] == kamera_id), None)
-    if not kamera:
-        raise HTTPException(404, "Kamera bulunamadı")
-    kamera["aktif"] = not kamera.get("aktif", True)
-    _kameralari_yaz(kameralar)
+    with _kamera_dosya_kilit:
+        kameralar = _kameralari_oku()
+        kamera = next((k for k in kameralar if k["id"] == kamera_id), None)
+        if not kamera:
+            raise HTTPException(404, "Kamera bulunamadı")
+        kamera["aktif"] = not kamera.get("aktif", True)
+        _kameralari_yaz(kameralar)
     if not kamera["aktif"]:
         _pipeline_durdur(kamera_id)
     else:
@@ -2069,15 +2113,16 @@ def kamera_yon_degistir(kamera_id: str, veri: schemas.KameraYonGuncelle, kullani
     RTSP adresi ve parolası hiç değişmeden kalır; yön değişikliği pipeline'a
     yansısın diye kamera etkinse yeniden başlatılır."""
     _rol_dogrula(kullanici, ROL_YONETICI, ROL_OPERATOR)
-    kameralar = _kameralari_oku()
-    kamera = next((k for k in kameralar if k["id"] == kamera_id), None)
-    if not kamera:
-        raise HTTPException(404, "Kamera bulunamadı")
-    yon = veri.yon.strip().lower()
-    if yon not in ("giris", "cikis"):
-        raise HTTPException(400, "Yön 'giris' veya 'cikis' olmalıdır")
-    kamera["yon"] = yon
-    _kameralari_yaz(kameralar)
+    with _kamera_dosya_kilit:
+        kameralar = _kameralari_oku()
+        kamera = next((k for k in kameralar if k["id"] == kamera_id), None)
+        if not kamera:
+            raise HTTPException(404, "Kamera bulunamadı")
+        yon = veri.yon.strip().lower()
+        if yon not in ("giris", "cikis"):
+            raise HTTPException(400, "Yön 'giris' veya 'cikis' olmalıdır")
+        kamera["yon"] = yon
+        _kameralari_yaz(kameralar)
     if kamera.get("aktif", True):
         _pipeline_durdur(kamera_id)
         time.sleep(0.3)
@@ -2113,33 +2158,59 @@ def kamera_ad_degistir(kamera_id: str, veri: schemas.KameraAdGuncelle, db: Sessi
     metinler (ör. bir "kamera_arizasi" alarmının mesaj metni) BİLİNÇLİ
     OLARAK değiştirilmez -- onlar birer olay günlüğü, geriye dönük
     "düzeltilmesi" yanlış olurdu; yalnızca fiilen sorgulanan/filtrelenen
-    `Kayit.kamera_id` alanı güncellenir."""
+    `Kayit.kamera_id` alanı güncellenir.
+
+    DÜZELTME (2026-09-25, sistem taraması): önceden ÖNCE veritabanı
+    güncelleniyor, SONRA cameras.json yazılıyordu -- JSON yazımı (disk dolu,
+    izin hatası, vb.) veritabanı commit'inden SONRA başarısız olursa, tüm
+    geçmiş kayıtlar yeni adı taşırken cameras.json hâlâ eski adı listeler,
+    ki bu da fonksiyonun yukarıdaki gerekçesinde tarif edilen TAM OLARAK aynı
+    "sessiz veri kaybı" riskini geri getirirdi. Artık sıra tersine çevrildi
+    (önce JSON, sonra DB) ve tüm "oku->değiştir->yaz" bloğu _kamera_dosya_kilit
+    ile korunuyor; DB güncellemesi JSON yazımından SONRA başarısız olursa
+    JSON en azından eski adına geri alınmaya çalışılır ki iki kaynak
+    birbirinden sapmasın."""
     _rol_dogrula(kullanici, ROL_YONETICI, ROL_OPERATOR)
-    kameralar = _kameralari_oku()
-    kamera = next((k for k in kameralar if k["id"] == kamera_id), None)
-    if not kamera:
-        raise HTTPException(404, "Kamera bulunamadı")
-    yeni_ad = veri.ad.strip()
-    if not yeni_ad:
-        raise HTTPException(400, "Kamera adı boş olamaz")
-    eski_ad = kamera.get("ad") or kamera_id
-    if yeni_ad == eski_ad:
-        return _kamera_guvenli_gorunum(kamera)
-    if any(
-        k["id"] != kamera_id and (k.get("ad") or "").strip().casefold() == yeni_ad.casefold()
-        for k in kameralar
-    ):
-        raise HTTPException(400, f"'{yeni_ad}' adında başka bir kamera zaten var")
+    with _kamera_dosya_kilit:
+        kameralar = _kameralari_oku()
+        kamera = next((k for k in kameralar if k["id"] == kamera_id), None)
+        if not kamera:
+            raise HTTPException(404, "Kamera bulunamadı")
+        yeni_ad = veri.ad.strip()
+        if not yeni_ad:
+            raise HTTPException(400, "Kamera adı boş olamaz")
+        eski_ad = kamera.get("ad") or kamera_id
+        if yeni_ad == eski_ad:
+            return _kamera_guvenli_gorunum(kamera)
+        if any(
+            k["id"] != kamera_id and (k.get("ad") or "").strip().casefold() == yeni_ad.casefold()
+            for k in kameralar
+        ):
+            raise HTTPException(400, f"'{yeni_ad}' adında başka bir kamera zaten var")
 
-    etkilenen_kayit = db.query(models.Kayit).filter(models.Kayit.kamera_id == eski_ad).update({"kamera_id": yeni_ad})
-    db.commit()
+        kamera["ad"] = yeni_ad
+        _kameralari_yaz(kameralar)
 
-    kamera["ad"] = yeni_ad
-    _kameralari_yaz(kameralar)
-    if kamera.get("aktif", True):
-        _pipeline_durdur(kamera_id)
-        time.sleep(0.3)
-        _pipeline_baslat(kamera)
+        try:
+            etkilenen_kayit = db.query(models.Kayit).filter(models.Kayit.kamera_id == eski_ad).update({"kamera_id": yeni_ad})
+            db.commit()
+        except Exception:
+            db.rollback()
+            kamera["ad"] = eski_ad
+            try:
+                _kameralari_yaz(kameralar)
+            except OSError:
+                logger.critical(
+                    "kamera_ad_degistir: DB güncellemesi başarısız oldu VE cameras.json geri alınamadı "
+                    "(kamera_id=%s, eski_ad=%r, yeni_ad=%r) -- iki kaynak birbirinden sapmış olabilir, elle kontrol gerekir",
+                    kamera_id, eski_ad, yeni_ad,
+                )
+            raise HTTPException(500, "Kamera adı güncellenirken veritabanı hatası oluştu, değişiklik geri alındı")
+
+        if kamera.get("aktif", True):
+            _pipeline_durdur(kamera_id)
+            time.sleep(0.3)
+            _pipeline_baslat(kamera)
 
     # 2026-09-20'den beri kamera silmede olduğu gibi (bkz. kamera_sil), kamera
     # kimliğini etkileyen değişiklikler de denetim kaydına düşer -- bir
@@ -2200,25 +2271,26 @@ def kamera_roi_guncelle(kamera_id: str, veri: schemas.KameraRoiGuncelle, kullani
     schemas.KameraRoiGuncelle'nin docstring'i ve camera_reader.py::
     _kutu_polygon_icinde_mi."""
     _rol_dogrula(kullanici, ROL_YONETICI, ROL_OPERATOR)
-    kameralar = _kameralari_oku()
-    kamera = next((k for k in kameralar if k["id"] == kamera_id), None)
-    if not kamera:
-        raise HTTPException(404, "Kamera bulunamadı")
-    if veri.temizle:
-        kamera.pop("roi", None)
-    elif veri.polygon is not None:
-        kamera["roi"] = _roi_polygon_gecerlilestir(veri.polygon)
-    else:
-        degerler = (veri.x1, veri.y1, veri.x2, veri.y2)
-        if any(v is None for v in degerler):
-            raise HTTPException(400, "x1, y1, x2, y2 değerlerinin hepsi gönderilmeli (veya polygon / temizle=true)")
-        x1, y1, x2, y2 = (float(v) for v in degerler)
-        if not all(0 <= v <= 100 for v in (x1, y1, x2, y2)):
-            raise HTTPException(400, "Değerler 0-100 arasında olmalı")
-        if x1 >= x2 or y1 >= y2:
-            raise HTTPException(400, "x1 < x2 ve y1 < y2 olmalı")
-        kamera["roi"] = {"x1": x1, "y1": y1, "x2": x2, "y2": y2}
-    _kameralari_yaz(kameralar)
+    with _kamera_dosya_kilit:
+        kameralar = _kameralari_oku()
+        kamera = next((k for k in kameralar if k["id"] == kamera_id), None)
+        if not kamera:
+            raise HTTPException(404, "Kamera bulunamadı")
+        if veri.temizle:
+            kamera.pop("roi", None)
+        elif veri.polygon is not None:
+            kamera["roi"] = _roi_polygon_gecerlilestir(veri.polygon)
+        else:
+            degerler = (veri.x1, veri.y1, veri.x2, veri.y2)
+            if any(v is None for v in degerler):
+                raise HTTPException(400, "x1, y1, x2, y2 değerlerinin hepsi gönderilmeli (veya polygon / temizle=true)")
+            x1, y1, x2, y2 = (float(v) for v in degerler)
+            if not all(0 <= v <= 100 for v in (x1, y1, x2, y2)):
+                raise HTTPException(400, "Değerler 0-100 arasında olmalı")
+            if x1 >= x2 or y1 >= y2:
+                raise HTTPException(400, "x1 < x2 ve y1 < y2 olmalı")
+            kamera["roi"] = {"x1": x1, "y1": y1, "x2": x2, "y2": y2}
+        _kameralari_yaz(kameralar)
     if kamera.get("aktif", True):
         _pipeline_durdur(kamera_id)
         time.sleep(0.3)
@@ -2342,12 +2414,8 @@ _GECERLI_KAMERA_SEMALARI = ("rtsp", "rtsps", "http", "https")
 @app.post("/kameralar")
 def kamera_ekle(kamera: dict = Body(...), kullanici: models.Kullanici = Depends(_personel_girisi_gerekli)):
     _rol_dogrula(kullanici, ROL_YONETICI, ROL_OPERATOR)
-    lisans = _lisans_durumunu_oku()
-    kameralar = _kameralari_oku()
     if not _lisans_aktif_mi():
         raise HTTPException(403, "Kamera eklemek için aktif lisans gereklidir")
-    if len(kameralar) >= lisans["kamera_limiti"]:
-        raise HTTPException(403, "Aktif lisans kamera limitine ulaşıldı")
     gerekli_alanlar = ("ad", "rtsp_url", "yon")
     if any(not str(kamera.get(alan, "")).strip() for alan in gerekli_alanlar):
         raise HTTPException(400, "Kamera adı, RTSP adresi ve yön zorunludur")
@@ -2387,8 +2455,20 @@ def kamera_ekle(kamera: dict = Body(...), kullanici: models.Kullanici = Depends(
     }
     if roi_temiz:
         yeni_kamera["roi"] = roi_temiz
-    kameralar.append(yeni_kamera)
-    _kameralari_yaz(kameralar)
+
+    # DÜZELTME (2026-09-25): lisans kamera limiti kontrolü ("len(kameralar) >=
+    # kamera_limiti") ile listeye ekleyip yazma işlemi önceden AYNI kilit
+    # altında değildi -- iki eşzamanlı POST /kameralar isteği, limite tam
+    # sınırdayken ikisi de kontrolü geçip toplam kamera sayısının lisans
+    # limitini aşmasına yol açabiliyordu. Artık kontrol de, ekleme de tek bir
+    # kilit altında, aynı okumaya dayanarak yapılıyor.
+    with _kamera_dosya_kilit:
+        lisans = _lisans_durumunu_oku()
+        kameralar = _kameralari_oku()
+        if len(kameralar) >= lisans["kamera_limiti"]:
+            raise HTTPException(403, "Aktif lisans kamera limitine ulaşıldı")
+        kameralar.append(yeni_kamera)
+        _kameralari_yaz(kameralar)
     _pipeline_baslat(yeni_kamera)
     return _kamera_guvenli_gorunum(yeni_kamera)
 
@@ -2396,12 +2476,13 @@ def kamera_ekle(kamera: dict = Body(...), kullanici: models.Kullanici = Depends(
 @app.delete("/kameralar/{kamera_id}")
 def kamera_sil(kamera_id: str, db: Session = Depends(get_db), kullanici: models.Kullanici = Depends(_personel_girisi_gerekli)):
     _rol_dogrula(kullanici, ROL_YONETICI, ROL_OPERATOR)
-    kameralar = _kameralari_oku()
-    silinen = next((kamera for kamera in kameralar if kamera["id"] == kamera_id), None)
-    yeni_kameralar = [kamera for kamera in kameralar if kamera["id"] != kamera_id]
-    if len(yeni_kameralar) == len(kameralar):
-        raise HTTPException(404, "Kamera bulunamadı")
-    _kameralari_yaz(yeni_kameralar)
+    with _kamera_dosya_kilit:
+        kameralar = _kameralari_oku()
+        silinen = next((kamera for kamera in kameralar if kamera["id"] == kamera_id), None)
+        yeni_kameralar = [kamera for kamera in kameralar if kamera["id"] != kamera_id]
+        if len(yeni_kameralar) == len(kameralar):
+            raise HTTPException(404, "Kamera bulunamadı")
+        _kameralari_yaz(yeni_kameralar)
     _pipeline_durdur(kamera_id)
     # 2026-09-20: hangi yöneticinin/operatörün hangi kamerayı kaldırdığı
     # önceden hiçbir yere loglanmıyordu -- bir güvenlik kamerasının
@@ -3294,6 +3375,37 @@ def _kayit_olustur_ve_bildir(db: Session, plaka_no: str, kamera_id: str, yon: st
                         args=(b.http_url, b.http_metot, {"plaka": plaka_no, "eylem": "ac", "otopark": b.ad}),
                         daemon=True,
                     ).start()
+                elif b.mod == "simulate":
+                    # Manuel açmadaki (bkz. bariyer_ac) davranışla tutarlı
+                    # olsun diye: gerçekte hiçbir şey açılmıyor ama en azından
+                    # loglanıyor, sessizce hiçbir iz bırakmıyor.
+                    logger.info("Bariyer açıldı (simülasyon, otomatik): %s, plaka=%s", b.ad, plaka_no)
+                else:
+                    # DÜZELTME (2026-09-25, sistem taraması): "gpio" modu
+                    # (ve http modu http_url'siz tanımlanmışsa) önceden bu
+                    # döngüde SESSİZCE hiçbir şey yapmıyordu -- yetkili bir
+                    # araç girse, plaka doğru okunup kayıt oluşsa bile fiziksel
+                    # bariyer hiç açılmıyor ve bunun nedenini gösteren HİÇBİR
+                    # log/alarm/denetim izi kalmıyordu. GPIO modu şemada/
+                    # panelde bir seçenek olarak sunulsa da bu sürümde gerçek
+                    # bir GPIO sürücüsü yok (bkz. bariyer_ac'ın manuel açma
+                    # tarafındaki aynı "Desteklenmeyen bariyer modu" hatası).
+                    # Artık en azından açıkça loglanıyor VE panelde görülebilir
+                    # bir alarm kaydı düşülüyor ki personel "araç girdi ama
+                    # bariyer açılmadı" durumunun nedenini bulabilsin.
+                    sebep = (
+                        f"'{b.ad}' bariyeri GPIO modunda tanımlı ama bu sürüm GPIO desteği içermiyor"
+                        if b.mod == "gpio"
+                        else f"'{b.ad}' bariyeri HTTP modunda ama http_url tanımlanmamış"
+                    )
+                    logger.error("Otomatik bariyer açılamadı (plaka=%s): %s", plaka_no, sebep)
+                    db.add(models.Alarm(
+                        kayit_id=kayit.id,
+                        plaka_no=plaka_no,
+                        alarm_tipi="bariyer_hatasi",
+                        mesaj=f"Yetkili araç girişinde bariyer otomatik AÇILAMADI: {sebep}",
+                    ))
+                    db.commit()
         except Exception as exc:
             logger.error("Otomatik bariyer hatası: %s", exc)
 
@@ -4511,6 +4623,35 @@ def led_test_mesaji(mesaj: str = Query("PTS SİSTEMİ TEST MESAJI"), kullanici: 
     return {"basarili": basarili, "mesaj": mesaj}
 
 
+@app.get("/led/durum")
+def led_durumu_getir(db: Session = Depends(get_db), _: models.Kullanici = Depends(_personel_girisi_gerekli)):
+    """DÜZELTME (2026-09-25, sistem taraması): `LedMesaj` tablosuna her LED
+    gönderiminde (kayıt bildirimi veya /led/test) bir satır düşülüyordu
+    (bkz. yukarıdaki kayıt bildirim akışı), ama bunu geri okuyan HİÇBİR uç
+    nokta yoktu -- yani panel kablosu çıkıp/IP'ye ulaşılamayıp HER gönderim
+    sessizce başarısız olmaya başlasa bile, arayüzde bunu gösterecek hiçbir
+    yer yoktu; tek yol sunucunun kendi log dosyasına elle bakmaktı. Bu uç
+    nokta, panelin "LED Ayarları" ekranında son gönderimleri ve varsa en
+    son başarısız gönderimi gösterebilmesi için döner."""
+    son_mesajlar = (
+        db.query(models.LedMesaj)
+        .order_by(models.LedMesaj.tarih_saat.desc())
+        .limit(20)
+        .all()
+    )
+    son_basarisiz = next((m for m in son_mesajlar if not m.basarili), None)
+    return {
+        "son_mesajlar": [
+            {"id": m.id, "mesaj": m.mesaj, "tarih_saat": m.tarih_saat.isoformat(), "basarili": m.basarili}
+            for m in son_mesajlar
+        ],
+        "son_basarisiz_gonderim": (
+            {"id": son_basarisiz.id, "mesaj": son_basarisiz.mesaj, "tarih_saat": son_basarisiz.tarih_saat.isoformat()}
+            if son_basarisiz else None
+        ),
+    }
+
+
 # ==================================================================
 # KULLANICI YÖNETİMİ
 # ==================================================================
@@ -4874,6 +5015,15 @@ def bariyer_ayarlarini_getir(db: Session = Depends(get_db), _: models.Kullanici 
 
 @app.post("/bariyer/ayarlar")
 def bariyer_ekle(istek: dict = Body(...), db: Session = Depends(get_db), kullanici: models.Kullanici = Depends(_personel_girisi_gerekli)):
+    """DÜZELTME (2026-09-25, sistem taraması): bu uç nokta önceden isteğin
+    `auto_ac` alanını TAMAMEN GÖZ ARDI EDİYORDU -- yeni bir bariyer her zaman
+    modelin varsayılanıyla (`auto_ac=False`) oluşturuluyordu. Frontend ise
+    (frontend/app.js::bariyerForm) panelde bir "Otomatik Aç" onay kutusu
+    gösterip bu değeri isteğe ekliyordu -- yani bir yönetici bu kutuyu
+    işaretleyip kaydetse bile, panelin en güvenlik-kritik özelliklerinden
+    biri (yetkili araç girişinde bariyerin OTOMATİK açılması) SESSİZCE hiçbir
+    zaman devreye girmiyordu; hiçbir hata/uyarı da gösterilmiyordu. Şimdi bu
+    alan da okunuyor."""
     _rol_dogrula(kullanici, ROL_YONETICI, ROL_OPERATOR)
     yeni = models.BariyerAyarlari(
         ad=str(istek.get("ad", "Bariyer")).strip()[:80],
@@ -4882,11 +5032,46 @@ def bariyer_ekle(istek: dict = Body(...), db: Session = Depends(get_db), kullani
         http_metot=str(istek.get("http_metot", "GET")),
         http_govde=istek.get("http_govde"),
         gpio_pin=istek.get("gpio_pin"),
+        auto_ac=bool(istek.get("auto_ac", False)),
     )
     db.add(yeni)
     db.commit()
     db.refresh(yeni)
     return yeni
+
+
+@app.patch("/bariyer/ayarlar/{bariyer_id}")
+def bariyer_guncelle(bariyer_id: int, veri: schemas.BariyerAyarlariGuncelle, db: Session = Depends(get_db), kullanici: models.Kullanici = Depends(_personel_girisi_gerekli)):
+    """DÜZELTME (2026-09-25, sistem taraması): önceden bir bariyerin ayarlarını
+    (ör. yanlış girilmiş bir http_url'i düzeltmek, ya da "auto_ac"ı sonradan
+    açmak) değiştirmenin TEK yolu bariyeri SİLİP YENİDEN EKLEMEKTİ -- ama bir
+    bariyer silindiğinde, ona atanmış her `Nokta.bariyer_id` referansı kırılır
+    (bkz. nokta_ekle/nokta_guncelle'nin bariyer_id doğrulaması) ve yeni
+    bariyer farklı bir id ile oluşturulduğu için o noktalar yeniden elle
+    bariyere bağlanmalıydı. Bu, kamera_yon_degistir/kamera_ad_degistir'in
+    üstündeki AYNI "sil-yeniden-ekle yerine tek alanı değiştir" gerekçesiyle
+    eklendi. Yalnızca istekte GÖNDERİLEN (None olmayan) alanlar güncellenir."""
+    _rol_dogrula(kullanici, ROL_YONETICI, ROL_OPERATOR)
+    bariyer = db.query(models.BariyerAyarlari).filter(models.BariyerAyarlari.id == bariyer_id).first()
+    if not bariyer:
+        raise HTTPException(404, "Bariyer bulunamadı")
+    guncellemeler = veri.model_dump(exclude_unset=True, exclude_none=True)
+    if not guncellemeler:
+        return bariyer
+    for alan, deger in guncellemeler.items():
+        if alan == "ad":
+            deger = str(deger).strip()[:80]
+        setattr(bariyer, alan, deger)
+    db.commit()
+    db.refresh(bariyer)
+    # Bariyerin otomatik açılıp açılmayacağını ya da nasıl açılacağını
+    # (mod/http_url) değiştiren bir ayar -- kim, ne zaman değiştirdi sessiz
+    # kalmasın (bkz. kamera_ad_degistir/kamera_sil'deki aynı denetim ilkesi).
+    _denetim_kaydet(
+        db, kullanici.kullanici_adi, "bariyer_ayarlari_guncelle",
+        f"bariyer_id={bariyer_id}, ad={bariyer.ad!r}, degisen_alanlar={sorted(guncellemeler.keys())}",
+    )
+    return bariyer
 
 
 @app.post("/bariyer/{bariyer_id}/ac")
@@ -5509,13 +5694,77 @@ def sistem_ayarlarini_getir(_: models.Kullanici = Depends(_personel_girisi_gerek
     return _sistem_ayarlari_oku()
 
 
+def _ayar_int_dogrula(v, min_deger: Optional[int] = None, max_deger: Optional[int] = None) -> int:
+    try:
+        n = int(v)
+    except (TypeError, ValueError):
+        raise HTTPException(400, f"Tam sayı olmalı, alınan değer: {v!r}")
+    if isinstance(v, bool):  # bool, int'in alt sınıfı olduğu için int(True)==1 sessizce geçerdi
+        raise HTTPException(400, f"Tam sayı olmalı, alınan değer: {v!r}")
+    if min_deger is not None and n < min_deger:
+        raise HTTPException(400, f"En az {min_deger} olmalı, alınan değer: {n}")
+    if max_deger is not None and n > max_deger:
+        raise HTTPException(400, f"En fazla {max_deger} olmalı, alınan değer: {n}")
+    return n
+
+
+def _ayar_float_dogrula(v, min_deger: float = 0.0, max_deger: float = 1.0) -> float:
+    if isinstance(v, bool):
+        raise HTTPException(400, f"Sayısal bir değer olmalı, alınan değer: {v!r}")
+    try:
+        n = float(v)
+    except (TypeError, ValueError):
+        raise HTTPException(400, f"Sayısal bir değer olmalı, alınan değer: {v!r}")
+    if not (min_deger <= n <= max_deger):
+        raise HTTPException(400, f"{min_deger}-{max_deger} arasında olmalı, alınan değer: {n}")
+    return n
+
+
+def _ayar_bool_dogrula(v) -> bool:
+    if isinstance(v, bool):
+        return v
+    raise HTTPException(400, f"true/false olmalı, alınan değer: {v!r}")
+
+
+# DÜZELTME (2026-09-25, sistem taraması): PUT /sistem/ayarlar önceden
+# gönderilen değerin TİPİNİ/ARALIĞINI hiç doğrulamıyordu -- yalnızca
+# anahtarın _VARSAYILAN_AYARLAR'da var olup olmadığına bakılıyordu. Bu iki
+# gerçek üretim riskine yol açıyordu: (1) "min_tanima_guveni" gibi bir eşiğe
+# sayı yerine metin/bozuk bir değer yazılırsa, bu değer _pipeline_baslat
+# içinde float()'a çevrilmeye çalışıldığında istisna fırlatıyor -- bu da
+# İZLEME (watchdog) döngüsü her denediğinde (20 sn'de bir) TÜM kameraların
+# sürekli başlatılıp hemen çökmesine yol açabiliyordu; (2) "supheli_esik"
+# gibi güvenlik eşikleri negatif/anlamsız bir değere ayarlanabiliyordu.
+# Her ayar için tip/aralık kontrolü burada MERKEZİ olarak tanımlanır --
+# ileride yeni bir ayar eklenirse bu sözlüğe eklenmediği sürece
+# doğrulanmadan kabul edilir, bu yüzden yeni ayar eklerken buraya da
+# eklemek gerekir.
+_AYAR_DOGRULAYICILAR = {
+    "supheli_esik": lambda v: _ayar_int_dogrula(v, 0, 1000),
+    "goruntu_saklama_gun": lambda v: _ayar_int_dogrula(v, 0, None),
+    "tekrar_gecikme_sn": lambda v: _ayar_int_dogrula(v, 0, 3600),
+    "capraz_kamera_tekrar_penceresi_sn": lambda v: _ayar_int_dogrula(v, None, None),
+    "auto_bariyer_giris": _ayar_bool_dogrula,
+    "panel_yenileme_sn": lambda v: _ayar_int_dogrula(v, 2, 3600),
+    "min_tanima_guveni": lambda v: _ayar_float_dogrula(v, 0.0, 1.0),
+    "bilinen_plaka_duzeltme_aktif": _ayar_bool_dogrula,
+    "otomatik_kayit_min_guven_skoru": lambda v: _ayar_float_dogrula(v, 0.0, 1.0),
+    "otomatik_kayit_min_guven_skoru_bilinen_arac": lambda v: _ayar_float_dogrula(v, 0.0, 1.0),
+}
+
+
 @app.put("/sistem/ayarlar")
 def sistem_ayarlarini_guncelle(yeni: dict = Body(...), db: Session = Depends(get_db), kullanici: models.Kullanici = Depends(_personel_girisi_gerekli)):
     _rol_dogrula(kullanici, ROL_YONETICI)
     mevcut = _sistem_ayarlari_oku()
     degisiklikler = []
     for k, v in yeni.items():
-        if k in _VARSAYILAN_AYARLAR and mevcut.get(k) != v:
+        if k not in _VARSAYILAN_AYARLAR:
+            continue
+        dogrulayici = _AYAR_DOGRULAYICILAR.get(k)
+        if dogrulayici is not None:
+            v = dogrulayici(v)
+        if mevcut.get(k) != v:
             degisiklikler.append(f"{k}: {mevcut.get(k)!r} -> {v!r}")
             mevcut[k] = v
     _sistem_ayarlari_yaz(mevcut)

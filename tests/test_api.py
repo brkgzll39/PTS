@@ -789,6 +789,44 @@ def test_nokta_gecerli_bariyerle_olusturulur_ve_bariyer_acmaya_baglanir(client, 
     assert r2.status_code == 200, r2.text
 
 
+def test_bariyer_ekle_auto_ac_alani_artik_kaydediliyor(client, yetkili_header):
+    """DÜZELTME (2026-09-25): POST /bariyer/ayarlar önceden isteğin "auto_ac"
+    alanını tamamen göz ardı ediyordu -- panelde "Otomatik Aç" kutusu
+    işaretlenip kaydedilse bile bariyer her zaman auto_ac=False ile
+    oluşuyordu (bkz. bariyer_ekle'nin docstring'i)."""
+    r = client.post("/bariyer/ayarlar", json={"ad": "Auto-Ac Test Bariyeri", "mod": "simulate", "auto_ac": True}, headers=yetkili_header)
+    assert r.status_code == 200, r.text
+    assert r.json()["auto_ac"] is True
+
+    r2 = client.get("/bariyer/ayarlar", headers=yetkili_header)
+    kaydedilen = next(b for b in r2.json() if b["id"] == r.json()["id"])
+    assert kaydedilen["auto_ac"] is True
+
+
+def test_bariyer_guncelle_sil_yeniden_eklemeden_ayarlari_degistirir(client, yetkili_header):
+    """Yeni PATCH /bariyer/ayarlar/{id} -- önceden bir bariyerin ayarlarını
+    değiştirmenin TEK yolu silip yeniden eklemekti, bu da o bariyere atanmış
+    Nokta.bariyer_id referanslarını kırardı."""
+    bariyer = client.post("/bariyer/ayarlar", json={"ad": "Guncelle Test Bariyeri", "mod": "simulate", "auto_ac": False}, headers=yetkili_header).json()
+
+    r = client.patch(f"/bariyer/ayarlar/{bariyer['id']}", json={"auto_ac": True, "mod": "http", "http_url": "http://192.168.1.99/ac"}, headers=yetkili_header)
+    assert r.status_code == 200, r.text
+    assert r.json()["auto_ac"] is True
+    assert r.json()["mod"] == "http"
+    assert r.json()["http_url"] == "http://192.168.1.99/ac"
+    assert r.json()["id"] == bariyer["id"], "id aynı kalmalı (Nokta.bariyer_id kırılmamalı)"
+
+
+def test_bariyer_guncelle_bulunamayan_bariyer_404_doner(client, yetkili_header):
+    r = client.patch("/bariyer/ayarlar/999999", json={"auto_ac": True}, headers=yetkili_header)
+    assert r.status_code == 404
+
+
+def test_bariyer_guncelle_izleyici_yetkisiz_403_doner(client, izleyici_header):
+    r = client.patch("/bariyer/ayarlar/1", json={"auto_ac": True}, headers=izleyici_header)
+    assert r.status_code == 403
+
+
 def test_nokta_kamera_adi_id_degil_gercek_ad_degerini_dondurur(client, yetkili_header):
     """schemas.NoktaCevap.kamera_adi (2026-09-21, "id vs ad" hata sınıfı --
     bkz. o alanın docstring'i): GET /noktalar, bağlı kameranın "id"sini
@@ -2628,6 +2666,153 @@ def test_sistem_ayarlari_degisikligi_loglanir(client, caplog, yetkili_header):
         assert "sistem_ayarlari_guncelle" not in caplog.text  # gerçek değişiklik yoksa log/denetim kaydı YOK
     finally:
         client.put("/sistem/ayarlar", json={"supheli_esik": onceki}, headers=yetkili_header)
+
+
+# ------------------------------------------------------------------
+# PUT /sistem/ayarlar değer doğrulama (2026-09-25, sistem taraması)
+# ------------------------------------------------------------------
+# Önceden bu uç nokta gönderilen değerin sadece ANAHTARININ geçerli olup
+# olmadığına bakıyordu, değerin tipini/aralığını hiç doğrulamıyordu -- bkz.
+# main.py::_AYAR_DOGRULAYICILAR'ın docstring'i. Bozuk bir "min_tanima_guveni"
+# değeri, TÜM kameraların _pipeline_baslat içinde sürekli çökmesine yol
+# açabiliyordu.
+
+def test_sistem_ayarlari_metin_yerine_sayi_beklenen_alanda_400_doner(client, yetkili_header):
+    r = client.put("/sistem/ayarlar", json={"min_tanima_guveni": "yüksek"}, headers=yetkili_header)
+    assert r.status_code == 400, r.text
+
+
+def test_sistem_ayarlari_0_1_araligi_disindaki_guven_skoru_400_doner(client, yetkili_header):
+    r = client.put("/sistem/ayarlar", json={"min_tanima_guveni": 1.5}, headers=yetkili_header)
+    assert r.status_code == 400, r.text
+    r2 = client.put("/sistem/ayarlar", json={"otomatik_kayit_min_guven_skoru": -0.1}, headers=yetkili_header)
+    assert r2.status_code == 400, r2.text
+
+
+def test_sistem_ayarlari_negatif_supheli_esik_400_doner(client, yetkili_header):
+    r = client.put("/sistem/ayarlar", json={"supheli_esik": -1}, headers=yetkili_header)
+    assert r.status_code == 400, r.text
+
+
+def test_sistem_ayarlari_bool_alana_sayi_gonderilirse_400_doner(client, yetkili_header):
+    r = client.put("/sistem/ayarlar", json={"auto_bariyer_giris": 1}, headers=yetkili_header)
+    assert r.status_code == 400, r.text
+
+
+def test_sistem_ayarlari_panel_yenileme_sn_cok_dusuk_400_doner(client, yetkili_header):
+    r = client.put("/sistem/ayarlar", json={"panel_yenileme_sn": 1}, headers=yetkili_header)
+    assert r.status_code == 400, r.text
+
+
+def test_sistem_ayarlari_gecerli_degerler_kabul_edilir_ve_kalici(client, yetkili_header):
+    onceki = client.get("/sistem/ayarlar", headers=yetkili_header).json()
+    try:
+        r = client.put("/sistem/ayarlar", json={
+            "min_tanima_guveni": 0.55, "supheli_esik": 7, "auto_bariyer_giris": True,
+        }, headers=yetkili_header)
+        assert r.status_code == 200, r.text
+        assert r.json()["min_tanima_guveni"] == 0.55
+        assert r.json()["supheli_esik"] == 7
+        assert r.json()["auto_bariyer_giris"] is True
+    finally:
+        client.put("/sistem/ayarlar", json={
+            "min_tanima_guveni": onceki["min_tanima_guveni"],
+            "supheli_esik": onceki["supheli_esik"],
+            "auto_bariyer_giris": onceki["auto_bariyer_giris"],
+        }, headers=yetkili_header)
+
+
+# ------------------------------------------------------------------
+# LED panel (2026-09-25, sistem taraması) -- önceden hiç testi yoktu
+# ------------------------------------------------------------------
+
+def test_led_ayarlari_okunabilir_ve_guncellenebilir(client, operator_header):
+    r = client.get("/led/ayarlar", headers=operator_header)
+    assert r.status_code == 200, r.text
+    assert "led_mod" in r.json()
+
+    r2 = client.put("/led/ayarlar", json={"led_mod": "simulate"}, headers=operator_header)
+    assert r2.status_code == 200, r2.text
+    assert r2.json()["led_mod"] == "simulate"
+
+
+def test_led_test_mesaji_simulate_modda_basarili_doner(client, operator_header):
+    r = client.put("/led/ayarlar", json={"led_mod": "simulate"}, headers=operator_header)
+    assert r.status_code == 200, r.text
+
+    r2 = client.post("/led/test", params={"mesaj": "PTS TEST"}, headers=operator_header)
+    assert r2.status_code == 200, r2.text
+    assert r2.json()["basarili"] is True
+
+
+def test_led_test_izleyici_yetkisiz_403_doner(client, izleyici_header):
+    r = client.post("/led/test", params={"mesaj": "PTS TEST"}, headers=izleyici_header)
+    assert r.status_code == 403
+
+
+def test_led_durum_son_gonderimleri_dondurur(client, operator_header):
+    """DÜZELTME (2026-09-25): `LedMesaj` tablosu önceden yazma-yalnız
+    (write-only) idi -- hiçbir uç nokta geri okumuyordu. Bu artık
+    /led/durum ile mümkün."""
+    onceki_sayi = len(client.get("/led/durum", headers=operator_header).json()["son_mesajlar"])
+
+    r = client.post("/led/test", params={"mesaj": "PTS DURUM TESTİ"}, headers=operator_header)
+    assert r.status_code == 200, r.text
+
+    r2 = client.get("/led/durum", headers=operator_header)
+    assert r2.status_code == 200, r2.text
+    veri = r2.json()
+    assert len(veri["son_mesajlar"]) == onceki_sayi + 1
+    assert veri["son_mesajlar"][0]["mesaj"] == "PTS DURUM TESTİ"
+    assert veri["son_mesajlar"][0]["basarili"] is True
+
+
+# ------------------------------------------------------------------
+# Otomatik bariyer açma -- desteklenmeyen mod (gpio) sessiz kalmamalı
+# (2026-09-25, sistem taraması)
+# ------------------------------------------------------------------
+
+def test_otomatik_bariyer_acma_gpio_modunda_sessiz_kalmaz_alarm_uretir(client, yetkili_header, caplog):
+    """Önceden: auto_ac=True ve mod='gpio' olan bir bariyer için yetkili bir
+    araç girişinde otomatik açma döngüsü (bkz. main.py'deki ilgili blok)
+    HİÇBİR ŞEY yapmıyordu -- ne log, ne alarm. Artık en azından loglanıyor
+    ve panelde görülebilir bir 'bariyer_hatasi' alarmı oluşturuluyor."""
+    from backend.database import SessionLocal
+    from backend import models
+
+    db = SessionLocal()
+    try:
+        bariyer = models.BariyerAyarlari(ad="GPIO Test Bariyeri", mod="gpio", auto_ac=True, aktif=True)
+        db.add(bariyer)
+        db.commit()
+        db.refresh(bariyer)
+        bariyer_id = bariyer.id
+    finally:
+        db.close()
+
+    try:
+        r = client.post("/kisiler", json={
+            "ad_soyad": "GPIO Test Abone", "plaka_no": "34 GPIO 01", "tip": "abone",
+        }, headers=yetkili_header)
+        assert r.status_code == 200, r.text
+
+        with caplog.at_level("ERROR", logger="pts"):
+            r2 = client.post("/kayitlar", json={"plaka_no": "34 GPIO 01", "kamera_id": "GPIO-TEST-KAM", "yon": "giris"},
+                              headers=yetkili_header)
+        assert r2.status_code == 200, r2.text
+        assert r2.json()["yetki_durumu"] == "yetkili"
+        assert "GPIO Test Bariyeri" in caplog.text and "GPIO" in caplog.text
+
+        r3 = client.get("/alarmlar", params={"alarm_tipi": "bariyer_hatasi"}, headers=yetkili_header)
+        assert r3.status_code == 200, r3.text
+        assert any("GPIO Test Bariyeri" in a["mesaj"] for a in r3.json())
+    finally:
+        db = SessionLocal()
+        try:
+            db.query(models.BariyerAyarlari).filter(models.BariyerAyarlari.id == bariyer_id).delete()
+            db.commit()
+        finally:
+            db.close()
 
 
 # ------------------------------------------------------------------

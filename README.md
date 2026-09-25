@@ -3306,3 +3306,89 @@ düğmesi doğru kamera için göründüğü, modal açılınca girdi kutusunun 
 adla önceden dolduğu, kaydet'e basınca doğru `PATCH /kameralar/{id}/ad`
 isteğinin doğru gövdeyle atıldığı. Mevcut 230 test (saf backend/diğer
 frontend testleri, bu değişiklikten etkilenmedi) geçmeye devam ediyor.
+
+## Sistem Taraması: Bulunan Eksikler ve Düzeltmeler (2026-09-25)
+
+Kullanıcı talebi ("sistem ile ilgili geliştirmelere bakar mısın eklenmesi
+ya da düzeltmesi gereken eksiklikler var mı") üzerine backend, frontend ve
+operasyonel/dağıtım katmanı ayrı ayrı derinlemesine tarandı. Bu bölüm, bu
+taramada bulunan ve bu sürümde DÜZELTİLEN sorunları belgeler; henüz
+düzeltilmemiş bulgular ilgili sonraki bölümlerde (bkz. aşağıdaki "Otomatik
+Veritabanı Yedekleme" ve gelecekteki commit'ler) ele alınıyor.
+
+**En kritik bulgu — bariyerin OTOMATİK açılması hiç devreye giremiyordu:**
+panelde bariyer eklerken görünen "Yetkili araç girişinde otomatik aç" onay
+kutusu (`frontend/app.js::bariyerForm`) işaretlenip kaydedilse bile,
+`POST /bariyer/ayarlar` (`main.py::bariyer_ekle`) isteğin `auto_ac` alanını
+HİÇ OKUMUYORDU — yeni bariyer her zaman `auto_ac=False` ile oluşuyordu.
+Üstelik bariyer ayarlarını SONRADAN değiştirmenin (bu kutuyu işaretlemek
+dahil) hiçbir yolu yoktu — panelde yalnızca ekleme ve silme vardı, "sil
++ yeniden ekle" ise o bariyere bağlı her `Nokta.bariyer_id` referansını
+kırardı. Artık: `bariyer_ekle` `auto_ac` alanını okuyor; yeni
+`PATCH /bariyer/ayarlar/{id}` uç noktası (`main.py::bariyer_guncelle`,
+`schemas.BariyerAyarlariGuncelle` — önceden tanımlı ama hiç kullanılmayan
+bir şema) ile bariyeri SİLMEDEN ayarları (ad, mod, http_url, http_metot,
+http_govde, auto_ac, aktif) değiştirmek mümkün; panelde "Tanımlı
+Bariyerler" tablosuna bir "Otomatik Aç: Açık/Kapalı" sütunu ve bir
+düzenleme (kalem) düğmesi eklendi. Değişiklik denetim kaydına düşer.
+
+**GPIO bariyer modu tanımlı ama uygulanmamış, sessizce hiçbir şey
+yapmıyordu:** `models.BariyerAyarlari.mod` şemada "gpio" üçüncü bir seçenek
+olarak tanımlansa da (panelin kendi arayüzü yalnızca Simülasyon/HTTP
+sunuyor, yani bu yalnızca doğrudan API çağrısıyla ya da ileride eklenecek
+bir arayüz seçeneğiyle karşılaşılabilecek bir durum), otomatik bariyer açma
+döngüsü yalnızca `mod == "http"` durumunu ele alıyordu — `gpio` (ya da
+`http_url` boş bırakılmış bir `http` bariyeri) için hiçbir şey olmuyordu:
+ne log, ne alarm. Yetkili bir araç girse, plaka doğru okunup kayıt oluşsa
+bile bariyer sessizce açılmıyordu. Artık bu durumlarda hem loglanıyor hem
+de panelde görülebilecek bir `bariyer_hatasi` alarmı oluşturuluyor.
+Gerçek bir GPIO sürücüsü bu sürümde YOK — kullanıcı bu modun herhangi bir
+sahada kullanılmadığını (ya da emin olmadığını) belirtti, bu yüzden gerçek
+donanım sürücüsü yazılmadı; yalnızca sessiz başarısızlık giderildi.
+
+**LED panel hataları hiçbir yerde görünmüyordu:** `backend/led_panel.py`
+tüm durum/hata mesajlarını `print()` ile yazıyordu — bir servis sürecinin
+stdout'u tipik olarak hiçbir yerde toplanmaz/görüntülenmez, oysa kod
+tabanının geri kalanı (main.py, camera_reader.py) bilinçli olarak
+`logging` modülüne geçmiş durumda. Artık `pts.led` alt logger'ı kullanılıyor
+(main.py'deki "pts" logger'ının `loglar/pts.log` dosyasına yazan
+handler'ını miras alır), yani LED panel hataları da `/sistem/loglar`
+üzerinden görülebilir. Ayrıca `LedMesaj` veritabanı tablosu yazma-yalnız
+(write-only) idi — hiçbir uç nokta geri okumuyordu; yeni `GET /led/durum`
+uç noktası son 20 gönderimi ve varsa en son başarısız gönderimi döner.
+
+**`cameras.json`'a kilitsiz eşzamanlı yazma:** kamera ekleme/silme/yeniden
+adlandırma/yön-ROI-aktiflik değiştirme uç noktalarının hepsi "oku → değiştir
+→ yaz" işlemini hiçbir kilit olmadan yapıyordu. FastAPI'nin senkron `def`
+uç noktaları bir iş parçacığı havuzunda çalıştığı için bu gerçek bir yarış
+durumuydu: iki eşzamanlı istek birbirinin değişikliğini sessizce
+ezebiliyordu; kamera ekleme tarafında ise lisans kamera limiti kontrolü de
+aynı yarışa açıktı. Artık tüm bu uç noktalar `_kamera_dosya_kilit` ile
+korunuyor. Ayrıca `_kameralari_yaz` artık ATOMİK yazıyor (geçici dosya +
+`os.replace`) — bir okuyucunun yazma sırasında yarım/bozuk JSON okuyup
+sessizce boş kamera listesi dönmesi ihtimali ortadan kalktı.
+
+**Kamera adı değiştirmede DB/JSON tutarsızlığı riski:** `kamera_ad_degistir`
+önceden ÖNCE veritabanını güncelleyip SONRA `cameras.json`'ı yazıyordu —
+JSON yazımı DB commit'inden sonra başarısız olursa iki kaynak birbirinden
+sapabiliyordu. Sıra tersine çevrildi (önce JSON, sonra DB) ve DB güncellemesi
+başarısız olursa JSON eski adına geri alınmaya çalışılıyor.
+
+**`PUT /sistem/ayarlar` hiçbir değeri doğrulamıyordu:** yalnızca anahtarın
+geçerli olup olmadığına bakılıyordu, değerin tipi/aralığı hiç
+kontrol edilmiyordu. Örneğin `min_tanima_guveni`'ne sayı yerine metin
+yazılırsa, bu değer `_pipeline_baslat` içinde kullanılmaya çalışıldığında
+istisna fırlatıyordu — bu da izleme (watchdog) döngüsü her denediğinde
+(20 sn'de bir bu ayar okunduğu için) TÜM kameraların sürekli başlatılıp
+hemen çökmesine yol açabiliyordu. Artık her ayar için tip/aralık doğrulaması
+`_AYAR_DOGRULAYICILAR` sözlüğünde merkezi olarak tanımlı ve `PUT
+/sistem/ayarlar` bunu uyguluyor; geçersiz bir değer 400 ile reddediliyor.
+
+**Testler:** yukarıdaki değişikliklerin tümü için `tests/test_api.py`'ye
+(yalnızca `py_compile` ile doğrulandı) yeni testler eklendi: ayar doğrulama
+(geçersiz/geçerli değerler), LED ayarları/test/durum uç noktaları
+(önceden hiç testi yoktu), otomatik bariyer açmanın `gpio` modunda alarm
+ürettiği, `auto_ac`'ın artık kaydedildiği ve `PATCH /bariyer/ayarlar/{id}`
+ile bir bariyerin id'si değişmeden güncellenebildiği. Mevcut 230 test
+(fastapi gerektirmeyen testler) değişmeden geçmeye devam ediyor. Frontend
+tarafı (bariyer düzenleme modalı) Playwright ile doğrulandı.
