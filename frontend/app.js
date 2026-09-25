@@ -2640,20 +2640,43 @@ document.getElementById("testKayitForm").addEventListener("submit", async (e) =>
 
 // ---------------------- BAŞLANGIÇ ----------------------
 
+// 2026-09-25: bkz. dosyanın SSE bölümündeki _sseSonVeriZamani/_sseController
+// notu -- "yenile desem de düzelmiyor, sayfayı f5 yapınca düzeldi" kök
+// nedeninin düzeltmesi. Eskiden bu yedek polling YALNIZCA `!_sseAktif`
+// şartına bakıyordu; ama `_sseAktif`, bağlantı FİİLEN ölse bile (zombi
+// `reader.read()`) sonsuza dek `true` kalabiliyordu -- bu durumda ne gerçek
+// zamanlı olaylar geliyordu ne de bu "yedek" polling hiç devreye giriyordu,
+// sayfa kullanıcı elle F5 yapana kadar tamamen donuyordu. Artık her turda
+// SSE'nin gerçekten canlı mı yoksa "görünüşte bağlı ama durgun" mu olduğu da
+// ayrıca kontrol ediliyor; durgunsa bağlantı zorla kapatılıyor (bu, mevcut
+// `.finally()` bloğunu tetikleyip normal yeniden bağlanma mantığını devreye
+// sokar) VE bu turda yenileme de -- yeniden bağlanmayı beklemeden -- hemen
+// çalıştırılıyor. Test edilebilirlik için (gerçek 15 sn'yi beklemeden)
+// isimli, dışa açık bir fonksiyona çıkarıldı -- bkz.
+// tests/test_frontend_rbac.py veya benzeri statik testler.
+function _canliYenilemeVeZombiSseKontrolu() {
+  if (!sessionStorage.getItem("pts_token")) return;
+  const sseDurgun = _sseAktif && _sseSonVeriZamani && (Date.now() - _sseSonVeriZamani > SSE_DURGUNLUK_ESIGI_MS);
+  if (sseDurgun) {
+    console.warn("SSE bağlantısı durgun görünüyor (uzun süredir veri yok), zorla yeniden bağlanılıyor.");
+    try { _sseController?.abort(); } catch { }
+  }
+  if (!_sseAktif || sseDurgun) {
+    panelYenile();
+    sonGecislerYukle(false);
+    if (!_kayitlarFiltresiDuzenleniyorMu()) kayitlariYukle(false);
+  }
+}
+
 authBaslat().then(() => {
   ziyaretciAlanGoster();
-  // SSE bağlıysa (gerçek zamanlı olaylar zaten Panel+Kayıtlar'ı tazeliyor,
-  // bkz. _sseKayitAl -> _canliBolumleriTazeleDebounce) bu yedek polling'e
-  // gerek yok; SSE bağlı DEĞİLSE (bağlantı koptu/henüz kurulmadıysa) 15
-  // sn'de bir Panel VE Kayıtlar sekmesi otomatik olarak yeniden yüklenir --
-  // kullanıcının müdahalesi olmadan sayfa arka planda kendini güncel tutar.
-  setInterval(() => {
-    if (sessionStorage.getItem("pts_token") && !_sseAktif) {
-      panelYenile();
-      sonGecislerYukle(false);
-      if (!_kayitlarFiltresiDuzenleniyorMu()) kayitlariYukle(false);
-    }
-  }, 15000);
+  // SSE bağlıysa VE gerçekten canlıysa (gerçek zamanlı olaylar zaten
+  // Panel+Kayıtlar'ı tazeliyor, bkz. _sseKayitAl -> _canliBolumleriTazeleDebounce)
+  // bu yedek polling'e gerek yok; SSE bağlı DEĞİLSE (bağlantı koptu/henüz
+  // kurulmadıysa) YA DA yukarıdaki fonksiyonun tespit ettiği gibi durgunsa,
+  // 15 sn'de bir Panel/Kayıtlar/Son Geçişler otomatik olarak yeniden yüklenir
+  // -- kullanıcının müdahalesi olmadan sayfa arka planda kendini güncel tutar.
+  setInterval(_canliYenilemeVeZombiSseKontrolu, 15000);
 });
 
 // ================================================================
@@ -2693,6 +2716,30 @@ function toastGoster(mesaj, tip = "bilgi", tikla = null) {
 
 let _sseAktif = false;
 let _sseYenidenBaglaSayaci = 0;
+// 2026-09-25 kullanıcı geri bildirimi: "sistem hiç kapanmadan aktif bir
+// şekilde çalışmaya devam etti fakat son geçişler ekranı akşam saatlerinde
+// kalmış güncellenmemiş... yenile desem de düzelmiyor... sayfayı f5 yapınca
+// düzeldi." KÖK NEDEN: tarayıcı sekmesi uzun süre açık kalırsa (özellikle
+// bilgisayar uykuya girip çıktıktan veya kısa bir ağ kesintisinden sonra),
+// aşağıdaki `_sseBaslatFetch`'in `reader.read()` çağrısı bazı tarayıcı/işletim
+// sistemi senaryolarında ASLA sonuçlanmadan (ne hata verir ne tamamlanır)
+// sonsuza dek askıda kalabiliyor -- alttaki TCP bağlantısı fiilen ölü ama
+// tarayıcı bunu fark etmiyor. Bu durumda `_sseAktif` sonsuza dek `true`
+// kalıyor: ne `.finally()` bloğu (yeniden bağlanma) çalışıyor, ne de
+// aşağıdaki 15 sn'lik yedek polling (`!_sseAktif` şartına bağlı olduğu için)
+// devreye giriyor -- sonuç: Panel/Kayıtlar/Son Geçişler'in TÜMÜ, kullanıcı
+// sayfayı elle F5 ile yenileyene kadar donmuş kalıyor (uygulama içi "Yenile"
+// düğmeleri de dahil -- onlar da AYNI zombi ağ yığınına düşen `fetch()`
+// çağrıları kullanıyor). `_sseSonVeriZamani`, akıştan HERHANGİ bir veri
+// (gerçek bir olay VEYA sunucunun 25 sn'de bir gönderdiği kalp atışı yorum
+// satırı, bkz. main.py::sse_baglantisi) alındığında güncellenir;
+// `_sseController`, o an aktif fetch'in AbortController'ıdır -- bu ikisi
+// birlikte, aşağıdaki periyodik kontrolün "bağlantı GÖRÜNÜŞTE açık ama
+// fiilen ölü" durumunu tespit edip ZORLA kapatabilmesini sağlar (bkz.
+// _canliYenilemeVeZombiSseKontrolu).
+let _sseSonVeriZamani = 0;
+let _sseController = null;
+const SSE_DURGUNLUK_ESIGI_MS = 70000; // sunucu en geç 25 sn'de bir veri gönderir; 70 sn'lik pay birkaç kaçırılan kalp atışına tolerans tanır
 
 function sseBaslat() {
   const token = sessionStorage.getItem("pts_token");
@@ -2711,9 +2758,12 @@ function sseBaslat() {
 function _sseBaslatFetch(token) {
   if (_sseAktif) return;
   _sseAktif = true;
+  _sseSonVeriZamani = Date.now();
   _sseYenidenBaglaSayaci++;
+  const baglanmaZamani = Date.now();
 
   const ctrl = new AbortController();
+  _sseController = ctrl;
   fetch("/olaylar/sse", { headers: { Authorization: `Bearer ${token}` }, signal: ctrl.signal })
     .then(async (r) => {
       if (!r.ok || !r.body) throw new Error("SSE bağlantısı kurulamadı");
@@ -2723,6 +2773,10 @@ function _sseBaslatFetch(token) {
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
+        // Gelen HER parça (gerçek bir olay ya da yalnızca kalp atışı yorum
+        // satırı olsun) bağlantının hâlâ canlı olduğunun kanıtıdır -- bkz.
+        // yukarıdaki _sseSonVeriZamani'nin docstring'i.
+        _sseSonVeriZamani = Date.now();
         tampon += dec.decode(value, { stream: true });
         const satirlar = tampon.split("\n");
         tampon = satirlar.pop();
@@ -2743,6 +2797,18 @@ function _sseBaslatFetch(token) {
     .catch(() => { })
     .finally(() => {
       _sseAktif = false;
+      _sseController = null;
+      // calistir.bat/calistir.sh'deki AYNI "en az 60 sn sorunsuz çalıştıysa
+      // deneme sayacını sıfırla" mantığı: bağlantı yeterince uzun süre
+      // sağlıklı kaldıysa bu KALICI bir sorun değildi (geçici bir ağ
+      // kesintisiydi) -- sayaç sıfırlanır. Aksi halde, sistemin ömrü
+      // boyunca yaşanmış TEK bir geçici kesinti bile üstel geri çekilmeyi
+      // kalıcı olarak 5 dakikalık tavana kilitler; sonraki (bambaşka,
+      // ilgisiz) bir kesintide bile yeniden bağlanmak gereksiz yere 5
+      // dakikaya kadar sürer.
+      if (Date.now() - baglanmaZamani >= 60000) {
+        _sseYenidenBaglaSayaci = 0;
+      }
       // Yeniden bağlan (max 5 dk bekleme)
       const bekleme = Math.min(2000 * Math.pow(1.5, _sseYenidenBaglaSayaci - 1), 300000);
       setTimeout(() => { if (sessionStorage.getItem("pts_token")) _sseBaslatFetch(sessionStorage.getItem("pts_token")); }, bekleme);

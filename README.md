@@ -3188,3 +3188,66 @@ sınıfını taşımadığı, tıklandığında `olayDetayAc(id)`'nin çağrıld
 büyük görsel lightbox'ının (`#gorselBuyutModal`) AÇILMADIĞI doğrulandı.
 `node --check frontend/app.js` ve mevcut 230 test (hiçbiri bu iki
 davranışa bağımlı değildi) değişiklikten etkilenmeden geçmeye devam ediyor.
+
+## "Zombi" SSE Bağlantısı Yüzünden Canlı Ekranların Donması (2026-09-25)
+
+**Kullanıcı talebi/bildirimi:** "sistem hiç kapanmadan aktif bir şekilde
+çalışmaya devam etti fakat son geçişler ekranı akşam saatlerinde kalmış
+güncellenmemiş neden?" — ardından "yenile desem de düzelmiyor" (uygulama
+içi "Yenile" düğmesi de dahil) ve son olarak "sayfayı f5 yapınca düzeldi".
+Bu üçü birlikte kök nedeni kesin olarak işaret ediyor: sunucu/kameralar
+sorunsuz çalışmaya devam ediyordu (aksi halde tam sayfa yenileme de
+düzeltmezdi) — sorun tamamen tarayıcı sekmesinin ağ durumundaydı.
+
+**Kök neden:** `frontend/app.js::_sseBaslatFetch`, gerçek zamanlı olayları
+`fetch()` tabanlı bir akışla (`reader.read()` döngüsü) okuyordu.
+Bilgisayarın kısa süreliğine uykuya girip çıkması, uzun süreli bir ağ
+kesintisi veya benzeri bir senaryoda, bu döngüdeki `reader.read()` çağrısı
+bazı tarayıcı/işletim sistemi kombinasyonlarında ASLA sonuçlanmadan (ne
+hata fırlatır ne `done: true` döner) sonsuza dek askıda kalabiliyor —
+alttaki TCP bağlantısı fiilen ölü ama tarayıcı bunu fark etmiyor
+("zombi" bağlantı). Bu durumda `_sseAktif` bayrağı sonsuza dek `true`
+kalıyordu: ne `.finally()` bloğundaki yeniden bağlanma mantığı çalışıyordu
+(çünkü `fetch` promise'i hiç tamamlanmıyordu), ne de 15 saniyelik yedek
+polling (`if (!_sseAktif) {...}` şartına bağlı olduğu için) devreye
+giriyordu. Sonuç: Panel, Kayıtlar VE Son Geçişler'in tümü, kullanıcı
+sayfayı elle F5 ile (yeni bir `fetch`/TCP bağlantısı zorlayarak) yenileyene
+kadar donmuş kalıyordu — uygulama içi "Yenile" düğmeleri de aynı türden
+zombi ağ yığınına düşen `apiCagir`/`fetch()` çağrıları kullandığı için
+onlar da işe yaramıyordu.
+
+**Düzeltme:** Sunucu zaten `/olaylar/sse` üzerinden en geç 25 saniyede bir
+bir "kalp atışı" yorum satırı gönderiyor (bkz. `main.py::sse_baglantisi`,
+`asyncio.wait_for(q.get(), timeout=25.0)`). İstemci tarafında yeni
+`_sseSonVeriZamani`, akıştan gelen HER parçada (gerçek bir olay veya
+yalnızca kalp atışı olsun) güncelleniyor; yeni `_sseController` de o an
+aktif `fetch`'in `AbortController`'ını tutuyor. 15 saniyelik yedek
+zamanlayıcı, artık yalnızca isimsiz bir kapanış değil (test edilebilir
+olması için) adlandırılmış `_canliYenilemeVeZombiSseKontrolu` fonksiyonu:
+her turda `_sseAktif` iken de `_sseSonVeriZamani`'nin üzerinden
+`SSE_DURGUNLUK_ESIGI_MS` (70 sn — birkaç kaçırılan kalp atışına tolerans
+tanır) geçip geçmediğine bakıyor. Geçtiyse bağlantı "durgun/zombi" sayılıp
+`_sseController.abort()` ile ZORLA kapatılıyor (bu, mevcut `.finally()`
+bloğunu tetikleyip normal üstel-geri-çekilmeli yeniden bağlanma mantığını
+devreye sokuyor) VE bu turda Panel/Kayıtlar/Son Geçişler yenilemesi de --
+yeniden bağlanmayı beklemeden -- hemen çalıştırılıyor.
+
+**Ek düzeltme (aynı bölge, ilişkili küçük bir sorun):** `_sseYenidenBaglaSayaci`
+(üstel geri çekilme sayacı) daha önce hiç sıfırlanmıyordu -- sistemin
+ömrü boyunca yaşanan TEK bir geçici ağ kesintisi bile, sonraki bambaşka bir
+kesintide de yeniden bağlanmanın gereksiz yere 5 dakikaya kadar sürmesine
+yol açabiliyordu. `calistir.bat`/`calistir.sh`'deki AYNI "en az 60 sn
+sorunsuz çalıştıysa deneme sayacını sıfırla" deseni buraya da uygulandı --
+bir SSE bağlantısı en az 60 saniye sağlıklı kaldıktan sonra koparsa, sayaç
+sıfırlanıp bir sonraki yeniden bağlanma yine hızlı (2 sn) başlıyor.
+
+**Testler:** Playwright ile üç senaryo doğrulandı: SSE sağlıklıyken (veri
+yakın zamanda geldi) yedek yenilemenin HİÇ çalışmadığı; SSE "zombi"yken
+(`_sseAktif=true` ama son veri 70 sn eşiğinden daha eski) hem
+`_sseController.abort()`'un çağrıldığı HEM DE Panel/Kayıtlar/Son
+Geçişler'in hemen yenilendiği; SSE hiç bağlı değilken (`_sseAktif=false`)
+eskisi gibi normal yedek pollingin çalıştığı. Ayrıca sahte bir `fetch`
+ile kısa süreli bir bağlantı kopmasının `_sseYenidenBaglaSayaci`'yi
+ARTIRDIĞI (sıfırlamadığı) doğrulandı. `node --check frontend/app.js` ve
+mevcut 230 test değişiklikten etkilenmeden geçmeye devam ediyor -- bu
+saf frontend bir düzeltme olduğu için backend testleri kapsam dışı.
