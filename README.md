@@ -3651,3 +3651,92 @@ bağlantı bandının görünüp kaybolması, 403/ağ hatalarının tekrar
 bildirilmemesi ve 500'ün dakikada bir bildirilmesi, olay detayında geç dönen
 eski cevabın yeni aracın üzerine yazmaması, 401'de giriş ekranına
 yönlendirme ve mesajın gösterilmesi.
+
+## Performans: PDF/Excel Raporları ve Kayıt/Plaka Aramasındaki Yavaşlık (2026-09-25, kullanıcı geri bildirimi)
+
+Kullanıcı geri bildirimi: "PDF ve Excel indirirken, sistemde kayıtlarda araç
+arattığımda işlemin yavaş ilerlediğini tespit ettim ... her an çökecekmiş
+gibi yavaş hareket ediyor" (ekran görüntüsünde Plaka Analizi penceresi
+yükleniyor simgesinde bekliyor). Ölçüm ve kod incelemesiyle bulunan kök
+nedenler ve düzeltmeler:
+
+- **Rapor, tüm sistemi kilitliyordu (asıl neden):** büyük bir PDF raporu
+  (2000 satıra kadar, her satırda bir görsel) ana PTS sürecinin içinde
+  üretiliyordu. Python'da aynı süreçteki işler tek bir çekirdek kilidini
+  (GIL) paylaştığı için, rapor hazırlanırken (ölçüm: 2000 satır ~41 sn)
+  diğer kullanıcıların istekleri (Plaka Analizi, Kayıtlar), canlı kamera
+  akışları ve plaka tanıma sırasını beklemek zorunda kalıyordu — tam olarak
+  "rapor indirirken aramanın yavaşlaması". Artık rapor dosyası **ayrı bir
+  işletim sistemi sürecinde** üretiliyor; ana süreç yalnızca sonucu
+  bekliyor ve panel/kameralar etkilenmiyor. Aynı anda yalnızca bir büyük
+  rapor üretiliyor (ikinci istek sırasını bekliyor). Ayrı süreç herhangi bir
+  nedenle başlatılamazsa rapor eskisi gibi süreç içinde üretilir;
+  `PTS_RAPOR_AYRI_SURECTE=0` ortam değişkeniyle bu özellik kapatılabilir.
+- **PDF üretimi ~6 kat hızlandı (2000 satır: ~41 sn → ~7-12 sn):** sürenin
+  ~%75'i her kamera karesini TAM çözünürlükte (1920x1080) açıp sonra
+  küçültmekten geliyordu. Artık JPEG "draft" moduyla görsel doğrudan 1/8
+  ölçekte çözülüyor (küçük resim için görsel kalite aynı); panelin
+  oluşturduğu küçük resim önbelleği varsa o kullanılıyor. Kısa ve serbest
+  metin olmayan hücreler (ID, plaka, tarih, geçiş tipi) daha hafif düz metin
+  olarak çiziliyor.
+- **Vardiya eşleştirmesi zamanla büyüyen bir yavaşlıktı:** Kayıtlar
+  ekranındaki ve raporlardaki "Vardiya" sütunu için her kayıt, sistemin
+  kurulduğu günden beri açılmış TÜM vardiya oturumlarıyla tek tek
+  karşılaştırılıyordu (tek bir kaydın detayı için bile tüm oturum tablosu
+  okunuyordu) — her vardiya girişiyle biraz daha yavaşlıyordu. Artık
+  yalnızca kayıtların zaman aralığıyla çakışan oturumlar okunuyor ve
+  eşleştirme bir süpürme algoritmasıyla yapılıyor (5000 kayıt x 3000
+  oturum: saniyeler yerine ~0,1 sn; sonuçların eski yöntemle birebir aynı
+  olduğu rastgele üretilmiş yüzlerce senaryoyla test edildi).
+- **Güvenlik personeli / Vardiya filtresi için "saatli bomba" giderildi:**
+  bu filtre, bir hesabın/vardiyanın TÜM geçmiş oturumlarını tek tek
+  `(tarih >= a VE tarih < b) VEYA ...` biçiminde sıralayan bir SQL koşuluyla
+  uygulanıyordu. Koşul her vardiya girişiyle büyüyordu; üstelik SQL Server
+  tek sorguda en fazla 2100 parametreye izin verdiği için bir vardiya
+  adında ~1050 oturum birikince (ör. 3 hesap x günde 1 oturum ≈ 1 yıl)
+  Kayıtlar ekranı, Vardiya filtresi ve güvenlik personelinin tüm kayıt
+  görünümleri hata verip TAMAMEN çalışmaz hale gelecekti. Artık sabit
+  boyutlu bir `EXISTS` alt sorgusu kullanılıyor (anlamı aynı).
+- **Küçük resimler:** Kayıtlar tablosu, Son Geçişler kartları ve Plaka
+  Analizi penceresi 96x68 px'lik küçük resimler için TAM kamera karesini
+  (150-400 KB) indiriyordu — 50 satırlık bir sayfa her yenilemede ~10-20 MB.
+  Artık sunucu, ilk istekte üretip diske önbelleğe aldığı küçük resmi
+  (~20 KB, `goruntuler/.kucuk/`) gönderiyor; tam çözünürlüklü görsel yalnızca
+  görsel büyütülünce indiriliyor (önce küçük resim anında gösterilir, tam
+  görsel hazır olunca yerine konur). Görseller oturum boyunca tarayıcıda
+  önbelleğe alınıyor (tablo her yeni geçişte yeniden çizildiğinde aynı
+  görseller tekrar indirilmiyor). Orijinali silinen küçük resimler periyodik
+  görüntü temizliğinde otomatik siliniyor.
+- **Plaka Analizi:** eşleşen kişi, tüm aktif kişileri (toplu içe aktarmayla
+  binlerce olabilir) belleğe yükleyip tek tek karşılaştırmak yerine
+  veritabanında bulunuyor. Ayrıca "Toplam Geçiş" sayısı eskiden listelenen
+  en fazla 50 kayıtla sınırlıydı (50'den fazla geçişi olan araç için hep
+  "50" yazıyordu) — artık gerçek toplam gösteriliyor.
+- **Kayıtlar listesinde gereksiz sorgu:** her Kayıtlar yüklemesinde (ve her
+  raporda) sonucu hiç kullanılmayan, filtrelenmiş tabloyu baştan sona sayan
+  bir `COUNT` sorgusu çalışıyordu — kaldırıldı.
+- **Rapor indirme deneyimi:** rapor eskiden yeni bir sekmede açılıyordu;
+  hazırlanırken hiçbir geri bildirim yoktu, kullanıcı "takıldı" sanıp tekrar
+  bastığında sunucuda ikinci bir rapor aynı anda üretilmeye başlıyordu.
+  Artık "Rapor hazırlanıyor…" bildirimi gösteriliyor, düğmeler rapor
+  bitene kadar devre dışı kalıyor ve dosya hazır olunca doğrudan iniyor.
+- **Rapor ekrandaki filtreyle aynı:** ekranda "Yetki Durumu" filtresi
+  seçiliyken alınan Excel/PDF bu filtreyi yok sayıp TÜM kayıtları
+  içeriyordu — artık filtre rapora da uygulanıyor.
+- **Geçici dosyalar birikmiyordu değil, birikiyordu:** üretilen her rapor ve
+  her "DB Yedek" indirmesinin geçici TAM veritabanı kopyası
+  `disa_aktarilanlar/` klasöründe süresiz kalıyordu (disk + kişisel veri
+  riski). Artık dosyalar indirildikten sonra siliniyor; 24 saatten eski
+  kalıntılar periyodik temizlikte temizleniyor.
+
+**Testler:** gerçekten çalıştırılanlar: vardiya eşleştirme algoritmasının
+eski yöntemle birebir aynı sonucu verdiği rastgele senaryolar + büyük veri
+hız testi (`tests/test_vardiya_eslestirme.py`), küçük resim önbelleği
+(`tests/test_kucuk_gorsel.py`), PDF/Excel'in "spawn" ile başlatılan ayrı
+bir süreçte üretilebildiği (`tests/test_rapor_ayri_surec.py` — Windows'taki
+davranışla aynı yöntem), mevcut PDF testleri (Türkçe karakter çizimi dahil).
+`tests/test_api.py`'ye (CI'da çalışır): rapor yetki_durumu filtresi, rapor
+dosyalarının indirildikten sonra silinmesi, küçük resim ucu (boyut, önbellek
+başlığı, yol geçişi koruması, kimliksiz 401), Plaka Analizi'nde 50'yi aşan
+toplam. Frontend (küçük resim isteği, büyütmede tam görselin yüklenmesi,
+rapor indirme bildirimi/düğme kilidi/tek istek) Playwright ile doğrulandı.

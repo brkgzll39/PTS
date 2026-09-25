@@ -220,15 +220,34 @@ function gorselZoomSifirla() {
   _gorselTransformUygula();
 }
 
+let _buyukGorselBlobUrl = null;
+let _buyukGorselIstekNo = 0;
+
 function buyukGorselAc(imgEl) {
   if (!imgEl || !imgEl.src) return;
   const buyukImg = document.getElementById("gorselBuyutImg");
   if (!buyukImg) return;
-  // Görsel zaten blob: URL olarak `imgEl.src`'de hazır (korumaliGorselAta ile
-  // atanmış) — tekrar fetch etmeye gerek yok, aynı blob URL'i yeniden kullanılır.
+  // Önce eldeki (küçük) görsel ANINDA gösterilir; kaynak bir küçük resimse
+  // (bkz. korumaliGorselAta'nın `kucuk` notu) tam çözünürlüklü görsel arka
+  // planda indirilip hazır olunca yerine konur -- plakayı okuyabilmek için
+  // büyütmede tam çözünürlük gerekir.
   buyukImg.src = imgEl.src;
   gorselZoomSifirla();
   bootstrap.Modal.getOrCreateInstance(document.getElementById("gorselBuyutModal")).show();
+  const tamAd = imgEl.dataset.tamGorsel;
+  const token = sessionStorage.getItem("pts_token");
+  if (!tamAd || !token) return;
+  const istekNo = ++_buyukGorselIstekNo;
+  fetch(`/goruntuler/${encodeURIComponent(tamAd)}`, { headers: { Authorization: `Bearer ${token}` } })
+    .then(r => (r.ok ? r.blob() : null))
+    .then(blob => {
+      // Bu arada lightbox kapatıldıysa ya da başka bir görsel açıldıysa dokunma.
+      if (!blob || istekNo !== _buyukGorselIstekNo || !buyukImg.getAttribute("src")) return;
+      if (_buyukGorselBlobUrl) URL.revokeObjectURL(_buyukGorselBlobUrl);
+      _buyukGorselBlobUrl = URL.createObjectURL(blob);
+      buyukImg.src = _buyukGorselBlobUrl;
+    })
+    .catch(e => console.warn("Tam boyutlu görsel yüklenemedi:", e));
 }
 
 (function () {
@@ -242,6 +261,8 @@ function buyukGorselAc(imgEl) {
     gorselZoomSifirla();
     const img = document.getElementById("gorselBuyutImg");
     if (img) img.removeAttribute("src");
+    _buyukGorselIstekNo++; // hâlâ inen tam boyutlu görsel geç gelirse yok sayılsın
+    if (_buyukGorselBlobUrl) { URL.revokeObjectURL(_buyukGorselBlobUrl); _buyukGorselBlobUrl = null; }
   });
 
   // 2026-09-22: bkz. style.css'teki #gorselBuyutModal z-index notu -- bu
@@ -311,12 +332,20 @@ function gorselAdiAl(yol) {
 // serbest bırakılır (revokeObjectURL).
 const _korumaliGorselBlobURLleri = new WeakMap();
 
-async function korumaliGorselAta(imgEl, goruntuYolu) {
+// `kucuk` (2026-09-25, kullanıcı: "kayıtlarda araç arattığımda ... yavaş"):
+// tablolar/kartlar/Plaka Analizi artık TAM kamera karesi (150-400 KB) yerine
+// sunucudaki küçük resmi (~20 KB, bkz. backend/kucuk_gorsel.py) istiyor --
+// 50 satırlık bir sayfa her yenilemede ~10-20 MB yerine ~1 MB. Tam boyutlu
+// görsel yalnızca büyütülünce (buyukGorselAc) indiriliyor; bunun için
+// görselin adı `data-tam-gorsel` olarak saklanıyor.
+async function korumaliGorselAta(imgEl, goruntuYolu, kucuk = false) {
   if (!imgEl || !goruntuYolu) return;
   const token = sessionStorage.getItem("pts_token");
   if (!token) return;
+  const ad = gorselAdiAl(goruntuYolu);
+  if (kucuk) imgEl.dataset.tamGorsel = ad; else delete imgEl.dataset.tamGorsel;
   try {
-    const yanit = await fetch(`/goruntuler/${encodeURIComponent(gorselAdiAl(goruntuYolu))}`, {
+    const yanit = await fetch(`/goruntuler/${encodeURIComponent(ad)}${kucuk ? "?kucuk=1" : ""}`, {
       headers: { Authorization: `Bearer ${token}` },
     });
     if (!yanit.ok) return;
@@ -336,7 +365,7 @@ async function korumaliGorselAta(imgEl, goruntuYolu) {
 // görseli asenkron olarak atar.
 function korumaliGorselleriYukle(kapsayici) {
   kapsayici.querySelectorAll("img[data-goruntu-yolu]").forEach(img => {
-    korumaliGorselAta(img, img.dataset.goruntuYolu);
+    korumaliGorselAta(img, img.dataset.goruntuYolu, true);
     img.removeAttribute("data-goruntu-yolu");
   });
 }
@@ -2403,9 +2432,59 @@ function sayfaDegistir(delta) {
   kayitlariYukle(false);
 }
 
-function disaAktar(tur) {
+// 2026-09-25 (kullanıcı: "pdf ve excel indirirken ... her an çökecekmiş gibi
+// yavaş"): eskiden rapor `window.open` ile yeni bir sekmede açılıyordu --
+// hazırlanırken hiçbir geri bildirim yoktu (boş bir sekme), kullanıcı
+// "takıldı" sanıp düğmeye tekrar bastığında sunucuda İKİNCİ bir rapor
+// aynı anda üretilmeye başlıyordu. Artık: istek fetch ile yapılıyor, rapor
+// hazırlanırken bir bildirim gösteriliyor ve düğmeler devre dışı kalıyor;
+// hazır olunca dosya doğrudan indiriliyor. Sayfalama parametreleri
+// (limit/offset) rapora gönderilmiyor -- rapor ekrandaki sayfayla değil,
+// filtreye uyan TÜM kayıtlarla (üst sınıra kadar) üretilir.
+let _disaAktarmaSuruyor = false;
+
+async function disaAktar(tur) {
+  if (_disaAktarmaSuruyor) {
+    toastGoster("Bir rapor zaten hazırlanıyor, lütfen bekleyin.", "bilgi");
+    return;
+  }
   const params = filtreParametreleri();
-  window.open(indirmeUrlOlustur(`/disa-aktar/${tur}/kayitlar`, params), "_blank");
+  params.delete("limit");
+  params.delete("offset");
+  const dugmeler = document.querySelectorAll('button[onclick^="disaAktar("]');
+  _disaAktarmaSuruyor = true;
+  dugmeler.forEach(b => { b.disabled = true; });
+  toastGoster(`${tur === "pdf" ? "PDF" : "Excel"} raporu hazırlanıyor… Kayıt sayısına göre birkaç saniye sürebilir.`, "bilgi");
+  const token = sessionStorage.getItem("pts_token");
+  try {
+    const sorgu = params.toString();
+    const cevap = await fetch(API + `/disa-aktar/${tur}/kayitlar${sorgu ? "?" + sorgu : ""}`, {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    });
+    if (cevap.status === 401) { _oturumSuresiDoldu(); return; }
+    if (!cevap.ok) {
+      const hata = await cevap.json().catch(() => ({ detail: "Rapor oluşturulamadı" }));
+      throw new Error(hata.detail || "Rapor oluşturulamadı");
+    }
+    const blob = await cevap.blob();
+    let dosyaAdi = tur === "pdf" ? "pts_kayitlari.pdf" : "pts_kayitlari.xlsx";
+    const eslesme = (cevap.headers.get("Content-Disposition") || "").match(/filename="?([^";]+)"?/i);
+    if (eslesme) dosyaAdi = eslesme[1];
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = dosyaAdi;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 10000);
+    toastGoster("Rapor indirildi.", "basari");
+  } catch (e) {
+    toastGoster("Rapor indirilemedi: " + (e.message || e), "hata");
+  } finally {
+    _disaAktarmaSuruyor = false;
+    dugmeler.forEach(b => { b.disabled = false; });
+  }
 }
 
 function kayitPdfIndir(id) {

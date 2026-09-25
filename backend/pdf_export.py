@@ -144,20 +144,19 @@ def _kucuk_gorsel_akisi(goruntu_yolu):
     """Bir kayıt görselini küçültüp bellekte bir JPEG akışı (BytesIO) olarak
     döner; dosya yoksa/okunamıyorsa/bozuksa None döner (rapor o durumda bu
     satır için görsel yerine bir yer tutucu metin gösterir -- tek bir bozuk
-    görsel yüzünden TÜM rapor oluşturma işlemi asla çökmemeli)."""
+    görsel yüzünden TÜM rapor oluşturma işlemi asla çökmemeli).
+
+    PERFORMANS (2026-09-25, kullanıcı: "PDF indirirken ... her an
+    çökecekmiş gibi yavaş"): ölçümde rapor süresinin ~%75'i her kamera
+    karesini TAM çözünürlükte açıp sonra küçültmekten geliyordu. Artık
+    `kucuk_gorsel` modülünün disk önbelleğindeki küçük resim (panelin
+    kullandığı) varsa kaynak olarak o kullanılıyor; yoksa orijinal JPEG
+    draft moduyla (tam çözmeden, doğrudan 1/8 ölçekte) açılıyor. Ölçüm
+    (2000 satır, 1920x1080 kareler): ~41 sn -> ~7 sn."""
     if not goruntu_yolu or not os.path.isfile(goruntu_yolu):
         return None
-    try:
-        from PIL import Image as PILImage
-        with PILImage.open(goruntu_yolu) as img:
-            img = img.convert("RGB")
-            img.thumbnail(_KUCUK_GORSEL_MAKS_BOYUT)
-            akis = io.BytesIO()
-            img.save(akis, format="JPEG", quality=_KUCUK_GORSEL_JPEG_KALITE)
-            akis.seek(0)
-            return akis
-    except Exception:
-        return None
+    from backend import kucuk_gorsel
+    return kucuk_gorsel.bellekte_kucuk_jpeg(goruntu_yolu, _KUCUK_GORSEL_MAKS_BOYUT, _KUCUK_GORSEL_JPEG_KALITE)
 
 
 def kayitlar_pdf_olustur(satirlar: list, dosya_yolu: str, tarih_araligi_metni: str = "", baslik: str = "GEÇİŞ RAPORU") -> str:
@@ -197,22 +196,30 @@ def kayitlar_pdf_olustur(satirlar: list, dosya_yolu: str, tarih_araligi_metni: s
     genislikler_cm = [0.9, 2.1, 2.0, 2.0, 1.8, 1.1, 1.6, 1.1, 2.3, 1.6, 2.6, 2.7, 2.9, 2.6]
     veri = [basliklar]
     for s in satirlar:
+        # PERFORMANS (2026-09-25): kısa, tek satırlık ve serbest metin
+        # OLMAYAN hücreler (ID, plaka, her zaman boş Blok/Otopark, geçiş
+        # tipi, tarih) artık `Paragraph` yerine düz metin -- `Paragraph`
+        # her hücre için satır kırma/ölçüm yapıyor ve rapor süresinin
+        # önemli bir kısmı buydu. Düz metin reportlab tarafından biçimlendirme
+        # dili olarak YORUMLANMAZ (bkz. _pdf_metin'in kök neden notu), yani
+        # bu hücreler için kaçışlama da gerekmez. Serbest metin girilebilen
+        # (ve uzun olabilen) sütunlar Paragraph olarak kaldı.
         veri.append([
-            Paragraph(_pdf_metin(s["id"]), hucre_stili),
-            Paragraph(_pdf_metin(s["plaka_no"]), hucre_stili),
+            str(s["id"]),
+            str(s["plaka_no"] or "")[:20],
             Paragraph(_pdf_metin(s["ad"]) if s["ad"] else "-", hucre_stili),
             Paragraph(_pdf_metin(s["soyad"]) if s["soyad"] else "-", hucre_stili),
             Paragraph(_pdf_metin(s["site"]) if s["site"] else "-", hucre_stili),
-            Paragraph(_pdf_metin(s["blok"]) if s["blok"] else "-", hucre_stili),
+            str(s["blok"])[:20] if s["blok"] else "-",
             Paragraph(_pdf_metin(s["daire"]) if s["daire"] else "-", hucre_stili),
-            Paragraph(_pdf_metin(s["otopark"]) if s["otopark"] else "-", hucre_stili),
+            str(s["otopark"])[:20] if s["otopark"] else "-",
             Paragraph(_pdf_metin(s["nokta"]) if s["nokta"] else "-", hucre_stili),
-            Paragraph(_pdf_metin(s["gecis_tipi"]), hucre_stili),
+            str(s["gecis_tipi"] or ""),
             Paragraph(_pdf_metin(s["arac_tipi"]), hucre_stili),
             # Tarih, sunucu tarafında strftime ile üretilir (kullanıcı girdisi
             # DEĞİLDİR) -- kaçışlamak zararsız olsa da gereksiz; yine de "\n"
             # içerdiği için Paragraph yerine kaçışsız bırakmak render'ı bozmaz.
-            Paragraph(s["tarih_saat"].strftime("%d.%m.%Y\n%H:%M:%S"), hucre_stili),
+            s["tarih_saat"].strftime("%d.%m.%Y\n%H:%M:%S"),
             _pdf_gorsel_hucresi(s.get("goruntu_yolu"), hucre_stili),
             Paragraph(_pdf_metin(s["vardiya"]) if s.get("vardiya") else "-", hucre_stili),
         ])
@@ -227,6 +234,11 @@ def kayitlar_pdf_olustur(satirlar: list, dosya_yolu: str, tarih_araligi_metni: s
         # karakterler ("Adı", "Soyadı", "Geçiş Tipi") için burada da AYRICA
         # FONT_BOLD belirtilmesi gerekiyor (bkz. modül başındaki 2026-09-18 notu).
         ("FONTNAME", (0, 0), (-1, 0), FONT_BOLD),
+        # Düz metin gövde hücreleri (bkz. yukarıdaki PERFORMANS notu) için
+        # de Türkçe destekli font ve Paragraph hücreleriyle aynı punto.
+        ("FONTNAME", (0, 1), (-1, -1), FONT_NORMAL),
+        ("FONTSIZE", (0, 1), (-1, -1), 7),
+        ("LEADING", (0, 1), (-1, -1), 8.5),
         ("GRID", (0, 0), (-1, -1), 0.5, colors.grey),
         ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#f3f4f6")]),
         ("ALIGN", (0, 0), (-1, -1), "CENTER"),

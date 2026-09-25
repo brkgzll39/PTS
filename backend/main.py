@@ -30,7 +30,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import text
 from sqlalchemy.orm import Session
-from sqlalchemy import desc, func, or_, and_, false
+from sqlalchemy import desc, func, or_, and_, false, select
 
 from backend import models
 from backend import schemas
@@ -40,6 +40,8 @@ from backend import excel_export
 from backend import pdf_export
 from backend import led_panel
 from backend import lisans as lisans_modulu
+from backend.vardiya_eslestirme import kayitlari_oturumlarla_eslestir
+from backend import kucuk_gorsel
 from backend.metin_araclari import levenshtein_mesafesi, en_yakin_bilinen_plakayi_bul, plaka_hucresini_ayir
 
 # ---------------------- KLASÖR AYARLARI ----------------------
@@ -510,6 +512,14 @@ async def _goruntu_temizlik_dongu() -> None:
                         )
                 finally:
                     db.close()
+            # Orijinali silinmiş (saklama süresi, kayıt silme, düşük güven
+            # temizliği vb.) küçük resimleri de temizle -- bkz. kucuk_gorsel.py.
+            yetim = kucuk_gorsel.yetim_kucuk_gorselleri_temizle(GORUNTU_KLASORU)
+            if yetim:
+                logger.info("Görüntü temizliği: %d yetim küçük resim silindi", yetim)
+            eski_rapor = _eski_gecici_raporlari_temizle()
+            if eski_rapor:
+                logger.info("Geçici rapor/yedek temizliği: %d eski dosya silindi (disa_aktarilanlar/)", eski_rapor)
         except Exception as exc:
             logger.error("[görüntü-temizlik] Otomatik temizlik döngüsünde hata: %s", exc, exc_info=True)
         await asyncio.sleep(GORUNTU_TEMIZLIK_ARALIK_SN)
@@ -1398,20 +1408,41 @@ def _kullanicinin_vardiya_pencereleri(db: Session, kullanici_id: Optional[int], 
     return [(o.giris_zamani, o.cikis_zamani) for o in sorgu.all()]
 
 
-def _pencerelerden_or_kosulu(pencereler: list):
-    """VardiyaOturumu (giriş, çıkış) pencere listesinden, `Kayit.tarih_saat`in
-    bu pencerelerden EN AZ BİRİNE denk düştüğünü ifade eden bir SQLAlchemy OR
-    koşulu üretir -- "tek doğruluk kaynağı" ilkesiyle (bkz. README)
-    `_guvenlik_kayit_filtresi_uygula` ve Kayıtlar ekranındaki "Vardiya" adı
-    filtresi (2026-09-21, bkz. kayitlari_listele) TARAFINDAN ORTAK
-    kullanılır -- ÇAĞRI YAPAN, `pencereler` boşsa bunu ÇAĞIRMADAN ÖNCE ayrıca
-    ele almalı (boş bir OR her zaman "false" değil, SQLAlchemy'de anlamsız/
-    boş bir ifade üretir)."""
-    return or_(*[
-        models.Kayit.tarih_saat >= baslangic if bitis is None
-        else and_(models.Kayit.tarih_saat >= baslangic, models.Kayit.tarih_saat < bitis)
-        for baslangic, bitis in pencereler
-    ])
+def _vardiya_oturumu_kosulu(kullanici_id: Optional[int], vardiya_adi: Optional[str]):
+    """`Kayit.tarih_saat`in, verilen hesabın (ya da vardiya ADININ) açık bir
+    vardiya oturumuna denk düştüğünü ifade eden, veritabanında çalışan bir
+    EXISTS koşulu (bkz. `_pencere_icinde_mi` ile BİREBİR aynı anlam:
+    giriş <= zaman VE (çıkış YOK ya da zaman < çıkış)).
+
+    2026-09-25 (kullanıcı: "kayıtlarda araç arattığımda ... her an
+    çökecekmiş gibi yavaş"): bu filtre eskiden `_pencerelerden_or_kosulu`
+    ile kurulan, hesabın/vardiyanın TÜM geçmiş oturumlarını tek tek
+    `(tarih >= a AND tarih < b) OR ...` biçiminde sıralayan bir koşuldu.
+    Her yeni vardiya girişiyle bu koşul BÜYÜYORDU: aylar içinde yüzlerce,
+    sonra binlerce terimlik bir SQL ifadesi -- sorgu her gün biraz daha
+    yavaşlıyordu. Daha kötüsü, SQL Server tek bir sorguda en fazla 2100
+    parametreye izin verir: bir vardiya adının ~1050 oturumu birikince
+    (ör. 3 hesap x günde 1 oturum = ~1 yıl) Kayıtlar ekranı, Vardiya
+    filtresi ve güvenlik personelinin tüm kayıt görünümleri 500 hatasıyla
+    TAMAMEN çalışmaz hale gelecekti. EXISTS alt sorgusu sabit sayıda
+    parametre kullanır ve veritabanının kendi indeksleriyle değerlendirilir.
+    """
+    O = models.VardiyaOturumu
+    zaman_kosullari = (
+        O.giris_zamani <= models.Kayit.tarih_saat,
+        or_(O.cikis_zamani.is_(None), O.cikis_zamani > models.Kayit.tarih_saat),
+    )
+    if vardiya_adi:
+        alt = (
+            select(O.id)
+            .join(models.Kullanici, O.kullanici_id == models.Kullanici.id)
+            .where(models.Kullanici.vardiya_adi == vardiya_adi, *zaman_kosullari)
+        )
+    elif kullanici_id is not None:
+        alt = select(O.id).where(O.kullanici_id == kullanici_id, *zaman_kosullari)
+    else:
+        return false()
+    return alt.correlate(models.Kayit).exists()
 
 
 def _kullanicinin_izinli_kameralari(kullanici: models.Kullanici) -> Optional[set]:
@@ -1522,10 +1553,9 @@ def _vardiya_adi_filtresi_uygula(sorgu, vardiya_adi: Optional[str], db: Session)
     aynı "hiç oturum yoksa hiçbir şey gösterme" kuralıyla tutarlı)."""
     if not vardiya_adi:
         return sorgu
-    pencereler = _kullanicinin_vardiya_pencereleri(db, None, vardiya_adi)
-    if not pencereler:
-        return sorgu.filter(false())
-    return sorgu.filter(_pencerelerden_or_kosulu(pencereler))
+    # O isimde hiç oturum yoksa EXISTS her satır için yanlış olur -- yani
+    # önceki "hiçbir kayıt döndürme" güvenli davranışı aynen korunur.
+    return sorgu.filter(_vardiya_oturumu_kosulu(None, vardiya_adi))
 
 
 def _guvenlik_kayit_filtresi_uygula(sorgu, kullanici: models.Kullanici, db: Session, vardiya_penceresini_atla: bool = False):
@@ -1580,11 +1610,9 @@ def _guvenlik_kayit_filtresi_uygula(sorgu, kullanici: models.Kullanici, db: Sess
     olduğu için açık bir vardiya filtresiyle birlikte de HER ZAMAN
     uygulanmaya devam eder."""
     if kullanici.rol == ROL_GUVENLIK and not vardiya_penceresini_atla:
-        pencereler = _kullanicinin_vardiya_pencereleri(db, kullanici.id, kullanici.vardiya_adi)
-        if not pencereler:
-            sorgu = sorgu.filter(false())
-        else:
-            sorgu = sorgu.filter(_pencerelerden_or_kosulu(pencereler))
+        # bkz. _vardiya_oturumu_kosulu (oturum yoksa -> hiçbir kayıt; önceki
+        # `filter(false())` davranışıyla aynı).
+        sorgu = sorgu.filter(_vardiya_oturumu_kosulu(kullanici.id, kullanici.vardiya_adi))
     izinli_kameralar = _kullanicinin_izinli_kamera_adlari(kullanici)
     if izinli_kameralar is not None:
         sorgu = sorgu.filter(models.Kayit.kamera_id.in_(izinli_kameralar))
@@ -1687,18 +1715,34 @@ def _kayitlarin_vardiya_adlarini_ekle(kayitlar: list, db: Session) -> None:
     çekilip bellekte eşleştirilir."""
     if not kayitlar:
         return
-    oturumlar = (
-        db.query(models.VardiyaOturumu, models.Kullanici.vardiya_adi)
-        .join(models.Kullanici, models.VardiyaOturumu.kullanici_id == models.Kullanici.id)
-        .filter(models.Kullanici.vardiya_adi.isnot(None))
-        .all()
+    # PERFORMANS (2026-09-25): yalnızca bu kayıtların zaman aralığıyla
+    # ÇAKIŞAN oturumlar çekilir (eskiden sistemin kurulduğu günden beri TÜM
+    # oturumlar -- tek bir kaydın detayı için bile) ve eşleştirme her kaydı
+    # her oturumla karşılaştırmak yerine süpürme algoritmasıyla yapılır --
+    # bkz. backend/vardiya_eslestirme.py.
+    zamanlar = [k.tarih_saat for k in kayitlar if k.tarih_saat is not None]
+    oturumlar = []
+    if zamanlar:
+        oturumlar = (
+            db.query(models.VardiyaOturumu.giris_zamani, models.VardiyaOturumu.cikis_zamani, models.Kullanici.vardiya_adi)
+            .join(models.Kullanici, models.VardiyaOturumu.kullanici_id == models.Kullanici.id)
+            .filter(
+                models.Kullanici.vardiya_adi.isnot(None),
+                models.VardiyaOturumu.giris_zamani <= max(zamanlar),
+                or_(models.VardiyaOturumu.cikis_zamani.is_(None), models.VardiyaOturumu.cikis_zamani > min(zamanlar)),
+            )
+            .order_by(models.VardiyaOturumu.id)
+            .all()
+        )
+    eslesmeler = kayitlari_oturumlarla_eslestir(
+        [(i, k.tarih_saat) for i, k in enumerate(kayitlar)],
+        [(giris, cikis, ad) for giris, cikis, ad in oturumlar],
     )
-    for k in kayitlar:
+    for i, k in enumerate(kayitlar):
         adlar = []
-        for oturum, vardiya_adi in oturumlar:
-            if _pencere_icinde_mi(k.tarih_saat, oturum.giris_zamani, oturum.cikis_zamani):
-                if vardiya_adi not in adlar:
-                    adlar.append(vardiya_adi)
+        for vardiya_adi in eslesmeler.get(i, []):
+            if vardiya_adi not in adlar:
+                adlar.append(vardiya_adi)
         k.vardiya_adi = "/".join(adlar) if adlar else None
 
 
@@ -1936,7 +1980,7 @@ def mevcut_kullanici(kullanici: models.Kullanici = Depends(_giris_gerekli)):
 
 
 @app.get("/goruntuler/{dosya_adi}")
-def gorsel_getir(dosya_adi: str, _: models.Kullanici = Depends(_personel_girisi_gerekli)):
+def gorsel_getir(dosya_adi: str, kucuk: bool = False, _: models.Kullanici = Depends(_personel_girisi_gerekli)):
     """Araç/sürücü görsellerini (plaka + fotoğraf — KVKK kapsamında kişisel
     veri) YALNIZCA giriş yapmış kullanıcılara servis eder.
 
@@ -1958,7 +2002,17 @@ def gorsel_getir(dosya_adi: str, _: models.Kullanici = Depends(_personel_girisi_
     tam_yol = os.path.join(GORUNTU_KLASORU, dosya_adi)
     if not os.path.isfile(tam_yol):
         raise HTTPException(404, "Görsel bulunamadı")
-    return FileResponse(tam_yol, media_type="image/jpeg")
+    # PERFORMANS (2026-09-25, kullanıcı: "kayıtlarda araç arattığımda ...
+    # yavaş"): tablolar/kartlar 96x68 px'lik küçük resimler için TAM kamera
+    # karesini (150-400 KB) indiriyordu -- 50 satırlık bir sayfa her
+    # yenilemede ~10-20 MB. `?kucuk=1` ile disk önbelleğindeki küçük resim
+    # (~20 KB) döner (bkz. backend/kucuk_gorsel.py); üretilemezse orijinale
+    # düşülür. Dosya adları benzersiz olduğundan (bkz. kayit_ekle_otomatik)
+    # tarayıcının oturum boyunca (1 saat) önbelleğe almasına izin veriyoruz:
+    # tablo her yeni geçişte yeniden çizildiğinde aynı görseller tekrar
+    # indirilmesin. `private`: ara vekil sunucular saklamaz.
+    servis_yolu = (kucuk_gorsel.kucuk_gorsel_yolu(tam_yol) or tam_yol) if kucuk else tam_yol
+    return FileResponse(servis_yolu, media_type="image/jpeg", headers={"Cache-Control": "private, max-age=3600"})
 
 
 @app.get("/")
@@ -4019,7 +4073,11 @@ def kayitlari_listele(
     # "Vardiya" (A/B/C/D) ekran filtresi (2026-09-21) -- yukarıdaki görünürlük
     # kısıtlamasından BAĞIMSIZ, bkz. _vardiya_adi_filtresi_uygula.
     sorgu = _vardiya_adi_filtresi_uygula(sorgu, normalize_edilmis_vardiya_adi, db)
-    toplam = sorgu.count()
+    # PERFORMANS (2026-09-25): burada eskiden sonucu HİÇ kullanılmayan bir
+    # `toplam = sorgu.count()` vardı -- Kayıtlar ekranının her yüklenişinde
+    # (ve her Excel/PDF raporunda) filtrelenmiş tabloyu baştan sona sayan
+    # gereksiz bir ikinci sorgu. Toplam sayı zaten ayrı `/kayitlar/sayfa-bilgisi`
+    # ucundan geliyor.
     # NOT (2026-09-20): `limit`/`offset` artık yukarıdaki `Query(ge=..., le=...)`
     # ile FastAPI/Pydantic seviyesinde doğrulanıyor -- önceden burada
     # `min(limit, 500)` gibi bir "üst sınırı kırp" deseni vardı, ama SQLite
@@ -4363,12 +4421,17 @@ def plaka_analiz(plaka_no: str, db: Session = Depends(get_db), kullanici: models
     # TÜM trafiğini) gezinemez ama belirli bir aracı sorduğunda tam geçmişini
     # görebilir (kişi/kara liste bilgisi zaten PLAKAYA ait sabit veridir,
     # hiçbir filtreye tabi değildir).
+    plaka_kosulu = _plaka_normalize_sql(models.Kayit.plaka_no) == hedef
     kayitlar = (
         db.query(models.Kayit)
-        .filter(_plaka_normalize_sql(models.Kayit.plaka_no) == hedef)
+        .filter(plaka_kosulu)
         .order_by(desc(models.Kayit.tarih_saat))
         .limit(50).all()
     )
+    # DÜZELTME (2026-09-25): "Toplam Geçiş" eskiden `len(kayitlar)` idi --
+    # yani yukarıdaki 50 satırlık listeleme sınırıyla kırpılmış sayı; 50'den
+    # fazla geçişi olan bir araç için ekran her zaman "50" gösteriyordu.
+    toplam_gecis = len(kayitlar) if len(kayitlar) < 50 else db.query(func.count(models.Kayit.id)).filter(plaka_kosulu).scalar()
     # "Vardiya Grupları" (2026-09-21): "plaka arayınca karşısına kimin
     # vardiyasında girip çıktığı gözükebilsin" -- bkz.
     # _kayitlarin_vardiya_adlarini_ekle; bu ekranın vardiya/kamera
@@ -4377,11 +4440,16 @@ def plaka_analiz(plaka_no: str, db: Session = Depends(get_db), kullanici: models
     # gizlemez.
     _kayitlarin_vardiya_adlarini_ekle(kayitlar, db)
     _kayitlara_kisi_adini_ekle(kayitlar, db)
-    kisi = None
-    for k in db.query(models.Kisi).filter(models.Kisi.aktif == True).all():  # noqa: E712
-        if _plaka_normalize(k.plaka_no) == hedef:
-            kisi = k
-            break
+    # PERFORMANS (2026-09-25): eskiden TÜM aktif kişiler (toplu içe
+    # aktarmayla binlerce olabilir) belleğe yüklenip Python'da tek tek
+    # karşılaştırılıyordu; artık eşleşme veritabanında yapılıyor
+    # (_plaka_yetki_kontrol ile aynı `_plaka_normalize_sql` kuralı).
+    kisi = (
+        db.query(models.Kisi)
+        .filter(models.Kisi.aktif == True, _plaka_normalize_sql(models.Kisi.plaka_no) == hedef)  # noqa: E712
+        .order_by(models.Kisi.id)
+        .first()
+    )
     if not kisi:
         ek = db.query(models.KisiPlaka).filter(
             _plaka_normalize_sql(models.KisiPlaka.plaka_no) == hedef,
@@ -4395,7 +4463,7 @@ def plaka_analiz(plaka_no: str, db: Session = Depends(get_db), kullanici: models
     ).first()
     return {
         "plaka_no": goruntu_plaka,
-        "toplam_gecis": len(kayitlar),
+        "toplam_gecis": toplam_gecis,
         "son_gecis": kayitlar[0].tarih_saat.isoformat() if kayitlar else None,
         "kisi": {"id": kisi.id, "ad_soyad": kisi.ad_soyad, "tip": kisi.tip, "telefon": kisi.telefon} if kisi else None,
         "kara_listesinde": kara is not None,
@@ -4597,20 +4665,27 @@ def _vardiya_etiketleri_haritasi(kayitlar: list, db: Session) -> dict:
     YAPILMAZ (N+1'den kaçınma, bkz. bu fonksiyonun çağrıldığı yerdeki not)."""
     if not kayitlar:
         return {}
+    # PERFORMANS (2026-09-25): bkz. _kayitlarin_vardiya_adlarini_ekle'deki
+    # aynı başlıklı not ve backend/vardiya_eslestirme.py.
+    zamanlar = [k.tarih_saat for k in kayitlar if k.tarih_saat is not None]
+    if not zamanlar:
+        return {k.id: "" for k in kayitlar}
     oturumlar = (
-        db.query(models.VardiyaOturumu, models.Kullanici)
+        db.query(models.VardiyaOturumu.giris_zamani, models.VardiyaOturumu.cikis_zamani, models.Kullanici.kullanici_adi)
         .join(models.Kullanici, models.VardiyaOturumu.kullanici_id == models.Kullanici.id)
+        .filter(
+            models.VardiyaOturumu.giris_zamani <= max(zamanlar),
+            or_(models.VardiyaOturumu.cikis_zamani.is_(None), models.VardiyaOturumu.cikis_zamani > min(zamanlar)),
+        )
+        .order_by(models.VardiyaOturumu.id)
         .all()
     )
-    harita = {}
-    for k in kayitlar:
-        etiketler = []
-        for oturum, kul in oturumlar:
-            if _pencere_icinde_mi(k.tarih_saat, oturum.giris_zamani, oturum.cikis_zamani):
-                bitis_metni = oturum.cikis_zamani.strftime("%H:%M") if oturum.cikis_zamani else "devam ediyor"
-                etiketler.append(f"{kul.kullanici_adi} ({oturum.giris_zamani.strftime('%H:%M')}-{bitis_metni})")
-        harita[k.id] = "; ".join(etiketler)
-    return harita
+    etiketli = []
+    for giris, cikis, kullanici_adi in oturumlar:
+        bitis_metni = cikis.strftime("%H:%M") if cikis else "devam ediyor"
+        etiketli.append((giris, cikis, f"{kullanici_adi} ({giris.strftime('%H:%M')}-{bitis_metni})"))
+    eslesmeler = kayitlari_oturumlarla_eslestir([(k.id, k.tarih_saat) for k in kayitlar], etiketli)
+    return {k.id: "; ".join(eslesmeler.get(k.id, [])) for k in kayitlar}
 
 
 def _kayitlari_rapor_satirlari(kayitlar: list, db: Session) -> list:
@@ -4710,10 +4785,153 @@ def _kayitlari_rapor_satirlari(kayitlar: list, db: Session) -> list:
     return satirlar
 
 
+# ==================================================================
+# RAPOR ÜRETİMİ: AYRI SÜREÇ + TEK SEFERDE BİR RAPOR (2026-09-25)
+# ==================================================================
+# Kullanıcı geri bildirimi: "pdf ve excel indirirken sistemde kayıtlarda araç
+# arattığımda işlemin yavaş ilerlediğini tespit ettim ... her an çökecekmiş
+# gibi yavaş hareket ediyor". KÖK NEDEN: büyük bir PDF raporu (2000 satır +
+# her satırda bir görsel) ana PTS sürecinin içinde, saniyelerce (ölçümde
+# 1000 satır ~20 sn) Python'un tek çekirdek kilidini (GIL) meşgul eden saf
+# Python koduyla (reportlab) üretiliyordu. O sürede AYNI süreçteki her şey --
+# diğer kullanıcıların istekleri (Plaka Analizi, Kayıtlar), canlı kamera
+# akışları ve plaka tanıma -- sırasını beklemek zorunda kalıyordu. Kullanıcı
+# "takıldı" sanıp düğmeye tekrar bastığında İKİNCİ bir rapor da aynı anda
+# üretilmeye başlıyor, durum daha da kötüleşiyordu.
+#
+# Düzeltme:
+#   1) Rapor dosyası (PDF/Excel) AYRI bir işletim sistemi sürecinde üretilir
+#      -- ana süreç yalnızca sonucu bekler (bekleme GIL'i tutmaz), panel ve
+#      kameralar etkilenmez. Ayrı süreç herhangi bir nedenle başlatılamazsa
+#      (ör. kısıtlı bir ortam) rapor eskisi gibi süreç içinde üretilir --
+#      bu bir iyileştirmedir, raporu asla engellememeli.
+#      PTS_RAPOR_AYRI_SURECTE=0 ile kapatılabilir.
+#   2) Aynı anda yalnızca BİR büyük rapor üretilir; ikinci bir istek
+#      öncekinin bitmesini sırayla bekler (paralel üretim yerine).
+#   3) Üretilen dosya indirildikten sonra diskten silinir (eskiden
+#      `disa_aktarilanlar/` klasöründe sonsuza dek birikiyordu -- veritabanı
+#      yedeklerinin geçici kopyaları dahil).
+import multiprocessing
+from concurrent.futures import ProcessPoolExecutor
+from concurrent.futures.process import BrokenProcessPool
+from starlette.background import BackgroundTask
+
+_RAPOR_KILIDI = threading.BoundedSemaphore(1)
+_RAPOR_BEKLEME_SN = 300
+_RAPOR_URETIM_ZAMAN_ASIMI_SN = 900
+_rapor_havuzu: Optional[ProcessPoolExecutor] = None
+_rapor_havuzu_kilit = threading.Lock()
+
+
+def _rapor_havuzunu_al() -> Optional[ProcessPoolExecutor]:
+    global _rapor_havuzu
+    if os.getenv("PTS_RAPOR_AYRI_SURECTE", "1").strip().lower() in ("0", "false", "hayir", "hayır", "no"):
+        return None
+    with _rapor_havuzu_kilit:
+        if _rapor_havuzu is None:
+            try:
+                # "spawn": Windows'ta zaten tek seçenek; Linux'ta da "fork"
+                # yerine bilinçli olarak seçildi -- çok iş parçacıklı (kamera
+                # thread'leri, ONNX, logging kilitleri) bir süreçten fork
+                # almak, çocukta kilitlenmelere yol açabilir.
+                _rapor_havuzu = ProcessPoolExecutor(max_workers=1, mp_context=multiprocessing.get_context("spawn"))
+            except Exception as exc:
+                logger.warning("Rapor süreci başlatılamadı, raporlar ana süreçte üretilecek: %s", exc)
+                return None
+        return _rapor_havuzu
+
+
+def _rapor_havuzunu_sifirla() -> None:
+    global _rapor_havuzu
+    with _rapor_havuzu_kilit:
+        if _rapor_havuzu is not None:
+            try:
+                _rapor_havuzu.shutdown(wait=False, cancel_futures=True)
+            except Exception:
+                pass
+        _rapor_havuzu = None
+
+
+def _raporu_uret(fonksiyon, *args, **kwargs):
+    """`fonksiyon(*args, **kwargs)`'ı (modül seviyesinde, içe aktarılabilir
+    bir fonksiyon olmalı; argümanlar pickle'lanabilir olmalı) ayrı süreçte
+    çalıştırır; süreç havuzu kullanılamazsa süreç içinde çalıştırır."""
+    havuz = _rapor_havuzunu_al()
+    if havuz is not None:
+        try:
+            return havuz.submit(fonksiyon, *args, **kwargs).result(timeout=_RAPOR_URETIM_ZAMAN_ASIMI_SN)
+        except BrokenProcessPool as exc:
+            logger.warning("Rapor süreci beklenmedik şekilde kapandı, rapor ana süreçte üretiliyor: %s", exc)
+            _rapor_havuzunu_sifirla()
+    return fonksiyon(*args, **kwargs)
+
+
+class _RaporSirasi:
+    """`with _RaporSirasi():` -- aynı anda tek rapor. Sıra
+    `_RAPOR_BEKLEME_SN` içinde gelmezse anlaşılır bir 503 döner."""
+
+    def __enter__(self):
+        if not _RAPOR_KILIDI.acquire(timeout=_RAPOR_BEKLEME_SN):
+            raise HTTPException(503, "Şu anda başka bir rapor hazırlanıyor. Lütfen biraz sonra tekrar deneyin.")
+        return self
+
+    def __exit__(self, *a):
+        _RAPOR_KILIDI.release()
+        return False
+
+
+def _gecici_rapor_yolu(on_ek: str, uzanti: str) -> str:
+    return os.path.join(DISA_AKTAR_KLASORU, f"{on_ek}_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:8]}.{uzanti}")
+
+
+def _indirip_sil(dosya_yolu: str, dosya_adi: str, media_type: str) -> FileResponse:
+    """Dosyayı indirir ve yanıt gönderildikten SONRA diskten siler."""
+    return FileResponse(
+        dosya_yolu, filename=dosya_adi, media_type=media_type,
+        background=BackgroundTask(_dosyayi_sessizce_sil, dosya_yolu),
+    )
+
+
+def _dosyayi_sessizce_sil(yol: str) -> None:
+    try:
+        os.remove(yol)
+    except OSError:
+        pass
+
+
+def _eski_gecici_raporlari_temizle(saat: int = 24) -> int:
+    """`disa_aktarilanlar/` içinde `saat`ten eski dosyaları siler (indirme
+    yarıda kesilip arka plan silme görevi çalışamadıysa ya da bu düzeltmeden
+    ÖNCE birikmiş dosyalar için)."""
+    sinir = time.time() - saat * 3600
+    silinen = 0
+    try:
+        for ad in os.listdir(DISA_AKTAR_KLASORU):
+            yol = os.path.join(DISA_AKTAR_KLASORU, ad)
+            try:
+                if os.path.isfile(yol) and os.path.getmtime(yol) < sinir:
+                    os.remove(yol)
+                    silinen += 1
+            except OSError:
+                pass
+    except OSError:
+        pass
+    return silinen
+
+
+@app.on_event("shutdown")
+def _rapor_havuzunu_kapat() -> None:
+    _rapor_havuzunu_sifirla()
+
+
+_XLSX_MEDIA = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+
+
 @app.get("/disa-aktar/excel/kayitlar")
 def kayitlari_excel_indir(
     plaka: Optional[str] = None, baslangic: Optional[str] = None,
-    bitis: Optional[str] = None, vardiya_adi: Optional[str] = None, db: Session = Depends(get_db),
+    bitis: Optional[str] = None, vardiya_adi: Optional[str] = None,
+    yetki_durumu: Optional[str] = None, db: Session = Depends(get_db),
     kullanici: models.Kullanici = Depends(_personel_girisi_gerekli),
 ):
     # NOT: kayitlari_listele() burada FastAPI'nin DI mekanizması ÜZERİNDEN
@@ -4739,37 +4957,45 @@ def kayitlari_excel_indir(
     # istek kendisi (kimlik doğrulaması, tarih filtresi, veri, hepsi)
     # tamamen geçerli olsa bile HER Excel/PDF dışa aktarma isteği bu
     # yüzden çöküyordu.
-    kayitlar = kayitlari_listele(
-        plaka=plaka, baslangic=baslangic, bitis=bitis, yetki_durumu=None, vardiya_adi=vardiya_adi,
-        limit=5000, offset=0, db=db, kullanici=kullanici,
-    )
-    satirlar = _kayitlari_rapor_satirlari(kayitlar, db)
-    dosya_yolu = os.path.join(DISA_AKTAR_KLASORU, f"pts_kayitlar_{int(datetime.now().timestamp())}.xlsx")
-    excel_export.kayitlar_excel_olustur(satirlar, dosya_yolu)
-    return FileResponse(
-        dosya_yolu, filename="pts_kayitlari.xlsx",
-        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-    )
+    #
+    # DÜZELTME (2026-09-25): `yetki_durumu` eskiden burada her zaman None
+    # geçiriliyordu -- ekranda "Yetki Durumu: Yetkisiz" filtresi seçiliyken
+    # alınan rapor, filtreyi yok sayıp TÜM kayıtları içeriyordu (ekran ile
+    # rapor sessizce farklı). Artık ekrandaki filtre rapora da uygulanıyor.
+    with _RaporSirasi():
+        kayitlar = kayitlari_listele(
+            plaka=plaka, baslangic=baslangic, bitis=bitis, yetki_durumu=yetki_durumu or None,
+            kamera_id=None, yon=None, vardiya_adi=vardiya_adi,
+            limit=5000, offset=0, db=db, kullanici=kullanici,
+        )
+        satirlar = _kayitlari_rapor_satirlari(kayitlar, db)
+        dosya_yolu = _gecici_rapor_yolu("pts_kayitlar", "xlsx")
+        _raporu_uret(excel_export.kayitlar_excel_olustur, satirlar, dosya_yolu)
+    return _indirip_sil(dosya_yolu, "pts_kayitlari.xlsx", _XLSX_MEDIA)
 
 
 @app.get("/disa-aktar/pdf/kayitlar")
 def kayitlari_pdf_indir(
     plaka: Optional[str] = None, baslangic: Optional[str] = None,
-    bitis: Optional[str] = None, vardiya_adi: Optional[str] = None, db: Session = Depends(get_db),
+    bitis: Optional[str] = None, vardiya_adi: Optional[str] = None,
+    yetki_durumu: Optional[str] = None, db: Session = Depends(get_db),
     kullanici: models.Kullanici = Depends(_personel_girisi_gerekli),
 ):
     # bkz. kayitlari_excel_indir'deki AYNI başlıklı not: `kullanici` VE
     # `offset` burada da AÇIKÇA geçirilmeli (offset eksikliği, gerçek
     # üretim verisiyle raporlanan asıl 500 çökmesinin kök nedeniydi).
-    kayitlar = kayitlari_listele(
-        plaka=plaka, baslangic=baslangic, bitis=bitis, yetki_durumu=None, vardiya_adi=vardiya_adi,
-        limit=2000, offset=0, db=db, kullanici=kullanici,
-    )
-    satirlar = _kayitlari_rapor_satirlari(kayitlar, db)
-    tarih_araligi_metni = _rapor_tarih_araligi_metni(baslangic, bitis, kayitlar)
-    dosya_yolu = os.path.join(DISA_AKTAR_KLASORU, f"pts_kayitlar_{int(datetime.now().timestamp())}.pdf")
-    pdf_export.kayitlar_pdf_olustur(satirlar, dosya_yolu, tarih_araligi_metni=tarih_araligi_metni)
-    return FileResponse(dosya_yolu, filename="pts_kayitlari.pdf", media_type="application/pdf")
+    # `yetki_durumu`: bkz. kayitlari_excel_indir'deki 2026-09-25 düzeltmesi.
+    with _RaporSirasi():
+        kayitlar = kayitlari_listele(
+            plaka=plaka, baslangic=baslangic, bitis=bitis, yetki_durumu=yetki_durumu or None,
+            kamera_id=None, yon=None, vardiya_adi=vardiya_adi,
+            limit=2000, offset=0, db=db, kullanici=kullanici,
+        )
+        satirlar = _kayitlari_rapor_satirlari(kayitlar, db)
+        tarih_araligi_metni = _rapor_tarih_araligi_metni(baslangic, bitis, kayitlar)
+        dosya_yolu = _gecici_rapor_yolu("pts_kayitlar", "pdf")
+        _raporu_uret(pdf_export.kayitlar_pdf_olustur, satirlar, dosya_yolu, tarih_araligi_metni=tarih_araligi_metni)
+    return _indirip_sil(dosya_yolu, "pts_kayitlari.pdf", "application/pdf")
 
 
 @app.get("/disa-aktar/pdf/kayit/{kayit_id}")
@@ -4791,9 +5017,11 @@ def kayit_detay_pdf_indir(
         raise HTTPException(404, "Kayıt bulunamadı")
     if not _guvenlik_kayit_gorunur_mu(kayit, kullanici, db, vardiya_adi_filtresi=_vardiya_adi_normalize(vardiya_adi)):
         raise HTTPException(403, "Bu kayıt vardiyanıza ait değil")
-    dosya_yolu = os.path.join(DISA_AKTAR_KLASORU, f"kayit_{kayit_id}.pdf")
+    # Benzersiz geçici ad: iki kullanıcı aynı kaydı aynı anda indirirse biri
+    # diğerinin yarım yazılmış dosyasını almasın; indirildikten sonra silinir.
+    dosya_yolu = _gecici_rapor_yolu(f"kayit_{kayit_id}", "pdf")
     pdf_export.kayit_detay_pdf_olustur(kayit, dosya_yolu)
-    return FileResponse(dosya_yolu, filename=f"kayit_{kayit_id}.pdf", media_type="application/pdf")
+    return _indirip_sil(dosya_yolu, f"kayit_{kayit_id}.pdf", "application/pdf")
 
 
 @app.get("/disa-aktar/excel/kisiler")
@@ -4802,12 +5030,9 @@ def kisileri_excel_indir(
     _: models.Kullanici = Depends(_personel_girisi_gerekli),
 ):
     kisiler = kisileri_listele(tip=tip, aktif=None, arama=None, db=db)
-    dosya_yolu = os.path.join(DISA_AKTAR_KLASORU, f"pts_kisiler_{int(datetime.now().timestamp())}.xlsx")
+    dosya_yolu = _gecici_rapor_yolu("pts_kisiler", "xlsx")
     excel_export.kisiler_excel_olustur(kisiler, dosya_yolu)
-    return FileResponse(
-        dosya_yolu, filename="pts_kisiler.xlsx",
-        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-    )
+    return _indirip_sil(dosya_yolu, "pts_kisiler.xlsx", _XLSX_MEDIA)
 
 
 # ==================================================================
@@ -5813,12 +6038,9 @@ def kisi_ice_aktarma_sablonu_indir(
     nokta, `toplu_kisi_import`'un beklediği sütunlarla BİREBİR eşleşen,
     örnek satırlar ve açıklama sayfası içeren, "tip" sütununda açılır liste
     doğrulaması olan hazır bir şablon üretir."""
-    dosya_yolu = os.path.join(DISA_AKTAR_KLASORU, f"pts_kisi_ice_aktarma_sablonu_{int(datetime.now().timestamp())}.xlsx")
+    dosya_yolu = _gecici_rapor_yolu("pts_kisi_ice_aktarma_sablonu", "xlsx")
     excel_export.kisi_ice_aktarma_sablonu_olustur(dosya_yolu)
-    return FileResponse(
-        dosya_yolu, filename="pts_kisi_ice_aktarma_sablonu.xlsx",
-        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-    )
+    return _indirip_sil(dosya_yolu, "pts_kisi_ice_aktarma_sablonu.xlsx", _XLSX_MEDIA)
 
 
 @app.post("/kisiler/toplu-import")
@@ -6117,6 +6339,7 @@ def _goruntu_temizle_calistir(gun: int, db: Session) -> tuple[int, "datetime"]:
             if os.path.exists(tam_yol):
                 os.remove(tam_yol)
                 silinen += 1
+            kucuk_gorsel.kucuk_gorseli_sil(tam_yol)
             kayit.goruntu_yolu = None
         except OSError:
             pass
@@ -6212,8 +6435,12 @@ def veritabani_yedek(kullanici: models.Kullanici = Depends(_personel_girisi_gere
     try:
         _sqlite_yedek_al(db_yolu, gecici_yol)
     except Exception as exc:
+        _dosyayi_sessizce_sil(gecici_yol)
         raise HTTPException(500, f"Yedek alınamadı: {exc}")
-    return FileResponse(gecici_yol, filename=dosya_adi, media_type="application/octet-stream")
+    # 2026-09-25: geçici tam veritabanı kopyası indirildikten sonra SİLİNİR
+    # -- eskiden her "DB Yedek" tıklaması, tüm kişisel verileri içeren tam
+    # bir kopyayı `disa_aktarilanlar/` klasöründe süresiz bırakıyordu.
+    return _indirip_sil(gecici_yol, dosya_adi, "application/octet-stream")
 
 
 @app.get("/sistem/yedek/otomatik-liste")

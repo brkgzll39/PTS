@@ -5100,3 +5100,81 @@ def test_kayit_olusturulamazsa_yetim_gorsel_dosyasi_kalmaz(client, monkeypatch):
             files={"gorsel": ("kare.jpg", _KUCUK_JPEG, "image/jpeg")},
         )
     assert set(os.listdir(pts_main.GORUNTU_KLASORU)) == once, "Hiçbir kayda bağlanmayan görsel diskte kalmamalı"
+
+
+# ------------------------------------------------------------------
+# PERFORMANS PAKETİ (2026-09-25, Patch #106) -- kullanıcı: "pdf ve excel
+# indirirken ... kayıtlarda araç arattığımda ... her an çökecekmiş gibi yavaş"
+# ------------------------------------------------------------------
+
+def test_disa_aktar_yetki_durumu_filtresini_uygular(client, yetkili_header):
+    """Eskiden rapor uçları `yetki_durumu`nu yok sayıyordu: ekranda
+    "Yetkisiz" filtresi seçiliyken alınan Excel TÜM kayıtları içeriyordu."""
+    import io
+    import openpyxl
+
+    for yon in ("giris", "cikis"):
+        r = client.post("/kayitlar", json={"plaka_no": "34 FLT 777", "kamera_id": "FILTRE-RAPOR", "yon": yon},
+                        headers=yetkili_header)
+        assert r.status_code == 200, r.text
+    durumlar = {k["yetki_durumu"] for k in client.get("/kayitlar", params={"plaka": "34 FLT 777"}, headers=yetkili_header).json()}
+    hedef = sorted(durumlar)[0]
+
+    r = client.get("/disa-aktar/excel/kayitlar", params={"plaka": "34 FLT 777", "yetki_durumu": "bu_durum_yok"},
+                   headers=yetkili_header)
+    assert r.status_code == 200, r.text
+    ws = openpyxl.load_workbook(io.BytesIO(r.content)).active
+    plakalar = [row[1] for row in ws.iter_rows(min_row=2, values_only=True) if row and row[1]]
+    assert "34 FLT 777" not in plakalar, "yetki_durumu filtresi rapora uygulanmadı"
+
+    r = client.get("/disa-aktar/excel/kayitlar", params={"plaka": "34 FLT 777", "yetki_durumu": hedef},
+                   headers=yetkili_header)
+    ws = openpyxl.load_workbook(io.BytesIO(r.content)).active
+    plakalar = [row[1] for row in ws.iter_rows(min_row=2, values_only=True) if row and row[1]]
+    assert plakalar.count("34 FLT 777") == 2
+
+
+def test_disa_aktar_uretilen_dosya_indirildikten_sonra_silinir(client, yetkili_header):
+    once = set(os.listdir(pts_main.DISA_AKTAR_KLASORU))
+    for yol in ("/disa-aktar/excel/kayitlar", "/disa-aktar/pdf/kayitlar", "/disa-aktar/excel/kisiler"):
+        r = client.get(yol, headers=yetkili_header)
+        assert r.status_code == 200, r.text
+    assert set(os.listdir(pts_main.DISA_AKTAR_KLASORU)) <= once, \
+        "Rapor dosyaları indirildikten sonra disa_aktarilanlar/ klasöründe birikmemeli"
+
+
+def test_gorsel_kucuk_parametresiyle_kucuk_resim_doner(client, yetkili_header):
+    import io
+    from PIL import Image
+
+    tampon = io.BytesIO()
+    Image.new("RGB", (1920, 1080), (30, 60, 90)).save(tampon, format="JPEG", quality=90)
+    r = client.post(
+        "/kayitlar/otomatik",
+        data={"plaka_no": "34 KCK 01", "kamera_id": "KUCUK-KAM", "yon": "giris", "guven_skoru": 0.99},
+        files={"gorsel": ("kare.jpg", tampon.getvalue(), "image/jpeg")},
+    )
+    assert r.status_code == 200, r.text
+    ad = os.path.basename(r.json()["goruntu_yolu"])
+
+    tam = client.get(f"/goruntuler/{ad}", headers=yetkili_header)
+    kucuk = client.get(f"/goruntuler/{ad}", params={"kucuk": 1}, headers=yetkili_header)
+    assert tam.status_code == 200 and kucuk.status_code == 200
+    assert Image.open(io.BytesIO(tam.content)).size == (1920, 1080)
+    assert max(Image.open(io.BytesIO(kucuk.content)).size) <= 480
+    assert "private" in kucuk.headers.get("cache-control", "")
+
+    # Yol geçişi koruması küçük resim modunda da geçerli.
+    assert client.get("/goruntuler/..%5Cmain.py", params={"kucuk": 1}, headers=yetkili_header).status_code in (400, 404)
+    assert client.get(f"/goruntuler/{ad}", params={"kucuk": 1}).status_code == 401
+
+
+def test_plaka_analiz_toplam_gecis_50_sinirina_takilmaz(client, operator_header):
+    """Eskiden `toplam_gecis` = listelenen (en fazla 50) kayıt sayısıydı."""
+    for i in range(53):
+        r = client.post("/kayitlar", json={"plaka_no": "34 ELL 053", "kamera_id": "ELLI-KAM", "yon": "giris" if i % 2 else "cikis"},
+                        headers=operator_header)
+        assert r.status_code == 200, r.text
+    v = client.get("/kayitlar/analiz/34 ELL 053", headers=operator_header).json()
+    assert v["toplam_gecis"] == 53
+    assert len(v["son_kayitlar"]) == 50
