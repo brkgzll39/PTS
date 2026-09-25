@@ -19,7 +19,7 @@ import uuid
 import base64
 import asyncio
 from collections import deque
-from urllib.parse import urlsplit, urlunsplit
+from urllib.parse import urlsplit, urlunsplit, urlparse
 from datetime import datetime, timedelta
 from typing import Optional, List
 
@@ -248,6 +248,16 @@ _VARSAYILAN_AYARLAR = {
     # doğru okunmuş bilinen bir araç" ile "muhtemelen gerçekten hatalı okuma"
     # ayrımı içindir.
     "otomatik_kayit_min_guven_skoru_bilinen_arac": 0.80,
+    # OTOMATİK VERİTABANI YEDEKLEME (2026-09-25, kullanıcı isteği: "günlük
+    # otomatik yedek ekle") -- bkz. _otomatik_yedek_dongu'nun docstring'i.
+    # Varsayılan klasör, canlı veritabanının bulunduğu "veritabani" klasörüyle
+    # KARIŞMASIN diye kasıtlı olarak ayrı bir üst klasördür (aynı diskte olsa
+    # bile en azından tek bir yanlış silme/üzerine yazma işleminin hem canlı
+    # veritabanını hem TÜM yedekleri birden götürmesi engellenir); panelden
+    # farklı bir diske/yola da ayarlanabilir.
+    "otomatik_yedek_aktif": True,
+    "otomatik_yedek_klasoru": os.path.join(PROJE_KOKU, "yedekler"),
+    "otomatik_yedek_saklama_gun": 30,
 }
 
 
@@ -503,6 +513,117 @@ async def _goruntu_temizlik_dongu() -> None:
         except Exception as exc:
             logger.error("[görüntü-temizlik] Otomatik temizlik döngüsünde hata: %s", exc, exc_info=True)
         await asyncio.sleep(GORUNTU_TEMIZLIK_ARALIK_SN)
+
+
+# ================================================================
+# OTOMATİK VERİTABANI YEDEKLEME (2026-09-25, kullanıcı isteği)
+# ================================================================
+# Önceden veritabanının TEK yedekleme yolu, bir yöneticinin panelden manuel
+# olarak /sistem/yedek'i indirmesiydi (bkz. README.md'nin "Üretim Ortamı"
+# bölümündeki uyarı). Bir operatör bunu düzenli yapmayı unutursa (ya da
+# yapması gerektiğini hiç bilmiyorsa), disk arızası/bozulması durumunda TÜM
+# geçiş kayıtları/denetim izi kalıcı olarak kaybolabilirdi -- kullanıcının
+# kendisinin belirttiği "görüntülerin 2-3 yıl hiç silinmeden durması"
+# hedefiyle de doğrudan çelişen bir risk. Bu bölüm, ayarlarda etkinse
+# (varsayılan: etkin), günde bir kez veritabanının TUTARLI bir kopyasını
+# ayrı bir klasöre otomatik olarak yazar ve eski yedekleri (varsayılan 30
+# gün) otomatik temizler -- görüntü saklama/temizliğiyle AYNI "arka planda
+# sessizce çalışan bakım görevi" deseni (bkz. yukarısı).
+YEDEK_KONTROL_ARALIK_SN = 6 * 3600  # her 6 saatte bir kontrol et (gerçek yedek günde 1 kez alınır)
+OTOMATIK_YEDEK_DOSYA_ONEKI = "pts_otomatik_yedek_"
+_VARSAYILAN_YEDEK_KLASORU = os.path.join(PROJE_KOKU, "yedekler")
+
+
+def _sqlite_yedek_al(kaynak_yolu: str, hedef_yolu: str) -> None:
+    """DÜZELTME (2026-09-25): önceden (hem burada eklenen otomatik yedekleme
+    hem de mevcut manuel /sistem/yedek uç noktası) veritabanını WAL modunda
+    ÇALIŞIRKEN doğrudan dosya kopyalayarak yedekliyordu -- ama WAL modunda
+    (bkz. database.py'deki ayrıntılı not) son yazılan işlemler bir süre ana
+    ".db" dosyasına değil, yanındaki ".db-wal" dosyasına yazılır; yalnızca
+    ana dosyayı kopyalamak bu son işlemleri SESSİZCE KAÇIRABİLİR -- yani bir
+    yönetici düzenli yedek alsa bile, geri yükleme sırasında "en son birkaç
+    saatlik/dakikalık kayıt nereye kayboldu" sürprizi yaşayabilirdi.
+    `sqlite3` modülünün kendi `Connection.backup()` API'si, hedefi KAYNAK
+    ÇALIŞIRKEN (okuma/yazmayı kilitlemeden) sayfa sayfa kopyalar ve WAL'daki
+    henüz checkpoint yapılmamış içeriği de otomatik olarak dahil eder --
+    elle bir "PRAGMA wal_checkpoint" adımına gerek kalmadan tutarlı, TAM bir
+    yedek üretir."""
+    import sqlite3
+    os.makedirs(os.path.dirname(os.path.abspath(hedef_yolu)) or ".", exist_ok=True)
+    kaynak = sqlite3.connect(kaynak_yolu)
+    try:
+        hedef = sqlite3.connect(hedef_yolu)
+        try:
+            kaynak.backup(hedef)
+        finally:
+            hedef.close()
+    finally:
+        kaynak.close()
+
+
+def _otomatik_yedek_klasoru_al(ayarlar: dict) -> str:
+    return str(ayarlar.get("otomatik_yedek_klasoru") or "").strip() or _VARSAYILAN_YEDEK_KLASORU
+
+
+def _eski_otomatik_yedekleri_temizle(klasor: str, saklama_gun: int) -> int:
+    if saklama_gun <= 0 or not os.path.isdir(klasor):
+        return 0
+    sinir = time.time() - saklama_gun * 86400
+    silinen = 0
+    for ad in os.listdir(klasor):
+        if not (ad.startswith(OTOMATIK_YEDEK_DOSYA_ONEKI) and ad.endswith(".db")):
+            continue
+        tam_yol = os.path.join(klasor, ad)
+        try:
+            if os.path.getmtime(tam_yol) < sinir:
+                os.remove(tam_yol)
+                silinen += 1
+        except OSError as exc:
+            logger.error("[otomatik-yedek] '%s' silinemedi: %s", tam_yol, exc)
+    return silinen
+
+
+async def _otomatik_yedek_dongu() -> None:
+    """Sonsuz döngü: ayarlarda etkinse, günde bir kez veritabanının tutarlı
+    bir kopyasını `otomatik_yedek_klasoru`'na yazar ve
+    `otomatik_yedek_saklama_gun`'dan eski otomatik yedekleri temizler.
+    Yalnızca SQLite için çalışır (SQL Server kurulumlarında kurumun kendi
+    veritabanı yedekleme araçları kullanılmalı, bkz. manuel /sistem/yedek
+    uç noktasındaki aynı kısıtlama)."""
+    son_yedek_gunu = None
+    while True:
+        try:
+            ayarlar = _sistem_ayarlari_oku()
+            if SQLALCHEMY_DATABASE_URL.startswith("sqlite") and ayarlar.get("otomatik_yedek_aktif", True):
+                bugun = datetime.now().date()
+                if son_yedek_gunu != bugun:
+                    db_yolu = urlparse(SQLALCHEMY_DATABASE_URL).path.lstrip("/")
+                    klasor = _otomatik_yedek_klasoru_al(ayarlar)
+                    if os.path.exists(db_yolu):
+                        zaman_damgasi = datetime.now().strftime("%Y%m%d_%H%M%S")
+                        hedef_yol = os.path.join(klasor, f"{OTOMATIK_YEDEK_DOSYA_ONEKI}{zaman_damgasi}.db")
+                        try:
+                            _sqlite_yedek_al(db_yolu, hedef_yol)
+                            logger.info("Otomatik veritabanı yedeği alındı: %s", hedef_yol)
+                        except Exception as exc:
+                            logger.error("Otomatik veritabanı yedeği alınamadı: %s", exc, exc_info=True)
+                        finally:
+                            # gün başarısız da olsa bir dahaki 6 saatlik kontrolde
+                            # HEMEN tekrar denenmesin diye (ör. disk o an geçici
+                            # olarak doluysa) gün işaretlenir -- bir sonraki gün
+                            # tekrar denenir; kalıcı bir sorun varsa bu, yukarıdaki
+                            # error logunda GÖRÜNÜR kalır (sessiz değildir).
+                            son_yedek_gunu = bugun
+                        try:
+                            saklama_gun = int(ayarlar.get("otomatik_yedek_saklama_gun", 30) or 0)
+                            silinen = _eski_otomatik_yedekleri_temizle(klasor, saklama_gun)
+                            if silinen:
+                                logger.info("Eski otomatik yedeklerden %d tanesi temizlendi (>%d gün)", silinen, saklama_gun)
+                        except (TypeError, ValueError, OSError) as exc:
+                            logger.error("[otomatik-yedek] eski yedekler temizlenirken hata: %s", exc)
+        except Exception as exc:
+            logger.error("[otomatik-yedek] döngüsünde beklenmeyen hata: %s", exc, exc_info=True)
+        await asyncio.sleep(YEDEK_KONTROL_ARALIK_SN)
 
 
 # ================================================================
@@ -908,6 +1029,14 @@ async def _goruntu_temizligini_baslat():
     """Arka planda sürekli çalışan otomatik görüntü/kayıt saklama görevini başlatır."""
     asyncio.ensure_future(_goruntu_temizlik_dongu())
     logger.info("Otomatik görüntü temizliği başlatıldı (her %d sn kontrol)", GORUNTU_TEMIZLIK_ARALIK_SN)
+
+
+@app.on_event("startup")
+async def _otomatik_yedeklemeyi_baslat():
+    """Arka planda sürekli çalışan otomatik veritabanı yedekleme görevini
+    başlatır (bkz. yukarısı, kullanıcı isteği: "günlük otomatik yedek ekle")."""
+    asyncio.ensure_future(_otomatik_yedek_dongu())
+    logger.info("Otomatik veritabanı yedekleme başlatıldı (her %d sn kontrol, günde 1 yedek)", YEDEK_KONTROL_ARALIK_SN)
 
 
 @app.on_event("startup")
@@ -5726,6 +5855,17 @@ def _ayar_bool_dogrula(v) -> bool:
     raise HTTPException(400, f"true/false olmalı, alınan değer: {v!r}")
 
 
+def _ayar_klasor_yolu_dogrula(v) -> str:
+    if not isinstance(v, str) or isinstance(v, bool):
+        raise HTTPException(400, f"Bir klasör yolu (metin) olmalı, alınan değer: {v!r}")
+    v = v.strip()
+    if not v:
+        raise HTTPException(400, "Klasör yolu boş olamaz")
+    if len(v) > 500:
+        raise HTTPException(400, "Klasör yolu en fazla 500 karakter olmalı")
+    return v
+
+
 # DÜZELTME (2026-09-25, sistem taraması): PUT /sistem/ayarlar önceden
 # gönderilen değerin TİPİNİ/ARALIĞINI hiç doğrulamıyordu -- yalnızca
 # anahtarın _VARSAYILAN_AYARLAR'da var olup olmadığına bakılıyordu. Bu iki
@@ -5750,6 +5890,9 @@ _AYAR_DOGRULAYICILAR = {
     "bilinen_plaka_duzeltme_aktif": _ayar_bool_dogrula,
     "otomatik_kayit_min_guven_skoru": lambda v: _ayar_float_dogrula(v, 0.0, 1.0),
     "otomatik_kayit_min_guven_skoru_bilinen_arac": lambda v: _ayar_float_dogrula(v, 0.0, 1.0),
+    "otomatik_yedek_aktif": _ayar_bool_dogrula,
+    "otomatik_yedek_klasoru": _ayar_klasor_yolu_dogrula,
+    "otomatik_yedek_saklama_gun": lambda v: _ayar_int_dogrula(v, 0, None),
 }
 
 
@@ -5932,16 +6075,59 @@ def dusuk_guven_kayitlarini_temizle(
 
 @app.get("/sistem/yedek")
 def veritabani_yedek(kullanici: models.Kullanici = Depends(_personel_girisi_gerekli)):
+    """DÜZELTME (2026-09-25): bu uç nokta önceden WAL modundaki veritabanı
+    dosyasını doğrudan (checkpoint yapmadan) kopyalıyordu -- bkz.
+    _sqlite_yedek_al'ın docstring'i: WAL modunda son işlemler bir süre
+    yalnızca ".db-wal" dosyasında durabilir, ana dosyanın ham kopyası bunları
+    SESSİZCE KAÇIRABİLİRDİ. Artık aynı sqlite3.backup() tabanlı yardımcıyı
+    (otomatik yedeklemeyle ORTAK) kullanarak DISA_AKTAR_KLASORU altında
+    tutarlı bir geçici kopya üretip onu indiriyor."""
     _rol_dogrula(kullanici, ROL_YONETICI)
     if not SQLALCHEMY_DATABASE_URL.startswith("sqlite"):
         raise HTTPException(400, "Otomatik yedek sadece SQLite için desteklenir. SQL Server için veritabanı yönetim araçlarını kullanın.")
-    from urllib.parse import urlparse
     db_yolu = urlparse(SQLALCHEMY_DATABASE_URL).path.lstrip("/")
     if not os.path.exists(db_yolu):
         raise HTTPException(404, "Veritabanı dosyası bulunamadı")
     zaman_damgasi = datetime.now().strftime("%Y%m%d_%H%M%S")
     dosya_adi = f"pts_yedek_{zaman_damgasi}.db"
-    return FileResponse(db_yolu, filename=dosya_adi, media_type="application/octet-stream")
+    gecici_yol = os.path.join(DISA_AKTAR_KLASORU, f"pts_yedek_gecici_{uuid.uuid4().hex}.db")
+    try:
+        _sqlite_yedek_al(db_yolu, gecici_yol)
+    except Exception as exc:
+        raise HTTPException(500, f"Yedek alınamadı: {exc}")
+    return FileResponse(gecici_yol, filename=dosya_adi, media_type="application/octet-stream")
+
+
+@app.get("/sistem/yedek/otomatik-liste")
+def otomatik_yedekleri_listele(kullanici: models.Kullanici = Depends(_personel_girisi_gerekli)):
+    """DÜZELTME (2026-09-25): otomatik yedekleme arka planda sessizce
+    çalıştığı için (bkz. _otomatik_yedek_dongu), bir yöneticinin bunun
+    GERÇEKTEN çalıştığını panelden görebilmesi gerekir -- yoksa "otomatik
+    yedek aktif" ayarı işaretlense bile, aslında hiç yedek üretilmiyor olsa
+    (ör. yanlış/erişilemez bir klasör yolu yazılmışsa) bunu fark etmenin tek
+    yolu sunucunun log dosyasına elle bakmak olurdu."""
+    _rol_dogrula(kullanici, ROL_YONETICI)
+    ayarlar = _sistem_ayarlari_oku()
+    klasor = _otomatik_yedek_klasoru_al(ayarlar)
+    yedekler = []
+    if os.path.isdir(klasor):
+        for ad in sorted(os.listdir(klasor), reverse=True):
+            if ad.startswith(OTOMATIK_YEDEK_DOSYA_ONEKI) and ad.endswith(".db"):
+                tam_yol = os.path.join(klasor, ad)
+                try:
+                    istat = os.stat(tam_yol)
+                    yedekler.append({
+                        "dosya_adi": ad,
+                        "boyut_bayt": istat.st_size,
+                        "tarih_saat": datetime.fromtimestamp(istat.st_mtime).isoformat(),
+                    })
+                except OSError:
+                    continue
+    return {
+        "klasor": klasor,
+        "aktif": bool(ayarlar.get("otomatik_yedek_aktif", True)),
+        "yedekler": yedekler[:30],
+    }
 
 
 if __name__ == "__main__":

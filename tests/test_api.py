@@ -2768,6 +2768,79 @@ def test_led_durum_son_gonderimleri_dondurur(client, operator_header):
 
 
 # ------------------------------------------------------------------
+# Otomatik veritabanı yedekleme (2026-09-25, kullanıcı isteği)
+# ------------------------------------------------------------------
+
+def test_sqlite_yedek_al_wal_da_bekleyen_veriyi_kacirmaz(tmp_path):
+    """DÜZELTME (2026-09-25): manuel /sistem/yedek ve otomatik yedekleme
+    ORTAK olarak main.py::_sqlite_yedek_al'ı kullanır -- bu, sqlite3'ün
+    kendi backup() API'siyle WAL modunda henüz checkpoint yapılmamış
+    (yalnızca ".db-wal" dosyasında duran) veriyi de dahil eder. Önceki
+    "ham dosya kopyala" yaklaşımı bunu sessizce kaçırabiliyordu."""
+    import sqlite3
+    from backend.main import _sqlite_yedek_al
+
+    kaynak = str(tmp_path / "kaynak.db")
+    hedef = str(tmp_path / "hedef.db")
+    baglanti = sqlite3.connect(kaynak)
+    baglanti.execute("PRAGMA journal_mode=WAL")
+    baglanti.execute("CREATE TABLE t (id INTEGER PRIMARY KEY, v TEXT)")
+    baglanti.execute("INSERT INTO t (v) VALUES ('checkpoint-oncesi')")
+    baglanti.commit()
+    baglanti.execute("INSERT INTO t (v) VALUES ('wal-da-bekleyen')")
+    baglanti.commit()  # WAL modunda bu satır henüz ana .db dosyasına checkpoint yapılmamış olabilir
+
+    _sqlite_yedek_al(kaynak, hedef)
+    baglanti.close()
+
+    kontrol = sqlite3.connect(hedef)
+    satirlar = [r[0] for r in kontrol.execute("SELECT v FROM t ORDER BY id").fetchall()]
+    kontrol.close()
+    assert satirlar == ["checkpoint-oncesi", "wal-da-bekleyen"]
+
+
+def test_sistem_ayarlari_otomatik_yedek_klasoru_bos_400_doner(client, yetkili_header):
+    r = client.put("/sistem/ayarlar", json={"otomatik_yedek_klasoru": "   "}, headers=yetkili_header)
+    assert r.status_code == 400, r.text
+
+
+def test_sistem_ayarlari_otomatik_yedek_saklama_gun_negatif_400_doner(client, yetkili_header):
+    r = client.put("/sistem/ayarlar", json={"otomatik_yedek_saklama_gun": -5}, headers=yetkili_header)
+    assert r.status_code == 400, r.text
+
+
+def test_otomatik_yedek_liste_yonetici_gorebilir(client, yetkili_header, tmp_path):
+    """GET /sistem/yedek/otomatik-liste -- otomatik yedekleme arka planda
+    sessizce çalıştığı için, bir yöneticinin bunun gerçekten dosya ürettiğini
+    panelden görebilmesi gerekir."""
+    onceki = client.get("/sistem/ayarlar", headers=yetkili_header).json()["otomatik_yedek_klasoru"]
+    yeni_klasor = str(tmp_path / "yedekler_test")
+    try:
+        r = client.put("/sistem/ayarlar", json={"otomatik_yedek_klasoru": yeni_klasor}, headers=yetkili_header)
+        assert r.status_code == 200, r.text
+
+        import sqlite3
+        from backend.main import _sqlite_yedek_al, OTOMATIK_YEDEK_DOSYA_ONEKI
+        hedef_dosya = os.path.join(yeni_klasor, f"{OTOMATIK_YEDEK_DOSYA_ONEKI}20260101_000000.db")
+        kaynak_db = str(tmp_path / "kaynak_liste.db")
+        sqlite3.connect(kaynak_db).execute("CREATE TABLE t (id INTEGER)")
+        _sqlite_yedek_al(kaynak_db, hedef_dosya)
+
+        r2 = client.get("/sistem/yedek/otomatik-liste", headers=yetkili_header)
+        assert r2.status_code == 200, r2.text
+        veri = r2.json()
+        assert veri["klasor"] == yeni_klasor
+        assert any(y["dosya_adi"].startswith(OTOMATIK_YEDEK_DOSYA_ONEKI) for y in veri["yedekler"])
+    finally:
+        client.put("/sistem/ayarlar", json={"otomatik_yedek_klasoru": onceki}, headers=yetkili_header)
+
+
+def test_otomatik_yedek_liste_operator_yetkisiz_403_doner(client, operator_header):
+    r = client.get("/sistem/yedek/otomatik-liste", headers=operator_header)
+    assert r.status_code == 403
+
+
+# ------------------------------------------------------------------
 # Otomatik bariyer açma -- desteklenmeyen mod (gpio) sessiz kalmamalı
 # (2026-09-25, sistem taraması)
 # ------------------------------------------------------------------

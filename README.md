@@ -3392,3 +3392,47 @@ hemen çökmesine yol açabiliyordu. Artık her ayar için tip/aralık doğrulam
 ile bir bariyerin id'si değişmeden güncellenebildiği. Mevcut 230 test
 (fastapi gerektirmeyen testler) değişmeden geçmeye devam ediyor. Frontend
 tarafı (bariyer düzenleme modalı) Playwright ile doğrulandı.
+
+## Otomatik Veritabanı Yedekleme (2026-09-25, kullanıcı isteği)
+
+Sistem taramasında bulunan en önemli operasyonel eksiklerden biri, veritabanının
+TEK yedekleme yolunun bir yöneticinin panelden manuel olarak `/sistem/yedek`
+indirmesi olmasıydı — bir operatör bunu düzenli yapmayı unutursa (ya da
+gerektiğini hiç bilmiyorsa), disk arızası/bozulması durumunda TÜM geçiş
+kayıtları ve denetim izi kalıcı olarak kaybolabilirdi. Kullanıcının "günlük
+otomatik yedek ekle" talebi üzerine:
+
+- Ayarlar panelinde yeni bir bölüm eklendi: "Veritabanını günde bir kez
+  otomatik yedekle" (varsayılan: açık), yedek klasörü (varsayılan: proje
+  kökünde `yedekler/` — canlı veritabanının bulunduğu `veritabani/` klasöründen
+  KASITLI OLARAK ayrı, tek bir yanlış silme/üzerine yazmanın hem canlıyı hem
+  yedekleri birden götürmesini engellemek için; farklı bir diske/harici
+  depolamaya da yönlendirilebilir) ve saklama süresi (varsayılan: 30 gün,
+  0 = süresiz sakla).
+- Arka planda (`main.py::_otomatik_yedek_dongu`), görüntü temizliğiyle AYNI
+  "periyodik arka plan bakım görevi" deseniyle her 6 saatte bir kontrol edilir,
+  günde bir kez gerçek yedek alınır ve saklama süresinden eski otomatik
+  yedekler otomatik silinir. Yalnızca SQLite için çalışır (SQL Server
+  kurulumlarında kurumun kendi veritabanı yedekleme araçları kullanılmalı —
+  manuel `/sistem/yedek` uç noktasıyla aynı kısıtlama).
+- **WAL modu düzeltmesi (önceden bilinen bir kısıtlamaydı, artık giderildi):**
+  hem otomatik hem manuel yedekleme, artık `sqlite3`'ün kendi `backup()` API'sini
+  kullanan ortak bir yardımcı (`_sqlite_yedek_al`) üzerinden çalışıyor. Önceki
+  "ham dosya kopyala" yaklaşımı, WAL modunda henüz ana `.db` dosyasına
+  checkpoint yapılmamış (yalnızca `.db-wal` dosyasında duran) son işlemleri
+  SESSİZCE KAÇIRABİLİYORDU — `sqlite3.backup()` ise kaynağı ÇALIŞIRKEN
+  (okuma/yazmayı kilitlemeden) sayfa sayfa kopyalayıp bu bekleyen içeriği de
+  otomatik dahil ediyor, elle bir "PRAGMA wal_checkpoint" adımına gerek
+  kalmıyor.
+- Otomatik yedekleme arka planda sessizce çalıştığı için, bunun "gerçekten
+  çalışıp çalışmadığını" görünür kılmak amacıyla yeni `GET
+  /sistem/yedek/otomatik-liste` uç noktası ve Ayarlar panelinde "Son otomatik
+  yedek: ... (X MB) — toplam N yedek" şeklinde bir durum satırı eklendi.
+
+**Testler:** `_sqlite_yedek_al`'ın WAL'da bekleyen veriyi gerçekten dahil
+ettiğini doğrulayan bir test (yalnızca stdlib `sqlite3` kullandığı için bu
+sandbox'ta GERÇEKTEN çalıştırılıp geçti — fastapi gerektirmiyor), ayar
+doğrulama testleri (boş klasör yolu, negatif saklama süresi → 400) ve
+otomatik yedek listeleme uç noktası için RBAC/içerik testleri eklendi.
+Frontend tarafı (yeni ayar alanları + durum satırı) Playwright ile
+doğrulandı.

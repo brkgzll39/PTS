@@ -3960,6 +3960,9 @@ async function sistemAyarlariYukle() {
       { key: "otomatik_kayit_min_guven_skoru_bilinen_arac", label: "Min. kayıt güven skoru — BİLİNEN araç istisnası (0-1)", tip: "number", step: "0.01" },
       { key: "tekrar_gecikme_sn", label: "Aynı kameranın kendi tekrarını bastırma gecikmesi (sn)", tip: "number" },
       { key: "capraz_kamera_tekrar_penceresi_sn", label: "Farklı kameralar arası kısa süreli tekrar penceresi (sn, 0 = kapalı)", tip: "number" },
+      // OTOMATİK VERİTABANI YEDEKLEME (2026-09-25, kullanıcı isteği: "günlük
+      // otomatik yedek ekle") -- bkz. main.py::_otomatik_yedek_dongu.
+      { key: "otomatik_yedek_saklama_gun", label: "Otomatik yedek saklama süresi (gün, 0 = süresiz sakla)", tip: "number" },
     ];
     el.innerHTML = `<form id="sistemAyarlariForm" data-rol-min="yonetici">${satirlar.map(s =>
       `<div class="mb-2"><label class="form-label small">${escapeHtml(s.label)}</label>
@@ -3983,6 +3986,18 @@ async function sistemAyarlariYukle() {
         <input type="checkbox" class="form-check-input" id="ayar_bilinen_plaka_duzeltme_aktif" ${ayarlar.bilinen_plaka_duzeltme_aktif ? "checked" : ""}>
         <label class="form-check-label small" for="ayar_bilinen_plaka_duzeltme_aktif">Bilinen plakaya göre OCR düzeltmesi (tek karakter hataları)</label>
       </div>
+      <hr>
+      <div class="form-check mb-2">
+        <input type="checkbox" class="form-check-input" id="ayar_otomatik_yedek_aktif" ${ayarlar.otomatik_yedek_aktif ? "checked" : ""}>
+        <label class="form-check-label small" for="ayar_otomatik_yedek_aktif">Veritabanını günde bir kez otomatik yedekle</label>
+      </div>
+      <div class="mb-2"><label class="form-label small" for="ayar_otomatik_yedek_klasoru">Otomatik yedek klasörü</label>
+        <input type="text" class="form-control form-control-sm" id="ayar_otomatik_yedek_klasoru" value="${escapeHtml(String(ayarlar.otomatik_yedek_klasoru ?? ""))}"></div>
+      <p class="small text-muted mb-2">Canlı veritabanı çalışırken bile tutarlı bir kopya alınır (WAL
+        modunda bekleyen son işlemler dahil, bkz. README) ve seçilen saklama süresinden eski otomatik
+        yedekler otomatik silinir. Uzun süreli/afet kurtarma amaçlı saklama için bu klasörü ayrı bir
+        diske/harici depolamaya yönlendirmeniz önerilir.</p>
+      <div id="otomatikYedekDurumu" class="small mb-2"></div>
       ${rolYeterli("yonetici") ? '' : '<p class="small text-muted mb-2"><i class="bi bi-lock-fill"></i> Bu ayarları sadece yönetici değiştirebilir.</p>'}
       <button type="submit" class="btn btn-sm btn-primary w-100 mt-1"><i class="bi bi-save"></i> Kaydet</button></form>`;
     document.getElementById("sistemAyarlariForm").addEventListener("submit", async (ev) => {
@@ -3990,11 +4005,37 @@ async function sistemAyarlariYukle() {
       const guncel = {};
       satirlar.forEach(s => { guncel[s.key] = Number(document.getElementById(`ayar_${s.key}`).value); });
       guncel.bilinen_plaka_duzeltme_aktif = document.getElementById("ayar_bilinen_plaka_duzeltme_aktif").checked;
+      guncel.otomatik_yedek_aktif = document.getElementById("ayar_otomatik_yedek_aktif").checked;
+      guncel.otomatik_yedek_klasoru = document.getElementById("ayar_otomatik_yedek_klasoru").value;
       await apiCagir("/sistem/ayarlar", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(guncel) });
       toastGoster("Sistem ayarları kaydedildi", "basari");
+      otomatikYedekDurumunuYukle();
     });
     rolBazliArayuzuUygula();
+    if (rolYeterli("yonetici")) otomatikYedekDurumunuYukle();
   } catch (e) { console.error(e); }
+}
+
+// DÜZELTME (2026-09-25): otomatik yedekleme arka planda sessizce çalıştığı
+// için, bir yöneticinin "gerçekten çalışıyor mu" sorusuna panelden cevap
+// bulabilmesi gerekir -- bkz. main.py::otomatik_yedekleri_listele.
+async function otomatikYedekDurumunuYukle() {
+  const el = document.getElementById("otomatikYedekDurumu");
+  if (!el) return;
+  try {
+    const veri = await apiCagir("/sistem/yedek/otomatik-liste");
+    if (!veri.yedekler.length) {
+      el.className = "small mb-2 text-muted";
+      el.textContent = `Henüz otomatik yedek alınmadı (klasör: ${veri.klasor}). İlk yedek en geç 6 saat içinde alınır.`;
+      return;
+    }
+    const son = veri.yedekler[0];
+    const boyutMb = (son.boyut_bayt / (1024 * 1024)).toFixed(1);
+    el.className = "small mb-2 text-muted";
+    el.textContent = `Son otomatik yedek: ${new Date(son.tarih_saat).toLocaleString("tr-TR")} (${boyutMb} MB) — toplam ${veri.yedekler.length} yedek, klasör: ${veri.klasor}`;
+  } catch (e) {
+    console.error(e);
+  }
 }
 
 // ================================================================
