@@ -176,6 +176,72 @@ def test_durdur_sonrasi_hicbir_thread_kalmaz(sahte_engine, sentetik_video, sahte
     assert kalan == [], f"durdur() sonrası hâlâ çalışan thread'ler var: {kalan}"
 
 
+class _OkunurkenSerbestBirakmayiYakalayanCap:
+    """Sahte VideoCapture: read() bir süre bloklanır (donmuş bir RTSP
+    soketini taklit eder) ve bir read() SÜRERKEN release() çağrılırsa bunu
+    kaydeder -- gerçek OpenCV/FFmpeg'de bu durum tanımsızdır ve tüm süreci
+    yerel bir çökmeyle düşürebilir (2026-09-25 sistem taraması bulgusu)."""
+
+    ihlaller = []
+    tum_caps = []
+
+    def __init__(self):
+        self._kilit = threading.Lock()
+        self._okuyor = False
+        self.serbest = False
+        _OkunurkenSerbestBirakmayiYakalayanCap.tum_caps.append(self)
+
+    def isOpened(self):
+        return True
+
+    def set(self, *a):
+        return True
+
+    def read(self):
+        with self._kilit:
+            self._okuyor = True
+        time.sleep(0.6)  # kare gelmiyor: pipeline'ın zaman aşımından uzun
+        with self._kilit:
+            self._okuyor = False
+        return False, None
+
+    def release(self):
+        with self._kilit:
+            if self._okuyor:
+                _OkunurkenSerbestBirakmayiYakalayanCap.ihlaller.append("okunurken release()")
+            self.serbest = True
+
+
+def test_yeniden_baglanma_okunmakta_olan_capi_baska_threadden_kapatmaz(sahte_engine, sahte_api, monkeypatch):
+    _OkunurkenSerbestBirakmayiYakalayanCap.ihlaller = []
+    _OkunurkenSerbestBirakmayiYakalayanCap.tum_caps = []
+    monkeypatch.setattr(camera_reader.KameraPipeline, "_cap_ac", lambda self: _OkunurkenSerbestBirakmayiYakalayanCap())
+    # Yeniden bağlanmadan önceki geri çekilme beklemesini kısalt (2*n sn).
+    gercek_sleep = time.sleep
+    monkeypatch.setattr(camera_reader.time, "sleep", lambda s: gercek_sleep(min(s, 0.05)))
+
+    pipeline = camera_reader.KameraPipeline(
+        video_kaynagi="rtsp://sahte/akis",
+        api_url=sahte_api.url,
+        kamera_id="TEST-YARIS-PYTEST",
+        baglanti_zaman_asimi_sn=0.3,
+    )
+    pipeline.baslat()
+    try:
+        gercek_sleep(3.0)
+        assert pipeline.durum_bilgisi()["yeniden_baglanma_sayisi"] >= 2, "Test yeniden bağlanmayı tetiklemedi"
+    finally:
+        pipeline.durdur()
+    gercek_sleep(1.5)  # son okuyucuların süren read()'leri bitsin
+
+    assert _OkunurkenSerbestBirakmayiYakalayanCap.ihlaller == [], \
+        "Bir VideoCapture, başka bir thread onu okurken serbest bırakıldı (yerel çökme riski)"
+    assert all(c.serbest for c in _OkunurkenSerbestBirakmayiYakalayanCap.tum_caps), \
+        "Eski bağlantılar sızdırılmamalı: her cap sonunda kendi okuyucusu tarafından kapatılmalı"
+    kalan = [t.name for t in threading.enumerate() if "TEST-YARIS-PYTEST" in t.name]
+    assert kalan == [], f"durdur() sonrası hâlâ çalışan thread'ler var: {kalan}"
+
+
 def test_plaka_regex_gecersiz_ocr_ciktisini_reddeder():
     assert camera_reader.plaka_dogrula("gecersiz") is None
     assert camera_reader.plaka_dogrula("34ABC123") == "34 ABC 123"

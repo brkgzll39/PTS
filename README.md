@@ -3563,3 +3563,47 @@ röleye ulaşılamayınca 503 + başarısız denemenin denetim kaydı) ve bağl�
 bariyer silme testi. Panel yenileme aralığının uygulanması (alt/üst sınırlar,
 aralık dolmadan yenilememe, donmuş bağlantıda hemen yenileme) ve Ayarlar
 formunun hata gösterimi Playwright ile doğrulandı.
+
+## Backend Sağlamlık: Kamera Yeniden Bağlanma Çökme Riski ve Araç Fotoğrafı Kayıpları (2026-09-25, sistem taraması devamı)
+
+- **Kamera yeniden bağlanırken tüm PTS'in çökme riski giderildi:** bir kamera
+  kare göndermeyi kestiğinde pipeline yeniden bağlanırken eski bağlantıyı
+  (`cv2.VideoCapture`) DOĞRUDAN kapatıyordu — ama ayrı çalışan okuyucu
+  thread o anda aynı bağlantı üzerinde `read()` içinde bekliyor olabiliyordu
+  (RTSP soket zaman aşımı ~5 sn). OpenCV/FFmpeg, okunmakta olan bir
+  bağlantının başka bir thread'den kapatılmasını desteklemez; sonuç
+  tanımsızdır ve yerel (native) bir çökme, uyarı vermeden TÜM PTS sürecini
+  (tüm kameralar + web paneli) düşürebilir — üstelik tam da bir kameranın
+  zaten sorun yaşadığı anda. Artık her bağlantıyı YALNIZCA onu okuyan thread
+  kapatıyor: yeniden bağlanma yalnızca "nesil" sayacını artırıyor, eski
+  okuyucu süren `read()`'i bitince bunu görüp döngüden çıkıyor ve kendi
+  bağlantısını kendisi kapatıyor. Bu, okuma sırasında kapatmayı yakalayan
+  sahte bir kamera nesnesiyle GERÇEKTEN çalıştırılan bir testle doğrulandı
+  (test eski kodda başarısız oluyor, yeni kodda 5/5 tekrar geçiyor).
+- **Aynı saniyedeki iki tespitin fotoğrafları artık birbirini ezmiyor:**
+  otomatik kayıt fotoğrafının dosya adı yalnızca `PLAKA_unixsaniye.jpg` idi.
+  Aynı geçidi paylaşan giriş+çıkış kameraları aynı aracı aynı saniyede
+  gördüğünde ikinci kamera birinci kaydın fotoğrafının ÜZERİNE yazıyor,
+  ardından "çapraz kamera tekrarı" olarak atlanınca kendi dosyasını — yani
+  İLK kaydın tek fotoğrafını — siliyordu; ilk (geçerli) kayıt sessizce
+  fotoğrafsız kalıyordu. Dosya adına kısa rastgele bir ek eklendi.
+- **Disk dolduğunda geçiş kaydı artık kaybolmuyor:** fotoğraf diske
+  yazılamazsa (disk dolu, izin sorunu) eskiden yarım bir `.jpg` diskte
+  kalıyor ve istek 500 ile düşüyordu — yani GEÇİŞ KAYDI DA kayboluyordu.
+  Artık yarım dosya siliniyor, kayıt fotoğrafsız oluşturuluyor ve panelde
+  "Disk hatası (fotoğraf kaydedilemiyor)" alarmı gösteriliyor (disk doluyken
+  her geçişte yeni alarm üretip listeyi boğmamak için en fazla 10 dakikada
+  bir).
+- **Kayıt oluşturulamazsa yetim fotoğraf kalmıyor:** fotoğraf yazıldıktan
+  sonra kayıt oluşturma başarısız olursa (ör. veritabanına o an
+  ulaşılamazsa) dosya, hiçbir kaydın göstermediği ve kayıt üzerinden çalışan
+  hiçbir temizlik görevinin bulamadığı yetim bir dosya olarak diskte
+  kalıyordu. Artık hiçbir kayda bağlanmadıysa siliniyor.
+- Panelde ham kod olarak görünen `bariyer_hatasi` ve yeni `disk_hatasi`
+  alarm tiplerine Türkçe etiket eklendi.
+
+**Testler:** kamera yarış durumu için `tests/test_camera_reader.py`'ye
+gerçekten çalıştırılan bir test; `tests/test_api.py`'ye aynı saniyedeki iki
+görselin çakışmaması, çapraz kamera tekrarının ilk kaydın fotoğrafını
+silmemesi, disk dolu senaryosu (kayıt oluşur + yarım dosya kalmaz + alarm)
+ve kayıt oluşturulamayınca yetim dosya kalmaması testleri.

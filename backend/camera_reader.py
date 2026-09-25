@@ -708,25 +708,49 @@ class KameraPipeline:
 
         `gen` bu thread'in ait olduğu bağlantı neslidir; pipeline yeniden bağlanıp
         `self._gen`'i artırdığında bu thread bir sonraki turda kendini durdurur —
-        böylece eski (kapatılmış) cap nesnesi üzerinde sonsuza kadar dönmez."""
+        böylece eski (kapatılmış) cap nesnesi üzerinde sonsuza kadar dönmez.
+
+        SAHİPLİK (2026-09-25, sistem taraması): `cap`'i YALNIZCA bu thread
+        kapatır (`finally` içinde, kendi döngüsünden çıktıktan sonra). Eskiden
+        `_yeniden_baglan` ve `_dongu`'nun `finally` bloğu `cap.release()`'i
+        DOĞRUDAN çağırıyordu -- ama bu thread o anda aynı nesne üzerinde
+        `cap.read()` içinde bloklanmış olabiliyordu (RTSP soket zaman aşımı
+        ~5 sn). OpenCV/FFmpeg bir VideoCapture'ın bir thread'de okunurken başka
+        bir thread'de serbest bırakılmasını desteklemez: sonuç tanımsızdır ve
+        yerel (native) bir çökme TÜM PTS sürecini (tüm kameralar + web paneli)
+        uyarı vermeden düşürebilir -- tam da kameranın zaten sorunlu olduğu,
+        yeniden bağlanmanın tetiklendiği anda. Artık yeniden bağlanma yalnızca
+        nesli artırıyor; eski okuyucu, süren `read()`'i dönünce yeni nesli
+        görüp döngüden çıkıyor ve kendi cap'ini kendisi kapatıyor."""
         ardarda_hata = 0
-        while self.calisiyor and gen == self._gen:
+        try:
+            while self.calisiyor and gen == self._gen:
+                try:
+                    ret, frame = cap.read()
+                except Exception as exc:
+                    ardarda_hata += 1
+                    if ardarda_hata == 1:
+                        logger.warning("[%s] Kare okuma hatası: %s", self.kamera_id, exc)
+                    time.sleep(0.2)
+                    continue
+                if gen != self._gen:
+                    # Bu read() sürerken yeniden bağlanıldı -- bu kare artık
+                    # eski bağlantıya ait, yeni neslin karesinin üzerine
+                    # yazmasın.
+                    break
+                if ret and frame is not None:
+                    ardarda_hata = 0
+                    with self._kare_kilit:
+                        self._son_kare = frame
+                    self._son_kare_zamani = time.monotonic()
+                    self._kare_guncellendi.set()
+                else:
+                    time.sleep(0.05)
+        finally:
             try:
-                ret, frame = cap.read()
-            except Exception as exc:
-                ardarda_hata += 1
-                if ardarda_hata == 1:
-                    logger.warning("[%s] Kare okuma hatası: %s", self.kamera_id, exc)
-                time.sleep(0.2)
-                continue
-            if ret and frame is not None:
-                ardarda_hata = 0
-                with self._kare_kilit:
-                    self._son_kare = frame
-                self._son_kare_zamani = time.monotonic()
-                self._kare_guncellendi.set()
-            else:
-                time.sleep(0.05)
+                cap.release()
+            except Exception:
+                pass
 
     def _kareyi_isle(self, frame, oturumu_hemen_kapat: bool = False) -> list:
         """Kareyi ANPR motoruna verir. Format olarak geçerli ve yeterince güvenli
@@ -1140,14 +1164,16 @@ class KameraPipeline:
         return cap
 
     def _yeniden_baglan(self, eski_cap) -> tuple:
-        """Eski cap'i kapatır, yeni bağlantı açar, yeni nesil ile okuyucu thread başlatır."""
+        """Yeni bağlantı açar, yeni nesil ile okuyucu thread başlatır.
+
+        `eski_cap` burada KAPATILMAZ -- nesil artırıldığı için eski okuyucu
+        thread süren `read()`'i dönünce döngüden çıkar ve onu kendisi kapatır
+        (bkz. `_kare_okuyucu`'nun SAHİPLİK notu: okunmakta olan bir
+        VideoCapture'ı başka bir thread'den serbest bırakmak yerel bir çökmeye
+        yol açabilir). Parametre, çağrı imzasını korumak için duruyor."""
         with self._gen_kilit:
             self._gen += 1
             gen = self._gen
-        try:
-            eski_cap.release()
-        except Exception:
-            pass
         cap = self._cap_ac()
         okuyucu = threading.Thread(target=self._kare_okuyucu, args=(cap, gen), daemon=True,
                                     name=f"pts-okuyucu-{self.kamera_id}-{gen}")
@@ -1159,6 +1185,7 @@ class KameraPipeline:
         istisna thread'i sessizce öldürmez, önce loglanır — dışarıdaki bekçi
         (main.py) `thread_canli_mi()` ile gerçek ölümü tespit edip yeniden başlatabilir."""
         cap = None
+        okuyucu_basladi = False
         try:
             cap = self._cap_ac()
             if not cap.isOpened():
@@ -1168,6 +1195,7 @@ class KameraPipeline:
             okuyucu = threading.Thread(target=self._kare_okuyucu, args=(cap, gen), daemon=True,
                                         name=f"pts-okuyucu-{self.kamera_id}-{gen}")
             okuyucu.start()
+            okuyucu_basladi = True
 
             while self.calisiyor:
                 # Taze kare gelene kadar bekle (zaman aşımı = baglanti_zaman_asimi_sn)
@@ -1204,7 +1232,14 @@ class KameraPipeline:
             logger.error("[%s] Pipeline döngüsü beklenmedik şekilde çöktü: %s", self.kamera_id, exc, exc_info=True)
             self.calisiyor = False
         finally:
-            if cap is not None:
+            # cap'i burada DOĞRUDAN kapatmıyoruz (bkz. `_kare_okuyucu`'nun
+            # SAHİPLİK notu) -- nesli geçersiz kılmak, okuyucu thread'in
+            # döngüden çıkıp kendi cap'ini kapatması için yeterli.
+            with self._gen_kilit:
+                self._gen += 1
+            if cap is not None and not okuyucu_basladi:
+                # Okuyucu thread hiç başlatılamadıysa cap'in sahibi yok --
+                # o durumda kapatmak güvenli (başka thread okumuyor).
                 try:
                     cap.release()
                 except Exception:

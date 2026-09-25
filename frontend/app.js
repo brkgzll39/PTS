@@ -439,6 +439,10 @@ function alarmTipiEtiketi(tip) {
     kara_liste: "Kara liste geçişi",
     supheli_arac: "Şüpheli araç (tekrarlı red)",
     kamera_arizasi: "Kamera arızası / bağlantı sorunu",
+    // 2026-09-25 (sistem taraması): bu iki alarm tipi backend'de üretiliyor
+    // ama burada etiketi yoktu -- panelde ham "bariyer_hatasi" metni görünüyordu.
+    bariyer_hatasi: "Bariyer otomatik açılamadı",
+    disk_hatasi: "Disk hatası (fotoğraf kaydedilemiyor)",
   };
   return etiketler[tip] || escapeHtml(tip || "Bilinmeyen alarm");
 }

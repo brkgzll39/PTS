@@ -5007,3 +5007,96 @@ def test_arvento_webhook_surucu_adi_olmayan_kayit_disaktarma_listesinde_none_don
     son_kayitlar = r_analiz.json()["son_kayitlar"]
     assert son_kayitlar, "son_kayitlar boş dönmemeli"
     assert son_kayitlar[0]["surucu_adi"] == "Plaka Analizi Testi"
+
+
+# ------------------------------------------------------------------
+# OTOMATİK KAYIT GÖRSELLERİ (2026-09-25, sistem taraması, Patch #104)
+# ------------------------------------------------------------------
+
+_KUCUK_JPEG = (
+    b"\xff\xd8\xff\xe0\x00\x10JFIF\x00\x01\x01\x00\x00\x01\x00\x01\x00\x00"
+    b"\xff\xdb\x00C\x00" + bytes([8] * 64) + b"\xff\xd9"
+)
+
+
+def test_ayni_saniyede_ayni_plakanin_iki_gorseli_birbirinin_uzerine_yazmaz(client, yetkili_header):
+    """Eskiden dosya adı `PLAKA_unixsaniye.jpg` idi -- aynı saniyede aynı
+    plakayı gönderen iki istek AYNI dosyaya yazıyordu (ikincisi birincinin
+    fotoğrafını eziyordu; çapraz-kamera tekrarı olarak atlanınca da onu
+    siliyordu)."""
+    yollar = []
+    for _ in range(2):
+        r = client.post(
+            "/kayitlar/otomatik",
+            data={"plaka_no": "34 GRS 01", "kamera_id": "GORSEL-CAKISMA-KAM", "yon": "giris", "guven_skoru": 0.99},
+            files={"gorsel": ("kare.jpg", _KUCUK_JPEG, "image/jpeg")},
+        )
+        assert r.status_code == 200, r.text
+        yollar.append(r.json()["goruntu_yolu"])
+    assert yollar[0] != yollar[1], "İki ayrı kayıt aynı görsel dosyasını paylaşmamalı"
+    assert all(os.path.isfile(y) for y in yollar)
+
+
+def test_capraz_kamera_tekrari_ilk_kaydin_fotografini_silmez(client, yetkili_header):
+    r1 = client.post(
+        "/kayitlar/otomatik",
+        data={"plaka_no": "34 GRS 02", "kamera_id": "GRS-GIRIS", "yon": "giris", "guven_skoru": 0.99},
+        files={"gorsel": ("kare.jpg", _KUCUK_JPEG, "image/jpeg")},
+    )
+    assert r1.status_code == 200, r1.text
+    ilk_yol = r1.json()["goruntu_yolu"]
+
+    r2 = client.post(
+        "/kayitlar/otomatik",
+        data={"plaka_no": "34 GRS 02", "kamera_id": "GRS-CIKIS", "yon": "cikis", "guven_skoru": 0.99},
+        files={"gorsel": ("kare.jpg", _KUCUK_JPEG, "image/jpeg")},
+    )
+    assert r2.status_code == 200, r2.text
+    assert r2.json()["atlandi"] is True
+    assert os.path.isfile(ilk_yol), "Çapraz kamera tekrarı, İLK kaydın fotoğrafını silmemeli"
+
+
+def test_gorsel_diske_yazilamazsa_kayit_fotografsiz_olusur_ve_alarm_uretilir(client, yetkili_header, monkeypatch):
+    import builtins
+
+    gercek_open = builtins.open
+
+    def _disk_dolu_open(yol, mod="r", *a, **kw):
+        if "wb" in mod and str(yol).startswith(pts_main.GORUNTU_KLASORU):
+            # Dosya oluşturulup yarım yazılmış gibi davran, sonra hata ver.
+            with gercek_open(yol, "wb") as f:
+                f.write(b"\xff\xd8yarim")
+            raise OSError(28, "No space left on device")
+        return gercek_open(yol, mod, *a, **kw)
+
+    monkeypatch.setattr(pts_main, "open", _disk_dolu_open, raising=False)
+    monkeypatch.setattr(pts_main, "_son_gorsel_yazma_alarm_zamani", 0.0)
+    once = set(os.listdir(pts_main.GORUNTU_KLASORU))
+
+    r = client.post(
+        "/kayitlar/otomatik",
+        data={"plaka_no": "34 DSK 01", "kamera_id": "DISK-DOLU-KAM", "yon": "giris", "guven_skoru": 0.99},
+        files={"gorsel": ("kare.jpg", _KUCUK_JPEG, "image/jpeg")},
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["plaka_no"] == "34 DSK 01", "Geçiş kaydı fotoğraf yazılamasa bile oluşmalı"
+    assert r.json()["goruntu_yolu"] is None
+    assert set(os.listdir(pts_main.GORUNTU_KLASORU)) == once, "Yarım yazılmış dosya diskte kalmamalı"
+
+    alarmlar = client.get("/alarmlar", headers=yetkili_header).json()
+    assert any(a["alarm_tipi"] == "disk_hatasi" for a in alarmlar)
+
+
+def test_kayit_olusturulamazsa_yetim_gorsel_dosyasi_kalmaz(client, monkeypatch):
+    def _db_hatasi(*a, **kw):
+        raise RuntimeError("veritabanına ulaşılamıyor")
+
+    monkeypatch.setattr(pts_main, "_kayit_olustur_ve_bildir", _db_hatasi)
+    once = set(os.listdir(pts_main.GORUNTU_KLASORU))
+    with pytest.raises(RuntimeError):
+        client.post(
+            "/kayitlar/otomatik",
+            data={"plaka_no": "34 YTM 01", "kamera_id": "YETIM-KAM", "yon": "giris", "guven_skoru": 0.99},
+            files={"gorsel": ("kare.jpg", _KUCUK_JPEG, "image/jpeg")},
+        )
+    assert set(os.listdir(pts_main.GORUNTU_KLASORU)) == once, "Hiçbir kayda bağlanmayan görsel diskte kalmamalı"

@@ -3648,25 +3648,43 @@ async def kayit_ekle_otomatik(
 
         # Dosya adı kullanıcı girdisinden (plaka_no) üretildiği için yalnızca güvenli karakterler bırakılır (path traversal önlemi).
         guvenli_plaka = re.sub(r"[^A-Za-z0-9]", "", plaka_no) or "PLAKA"
-        dosya_adi = f"{guvenli_plaka}_{int(datetime.now().timestamp())}.jpg"
+        # 2026-09-25 (sistem taraması): dosya adı eskiden yalnızca
+        # `PLAKA_unixsaniye.jpg` idi. AYNI saniye içinde aynı plakayı gören iki
+        # kamera (tipik: aynı geçidi paylaşan giriş+çıkış kameraları -- tam da
+        # `_capraz_kamera_kisa_sureli_tekrar_mi`'nin var olma nedeni) AYNI
+        # dosyaya yazıyordu: ikinci kamera birinci kaydın fotoğrafının ÜZERİNE
+        # yazıyor, ardından çapraz-kamera tekrarı olarak atlanınca "kendi"
+        # dosyasını -- yani birinci kaydın tek fotoğrafını -- SİLİYORDU. Sonuç:
+        # ilk (geçerli) kayıt fotoğrafsız kalıyordu, sessizce. Kısa rastgele bir
+        # ek bu çakışmayı ortadan kaldırıyor (ayrıca dosya adlarının tahmin
+        # edilebilirliğini de azaltıyor, bkz. gorsel_getir'in güvenlik notu).
+        dosya_adi = f"{guvenli_plaka}_{int(datetime.now().timestamp())}_{uuid.uuid4().hex[:8]}.jpg"
         goruntu_yolu = os.path.join(GORUNTU_KLASORU, dosya_adi)
         toplam_bayt = 0
         asildi = False
-        with open(goruntu_yolu, "wb") as f:
-            while True:
-                parca = await gorsel.read(1024 * 1024)
-                if not parca:
-                    break
-                toplam_bayt += len(parca)
-                if toplam_bayt > MAKS_GORSEL_BOYUTU_BAYT:
-                    asildi = True
-                    break
-                f.write(parca)
+        try:
+            with open(goruntu_yolu, "wb") as f:
+                while True:
+                    parca = await gorsel.read(1024 * 1024)
+                    if not parca:
+                        break
+                    toplam_bayt += len(parca)
+                    if toplam_bayt > MAKS_GORSEL_BOYUTU_BAYT:
+                        asildi = True
+                        break
+                    f.write(parca)
+        except OSError as exc:
+            # 2026-09-25 (sistem taraması): disk doluysa/izin sorunu varsa
+            # eskiden yarım yazılmış bir .jpg diskte kalıyor (hiçbir kayda
+            # bağlı olmayan yetim dosya) VE istek 500 ile düşüyordu -- yani
+            # GEÇİŞ KAYDI DA kayboluyordu. Bir nizamiyede geçiş kaydı
+            # fotoğraftan daha önemli: yarım dosyayı temizleyip kaydı
+            # FOTOĞRAFSIZ oluşturuyoruz ve durumu görünür kılıyoruz.
+            _yarim_dosyayi_sil(goruntu_yolu)
+            goruntu_yolu = None
+            _gorsel_yazma_hatasini_bildir(db, kamera_id, plaka_no, exc)
         if asildi:
-            try:
-                os.remove(goruntu_yolu)
-            except OSError:
-                pass
+            _yarim_dosyayi_sil(goruntu_yolu)
             raise HTTPException(
                 413,
                 f"Görsel {MAKS_GORSEL_BOYUTU_BAYT // (1024 * 1024)} MB sınırını aşıyor",
@@ -3709,8 +3727,8 @@ async def kayit_ekle_otomatik(
                 "plaka=%s güven=%.3f (genel eşik=%.3f, bilinen araç eşiği=%.3f)",
                 kamera_id, plaka_no, guven_skoru, esik, bilinen_esik,
             )
-            return _kayit_olustur_ve_bildir(db, plaka_no, kamera_id, yon, guven_skoru, goruntu_yolu,
-                                             dogrulama_kare_sayisi, farkli_okuma_sayisi=farkli_okuma_sayisi)
+            return _kaydi_olustur_gorseli_koru(db, plaka_no, kamera_id, yon, guven_skoru, goruntu_yolu,
+                                               dogrulama_kare_sayisi, farkli_okuma_sayisi)
 
         if goruntu_yolu and os.path.isfile(goruntu_yolu):
             try:
@@ -3729,8 +3747,73 @@ async def kayit_ekle_otomatik(
             "esik": esik,
         })
 
-    return _kayit_olustur_ve_bildir(db, plaka_no, kamera_id, yon, guven_skoru, goruntu_yolu,
-                                     dogrulama_kare_sayisi, farkli_okuma_sayisi=farkli_okuma_sayisi)
+    return _kaydi_olustur_gorseli_koru(db, plaka_no, kamera_id, yon, guven_skoru, goruntu_yolu,
+                                       dogrulama_kare_sayisi, farkli_okuma_sayisi)
+
+
+def _yarim_dosyayi_sil(yol: Optional[str]) -> None:
+    if yol and os.path.isfile(yol):
+        try:
+            os.remove(yol)
+        except OSError:
+            logger.warning("Yarım kalan görsel dosyası silinemedi: %s", yol)
+
+
+_GORSEL_YAZMA_ALARM_ARALIK_SN = 600
+_son_gorsel_yazma_alarm_zamani = 0.0
+_gorsel_yazma_alarm_kilit = threading.Lock()
+
+
+def _gorsel_yazma_hatasini_bildir(db: Session, kamera_id: str, plaka_no: str, exc: Exception) -> None:
+    """Araç fotoğrafı diske yazılamadığında (disk dolu, izin sorunu vb.) her
+    seferinde loglar; panelde görülebilir bir alarmı ise en fazla 10 dakikada
+    bir üretir -- disk doluyken HER geçiş yeni bir alarm üretip alarm listesini
+    boğmasın. Alarmın yazılamaması asıl kaydı engellemez."""
+    global _son_gorsel_yazma_alarm_zamani
+    logger.error("[%s] Araç görseli diske yazılamadı (plaka=%s), kayıt fotoğrafsız oluşturulacak: %s",
+                 kamera_id, plaka_no, exc)
+    with _gorsel_yazma_alarm_kilit:
+        simdi = time.monotonic()
+        if _son_gorsel_yazma_alarm_zamani and simdi - _son_gorsel_yazma_alarm_zamani < _GORSEL_YAZMA_ALARM_ARALIK_SN:
+            return
+        _son_gorsel_yazma_alarm_zamani = simdi
+    try:
+        db.add(models.Alarm(
+            # plaka_no NOT NULL + String(15) (bkz. models.Alarm); kamera
+            # arızası alarmındaki gibi alarmın kaynağını (kamerayı) yazıyoruz.
+            plaka_no=(re.sub(r"[^A-Za-z0-9 _.\-]", "", str(kamera_id)).strip() or "SISTEM")[:15],
+            alarm_tipi="disk_hatasi",
+            mesaj=f"Araç fotoğrafları diske YAZILAMIYOR (kayıtlar fotoğrafsız oluşturuluyor): {exc}"[:255],
+        ))
+        db.commit()
+    except Exception:
+        db.rollback()
+        logger.exception("Görsel yazma hatası alarmı kaydedilemedi")
+
+
+def _kaydi_olustur_gorseli_koru(db: Session, plaka_no: str, kamera_id: str, yon: str,
+                                guven_skoru: Optional[float], goruntu_yolu: Optional[str],
+                                dogrulama_kare_sayisi: Optional[int], farkli_okuma_sayisi: Optional[int]):
+    """`_kayit_olustur_ve_bildir`'i çağırır; kayıt oluşturma bir istisnayla
+    başarısız olursa (ör. veritabanı o an erişilemez) ve bu görsel hiçbir
+    kayda BAĞLANMADIYSA diskteki dosyayı siler -- eskiden bu durumda dosya,
+    hiçbir kaydın göstermediği ve hiçbir temizlik görevinin (kayıt üzerinden
+    çalıştıkları için) bulamadığı yetim bir dosya olarak diskte kalıyordu.
+    Kayıt commit edildikten SONRAKİ bir adımda hata çıkarsa (bildirim vb.)
+    dosya SİLİNMEZ, çünkü artık bir kayda bağlı."""
+    try:
+        return _kayit_olustur_ve_bildir(db, plaka_no, kamera_id, yon, guven_skoru, goruntu_yolu,
+                                         dogrulama_kare_sayisi, farkli_okuma_sayisi=farkli_okuma_sayisi)
+    except Exception:
+        if goruntu_yolu:
+            try:
+                db.rollback()
+                bagli = db.query(models.Kayit.id).filter(models.Kayit.goruntu_yolu == goruntu_yolu).first()
+            except Exception:
+                bagli = True  # emin olamıyorsak dosyayı silmeyelim
+            if not bagli:
+                _yarim_dosyayi_sil(goruntu_yolu)
+        raise
 
 
 def _iso_tarih_parametresini_coz(deger: Optional[str], alan_adi: str) -> Optional[datetime]:
