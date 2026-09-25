@@ -21,6 +21,7 @@ echo Durdurmak icin bu pencereye gelip CTRL+C tuslarina basin.
 echo.
 
 set /a deneme=0
+set "ilk_baslatma=1"
 
 :yeniden_baslat
 
@@ -37,8 +38,21 @@ rem kaynaklanir. Artik baslamadan ONCE port bos mu diye bakiyoruz ve
 rem doluysa hangi PID oldugunu soyleyip ne yapilmasi gerektigini
 rem aciklayip DURUYORUZ -- garantili basarisiz bir baslatma denemesi
 rem yapip kullaniciyi sonsuz bir dongude birakmiyoruz.
+rem
+rem 2026-09-25: Bu "dur ve kullaniciya sor" davranisi artik YALNIZCA ilk
+rem baslatmada gecerli (kullanici o anda pencerenin basinda). Bir cokmeden
+rem SONRAKI otomatik yeniden baslatmalarda port hala doluysa (tipik neden:
+rem coken surecin soketi birkac saniye daha birakmamasi), betik artik
+rem kapanip gorevli kimse fark edene kadar nizamiyeyi PTS'siz birakmiyor --
+rem bekleyip tekrar deniyor.
 set "port_pid="
 for /f "tokens=5" %%p in ('netstat -ano ^| findstr /C:":8000 " ^| findstr /C:"LISTENING"') do set "port_pid=%%p"
+if defined port_pid if not "%ilk_baslatma%" == "1" (
+    echo.
+    echo UYARI: 8000 portu hala dolu ^(PID %port_pid%^). 30 saniye sonra tekrar denenecek...
+    timeout /t 30 /nobreak >nul
+    goto yeniden_baslat
+)
 if defined port_pid (
     echo.
     echo ============================================================
@@ -59,6 +73,7 @@ if defined port_pid (
     exit /b 1
 )
 
+set "ilk_baslatma=0"
 for /f %%t in ('powershell -NoProfile -Command "[DateTimeOffset]::UtcNow.ToUnixTimeSeconds()"') do set "baslangic_zamani=%%t"
 
 ".venv\Scripts\python.exe" -m uvicorn backend.main:app --host 0.0.0.0 --port 8000
@@ -80,23 +95,35 @@ if %calisma_suresi% GEQ 60 (
 )
 set /a deneme+=1
 
-if %deneme% GEQ 5 (
-    echo.
-    echo ============================================================
-    echo PTS art arda %deneme% kez kisa surede beklenmedik sekilde durdu.
-    echo Bu genellikle tekrar eden ayni sorunun ^(yanlis yapilandirma,
-    echo eksik bagimlilik, vb.^) her seferinde hemen tekrar olustugu
-    echo anlamina gelir -- otomatik yeniden baslatma DURDURULDU.
-    echo Olasi nedeni gormek icin loglar\pts.log dosyasina bakin.
-    echo ============================================================
-    pause
-    exit /b 1
-)
+rem ================================================================
+rem 2026-09-25 (sistem taramasi): Eskiden art arda 5 kisa cokmeden sonra
+rem betik "pause" + "exit" ile KALICI olarak duruyordu. Bu, gozetimsiz
+rem calisan bir nizamiye sisteminde en kotu sonuc: gecici ama birkac
+rem dakika suren bir sorun (ag surucusu gec gelmesi, SQL Server'in
+rem henuz ayaga kalkmamis olmasi, disk anlik dolu vb.) tum sistemi biri
+rem gelip pencereye bakana kadar -- belki saatlerce -- kapali birakiyordu.
+rem Artik durmuyoruz; bunun yerine bekleme suresini ARTIRIYORUZ (5 sn ->
+rem 60 sn -> 5 dk) ki kalici bir yapilandirma hatasi logu/CPU'yu
+rem bogmasin, ama sorun kendiliginden duzeldiginde PTS de kendiliginden
+rem geri gelsin.
+set /a bekleme_sn=5
+if %deneme% GEQ 5 set /a bekleme_sn=60
+if %deneme% GEQ 10 set /a bekleme_sn=300
 
 echo.
-echo PTS beklenmedik sekilde durdu ^(deneme %deneme%/5^). 5 saniye icinde yeniden baslatiliyor...
+if %deneme% GEQ 5 (
+    echo ============================================================
+    echo UYARI: PTS art arda %deneme% kez kisa surede beklenmedik sekilde durdu.
+    echo Bu genellikle tekrar eden ayni bir soruna ^(yanlis yapilandirma,
+    echo veritabanina ulasilamamasi, eksik bagimlilik vb.^) isaret eder.
+    echo Olasi nedeni gormek icin loglar\pts.log dosyasina bakin.
+    echo Otomatik yeniden baslatma DURDURULMUYOR -- sorun duzeldiginde PTS
+    echo kendiliginden geri gelecek.
+    echo ============================================================
+)
+echo PTS beklenmedik sekilde durdu ^(deneme %deneme%^). %bekleme_sn% saniye icinde yeniden baslatiliyor...
 echo Tamamen kapatmak icin bu pencereyi kapatin.
-timeout /t 5 /nobreak >nul
+timeout /t %bekleme_sn% /nobreak >nul
 goto yeniden_baslat
 
 :son

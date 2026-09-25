@@ -3500,3 +3500,66 @@ yapıldı, (2) kamera adı değiştirme modalında Enter tuşuna basmanın gerç
 düğmesinin istek sürerken devre dışı kalıp tamamlanınca yeniden etkinleştiği,
 (4) "Bariyer Aç" düğmesinin aynı bariyer için istek sürerken ikinci bir
 tıklamayı engelleyip istek bitince yeni bir tıklamaya izin verdiği.
+
+## Operasyonel İyileştirmeler: Otomatik Yeniden Başlatma, Panel Yenileme Ayarı, Elle Bariyer Açma Denetimi (2026-09-25, sistem taraması devamı)
+
+- **`calistir.bat` / `calistir.sh` artık kalıcı olarak durmuyor:** eskiden
+  PTS art arda 5 kez kısa sürede (60 sn içinde) çökerse betik "otomatik
+  yeniden başlatma DURDURULDU" deyip kapanıyordu. Gözetimsiz çalışan bir
+  nizamiye sisteminde bu, geçici ama birkaç dakika süren bir sorunun
+  (veritabanı sunucusunun henüz ayağa kalkmamış olması, ağ sürücüsünün geç
+  gelmesi, diskin anlık dolması vb.) PTS'i biri pencereye bakana kadar —
+  belki saatlerce — kapalı bırakması demekti. Artık betik durmuyor; bunun
+  yerine bekleme süresini artırıyor (ilk 4 denemede 5 sn, 5.–9. denemede
+  60 sn, sonrasında 5 dk). Kalıcı bir yapılandırma hatası logları/CPU'yu
+  boğmuyor, ama sorun kendiliğinden düzeldiğinde PTS de kendiliğinden geri
+  geliyor. 5. denemeden itibaren pencerede `loglar/pts.log`'a bakılması
+  gerektiğini söyleyen belirgin bir uyarı gösteriliyor. Port 8000 dolu
+  kontrolü de ayrıldı: İLK başlatmada (kullanıcı pencerenin başındayken)
+  eskisi gibi durup ne yapılması gerektiğini söylüyor; bir çökmeden SONRAKİ
+  yeniden başlatmada port hâlâ doluysa (tipik neden: çöken sürecin soketi
+  birkaç saniye daha bırakmaması) 30 sn bekleyip tekrar deniyor.
+- **"Panel yenileme aralığı (sn)" ayarı artık gerçekten çalışıyor:** bu ayar
+  Ayarlar ekranında gösterilip kaydedilebiliyordu ama hiçbir yerde
+  kullanılmıyordu — yedek yenileme aralığı `app.js`'te 15 sn olarak sabit
+  kodluydu (ölü ayar). Artık canlı bağlantı (SSE) koptuğunda devreye giren
+  Panel/Son Geçişler/Kayıtlar yenilemesi bu ayara uyuyor ve ayar
+  kaydedildiğinde sayfa yenilenmeden hemen geçerli oluyor. "Donmuş bağlantı"
+  (zombi SSE) kontrolü ise ayardan bağımsız olarak en geç 15 sn'de bir
+  çalışmaya devam ediyor; donmuş bir bağlantı tespit edildiğinde ayar ne
+  olursa olsun ekran hemen yenileniyor.
+- **Sistem Ayarları kaydetme hatası artık görünüyor:** bu formun gönderim
+  işleyicisinde hata yakalama yoktu; backend geçersiz bir değeri (ör. panel
+  yenileme 1 sn) reddettiğinde kullanıcı yalnızca genel "yakalanmamış hata"
+  bildirimini görüyordu. Artık "Ayarlar kaydedilemedi: En az 2 olmalı..."
+  gibi anlaşılır bir mesaj gösteriliyor; çifte gönderim koruması da eklendi.
+- **Elle bariyer açma artık Denetim Kayıtları'na yazılıyor:** bir nizamiye
+  sisteminin en hassas işlemlerinden biri olan elle bariyer açma, bugüne
+  kadar yalnızca log dosyasına düşüyordu. Artık her başarılı açma
+  (`bariyer_ac`) ve her başarısız deneme (`bariyer_ac_basarisiz` — röleye
+  ulaşılamaması, HTTP adresinin tanımlı olmaması, desteklenmeyen mod) kim
+  tarafından ve ne zaman yapıldığıyla birlikte Denetim Kayıtları ekranında
+  görülebiliyor. HTTP modunda röle adresi boş bırakılmış bir bariyer için
+  eskiden anlaşılmaz bir "yanıt alınamadı (unknown url type)" hatası
+  dönüyordu; artık "HTTP röle adresi tanımlı değil — Bariyer ayarlarından
+  düzenleyin" deniyor.
+- **Bağlı olduğu erişim noktası olan bir bariyerin silinmesi düzeltildi:**
+  `noktalar.bariyer_id` bariyer tablosuna bir FOREIGN KEY. Eskiden böyle bir
+  bariyer silindiğinde SQL Server kurulumlarında silme anlamsız bir 500
+  hatasıyla reddediliyor, SQLite'ta ise geçiyor ama erişim noktası artık var
+  olmayan bir bariyeri göstermeye devam ediyordu. Artık önce bu bariyere
+  bağlı noktaların bağlantısı kaldırılıyor (noktalar silinmez, yalnızca
+  "bariyersiz" duruma düşer), kaç noktanın etkilendiği mesajda söyleniyor ve
+  silme işlemi de denetim kaydına yazılıyor.
+
+**Testler:** `calistir.sh` için sahte `uvicorn`/`sleep` ile GERÇEKTEN
+çalıştırılan bir test eklendi (12 ardışık çökmeden sonra betiğin hâlâ
+denemeye devam ettiğini ve bekleme sürelerinin 5→60→300 sn sırasıyla
+arttığını doğruluyor); `calistir.bat` ve `panel_yenileme_sn` bağlantısı için
+statik testler; `tests/test_api.py`'ye elle bariyer açma için 9 test
+(simülasyon + denetim kaydı, operatör izni, izleyici 403, kimliksiz 401,
+olmayan/pasif bariyer 404, boş HTTP adresi 400, sahte röleyle HTTP başarı,
+röleye ulaşılamayınca 503 + başarısız denemenin denetim kaydı) ve bağlı
+bariyer silme testi. Panel yenileme aralığının uygulanması (alt/üst sınırlar,
+aralık dolmadan yenilememe, donmuş bağlantıda hemen yenileme) ve Ayarlar
+formunun hata gösterimi Playwright ile doğrulandı.

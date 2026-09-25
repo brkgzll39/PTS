@@ -827,6 +827,134 @@ def test_bariyer_guncelle_izleyici_yetkisiz_403_doner(client, izleyici_header):
     assert r.status_code == 403
 
 
+# ------------------------------------------------------------------
+# ELLE BARİYER AÇMA (POST /bariyer/{id}/ac) -- 2026-09-25 sistem taraması:
+# fiziksel donanıma komut gönderen bu uç nokta için neredeyse hiç test
+# yoktu (yalnızca simülasyon modunda 200 dönüşü, dolaylı olarak).
+# ------------------------------------------------------------------
+
+def _bariyer_olustur(client, header, **alanlar):
+    govde = {"ad": "Elle Acma Test Bariyeri", "mod": "simulate"}
+    govde.update(alanlar)
+    r = client.post("/bariyer/ayarlar", json=govde, headers=header)
+    assert r.status_code == 200, r.text
+    return r.json()
+
+
+def test_bariyer_ac_simulasyon_basarili_ve_denetim_kaydina_yazilir(client, yetkili_header):
+    b = _bariyer_olustur(client, yetkili_header, ad="Denetim Bariyeri Sim")
+    r = client.post(f"/bariyer/{b['id']}/ac", headers=yetkili_header)
+    assert r.status_code == 200, r.text
+    assert r.json()["basarili"] is True
+    assert r.json()["mod"] == "simulate"
+
+    d = client.get("/denetim-kayitlari", params={"eylem": "bariyer_ac"}, headers=yetkili_header)
+    assert d.status_code == 200, d.text
+    kayitlar = d.json()
+    assert any("Denetim Bariyeri Sim" in (k.get("aciklama") or "") for k in kayitlar), \
+        "Elle bariyer açma denetim kaydına yazılmalı (kim/ne zaman/hangi bariyer)"
+
+
+def test_bariyer_ac_operator_acabilir(client, yetkili_header, operator_header):
+    b = _bariyer_olustur(client, yetkili_header, ad="Operator Bariyeri")
+    r = client.post(f"/bariyer/{b['id']}/ac", headers=operator_header)
+    assert r.status_code == 200, r.text
+
+
+def test_bariyer_ac_izleyici_yetkisiz_403_doner(client, yetkili_header, izleyici_header):
+    b = _bariyer_olustur(client, yetkili_header, ad="Izleyici Bariyeri")
+    r = client.post(f"/bariyer/{b['id']}/ac", headers=izleyici_header)
+    assert r.status_code == 403
+
+
+def test_bariyer_ac_kimliksiz_401_doner(client, yetkili_header):
+    b = _bariyer_olustur(client, yetkili_header, ad="Kimliksiz Bariyer")
+    r = client.post(f"/bariyer/{b['id']}/ac")
+    assert r.status_code == 401
+
+
+def test_bariyer_ac_bulunamayan_bariyer_404_doner(client, yetkili_header):
+    r = client.post("/bariyer/999999/ac", headers=yetkili_header)
+    assert r.status_code == 404
+
+
+def test_bariyer_ac_pasif_bariyer_404_doner(client, yetkili_header):
+    b = _bariyer_olustur(client, yetkili_header, ad="Pasif Bariyer")
+    r = client.patch(f"/bariyer/ayarlar/{b['id']}", json={"aktif": False}, headers=yetkili_header)
+    assert r.status_code == 200, r.text
+    assert r.json()["aktif"] is False
+    r2 = client.post(f"/bariyer/{b['id']}/ac", headers=yetkili_header)
+    assert r2.status_code == 404, "Pasif bir bariyer elle de açılamamalı"
+
+
+def test_bariyer_ac_http_adresi_bos_400_ve_anlasilir_mesaj(client, yetkili_header):
+    b = _bariyer_olustur(client, yetkili_header, ad="Adressiz HTTP Bariyer", mod="http", http_url="")
+    r = client.post(f"/bariyer/{b['id']}/ac", headers=yetkili_header)
+    assert r.status_code == 400, r.text
+    assert "adresi tanımlı değil" in r.json()["detail"]
+
+
+def test_bariyer_ac_http_basarili(client, yetkili_header, monkeypatch):
+    import urllib.request
+    gonderilen = {}
+
+    class _SahteCevap:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+    def _sahte_urlopen(req, timeout=None):
+        gonderilen["url"] = req.full_url
+        gonderilen["metot"] = req.get_method()
+        return _SahteCevap()
+
+    monkeypatch.setattr(urllib.request, "urlopen", _sahte_urlopen)
+    b = _bariyer_olustur(client, yetkili_header, ad="HTTP Basarili Bariyer", mod="http",
+                         http_url="http://192.168.1.50/role/ac", http_metot="POST")
+    r = client.post(f"/bariyer/{b['id']}/ac", headers=yetkili_header)
+    assert r.status_code == 200, r.text
+    assert r.json()["mod"] == "http"
+    assert gonderilen == {"url": "http://192.168.1.50/role/ac", "metot": "POST"}
+
+
+def test_bariyer_ac_http_rolesine_ulasilamazsa_503_ve_basarisiz_denetim_kaydi(client, yetkili_header, monkeypatch):
+    import urllib.request
+
+    def _hata_veren_urlopen(req, timeout=None):
+        raise OSError("baglanti reddedildi")
+
+    monkeypatch.setattr(urllib.request, "urlopen", _hata_veren_urlopen)
+    b = _bariyer_olustur(client, yetkili_header, ad="Ulasilamaz Role Bariyeri", mod="http",
+                         http_url="http://192.168.1.51/role/ac")
+    r = client.post(f"/bariyer/{b['id']}/ac", headers=yetkili_header)
+    assert r.status_code == 503, r.text
+
+    d = client.get("/denetim-kayitlari", params={"eylem": "bariyer_ac_basarisiz"}, headers=yetkili_header)
+    kayitlar = d.json()
+    assert any("Ulasilamaz Role Bariyeri" in (k.get("aciklama") or "") for k in kayitlar)
+
+
+def test_bariyer_sil_bagli_noktanin_bariyer_baglantisini_kaldirir(client, yetkili_header):
+    """2026-09-25: noktalar.bariyer_id bir FOREIGN KEY -- eskiden bağlı bir
+    bariyerin silinmesi SQL Server'da 500 ile reddediliyor, SQLite'ta ise
+    noktada kırık bir referans bırakıyordu."""
+    site = client.post("/siteler", json={"ad": "Bariyer Sil Test Sitesi"}, headers=yetkili_header).json()
+    b = _bariyer_olustur(client, yetkili_header, ad="Silinecek Bagli Bariyer")
+    nokta = client.post("/noktalar", json={
+        "site_id": site["id"], "ad": "Bagli Nokta", "yon": "giris", "bariyer_id": b["id"],
+    }, headers=yetkili_header).json()
+
+    r = client.delete(f"/bariyer/ayarlar/{b['id']}", headers=yetkili_header)
+    assert r.status_code == 200, r.text
+    assert r.json()["baglantisi_kaldirilan_nokta_sayisi"] == 1
+
+    noktalar = client.get("/noktalar", headers=yetkili_header).json()
+    guncel = next(n for n in noktalar if n["id"] == nokta["id"])
+    assert guncel["bariyer_id"] is None, "Nokta silinmemeli, yalnızca bariyer bağlantısı kaldırılmalı"
+
+
 def test_nokta_kamera_adi_id_degil_gercek_ad_degerini_dondurur(client, yetkili_header):
     """schemas.NoktaCevap.kamera_adi (2026-09-21, "id vs ad" hata sınıfı --
     bkz. o alanın docstring'i): GET /noktalar, bağlı kameranın "id"sini

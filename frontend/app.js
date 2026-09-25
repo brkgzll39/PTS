@@ -573,7 +573,7 @@ function authBasarili(kullanici) {
 async function uygulamaVerileriniYukle() {
   panelYenile(); sonGecislerYukle(); kayitlariYukle(); kisileriYukle(); ledAyarlariYukle(); lisansYukle(); kameralariYukle();
   grafikYukle(); karaListesiYukle(); bariyerleriYukle(); kullanicilariYukle(); sistemSagliginiYukle();
-  bildirimleriYukle(); vardiyaOturumlariniYukle();
+  bildirimleriYukle(); vardiyaOturumlariniYukle(); _panelYenilemeAyariniYukle();
   await siteleriYukle(); noktalariYukle();
   sseBaslat();
 }
@@ -2828,6 +2828,31 @@ document.getElementById("testKayitForm").addEventListener("submit", async (e) =>
 // çalıştırılıyor. Test edilebilirlik için (gerçek 15 sn'yi beklemeden)
 // isimli, dışa açık bir fonksiyona çıkarıldı -- bkz.
 // tests/test_frontend_rbac.py veya benzeri statik testler.
+// 2026-09-25 (sistem taraması): "Panel yenileme aralığı (sn)" ayarı
+// (`panel_yenileme_sn`) Ayarlar ekranında gösterilip kaydedilebiliyordu ama
+// HİÇBİR YERDE kullanılmıyordu -- yedek polling aralığı burada 15 sn olarak
+// sabit kodlanmıştı, ayarı değiştirmek hiçbir şeyi değiştirmiyordu (ölü
+// ayar). Artık yedek yenileme (SSE koptuğunda/durgunlaştığında devreye giren
+// Panel/Son Geçişler/Kayıtlar yenilemesi) bu ayara uyuyor. Zombi-SSE
+// KONTROLÜ ise ayardan bağımsız olarak en geç 15 sn'de bir çalışmaya devam
+// ediyor -- aksi halde ayar örn. 600 sn yapılırsa donmuş bir bağlantının
+// fark edilmesi de 10 dakikaya çıkardı.
+const _CANLI_KONTROL_MAKS_ARALIK_MS = 15000;
+let _panelYenilemeAraligiMs = 15000;
+let _sonYedekYenilemeZamani = 0;
+let _canliKontrolZamanlayici = null;
+
+function _panelYenilemeAraliginiUygula(sn) {
+  const n = Number(sn);
+  if (!Number.isFinite(n)) return;
+  _panelYenilemeAraligiMs = Math.min(3600, Math.max(2, Math.round(n))) * 1000;
+  if (_canliKontrolZamanlayici) clearInterval(_canliKontrolZamanlayici);
+  _canliKontrolZamanlayici = setInterval(
+    _canliYenilemeVeZombiSseKontrolu,
+    Math.min(_panelYenilemeAraligiMs, _CANLI_KONTROL_MAKS_ARALIK_MS)
+  );
+}
+
 function _canliYenilemeVeZombiSseKontrolu() {
   if (!sessionStorage.getItem("pts_token")) return;
   const sseDurgun = _sseAktif && _sseSonVeriZamani && (Date.now() - _sseSonVeriZamani > SSE_DURGUNLUK_ESIGI_MS);
@@ -2835,7 +2860,12 @@ function _canliYenilemeVeZombiSseKontrolu() {
     console.warn("SSE bağlantısı durgun görünüyor (uzun süredir veri yok), zorla yeniden bağlanılıyor.");
     try { _sseController?.abort(); } catch { }
   }
-  if (!_sseAktif || sseDurgun) {
+  // Durgun SSE tespit edildiği turda, ayar ne olursa olsun HEMEN yenile
+  // (kullanıcı donmuş ekranı daha fazla beklememeli); yalnızca SSE hiç bağlı
+  // değilken yapılan rutin yedek yenileme ayardaki aralığa uyar.
+  const aralikDoldu = Date.now() - _sonYedekYenilemeZamani >= _panelYenilemeAraligiMs - 250;
+  if (sseDurgun || (!_sseAktif && aralikDoldu)) {
+    _sonYedekYenilemeZamani = Date.now();
     panelYenile();
     sonGecislerYukle(false);
     if (!_kayitlarFiltresiDuzenleniyorMu()) kayitlariYukle(false);
@@ -2848,10 +2878,22 @@ authBaslat().then(() => {
   // Panel+Kayıtlar'ı tazeliyor, bkz. _sseKayitAl -> _canliBolumleriTazeleDebounce)
   // bu yedek polling'e gerek yok; SSE bağlı DEĞİLSE (bağlantı koptu/henüz
   // kurulmadıysa) YA DA yukarıdaki fonksiyonun tespit ettiği gibi durgunsa,
-  // 15 sn'de bir Panel/Kayıtlar/Son Geçişler otomatik olarak yeniden yüklenir
-  // -- kullanıcının müdahalesi olmadan sayfa arka planda kendini güncel tutar.
-  setInterval(_canliYenilemeVeZombiSseKontrolu, 15000);
+  // `panel_yenileme_sn` aralığında Panel/Kayıtlar/Son Geçişler otomatik
+  // olarak yeniden yüklenir.
+  // Varsayılanla başla; gerçek ayar, personel girişi tamamlanınca
+  // uygulamaVerileriniYukle() -> _panelYenilemeAyariniYukle() ile okunur
+  // (kayıtlı oturumla açılışta da, giriş formundan girişte de aynı yol).
+  if (!_canliKontrolZamanlayici) _panelYenilemeAraliginiUygula(15);
 });
+
+async function _panelYenilemeAyariniYukle() {
+  try {
+    const ayarlar = await apiCagir("/sistem/ayarlar");
+    if (ayarlar && ayarlar.panel_yenileme_sn != null) _panelYenilemeAraliginiUygula(ayarlar.panel_yenileme_sn);
+  } catch (e) {
+    console.warn("Panel yenileme aralığı okunamadı, varsayılan kullanılıyor:", e);
+  }
+}
 
 // ================================================================
 // TOAST BİLDİRİMLER
@@ -3393,10 +3435,14 @@ async function bariyerAc(id) {
 }
 
 async function bariyerSil(id) {
-  if (!(await onayAl("Bu bariyer kaydını silmek istiyor musunuz?"))) return;
+  if (!(await onayAl("Bu bariyer kaydını silmek istiyor musunuz? Bu bariyere bağlı erişim noktaları varsa bariyersiz kalır."))) return;
   try {
-    await apiCagir(`/bariyer/ayarlar/${id}`, { method: "DELETE" });
+    const r = await apiCagir(`/bariyer/ayarlar/${id}`, { method: "DELETE" });
+    toastGoster(r?.mesaj || "Bariyer silindi", "basari");
     bariyerleriYukle();
+    // Erişim noktası tablosu bariyer adını gösteriyor -- bağlantısı
+    // kaldırılan noktalar da hemen güncel görünsün.
+    if (r?.baglantisi_kaldirilan_nokta_sayisi) noktalariYukle();
   } catch (e) {
     toastGoster(e.message, "hata");
   }
@@ -4148,9 +4194,24 @@ async function sistemAyarlariYukle() {
       guncel.bilinen_plaka_duzeltme_aktif = document.getElementById("ayar_bilinen_plaka_duzeltme_aktif").checked;
       guncel.otomatik_yedek_aktif = document.getElementById("ayar_otomatik_yedek_aktif").checked;
       guncel.otomatik_yedek_klasoru = document.getElementById("ayar_otomatik_yedek_klasoru").value;
-      await apiCagir("/sistem/ayarlar", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(guncel) });
-      toastGoster("Sistem ayarları kaydedildi", "basari");
-      otomatikYedekDurumunuYukle();
+      // DÜZELTME (2026-09-25): bu gönderim işleyicisinde try/catch YOKTU --
+      // backend'in yeni ayar doğrulaması (Patch #100) geçersiz bir değeri
+      // (ör. panel yenileme 1 sn) 400 ile reddettiğinde kullanıcı yalnızca
+      // genel "yakalanmamış hata" bildirimini görüyordu, HANGİ alanın neden
+      // reddedildiğini değil. Ayrıca çifte gönderim koruması eklendi.
+      const btn = ev.target.querySelector('button[type="submit"]');
+      if (btn) btn.disabled = true;
+      try {
+        await apiCagir("/sistem/ayarlar", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(guncel) });
+        toastGoster("Sistem ayarları kaydedildi", "basari");
+        // Yeni yenileme aralığı sayfa yeniden yüklenmeden hemen geçerli olsun.
+        _panelYenilemeAraliginiUygula(guncel.panel_yenileme_sn);
+        otomatikYedekDurumunuYukle();
+      } catch (err) {
+        toastGoster("Ayarlar kaydedilemedi: " + err.message, "hata");
+      } finally {
+        if (btn) btn.disabled = false;
+      }
     });
     rolBazliArayuzuUygula();
     if (rolYeterli("yonetici")) otomatikYedekDurumunuYukle();

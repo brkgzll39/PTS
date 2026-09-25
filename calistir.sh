@@ -8,8 +8,9 @@
 # mantik: (1) baslamadan once 8000 portu zaten kullanimda mi kontrol
 # edilir (tipik neden: PTS'in kapatilmamis eski bir kopyasi hala
 # calisiyor), (2) uvicorn beklenmedik sekilde cokerse otomatik olarak
-# yeniden baslatilir, AMA art arda 5 kez KISA surede cokerse (kalici bir
-# yapilandirma sorununa isaret eder) sonsuz donguye girmeden durulur.
+# yeniden baslatilir; art arda KISA surede cokmeye devam ederse (kalici bir
+# yapilandirma sorununa isaret eder) bekleme suresi artirilir (5 sn -> 60 sn
+# -> 5 dk) ama betik ARTIK DURMAZ (2026-09-25 degisikligi, bkz. asagisi).
 cd "$(dirname "$0")"
 
 echo "Bağımlılıklar kuruluyor (ilk çalıştırmada biraz sürebilir)..."
@@ -30,9 +31,19 @@ port_sahibi_pid() {
 }
 
 deneme=0
+ilk_baslatma=1
 
 while true; do
     port_pid="$(port_sahibi_pid)"
+    if [ -n "$port_pid" ] && [ "$ilk_baslatma" -eq 0 ]; then
+        # 2026-09-25: yalnizca ilk baslatmada durup kullaniciya soruyoruz;
+        # bir cokmeden SONRAKI yeniden baslatmada port hala doluysa (coken
+        # surecin soketi henuz birakmamasi vb.) bekleyip tekrar deniyoruz.
+        echo ""
+        echo "UYARI: 8000 portu hâlâ dolu (PID ${port_pid}). 30 saniye sonra tekrar denenecek..."
+        sleep 30
+        continue
+    fi
     if [ -n "$port_pid" ]; then
         echo ""
         echo "============================================================"
@@ -49,6 +60,7 @@ while true; do
         exit 1
     fi
 
+    ilk_baslatma=0
     baslangic_zamani=$(date +%s)
     uvicorn backend.main:app --host 0.0.0.0 --port 8000
     cikis_kodu=$?
@@ -66,20 +78,27 @@ while true; do
     fi
     deneme=$((deneme + 1))
 
-    if [ "$deneme" -ge 5 ]; then
-        echo ""
-        echo "============================================================"
-        echo "PTS art arda ${deneme} kez kısa sürede beklenmedik şekilde durdu."
-        echo "Bu genellikle tekrar eden aynı sorunun (yanlış yapılandırma,"
-        echo "eksik bağımlılık, vb.) her seferinde hemen tekrar oluştuğu"
-        echo "anlamına gelir -- otomatik yeniden başlatma DURDURULDU."
-        echo "Olası nedeni görmek için loglar/pts.log dosyasına bakın."
-        echo "============================================================"
-        exit 1
-    fi
+    # 2026-09-25 (sistem taramasi): eskiden 5 kisa cokmeden sonra "exit 1"
+    # ile KALICI olarak duruluyordu -- gozetimsiz calisan bir nizamiyede
+    # gecici ama birkac dakika suren bir sorun (veritabanina henuz
+    # ulasilamamasi, disk anlik dolu vb.) sistemi biri fark edene kadar
+    # kapali birakiyordu. Artik durmuyoruz, bekleme suresini artiriyoruz.
+    bekleme_sn=5
+    [ "$deneme" -ge 5 ] && bekleme_sn=60
+    [ "$deneme" -ge 10 ] && bekleme_sn=300
 
     echo ""
-    echo "PTS beklenmedik şekilde durdu (deneme ${deneme}/5). 5 saniye içinde yeniden başlatılıyor..."
+    if [ "$deneme" -ge 5 ]; then
+        echo "============================================================"
+        echo "UYARI: PTS art arda ${deneme} kez kısa sürede beklenmedik şekilde durdu."
+        echo "Bu genellikle tekrar eden aynı bir soruna (yanlış yapılandırma,"
+        echo "veritabanına ulaşılamaması, eksik bağımlılık vb.) işaret eder."
+        echo "Olası nedeni görmek için loglar/pts.log dosyasına bakın."
+        echo "Otomatik yeniden başlatma DURDURULMUYOR -- sorun düzeldiğinde PTS"
+        echo "kendiliğinden geri gelecek."
+        echo "============================================================"
+    fi
+    echo "PTS beklenmedik şekilde durdu (deneme ${deneme}). ${bekleme_sn} saniye içinde yeniden başlatılıyor..."
     echo "Tamamen durdurmak için CTRL+C tuşlarına basın."
-    sleep 5
+    sleep "$bekleme_sn"
 done

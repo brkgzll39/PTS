@@ -5210,23 +5210,38 @@ def bariyer_ac(bariyer_id: int, db: Session = Depends(get_db), kullanici: models
     if not bariyer:
         raise HTTPException(404, "Bariyer bulunamadı")
 
+    # 2026-09-25 (sistem taraması): elle bariyer açma, bir nizamiye sisteminde
+    # en hassas işlemlerden biri (yetkisiz bir aracın içeri alınması) -- ama
+    # bugüne kadar YALNIZCA log dosyasına düşüyordu, Denetim Kayıtları
+    # ekranında "kim, ne zaman, hangi bariyeri elle açtı" sorusunun cevabı
+    # yoktu. Artık başarılı ve BAŞARISIZ her deneme denetim kaydına yazılıyor.
     if bariyer.mod == "simulate":
         logger.info("Bariyer açıldı (simülasyon): %s", bariyer.ad)
+        _denetim_kaydet(db, kullanici.kullanici_adi, "bariyer_ac", f"{bariyer.ad} (id={bariyer.id}) elle açıldı (simülasyon)")
         return {"basarili": True, "mod": "simulate", "mesaj": f"{bariyer.ad} açıldı (simülasyon)"}
 
     if bariyer.mod == "http":
+        if not (bariyer.http_url or "").strip():
+            # Eskiden bu durumda urllib'in anlaşılmaz "unknown url type: ''"
+            # hatası 503 ("yanıt alınamadı") olarak dönüyordu -- sorun ağda
+            # değil yapılandırmada; kullanıcıya doğrudan söyleyelim.
+            _denetim_kaydet(db, kullanici.kullanici_adi, "bariyer_ac_basarisiz", f"{bariyer.ad} (id={bariyer.id}): HTTP adresi tanımlı değil")
+            raise HTTPException(400, f"{bariyer.ad} için HTTP röle adresi tanımlı değil -- Bariyer ayarlarından düzenleyin.")
         try:
             import urllib.request
             govde = (bariyer.http_govde or "").encode("utf-8") or None
-            req = urllib.request.Request(bariyer.http_url, data=govde, method=bariyer.http_metot)
+            req = urllib.request.Request(bariyer.http_url, data=govde, method=bariyer.http_metot or "GET")
             with urllib.request.urlopen(req, timeout=5):
                 pass
-            logger.info("Bariyer HTTP komutu gönderildi: %s", bariyer.ad)
-            return {"basarili": True, "mod": "http", "mesaj": f"{bariyer.ad} komutu gönderildi"}
         except Exception as exc:
             logger.error("Bariyer HTTP hatası %s: %s", bariyer.ad, exc)
+            _denetim_kaydet(db, kullanici.kullanici_adi, "bariyer_ac_basarisiz", f"{bariyer.ad} (id={bariyer.id}): {exc}")
             raise HTTPException(503, f"Bariyer komutuna yanıt alınamadı: {exc}")
+        logger.info("Bariyer HTTP komutu gönderildi: %s", bariyer.ad)
+        _denetim_kaydet(db, kullanici.kullanici_adi, "bariyer_ac", f"{bariyer.ad} (id={bariyer.id}) elle açıldı (HTTP)")
+        return {"basarili": True, "mod": "http", "mesaj": f"{bariyer.ad} komutu gönderildi"}
 
+    _denetim_kaydet(db, kullanici.kullanici_adi, "bariyer_ac_basarisiz", f"{bariyer.ad} (id={bariyer.id}): desteklenmeyen mod {bariyer.mod}")
     raise HTTPException(400, f"Desteklenmeyen bariyer modu: {bariyer.mod}")
 
 
@@ -5236,9 +5251,29 @@ def bariyer_sil(bariyer_id: int, db: Session = Depends(get_db), kullanici: model
     b = db.query(models.BariyerAyarlari).filter(models.BariyerAyarlari.id == bariyer_id).first()
     if not b:
         raise HTTPException(404, "Bariyer bulunamadı")
+    # 2026-09-25 (sistem taraması): `noktalar.bariyer_id` bu tabloya bir
+    # FOREIGN KEY. Eskiden bir erişim noktasına atanmış bir bariyer
+    # silindiğinde: SQL Server kurulumlarında FK kısıtı silmeyi reddedip
+    # kullanıcıya anlamsız bir 500 dönüyordu; SQLite'ta (FK zorlaması kapalı)
+    # ise silme geçiyor ama nokta, artık var olmayan bir bariyer id'sini
+    # göstermeye devam ediyordu (sessiz, kırık referans). Artık önce bu
+    # bariyere bağlı noktaların bağlantısını kaldırıyoruz (nokta silinmez,
+    # yalnızca "bariyeri yok" durumuna düşer) ve kaç noktanın etkilendiğini
+    # cevapta söylüyoruz.
+    etkilenen_noktalar = db.query(models.Nokta).filter(models.Nokta.bariyer_id == bariyer_id).all()
+    for n in etkilenen_noktalar:
+        n.bariyer_id = None
+    bariyer_adi = b.ad
     db.delete(b)
     db.commit()
-    return {"mesaj": "Bariyer silindi"}
+    _denetim_kaydet(
+        db, kullanici.kullanici_adi, "bariyer_sil",
+        f"bariyer_id={bariyer_id}, ad={bariyer_adi!r}, baglantisi_kaldirilan_nokta_sayisi={len(etkilenen_noktalar)}",
+    )
+    mesaj = "Bariyer silindi"
+    if etkilenen_noktalar:
+        mesaj += f" ({len(etkilenen_noktalar)} erişim noktasının bariyer bağlantısı kaldırıldı)"
+    return {"mesaj": mesaj, "baglantisi_kaldirilan_nokta_sayisi": len(etkilenen_noktalar)}
 
 
 # ==================================================================
