@@ -2085,6 +2085,73 @@ def kamera_yon_degistir(kamera_id: str, veri: schemas.KameraYonGuncelle, kullani
     return _kamera_guvenli_gorunum(kamera)
 
 
+@app.patch("/kameralar/{kamera_id}/ad")
+def kamera_ad_degistir(kamera_id: str, veri: schemas.KameraAdGuncelle, db: Session = Depends(get_db), kullanici: models.Kullanici = Depends(_personel_girisi_gerekli)):
+    """Var olan bir kameranın görünen adını ("ad") DEĞİŞTİRİR -- kameranın
+    id'si, RTSP adresi ve parolası hiç değişmeden kalır (bkz.
+    kamera_yon_degistir'in üstündeki AYNI "kamerayı silip yeniden eklemeye
+    gerek yok" gerekçesi). Kullanıcı isteği (2026-09-25): "tanımlı kamera
+    listesine tanımlı kameranın ismini değiştirmek için buton koyar mısın".
+
+    ÖNEMLİ -- bu, cameras.json'da bir etiket değiştirmekten daha fazlasını
+    gerektiriyor: kameranın "ad"ı, HER yeni geçiş kaydına `Kayit.kamera_id`
+    olarak DAMGALANAN değerin ta kendisidir (bkz. _pipeline_baslat:
+    `kamera_id=kamera["ad"]`, ve _kullanicinin_izinli_kamera_adlari'nin
+    docstring'indeki "id vs ad" kök nedeni, 2026-09-21). Yalnızca
+    cameras.json'ı güncelleyip veritabanına dokunmasaydık:
+      - bu kameraya ait TÜM geçmiş kayıtlar eski adla "yetim" kalırdı (yeni
+        kayıtlar yeni adla, eskiler eski adla -- aynı fiziksel kamera için
+        raporlarda/filtrelerde SANKİ iki ayrı kameraymış gibi görünürdü),
+      - kamera erişim kısıtlaması olan bir hesap ("Nizamiye Bazlı Kamera
+        Erişimi", 2026-09-21), bu kameranın GEÇMİŞ kayıtlarını SESSİZCE
+        göremez hale gelebilirdi -- çünkü kısıtlama id'den ada her seferinde
+        GÜNCEL cameras.json ile çevriliyor (bkz. _kamera_id_den_ad_haritasi),
+        ama eski kayıtlar hâlâ eski adı taşırdı.
+    Bu yüzden ad değişikliği, aynı işlemde bu kameraya ait TÜM `Kayit`
+    satırlarının `kamera_id` alanına da (eski ad -> yeni ad) yansıtılır.
+    Alarm/denetim kaydı gibi noktasal, "o anki olayı" belgeleyen geçmiş
+    metinler (ör. bir "kamera_arizasi" alarmının mesaj metni) BİLİNÇLİ
+    OLARAK değiştirilmez -- onlar birer olay günlüğü, geriye dönük
+    "düzeltilmesi" yanlış olurdu; yalnızca fiilen sorgulanan/filtrelenen
+    `Kayit.kamera_id` alanı güncellenir."""
+    _rol_dogrula(kullanici, ROL_YONETICI, ROL_OPERATOR)
+    kameralar = _kameralari_oku()
+    kamera = next((k for k in kameralar if k["id"] == kamera_id), None)
+    if not kamera:
+        raise HTTPException(404, "Kamera bulunamadı")
+    yeni_ad = veri.ad.strip()
+    if not yeni_ad:
+        raise HTTPException(400, "Kamera adı boş olamaz")
+    eski_ad = kamera.get("ad") or kamera_id
+    if yeni_ad == eski_ad:
+        return _kamera_guvenli_gorunum(kamera)
+    if any(
+        k["id"] != kamera_id and (k.get("ad") or "").strip().casefold() == yeni_ad.casefold()
+        for k in kameralar
+    ):
+        raise HTTPException(400, f"'{yeni_ad}' adında başka bir kamera zaten var")
+
+    etkilenen_kayit = db.query(models.Kayit).filter(models.Kayit.kamera_id == eski_ad).update({"kamera_id": yeni_ad})
+    db.commit()
+
+    kamera["ad"] = yeni_ad
+    _kameralari_yaz(kameralar)
+    if kamera.get("aktif", True):
+        _pipeline_durdur(kamera_id)
+        time.sleep(0.3)
+        _pipeline_baslat(kamera)
+
+    # 2026-09-20'den beri kamera silmede olduğu gibi (bkz. kamera_sil), kamera
+    # kimliğini etkileyen değişiklikler de denetim kaydına düşer -- bir
+    # kameranın adının kimin tarafından, ne zaman, neden/neye değiştirildiği
+    # sessiz kalmasın.
+    _denetim_kaydet(
+        db, kullanici.kullanici_adi, "kamera_ad_degistir",
+        f"kamera_id={kamera_id}, eski_ad={eski_ad!r}, yeni_ad={yeni_ad!r}, etkilenen_kayit={etkilenen_kayit}",
+    )
+    return _kamera_guvenli_gorunum(kamera)
+
+
 _ROI_POLIGON_MIN_NOKTA = 3
 _ROI_POLIGON_MAX_NOKTA = 20
 

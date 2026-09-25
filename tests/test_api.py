@@ -1677,6 +1677,91 @@ def test_kamera_yon_degistir_izleyici_yetkisiz_403_doner(client, izleyici_header
     assert r.status_code == 403
 
 
+# ------------------------------------------------------------------
+# Kamera adı değiştirme (2026-09-25)
+# ------------------------------------------------------------------
+# Kullanıcı isteği: "tanımlı kamera listesine tanımlı kameranın ismini
+# değiştirmek için buton koyar mısın". Kritik olan kısım -- ve bu testlerin
+# asıl amacı -- kameranın "ad"ının yalnızca cameras.json'da bir etiket değil,
+# AYNI ZAMANDA Kayit.kamera_id olarak damgalanan değerin ta kendisi olması
+# (bkz. main.py::kamera_ad_degistir'in docstring'i): ad değiştiğinde bu
+# kameraya ait GEÇMİŞ kayıtların da yeni adla eşleşmesi gerekiyor, aksi
+# halde kamera erişim kısıtlaması olan bir hesap o kameranın geçmişini
+# sessizce kaybedebilir (2026-09-21 "id vs ad" hata sınıfıyla AYNI risk).
+
+def test_kamera_ad_degistir_operator_calistirabilir_ve_gecmis_kayitlari_gunceller(client, operator_header, roi_test_kamera_id):
+    # Ad değişmeden ÖNCE, eski adla bir geçiş kaydı oluştur.
+    r_kayit = client.post("/kayitlar", json={
+        "plaka_no": "34 KAD 01", "kamera_id": "ROI Test Kamerası", "yon": "giris",
+    }, headers=operator_header)
+    assert r_kayit.status_code == 200, r_kayit.text
+    kayit_id = r_kayit.json()["id"]
+
+    try:
+        r = client.patch(f"/kameralar/{roi_test_kamera_id}/ad", json={"ad": "ROI Test Kamerası (Yeni)"}, headers=operator_header)
+        assert r.status_code == 200, r.text
+        assert r.json()["ad"] == "ROI Test Kamerası (Yeni)"
+
+        # Kameranın id'si ve RTSP adresi DEĞİŞMEMİŞ olmalı.
+        assert r.json()["id"] == roi_test_kamera_id
+
+        # Ad değişmeden önce oluşturulan kayıt da yeni adla eşleşmeli --
+        # aksi halde "yetim" kalırdı (bkz. yukarıdaki modül notu).
+        r_guncel_kayit = client.get(f"/kayitlar/{kayit_id}", headers=operator_header)
+        assert r_guncel_kayit.status_code == 200, r_guncel_kayit.text
+        assert r_guncel_kayit.json()["kamera_id"] == "ROI Test Kamerası (Yeni)"
+
+        # Ad değişikliğinden SONRA oluşturulan yeni bir kayıt da doğal olarak
+        # yeni adla damgalanmalı.
+        r_kayit2 = client.post("/kayitlar", json={
+            "plaka_no": "34 KAD 02", "kamera_id": "ROI Test Kamerası (Yeni)", "yon": "giris",
+        }, headers=operator_header)
+        assert r_kayit2.status_code == 200, r_kayit2.text
+        assert r_kayit2.json()["kamera_id"] == "ROI Test Kamerası (Yeni)"
+    finally:
+        # Panel/başka testler karışmasın diye eski haline geri alıyoruz --
+        # bkz. yön testindeki AYNI temizlik deseni.
+        r_geri = client.patch(f"/kameralar/{roi_test_kamera_id}/ad", json={"ad": "ROI Test Kamerası"}, headers=operator_header)
+        assert r_geri.status_code == 200, r_geri.text
+        r_kayit_geri = client.get(f"/kayitlar/{kayit_id}", headers=operator_header)
+        assert r_kayit_geri.json()["kamera_id"] == "ROI Test Kamerası", "geri alma sonrası eski kayıt da eski ada dönmeli"
+
+
+def test_kamera_ad_degistir_ayni_ada_degistirmek_no_op_gibi_davranir(client, operator_header, roi_test_kamera_id):
+    r = client.patch(f"/kameralar/{roi_test_kamera_id}/ad", json={"ad": "ROI Test Kamerası"}, headers=operator_header)
+    assert r.status_code == 200, r.text
+    assert r.json()["ad"] == "ROI Test Kamerası"
+
+
+def test_kamera_ad_degistir_bos_ad_400_doner(client, operator_header, roi_test_kamera_id):
+    r = client.patch(f"/kameralar/{roi_test_kamera_id}/ad", json={"ad": "   "}, headers=operator_header)
+    assert r.status_code == 400
+
+
+def test_kamera_ad_degistir_baska_kamerayla_cakisirsa_400_doner(client, yetkili_header, operator_header, roi_test_kamera_id):
+    r_yeni = client.post("/kameralar", json={
+        "ad": "Çakışma Test Kamerası", "rtsp_url": "rtsp://127.0.0.1/cakisma", "yon": "giris",
+    }, headers=yetkili_header)
+    assert r_yeni.status_code == 200, r_yeni.text
+    yeni_id = r_yeni.json()["id"]
+    try:
+        # Büyük/küçük harf ve baştaki/sondaki boşluk farkı da yakalanmalı.
+        r = client.patch(f"/kameralar/{roi_test_kamera_id}/ad", json={"ad": " çakışma test kamerası "}, headers=operator_header)
+        assert r.status_code == 400
+    finally:
+        client.delete(f"/kameralar/{yeni_id}", headers=yetkili_header)
+
+
+def test_kamera_ad_degistir_bulunamayan_kamera_404_doner(client, operator_header):
+    r = client.patch("/kameralar/YOK-BOYLE-BIR-KAMERA/ad", json={"ad": "Yeni Ad"}, headers=operator_header)
+    assert r.status_code == 404
+
+
+def test_kamera_ad_degistir_izleyici_yetkisiz_403_doner(client, izleyici_header, roi_test_kamera_id):
+    r = client.patch(f"/kameralar/{roi_test_kamera_id}/ad", json={"ad": "İzleyici Deneme"}, headers=izleyici_header)
+    assert r.status_code == 403
+
+
 def test_kamera_roi_guncelle_operator_calistirabilir_ve_alani_kaydeder(client, operator_header, roi_test_kamera_id):
     r = client.patch(f"/kameralar/{roi_test_kamera_id}/roi",
                       json={"x1": 10, "y1": 5, "x2": 90, "y2": 95}, headers=operator_header)

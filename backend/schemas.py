@@ -460,6 +460,14 @@ class KameraYonGuncelle(BaseModel):
     yon: str
 
 
+class KameraAdGuncelle(BaseModel):
+    """Var olan bir kameranın görünen adını DEĞİŞTİRİR -- id/RTSP adresine/
+    parolasına dokunmadan (bkz. main.py::kamera_ad_degistir). Boş/yalnızca
+    boşluk olamaz; asıl doğrulama (boşluk kırpma, başka bir kamerayla
+    çakışma kontrolü) uç noktanın kendisinde yapılır."""
+    ad: str
+
+
 class KameraRoiNoktasi(BaseModel):
     """Serbest çizim (polygon) ROI'nin tek bir köşe noktası -- kare
     genişliğinin/yüksekliğinin YÜZDESİ (0-100) cinsinden."""

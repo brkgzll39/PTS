@@ -456,6 +456,30 @@
   </div></div>
 </div>
 
+<!-- 2026-09-25 kullanıcı isteği: "tanımlı kamera listesine tanımlı kameranın
+     ismini değiştirmek için buton koyar mısın" -- bkz. app.js::kameraAdDuzenleAc,
+     main.py::kamera_ad_degistir. Kamera adının yalnızca cameras.json'da bir
+     etiket DEĞİL, aynı zamanda her geçiş kaydına damgalanan Kayit.kamera_id
+     değeri olduğu için (bkz. o fonksiyonun docstring'i), bu basit görünen
+     "isim değiştirme" aslında backend'de kameraya ait geçmiş kayıtları da
+     güncelleyen bir işlem -- bu yüzden yeni bir uç nokta/onay adımı gerekti,
+     doğrudan tabloda satır-içi düzenleme yerine ayrı bir modal tercih edildi. -->
+<div class="modal fade" id="kameraAdDuzenleModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered"><div class="modal-content">
+    <div class="modal-header"><h5 class="modal-title">Kamera Adını Değiştir</h5><button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Kapat"></button></div>
+    <div class="modal-body">
+      <label class="form-label small mb-1" for="kameraAdDuzenleGirdi">Yeni ad</label>
+      <input type="text" class="form-control" id="kameraAdDuzenleGirdi" maxlength="80">
+      <div class="form-text">Kameranın RTSP adresi, yönü ve tespit alanı değişmez -- yalnızca görünen adı güncellenir. Bu kameraya ait geçmiş geçiş kayıtları da yeni adla eşleşecek şekilde otomatik güncellenir.</div>
+      <div id="kameraAdDuzenleSonuc" class="small mt-2"></div>
+    </div>
+    <div class="modal-footer">
+      <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">İptal</button>
+      <button type="button" class="btn btn-primary" id="kameraAdDuzenleKaydetBtn">Kaydet</button>
+    </div>
+  </div></div>
+</div>
+
 <nav class="navbar navbar-dark navbar-pts px-3">
   <!-- 2026-09-22 kullanıcı isteği: "bu güvenli giriş ekranına uyguladığımız
        logoyu Panelde TPAO PTS CANLI İZLEME Yazan yere yapabilir misin TPAO

@@ -1382,7 +1382,17 @@ async function kameralariYukle() {
       const silBtn = rolYeterli("operatör")
         ? `<button class="btn btn-sm btn-outline-danger" title="Kamerayı sil" onclick="kameraSil('${k.id}')"><i class="bi bi-trash"></i></button>`
         : "";
-      return `<tr><td><strong>${escapeHtml(k.ad)}</strong>${roiRozeti}</td><td>${yonSecim}</td><td class="text-muted small text-truncate" style="max-width: 180px">${escapeHtml(k.rtsp_url)}</td><td>${durum}${yenidenBaglanmaBadge}</td><td>${tcpBadge}</td><td class="text-nowrap">${silBtn}${yenidenBtn}${roiBtn}</td></tr>`;
+      // 2026-09-25 kullanıcı isteği: "tanımlı kamera listesine tanımlı
+      // kameranın ismini değiştirmek için buton koyar mısın" -- kameranın
+      // GÜNCEL adı, olası özel karakterler (tek/çift tırnak vb.) yüzünden
+      // onclick attribute'una GÖMÜLMEDEN (bkz. dosyada başka yerlerde
+      // tekrarlanan AYNI güvenlik notu, ör. olayModalAnaliz/plaka
+      // örüntüleri), yalnızca güvenli bir id ile çağrılıyor --
+      // kameraAdDuzenleAc(id) kendi içinde _kameralarCache'ten okuyor.
+      const adDuzenleBtn = rolYeterli("operatör")
+        ? `<button type="button" class="btn btn-sm btn-link p-0 ms-1 align-baseline" title="Kamera adını değiştir" aria-label="Kamera adını değiştir" onclick="kameraAdDuzenleAc('${k.id}')"><i class="bi bi-pencil-square"></i></button>`
+        : "";
+      return `<tr><td><strong>${escapeHtml(k.ad)}</strong>${adDuzenleBtn}${roiRozeti}</td><td>${yonSecim}</td><td class="text-muted small text-truncate" style="max-width: 180px">${escapeHtml(k.rtsp_url)}</td><td>${durum}${yenidenBaglanmaBadge}</td><td>${tcpBadge}</td><td class="text-nowrap">${silBtn}${yenidenBtn}${roiBtn}</td></tr>`;
     }).join("") || '<tr><td colspan="6" class="text-center text-muted py-4">Henüz kamera tanımlanmadı</td></tr>';
     kameraDuvariniGuncelle(kameralar);
   } catch (err) { console.error(err); }
@@ -1402,6 +1412,54 @@ async function kameraYonDegistir(id, selectEl) {
     alert(err.message);
   }
 }
+
+// ---------------------- KAMERA ADINI DEĞİŞTİRME ----------------------
+// 2026-09-25 kullanıcı isteği: "tanımlı kamera listesine tanımlı kameranın
+// ismini değiştirmek için buton koyar mısın". Yön değiştirmede olduğu gibi
+// (bkz. yukarıdaki kameraYonDegistir'in dayandığı main.py::kamera_yon_degistir
+// notu) kameranın id'si/RTSP adresi hiç değişmeden yalnızca "ad" güncellenir
+// -- ama bu sefer backend AYRICA bu kameraya ait geçmiş Kayit satırlarını da
+// günceller (bkz. main.py::kamera_ad_degistir'in docstring'i, "id vs ad" kök
+// nedeni) -- bu yüzden basit bir satır-içi metin kutusu yerine, ne olacağını
+// açıklayan bir uyarı metniyle birlikte küçük bir onay modali kullanıldı.
+let _kameraAdDuzenleId = null;
+
+function kameraAdDuzenleAc(id) {
+  const kamera = (_kameralarCache || []).find(k => k.id === id);
+  if (!kamera) return;
+  _kameraAdDuzenleId = id;
+  document.getElementById("kameraAdDuzenleGirdi").value = kamera.ad;
+  document.getElementById("kameraAdDuzenleSonuc").textContent = "";
+  bootstrap.Modal.getOrCreateInstance(document.getElementById("kameraAdDuzenleModal")).show();
+}
+
+document.getElementById("kameraAdDuzenleKaydetBtn")?.addEventListener("click", async () => {
+  const sonuc = document.getElementById("kameraAdDuzenleSonuc");
+  const yeniAd = document.getElementById("kameraAdDuzenleGirdi").value.trim();
+  if (!yeniAd) {
+    sonuc.className = "small mt-2 text-danger";
+    sonuc.textContent = "Kamera adı boş olamaz.";
+    return;
+  }
+  const btn = document.getElementById("kameraAdDuzenleKaydetBtn");
+  btn.disabled = true;
+  sonuc.className = "small mt-2";
+  sonuc.textContent = "Kaydediliyor...";
+  try {
+    await apiCagir(`/kameralar/${_kameraAdDuzenleId}/ad`, {
+      method: "PATCH", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ad: yeniAd }),
+    });
+    toastGoster("Kamera adı güncellendi.", "basari");
+    bootstrap.Modal.getInstance(document.getElementById("kameraAdDuzenleModal"))?.hide();
+    kameralariYukle();
+  } catch (err) {
+    sonuc.className = "small mt-2 text-danger";
+    sonuc.textContent = err.message;
+  } finally {
+    btn.disabled = false;
+  }
+});
 
 // ---------------------- KAMERA TESPİT ALANI (ROI) ----------------------
 // Giriş ve çıkış kameralarının açıları birbirinin şeridini de görüyorsa, bir

@@ -3251,3 +3251,58 @@ ile kısa süreli bir bağlantı kopmasının `_sseYenidenBaglaSayaci`'yi
 ARTIRDIĞI (sıfırlamadığı) doğrulandı. `node --check frontend/app.js` ve
 mevcut 230 test değişiklikten etkilenmeden geçmeye devam ediyor -- bu
 saf frontend bir düzeltme olduğu için backend testleri kapsam dışı.
+
+## Tanımlı Kamera Listesinden Kamera Adını Değiştirme (2026-09-25)
+
+**Kullanıcı talebi:** "tanımlı kamera listesine tanımlı kameranın ismini
+değiştirmek için buton koyar mısın."
+
+Kameralar ekranındaki "Tanımlı Kameralar" tablosunda, her kameranın adının
+yanına bir kalem düğmesi eklendi (`frontend/app.js::kameraAdDuzenleAc`,
+yalnızca operatör+ rolüne görünür) — tıklandığında küçük bir modal
+(`#kameraAdDuzenleModal`) açılıp yeni ad girilip kaydedilebiliyor. Yön
+değiştirmede olduğu gibi (bkz. yukarıdaki 2026-09-17 "Kamera Yön Değiştirme"
+notu) kameranın `id`'si, RTSP adresi ve parolası hiç değişmeden kalıyor —
+kamerayı silip yeniden eklemeye gerek yok.
+
+**Basit bir etiket değişikliğinden fazlası:** Kameranın "ad"ı yalnızca
+`cameras.json`'da görünen bir isim değil, AYNI ZAMANDA her yeni geçiş
+kaydına `Kayit.kamera_id` olarak damgalanan değerin ta kendisi (bkz.
+`_pipeline_baslat`: `kamera_id=kamera["ad"]`, ve 2026-09-21 tarihli "id vs
+ad" hata sınıfının kök nedeni). Yalnızca `cameras.json`'ı güncelleyip
+veritabanına dokunmasaydık:
+
+- bu kameraya ait TÜM geçmiş kayıtlar eski adla "yetim" kalırdı (aynı
+  fiziksel kamera, raporlarda/filtrelerde SANKİ iki ayrı kameraymış gibi
+  görünürdü),
+- kamera erişim kısıtlaması olan bir hesap ("Nizamiye Bazlı Kamera
+  Erişimi", 2026-09-21), bu kameranın GEÇMİŞ kayıtlarını SESSİZCE
+  göremez hale gelebilirdi — çünkü kısıtlama id'den ada her seferinde
+  GÜNCEL `cameras.json` ile çevriliyor, ama eski kayıtlar hâlâ eski adı
+  taşırdı.
+
+Bu yüzden yeni `PATCH /kameralar/{id}/ad` uç noktası (`main.py::
+kamera_ad_degistir`), `cameras.json`'ı güncellemenin yanında, bu kameraya
+ait TÜM `Kayit` satırlarının `kamera_id` alanını da (eski ad → yeni ad) TEK
+bir veritabanı işleminde günceller. Aynı isimde BAŞKA bir kamera varsa (büyük/
+küçük harf ve boşluktan bağımsız karşılaştırılır) 400 ile reddedilir — ileride
+yeni kayıtların hangi kameraya ait olduğu belirsizleşmesin diye. Alarm/denetim
+kaydı gibi noktasal, "o anki olayı" belgeleyen geçmiş metinler (ör. bir
+"kamera_arizasi" alarmının mesaj metni) BİLİNÇLİ OLARAK değiştirilmez — onlar
+birer olay günlüğü, geriye dönük "düzeltilmesi" yanlış olurdu; yalnızca fiilen
+sorgulanan/filtrelenen `Kayit.kamera_id` alanı güncellenir. Değişiklik, kim
+tarafından/eski-yeni ad/kaç kaydın etkilendiği bilgisiyle denetim kaydına
+düşer (2026-09-20'deki "kamera silme" denetim kaydıyla aynı gerekçe).
+
+**Testler:** `tests/test_api.py`'ye (fastapi gerektirdiği için yalnızca
+`py_compile` ile doğrulandı) 6 yeni test eklendi: ad değişikliğinin hem
+kamerayı hem de değişiklikten ÖNCE oluşturulmuş bir kaydı yeni adla
+güncellediği (ve geri alındığında eski kaydın da eski ada döndüğü) — bu
+testlerin asıl amacı; aynı ada "değiştirmenin" no-op gibi davrandığı; boş
+adın 400 döndüğü; başka bir kamerayla ad çakışmasının (baş/son boşluk ve
+büyük/küçük harf farkına rağmen) 400 döndüğü; var olmayan kamera için 404;
+izleyici rolü için 403. Frontend tarafı Playwright ile doğrulandı: kalem
+düğmesi doğru kamera için göründüğü, modal açılınca girdi kutusunun mevcut
+adla önceden dolduğu, kaydet'e basınca doğru `PATCH /kameralar/{id}/ad`
+isteğinin doğru gövdeyle atıldığı. Mevcut 230 test (saf backend/diğer
+frontend testleri, bu değişiklikten etkilenmedi) geçmeye devam ediyor.
