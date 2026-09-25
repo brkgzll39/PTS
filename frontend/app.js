@@ -501,12 +501,123 @@ saatiGuncelle();
 async function apiCagir(yol, secenekler = {}) {
   const token = sessionStorage.getItem("pts_token");
   secenekler.headers = { ...(secenekler.headers || {}), ...(token ? { Authorization: `Bearer ${token}` } : {}) };
-  const cevap = await fetch(API + yol, secenekler);
+  let cevap;
+  try {
+    cevap = await fetch(API + yol, secenekler);
+  } catch (agHatasi) {
+    // Sunucuya HİÇ ulaşılamadı (PTS kapalı/yeniden başlıyor, ağ kopuk).
+    _baglantiDurumunuBildir(false);
+    const e = new Error("Sunucuya ulaşılamıyor");
+    e.agHatasi = true;
+    throw e;
+  }
+  _baglantiDurumunuBildir(true);
   if (!cevap.ok) {
     const hata = await cevap.json().catch(() => ({ detail: "Bilinmeyen hata" }));
-    throw new Error(hata.detail || "İstek başarısız");
+    // Oturum süresi doldu (token 8 saat geçerli, bkz. main.py::_token_uret):
+    // bkz. _oturumSuresiDoldu'nun notu. /auth/* uçları kendi 401'lerini
+    // (yanlış parola, açılışta eski token) zaten kendileri ele alıyor.
+    if (cevap.status === 401 && token && !String(yol).startsWith("/auth/")) {
+      _oturumSuresiDoldu();
+    }
+    const e = new Error(hata.detail || "İstek başarısız");
+    e.status = cevap.status;
+    throw e;
   }
   return cevap.status === 204 ? null : cevap.json();
+}
+
+// ---------------------- BAĞLANTI / OTURUM DURUMU (2026-09-25) ----------------------
+// Sistem taraması bulgusu: panelin arka planda kendini yenileyen yükleyicileri
+// (panelYenile, bariyerleriYukle, siteleriYukle, ...) hataları yalnızca
+// `console.error` ile yutuyordu. Sonuç: PTS sunucusu yeniden başlarken/kapalıyken
+// ya da oturumun süresi dolduğunda ekran ESKİ verileri göstermeye sessizce devam
+// ediyordu -- nizamiyedeki görevli ekranın donduğunu fark edemiyordu.
+
+let _baglantiKopuk = false;
+function _baglantiDurumunuBildir(ulasildi) {
+  if (ulasildi === !_baglantiKopuk) return; // durum değişmedi
+  _baglantiKopuk = !ulasildi;
+  let el = document.getElementById("baglantiUyarisi");
+  if (!el) {
+    el = document.createElement("div");
+    el.id = "baglantiUyarisi";
+    el.setAttribute("role", "alert");
+    el.className = "alert alert-danger text-center fw-semibold mb-0 rounded-0 d-none";
+    el.style.cssText = "position:fixed;top:0;left:0;right:0;z-index:2000;";
+    el.innerHTML = '<i class="bi bi-wifi-off"></i> PTS sunucusuna ulaşılamıyor — ekrandaki bilgiler güncel olmayabilir. Bağlantı geri geldiğinde otomatik olarak yenilenecek.';
+    document.body.appendChild(el);
+  }
+  el.classList.toggle("d-none", !_baglantiKopuk);
+  if (!_baglantiKopuk && sessionStorage.getItem("pts_token") && typeof panelYenile === "function" && mevcutRol && mevcutRol !== "sakin") {
+    // Bağlantı geri geldi: beklemeden tazele (kopukluk sırasında kaçırılan
+    // geçişler görünsün).
+    try { panelYenile(); sonGecislerYukle(false); } catch { }
+  }
+}
+
+// Oturum süresi dolduğunda (ya da hesap pasife alındığında) sunucu her isteği
+// 401 ile reddeder. Eskiden bu da sessizce yutuluyordu: ekran 8 saat sonra
+// donuyor, canlı bildirimler (SSE) de 401 aldığı için hiç gelmiyordu -- ta ki
+// biri sayfayı elle yenileyene kadar. Artık kullanıcı açık bir mesajla giriş
+// ekranına yönlendiriliyor.
+let _oturumSuresiDolduBildirildi = false;
+function _oturumSuresiDoldu() {
+  if (_oturumSuresiDolduBildirildi) return;
+  _oturumSuresiDolduBildirildi = true;
+  sessionStorage.removeItem("pts_token");
+  try {
+    sessionStorage.setItem("pts_oturum_mesaji", "Oturumunuzun süresi doldu. Devam etmek için lütfen tekrar giriş yapın.");
+  } catch { }
+  location.reload();
+}
+
+// Token'ın bitiş zamanı (sn) token'ın içinde düz metin olarak duruyor
+// ("kullanici_id:bitis:imza", base64url) -- imza doğrulaması sunucuda
+// yapılır, burada yalnızca kullanıcıyı ÖNCEDEN uyarmak için okunuyor.
+function _tokenBitisZamaniMs(token) {
+  try {
+    let b64 = String(token).replace(/-/g, "+").replace(/_/g, "/");
+    while (b64.length % 4) b64 += "=";
+    const bitis = parseInt(atob(b64).split(":")[1], 10);
+    return Number.isFinite(bitis) ? bitis * 1000 : null;
+  } catch {
+    return null;
+  }
+}
+
+const _OTURUM_UYARI_ONCESI_MS = 10 * 60 * 1000;
+let _oturumUyariZamanlayici = null;
+function _oturumBitisUyarisiniKur() {
+  if (_oturumUyariZamanlayici) clearTimeout(_oturumUyariZamanlayici);
+  const bitis = _tokenBitisZamaniMs(sessionStorage.getItem("pts_token"));
+  if (!bitis) return;
+  const kalan = bitis - Date.now();
+  const uyar = () => toastGoster(
+    `Oturumunuz ${Math.max(1, Math.round((bitis - Date.now()) / 60000))} dakika içinde sona erecek. Süre dolunca giriş ekranına yönlendirileceksiniz.`,
+    "uyari"
+  );
+  if (kalan <= 0) return;
+  if (kalan <= _OTURUM_UYARI_ONCESI_MS) { uyar(); return; }
+  // setTimeout ~24,8 günden uzun gecikmeleri desteklemez; token zaten 8 saat.
+  _oturumUyariZamanlayici = setTimeout(uyar, Math.min(kalan - _OTURUM_UYARI_ONCESI_MS, 2147483000));
+}
+
+// Arka plan yükleyicileri için ortak hata bildirimi: konsola HER ZAMAN yazar;
+// kullanıcıya ise yalnızca anlamlı olduğunda ve bölüm başına en fazla dakikada
+// bir kez toast gösterir (15 sn'lik yedek yenileme her turda aynı hatayı
+// tekrar üretip ekranı boğmasın). Yetki (403) hataları gösterilmez -- bir
+// operatörün yönetici verisini görememesi beklenen bir durumdur; ağ
+// kopukluğu da gösterilmez -- onu tek bir sabit bant (_baglantiDurumunuBildir)
+// zaten gösteriyor; 401 ise giriş ekranına yönlendiriyor.
+const _yuklemeHatasiSonGosterim = {};
+function _yuklemeHatasi(bolum, e) {
+  console.error(`${bolum} yüklenemedi:`, e);
+  if (!e || e.agHatasi || e.status === 401 || e.status === 403) return;
+  const simdi = Date.now();
+  if (simdi - (_yuklemeHatasiSonGosterim[bolum] || 0) < 60000) return;
+  _yuklemeHatasiSonGosterim[bolum] = simdi;
+  toastGoster(`${bolum} yüklenemedi: ${e.message || e}`, "uyari");
 }
 
 // DOSYA İNDİRME URL'İ (2026-09-18): `/disa-aktar/...` ve şablon indirme
@@ -543,6 +654,18 @@ async function sonNotOnerisiGetir(plaka) {
 }
 
 async function authBaslat() {
+  // Oturum süresi dolduğu için giriş ekranına yönlendirildiysek (bkz.
+  // _oturumSuresiDoldu) nedenini göster -- görevli neden tekrar giriş
+  // yapması gerektiğini bilsin.
+  let oturumMesaji = null;
+  try {
+    oturumMesaji = sessionStorage.getItem("pts_oturum_mesaji");
+    sessionStorage.removeItem("pts_oturum_mesaji");
+  } catch { }
+  if (oturumMesaji) {
+    const sonucEl = document.getElementById("authSonuc");
+    if (sonucEl) { sonucEl.className = "small mt-3 text-warning fw-semibold"; sonucEl.textContent = oturumMesaji; }
+  }
   const durum = await apiCagir("/auth/durum");
   if (!durum.kurulum_tamamlandi) {
     document.getElementById("authBaslik").textContent = "Yönetici hesabı oluştur";
@@ -560,6 +683,7 @@ async function authBaslat() {
 
 function authBasarili(kullanici) {
   document.getElementById("authKapisi").classList.add("d-none");
+  _oturumBitisUyarisiniKur();
   document.getElementById("oturumKullanici").textContent = kullanici.kullanici_adi;
   mevcutRol = kullanici.rol;
   // "sakin" (site sakini öz-hizmet) hesabı panel PERSONELİ değil -- normal
@@ -832,7 +956,7 @@ async function panelYenile() {
     if (canliYenileme) canliYenileme.textContent = new Date().toLocaleTimeString("tr-TR");
     if (mevcutRol === "güvenlik") guvenlikVardiyaDurumunuGuncelle();
   } catch (e) {
-    console.error(e);
+    _yuklemeHatasi("Panel", e);
   }
 }
 
@@ -1100,7 +1224,18 @@ async function alarmOkundu(id) {
   }
 }
 
+// 2026-09-25 (sistem taraması): olayDetayAc birden çok ağ isteği bekliyor
+// (kayıt, kişi, erişim noktaları, siteler). Kullanıcı iki farklı geçişe art
+// arda hızlıca tıklarsa (ya da bir satıra tıklarken yeni bir SSE bildirimine
+// tıklarsa), İLK tıklamanın geç dönen cevabı modali ikinci aracın
+// bilgileriyle doldurduktan SONRA eski aracın plakası/fotoğrafıyla ÜZERİNE
+// yazabiliyordu -- operatör yanlış araca not yazabilir/yanlış kaydı
+// onaylayabilirdi. `sonGecislerYukle`/`kayitlariYukle`'deki aynı istek sıra
+// numarası deseniyle yalnızca EN SON açılma isteği modali doldurur.
+let _olayDetayIstekNo = 0;
+
 async function olayDetayAc(id) {
+  const istekNo = ++_olayDetayIstekNo;
   let kayit = sonKayitlarCache.find(item => item.id === id);
   if (!kayit) {
     // 2026-09-23 KRİTİK HATA DÜZELTMESİ (gerçek kullanıcı geri bildirimi:
@@ -1121,9 +1256,11 @@ async function olayDetayAc(id) {
       kayit = await apiCagir(`/kayitlar/${id}`);
       _kayitCacheYerindeGuncelle(kayit);
     } catch (e) {
+      if (istekNo !== _olayDetayIstekNo) return;
       toastGoster("Kayıt açılamadı: " + e.message, "hata");
       return;
     }
+    if (istekNo !== _olayDetayIstekNo) return;
   }
   // 2026-09-22 KRİTİK HATA DÜZELTMESİ: bu fonksiyon YENİ bir SSE bildirimine
   // tıklanınca da çağrılıyor (bkz. sseBaslat içindeki toastGoster(...,
@@ -1138,7 +1275,12 @@ async function olayDetayAc(id) {
   // modal her (yeniden) gösterildiğinde, eğer lightbox hâlâ açıksa önce onu
   // kapatıyoruz ki altındaki (az önce güncellenen) bu modal görünür olsun.
   bootstrap.Modal.getInstance(document.getElementById("gorselBuyutModal"))?.hide();
-  const detay = kayit.kisi_id ? await apiCagir(`/kisiler/${kayit.kisi_id}`).catch(() => null) : null;
+  // Kişi ve erişim noktası istekleri birbirinden bağımsız -- paralel çek.
+  const [detay, noktalar] = await Promise.all([
+    kayit.kisi_id ? apiCagir(`/kisiler/${kayit.kisi_id}`).catch(() => null) : Promise.resolve(null),
+    apiCagir("/noktalar").catch(() => []),
+  ]);
+  if (istekNo !== _olayDetayIstekNo) return;
   // Kameranın bağlı olduğu erişim noktasını (ve varsa sitesini/bariyerini) bul —
   // kameralar ile siteler/bariyerler arasındaki tek bağlantı Nokta kaydıdır.
   // ÖNEMLİ (2026-09-21, "id vs ad" hata sınıfı -- bkz. schemas.NoktaCevap.
@@ -1148,12 +1290,12 @@ async function olayDetayAc(id) {
   // Eskiden n.kamera_id ile karşılaştırılıyordu ve id!=ad olduğu (yani
   // neredeyse HER kurulumda) bu eşleşme hiçbir zaman tutmuyor, "Bağlı site
   // tanımlı değil" her olayda sessizce gösteriliyordu.
-  const noktalar = await apiCagir("/noktalar").catch(() => []);
-  const nokta = noktalar.find(n => n.kamera_adi && n.kamera_adi === kayit.kamera_id) || null;
+  const nokta = (noktalar || []).find(n => n.kamera_adi && n.kamera_adi === kayit.kamera_id) || null;
   let siteAdi = null;
   if (nokta) {
     const siteler = await apiCagir("/siteler").catch(() => []);
-    siteAdi = siteler.find(s => s.id === nokta.site_id)?.ad || null;
+    if (istekNo !== _olayDetayIstekNo) return;
+    siteAdi = (siteler || []).find(s => s.id === nokta.site_id)?.ad || null;
   }
   const gorsel = document.getElementById("olayModalGorsel");
   const gorselYok = document.getElementById("olayModalGorselYok");
@@ -1188,6 +1330,7 @@ async function olayDetayAc(id) {
   _olayModalAnalizButonunuAyarla(kayit);
   _olayModalNotButonunuAyarla(kayit);
   await _ziyaretciGirisiKutusunuAyarla(kayit);
+  if (istekNo !== _olayDetayIstekNo) return;
   bootstrap.Modal.getOrCreateInstance(document.getElementById("olayDetayModal")).show();
 }
 
@@ -1335,7 +1478,7 @@ async function lisansYukle() {
     document.getElementById("cihazKodu").textContent = lisans.cihaz_kodu;
     document.getElementById("kameraLimiti").textContent = lisans.aktif ? `${lisans.kamera_limiti} kamera` : "0 kamera";
     document.getElementById("lisansBitisi").textContent = lisans.bitis_tarihi || "Aktif değil";
-  } catch (err) { console.error(err); }
+  } catch (err) { _yuklemeHatasi("Lisans bilgisi", err); }
 }
 
 // Kamera Yön/ROI değişikliklerinde (kameraYonDegistir, kameraRoiAc/Kaydet)
@@ -1407,7 +1550,7 @@ async function kameralariYukle() {
       return `<tr><td><strong>${escapeHtml(k.ad)}</strong>${adDuzenleBtn}${roiRozeti}</td><td>${yonSecim}</td><td class="text-muted small text-truncate" style="max-width: 180px">${escapeHtml(k.rtsp_url)}</td><td>${durum}${yenidenBaglanmaBadge}</td><td>${tcpBadge}</td><td class="text-nowrap">${silBtn}${yenidenBtn}${roiBtn}</td></tr>`;
     }).join("") || '<tr><td colspan="6" class="text-center text-muted py-4">Henüz kamera tanımlanmadı</td></tr>';
     kameraDuvariniGuncelle(kameralar);
-  } catch (err) { console.error(err); }
+  } catch (err) { _yuklemeHatasi("Kamera listesi", err); }
 }
 
 async function kameraYonDegistir(id, selectEl) {
@@ -2475,7 +2618,13 @@ function kisiTipFiltrele(tip, btn) {
 async function kisileriYukle() {
   const params = new URLSearchParams();
   if (aktifTipFiltre) params.set("tip", aktifTipFiltre);
-  const kisiler = await apiCagir(`/kisiler?${params.toString()}`);
+  let kisiler;
+  try {
+    kisiler = await apiCagir(`/kisiler?${params.toString()}`);
+  } catch (e) {
+    _yuklemeHatasi("Kişi listesi", e);
+    return;
+  }
   const tbody = document.getElementById("kisilerTablo");
   // 2026-09-22 kullanıcı isteği: "aracın sisteme kayıtlara ilk giriş tarihi
   // eklensin. son güncel geçiş tarihi ve saati eklensin. Not ekleyen
@@ -2615,7 +2764,13 @@ function duzenleZiyaretciAlanGoster() {
 }
 
 async function kisiDuzenleAc(id) {
-  const kisi = await apiCagir(`/kisiler/${id}`);
+  let kisi;
+  try {
+    kisi = await apiCagir(`/kisiler/${id}`);
+  } catch (e) {
+    toastGoster("Kişi bilgisi açılamadı: " + e.message, "hata");
+    return;
+  }
   document.getElementById("duzenleId").value = kisi.id;
   document.getElementById("duzenleTip").value = kisi.tip;
   document.getElementById("duzenleAdSoyad").value = kisi.ad_soyad;
@@ -2726,7 +2881,13 @@ function ledModDegisti() {
 }
 
 async function ledAyarlariYukle() {
-  const ayarlar = await apiCagir("/led/ayarlar");
+  let ayarlar;
+  try {
+    ayarlar = await apiCagir("/led/ayarlar");
+  } catch (e) {
+    _yuklemeHatasi("LED ayarları", e);
+    return;
+  }
   document.getElementById("ledMod").value = ayarlar.led_mod;
   document.getElementById("ledSerialPort").value = ayarlar.serial_port;
   document.getElementById("ledBaudrate").value = ayarlar.serial_baudrate;
@@ -2986,6 +3147,12 @@ function _sseBaslatFetch(token) {
   _sseController = ctrl;
   fetch("/olaylar/sse", { headers: { Authorization: `Bearer ${token}` }, signal: ctrl.signal })
     .then(async (r) => {
+      if (r.status === 401) {
+        // Oturum süresi doldu -- yeniden bağlanmayı sonsuza dek denemek
+        // yerine kullanıcıyı giriş ekranına yönlendir (bkz. _oturumSuresiDoldu).
+        _oturumSuresiDoldu();
+        throw new Error("Oturum süresi doldu");
+      }
       if (!r.ok || !r.body) throw new Error("SSE bağlantısı kurulamadı");
       const reader = r.body.getReader();
       const dec = new TextDecoder();
@@ -3102,7 +3269,7 @@ async function grafikYukle() {
     const veri = await apiCagir(`/kayitlar/grafik?gun=${gun}`);
     _gunlukGrafigCiz(veri.gunluk);
     _yetkiPieCiz(veri.yetki_dagilimi);
-  } catch (e) { console.error(e); }
+  } catch (e) { _yuklemeHatasi("Grafik", e); }
 }
 
 function _gunlukGrafigCiz(gunluk) {
@@ -3272,7 +3439,7 @@ async function karaListesiYukle() {
       <td class="small text-muted">${tarihFormatla(k.olusturma_tarihi)}</td>
       <td>${rolYeterli("operatör") ? `<button class="btn btn-sm btn-outline-success" onclick="karaListedenCikar(${k.id})" title="Listeden çıkar"><i class="bi bi-check-circle"></i></button>` : '<span class="text-muted small">-</span>'}</td>
     </tr>`).join("") || `<tr><td colspan="5" class="text-center text-muted py-3">Kara listede kayıt yok</td></tr>`;
-  } catch (e) { console.error(e); }
+  } catch (e) { _yuklemeHatasi("Kara liste", e); }
 }
 
 document.getElementById("karaListeForm")?.addEventListener("submit", async (e) => {
@@ -3336,7 +3503,7 @@ async function bariyerleriYukle() {
         ` : '<span class="text-muted small">-</span>'}
       </td>
     </tr>`).join("") || `<tr><td colspan="5" class="text-center text-muted py-3">Bariyer tanımlanmadı</td></tr>`;
-  } catch (e) { console.error(e); }
+  } catch (e) { _yuklemeHatasi("Bariyer listesi", e); }
 }
 
 document.getElementById("bariyerForm")?.addEventListener("submit", async (e) => {
@@ -3476,7 +3643,7 @@ async function siteleriYukle() {
       secim.innerHTML = siteler.map(s => `<option value="${s.id}">${escapeHtml(s.ad)}</option>`).join("") || '<option value="">- Önce bir site ekleyin -</option>';
       if (oncekiDeger && siteler.some(s => String(s.id) === oncekiDeger)) secim.value = oncekiDeger;
     }
-  } catch (e) { console.error(e); }
+  } catch (e) { _yuklemeHatasi("Site listesi", e); }
 }
 
 document.getElementById("siteForm")?.addEventListener("submit", async (e) => {
@@ -3511,7 +3678,7 @@ async function _kameraSecenekleriniDoldur() {
     const oncekiDeger = secim.value;
     secim.innerHTML = '<option value="">- Yok -</option>' + kameralar.map(k => `<option value="${k.id}">${escapeHtml(k.ad)}</option>`).join("");
     secim.value = oncekiDeger;
-  } catch (e) { console.error(e); }
+  } catch (e) { _yuklemeHatasi("Kamera seçenekleri", e); }
 }
 
 async function _bariyerSecenekleriniDoldur() {
@@ -3522,7 +3689,7 @@ async function _bariyerSecenekleriniDoldur() {
     const oncekiDeger = secim.value;
     secim.innerHTML = '<option value="">- Yok -</option>' + bariyerler.map(b => `<option value="${b.id}">${escapeHtml(b.ad)}</option>`).join("");
     secim.value = oncekiDeger;
-  } catch (e) { console.error(e); }
+  } catch (e) { _yuklemeHatasi("Bariyer seçenekleri", e); }
 }
 
 async function noktalariYukle() {
@@ -3550,7 +3717,7 @@ async function noktalariYukle() {
     }
     await _kameraSecenekleriniDoldur();
     await _bariyerSecenekleriniDoldur();
-  } catch (e) { console.error(e); }
+  } catch (e) { _yuklemeHatasi("Erişim noktaları", e); }
 }
 
 document.getElementById("noktaForm")?.addEventListener("submit", async (e) => {
@@ -3689,7 +3856,7 @@ async function _denetimEylemListesiniDoldur() {
       e => `<option value="${escapeHtml(e)}">${escapeHtml(e)}</option>`
     ).join("");
     _denetimEylemListesiYuklendiMi = true;
-  } catch (e) { console.error(e); }
+  } catch (e) { _yuklemeHatasi("Denetim eylem listesi", e); }
 }
 
 async function denetimKayitlariniYukle() {
@@ -3959,7 +4126,7 @@ async function sistemSagliginiYukle() {
       ${dedektorModeliSatiri}
       <div class="info-row"><i class="bi bi-code text-muted"></i> <span>Sürüm</span><strong>PTS v${s.surum}</strong></div>
       <div class="text-muted small mt-2">${new Date(s.zaman).toLocaleString("tr-TR")}</div>`;
-  } catch (e) { console.error(e); }
+  } catch (e) { _yuklemeHatasi("Sistem sağlığı", e); }
 }
 
 // "Güvenlik uyarıları" banner'ı (2026-09-20): yalnızca yönetici görür --
@@ -4005,7 +4172,7 @@ async function loglariYukle() {
     if (!el) return;
     el.textContent = r.satirlar.join("\n");
     el.scrollTop = el.scrollHeight;
-  } catch (e) { console.error(e); }
+  } catch (e) { _yuklemeHatasi("Sistem logları", e); }
 }
 
 // Toplu doğruluk testi (bkz. camera_reader.py::toplu_dogruluk_testi,
@@ -4219,7 +4386,7 @@ async function sistemAyarlariYukle() {
     });
     rolBazliArayuzuUygula();
     if (rolYeterli("yonetici")) otomatikYedekDurumunuYukle();
-  } catch (e) { console.error(e); }
+  } catch (e) { _yuklemeHatasi("Sistem ayarları", e); }
 }
 
 // DÜZELTME (2026-09-25): otomatik yedekleme arka planda sessizce çalıştığı
@@ -4240,7 +4407,7 @@ async function otomatikYedekDurumunuYukle() {
     el.className = "small mb-2 text-muted";
     el.textContent = `Son otomatik yedek: ${new Date(son.tarih_saat).toLocaleString("tr-TR")} (${boyutMb} MB) — toplam ${veri.yedekler.length} yedek, klasör: ${veri.klasor}`;
   } catch (e) {
-    console.error(e);
+    _yuklemeHatasi("Otomatik yedek durumu", e);
   }
 }
 
@@ -4268,8 +4435,12 @@ async function diskBilgisiYukle() {
 async function goruntuleriTemizle() {
   const gun = document.getElementById("temizleGun")?.value || 30;
   if (!(await onayAl(`${gun} günden eski görüntüler silinecek. Emin misiniz?`))) return;
-  const r = await apiCagir(`/sistem/goruntu-temizle?gun=${gun}`, { method: "POST" });
-  toastGoster(`${r.silinen_goruntu} görüntü silindi`, "basari");
+  try {
+    const r = await apiCagir(`/sistem/goruntu-temizle?gun=${gun}`, { method: "POST" });
+    toastGoster(`${r.silinen_goruntu} görüntü silindi`, "basari");
+  } catch (e) {
+    toastGoster("Görüntüler temizlenemedi: " + e.message, "hata");
+  }
   diskBilgisiYukle();
 }
 
@@ -4345,7 +4516,7 @@ async function bildirimleriYukle() {
         ` : '<span class="text-muted small">-</span>'}
       </td>
     </tr>`).join("") || `<tr><td colspan="5" class="text-center text-muted py-3">Henüz webhook tanımlanmadı</td></tr>`;
-  } catch (e) { console.error(e); }
+  } catch (e) { _yuklemeHatasi("Webhook listesi", e); }
 }
 
 document.getElementById("bildirimForm")?.addEventListener("submit", async (e) => {
@@ -4374,13 +4545,21 @@ async function bildirimTestGonder(id) {
 }
 
 async function bildirimToggle(id) {
-  await apiCagir(`/bildirim/ayarlar/${id}/aktif`, { method: "PATCH" });
+  try {
+    await apiCagir(`/bildirim/ayarlar/${id}/aktif`, { method: "PATCH" });
+  } catch (e) {
+    toastGoster(e.message, "hata");
+  }
   bildirimleriYukle();
 }
 
 async function bildirimSil(id) {
   if (!(await onayAl("Bu webhook'u silmek istediğinize emin misiniz?"))) return;
-  await apiCagir(`/bildirim/ayarlar/${id}`, { method: "DELETE" });
+  try {
+    await apiCagir(`/bildirim/ayarlar/${id}`, { method: "DELETE" });
+  } catch (e) {
+    toastGoster(e.message, "hata");
+  }
   bildirimleriYukle();
 }
 

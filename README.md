@@ -3607,3 +3607,47 @@ gerçekten çalıştırılan bir test; `tests/test_api.py`'ye aynı saniyedeki i
 görselin çakışmaması, çapraz kamera tekrarının ilk kaydın fotoğrafını
 silmemesi, disk dolu senaryosu (kayıt oluşur + yarım dosya kalmaz + alarm)
 ve kayıt oluşturulamayınca yetim dosya kalmaması testleri.
+
+## Frontend: Oturum Süresi Dolması, Bağlantı Kopukluğu ve Sessiz Hatalar (2026-09-25, sistem taraması devamı)
+
+- **Oturum süresi dolunca ekran artık sessizce donmuyor:** oturum anahtarı
+  (token) 8 saat geçerli. Süre dolduktan sonra sunucu her isteği 401 ile
+  reddediyordu, ama panelin arka planda kendini yenileyen bölümleri bu
+  hatayı yalnızca konsola yazıyordu; canlı bildirim bağlantısı (SSE) da
+  401 alıp beş dakikaya kadar aralıklarla sonsuza dek yeniden denemeye devam
+  ediyordu. Sonuç: nizamiye ekranı, giriş yapıldıktan 8 saat sonra hiçbir
+  uyarı vermeden eski verileri göstermeye devam ediyordu. Artık herhangi bir
+  istek 401 aldığında kullanıcı "Oturumunuzun süresi doldu, lütfen tekrar
+  giriş yapın" mesajıyla giriş ekranına yönlendiriliyor; ayrıca süre
+  dolmadan 10 dakika önce bir uyarı gösteriliyor. (8 saatlik süre bilinçli
+  bir güvenlik ayarı olarak DEĞİŞTİRİLMEDİ — yalnızca görünür kılındı.)
+- **Sunucuya ulaşılamadığında ekranın üstünde sabit bir uyarı bandı:** PTS
+  yeniden başlarken ya da ağ koptuğunda "PTS sunucusuna ulaşılamıyor —
+  ekrandaki bilgiler güncel olmayabilir" bandı görünüyor; bağlantı geri
+  gelince bant kayboluyor ve panel beklemeden tazeleniyor.
+- **Sessiz yükleyici hataları:** Panel, lisans, kamera, grafik, kara liste,
+  bariyer, site/erişim noktası, denetim, sistem sağlığı/log/ayarlar, webhook,
+  kişi listesi, LED ayarları ve otomatik yedek durumu yükleyicilerindeki
+  "yalnızca konsola yaz" hata yakalayıcıları ortak bir `_yuklemeHatasi`
+  fonksiyonuna taşındı: gerçek hatalar (ör. 500) kullanıcıya bir uyarı
+  olarak gösteriliyor (her bölüm için en fazla dakikada bir, ekranı boğmamak
+  için); yetki (403) hataları — bir operatörün yönetici verisini görememesi
+  beklenen bir durum — ve ağ kopukluğu (tek bir bant zaten gösteriyor)
+  tekrar tekrar bildirilmiyor. Hiç hata yakalaması olmayan birkaç işlem
+  (kişi düzenleme penceresini açma, görüntü temizleme, webhook aç/kapat ve
+  silme) de artık hatayı kullanıcıya gösteriyor.
+- **Olay detayı penceresinde yarış durumu:** iki farklı geçişe art arda
+  hızlıca tıklandığında (ya da bir satıra tıklarken yeni bir canlı
+  bildirime tıklandığında) ilk tıklamanın geç dönen cevabı pencereyi ikinci
+  aracın bilgileriyle doldurduktan SONRA eski aracın plakası/fotoğrafıyla
+  üzerine yazabiliyordu — görevli yanlış araca not yazabilir ya da yanlış
+  kaydı onaylayabilirdi. Kayıtlar/Son Geçişler'deki aynı istek sıra numarası
+  deseniyle artık yalnızca EN SON açılma isteği pencereyi dolduruyor; kişi ve
+  erişim noktası bilgileri de artık paralel çekiliyor (pencere daha hızlı
+  açılıyor).
+
+**Testler:** Playwright ile doğrulandı: token bitiş zamanının okunması,
+bağlantı bandının görünüp kaybolması, 403/ağ hatalarının tekrar
+bildirilmemesi ve 500'ün dakikada bir bildirilmesi, olay detayında geç dönen
+eski cevabın yeni aracın üzerine yazmaması, 401'de giriş ekranına
+yönlendirme ve mesajın gösterilmesi.
