@@ -225,6 +225,24 @@ VARSAYILAN_MIN_GUVEN_SKORU = 0.4  # bu eşiğin altındaki OCR sonuçları oylam
 # bırakılıyor.
 _SUREGELEN_PLAKA_ZAMAN_ASIMI_SN = OTURUM_MAX_SURE_SN * 2.5  # = 20.0 sn
 
+# 2026-09-25 kullanıcı geri bildirimi (ekran görüntüsü: gece, bariyerde
+# bekleyen "39 AES 145" aynı giriş kamerasından 21:31 ve 21:32'de İKİ ayrı
+# "Yetkisiz" kayıt olarak düşmüş; ikinci karede aracın önünde bir görevli
+# yürüyor). KÖK NEDEN: yukarıdaki "_suregelen_plakalar" mekanizması, aracın
+# gidip gitmediğine OTURUMUN nasıl kapandığına bakarak karar veriyordu --
+# 1,2 sn okuma gelmezse ("sessizlik") araç "gitti" sayılıyordu. Ama bekleyen
+# bir aracın plakası çok sık birkaç saniyeliğine okunamaz: önünden görevli
+# geçer, gece far/IR parlaması okumayı bozar, sürücü biraz ilerler. Bu kısa
+# kesintiden sonra plaka tekrar okununca, son kayıttan beri tekrar_gecikme_sn
+# (30 sn) geçmişse YENİ bir geçiş kaydı oluşuyordu.
+#
+# Düzeltme: her plaka için ham okumalardan bağımsız bir "görünüm" (aracın
+# kamerada kesintisiz bulunduğu süre) tutulur. Plaka en az
+# `max(tekrar_gecikme_sn, ARAC_AYRILMA_MIN_SN)` saniye boyunca HİÇ okunmadıysa
+# araç gerçekten gitmiş sayılır; bu süreden kısa kesintiler aynı görünümün
+# devamıdır ve aynı görünüm için en fazla BİR kayıt oluşturulur.
+ARAC_AYRILMA_MIN_SN = 60.0
+
 # ------------------------------------------------------------------
 # "SONDAN KARAKTER EKSİK" DÜZELTMESİ (2026-09-18)
 # ------------------------------------------------------------------
@@ -364,6 +382,10 @@ class PlakaOyBirikimi:
             "toplam_kare_sayisi": self.toplam_kare_sayisi,
             "jpeg": self.en_iyi_jpeg,
             "uzun_varyant_tercih_edildi": uzun_varyant_tercih_edildi,
+            # Bu oturumda okunan TÜM metin varyantları -- aynı aracın kesintisiz
+            # görünümünü takip eden `KameraPipeline._gorunumler` için (bkz.
+            # `_oturum_gonderilmeli_mi`'nin 2026-09-25 notu).
+            "varyantlar": list(self.oylar.keys()),
         }
 
 
@@ -632,6 +654,9 @@ class KameraPipeline:
         # çekmiş" kullanıcı geri bildirimi). Değer = plakanın en son bir kapanış
         # olayıyla (max_sure ya da henüz kapanmamış sessizlik) görüldüğü zaman.
         self._suregelen_plakalar: dict = {}
+        # plaka metni -> {"son": son okunma zamanı, "bildirildi": bu kesintisiz
+        # görünüm için kayıt gönderildi mi} -- bkz. ARAC_AYRILMA_MIN_SN notu.
+        self._gorunumler: dict = {}
         # GÖZLEMLENEBİLİRLİK: dedektör hiçbir plaka bulamazsa (sonuc listesi
         # tamamen boşsa) bunu HER karede loglamak günlük dosyasını gereksiz
         # şişirir (boş yol/trafiksiz an normaldir); ama hiç loglamamak da
@@ -933,6 +958,10 @@ class KameraPipeline:
                     self.kamera_id, t["plaka"], t.get("kutu"),
                 )
                 continue
+            # Aracın hâlâ kamerada olduğunun kanıtı: güveni düşük olsa bile
+            # (gece, parlama) bu plaka okunduysa araç oradadır -- görünümü
+            # tazele (oy birikimine girip girmemesinden bağımsız).
+            self._gorunumu_tazele(t["plaka"], simdi)
             if t["guven"] < self.min_guven_skoru:
                 # GÖZLEMLENEBİLİRLİK: format olarak geçerli bir plaka okundu ama
                 # güven eşiğinin altında kaldığı için oy birikimine HİÇ girmedi —
@@ -1088,8 +1117,40 @@ class KameraPipeline:
         if (plaka in self.son_plaka_zamani and
                 simdi - self.son_plaka_zamani[plaka] < self.tekrar_gecikme_sn):
             return False
+
+        # 2026-09-25 (bkz. ARAC_AYRILMA_MIN_SN notu): bu oturumun okuduğu
+        # metinlerden herhangi biri, arada araç GİTMEDEN (kısa okuma
+        # kesintileriyle) süregelen ve zaten kaydı gönderilmiş bir görünüme
+        # aitse, bu aynı bekleyen aracın tekrarıdır -- yeni geçiş değil.
+        varyantlar = set(oturum.get("varyantlar") or []) | {plaka}
+        aktif = [
+            self._gorunumler[v] for v in varyantlar
+            if v in self._gorunumler and simdi - self._gorunumler[v]["son"] < self._arac_ayrilma_suresi()
+        ]
+        if any(g["bildirildi"] for g in aktif):
+            logger.info(
+                "[%s] %s: araç kamerada kesintisiz bekliyor (kısa okuma kesintisi), "
+                "aynı görünüm için ikinci kayıt oluşturulmadı.",
+                self.kamera_id, plaka,
+            )
+            return False
+        for g in aktif:
+            g["bildirildi"] = True
         self.son_plaka_zamani[plaka] = simdi
         return True
+
+    def _arac_ayrilma_suresi(self) -> float:
+        return max(float(self.tekrar_gecikme_sn), ARAC_AYRILMA_MIN_SN)
+
+    def _gorunumu_tazele(self, plaka: str, simdi: float) -> None:
+        """Bir plaka okunduğunda o plakanın "görünüm"ünü tazeler; plaka
+        ayrılma süresinden uzun süredir görülmüyorsa bu YENİ bir görünümdür
+        (araç gidip gelmiş) ve henüz kaydı gönderilmemiş sayılır."""
+        g = self._gorunumler.get(plaka)
+        if g is None or simdi - g["son"] >= self._arac_ayrilma_suresi():
+            self._gorunumler[plaka] = {"son": simdi, "bildirildi": False}
+        else:
+            g["son"] = simdi
 
     def _ham_kareyi_kaydet_gerekirse(self, frame, simdi_mono: float, dizin: str) -> None:
         """PTS_HAM_KARE_KAYIT_DIZINI ayarlıysa, dedektörün hiçbir aday bulamadığı
@@ -1133,6 +1194,10 @@ class KameraPipeline:
             for p in eskiler:
                 self.son_plaka_zamani.pop(p, None)
         self._suregelen_plakalari_buda()
+        if len(self._gorunumler) >= 200:
+            esik = time.time() - self._arac_ayrilma_suresi() * 2
+            for p in [p for p, g in self._gorunumler.items() if g["son"] < esik]:
+                self._gorunumler.pop(p, None)
 
     def _suregelen_plakalari_buda(self) -> None:
         """`_suregelen_plakalar` içindeki bir plaka -- normalde, aracın kareden

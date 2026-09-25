@@ -1244,3 +1244,87 @@ def test_toplu_dogruluk_testi_yuklenemeyen_model_anlasilir_hata_verir(tmp_path, 
     monkeypatch.setattr(camera_reader, "_test_motoru_anahtari", None)
     with pytest.raises(ValueError, match="Model yüklenemedi"):
         camera_reader.toplu_dogruluk_testi(str(tmp_path), ocr_modeli="olmayan-model")
+
+
+# ------------------------------------------------------------------
+# 2026-09-25: bekleyen aracın plakası kısa süre okunamayınca (önünden görevli
+# geçti / gece parlaması) İKİNCİ kayıt oluşmamalı -- kullanıcının ekran
+# görüntüsü: "39 AES 145" aynı giriş kamerasından 21:31 ve 21:32'de iki kez.
+# ------------------------------------------------------------------
+
+class _KontrolluEngine(_SahteEngine):
+    """`gorunur` False iken plakayı hiç okumaz (araç önünden biri geçiyor)."""
+    gorunur = True
+    guven = 0.95
+
+    def tahmin_et(self, frame):
+        return [_SahteSonuc("39AES145", type(self).guven)] if type(self).gorunur else []
+
+
+def _saat_ile_pipeline(monkeypatch, sahte_api, saat):
+    monkeypatch.setattr(camera_reader, "ANPREngine", _KontrolluEngine)
+    monkeypatch.setattr(camera_reader, "_paylasilan_motor", None)
+    import types as _types
+    monkeypatch.setattr(camera_reader, "time", _types.SimpleNamespace(
+        time=lambda: saat[0], monotonic=time.monotonic, sleep=time.sleep, perf_counter=time.perf_counter))
+    _KontrolluEngine.gorunur = True
+    _KontrolluEngine.guven = 0.95
+    return camera_reader.KameraPipeline(
+        video_kaynagi="kullanilmiyor", api_url=sahte_api.url, kamera_id="NIZAMIYE-GIRIS-TEST",
+        tekrar_gecikme_sn=30,
+    )
+
+
+def _kareleri_isle(pipeline, saat, bas, bit, adim=0.5):
+    kare = np.full((240, 320, 3), 60, dtype=np.uint8)
+    t = bas
+    while t <= bit:
+        saat[0] = t
+        pipeline._kareyi_isle(kare)
+        t += adim
+
+
+def test_bekleyen_arac_kisa_okuma_kesintilerinde_ikinci_kayit_uretmez(monkeypatch, sahte_api):
+    saat = [1000.0]
+    pipeline = _saat_ile_pipeline(monkeypatch, sahte_api, saat)
+
+    _kareleri_isle(pipeline, saat, 1000, 1005)          # araç geldi, okunuyor -> 1. kayıt
+    _KontrolluEngine.gorunur = False
+    _kareleri_isle(pipeline, saat, 1005.5, 1020)        # görevli plakanın önünde: 15 sn okunamıyor
+    _KontrolluEngine.gorunur = True
+    _kareleri_isle(pipeline, saat, 1020.5, 1030)        # tekrar görünüyor
+    _KontrolluEngine.gorunur = False
+    _kareleri_isle(pipeline, saat, 1030.5, 1040)        # yine 10 sn kesinti
+    _KontrolluEngine.gorunur = True
+    _kareleri_isle(pipeline, saat, 1040.5, 1085)        # ilk kayıttan >30 sn sonra hâlâ bekliyor
+    # (Eski kodda burada, ilk kayıttan ~42 sn sonra İKİNCİ bir kayıt gidiyordu.)
+
+    assert len(sahte_api.alinan_istekler) == 1, (
+        f"Bekleyen tek araç için {len(sahte_api.alinan_istekler)} kayıt gönderildi (1 bekleniyordu)"
+    )
+
+
+def test_gece_dusuk_guvenli_okumalar_da_aracin_orada_oldugunu_gosterir(monkeypatch, sahte_api):
+    """Kesinti sırasında plaka yalnızca DÜŞÜK güvenle okunsa bile (oy
+    birikimine girmez) araç hâlâ oradadır -- görünüm kopmamalı."""
+    saat = [2000.0]
+    pipeline = _saat_ile_pipeline(monkeypatch, sahte_api, saat)
+    _kareleri_isle(pipeline, saat, 2000, 2005)
+    _KontrolluEngine.guven = 0.1                        # min_guven_skoru (0.4) altında
+    _kareleri_isle(pipeline, saat, 2005.5, 2070)        # 65 sn: yalnızca zayıf okumalar
+    _KontrolluEngine.guven = 0.95
+    _kareleri_isle(pipeline, saat, 2070.5, 2080)
+    assert len(sahte_api.alinan_istekler) == 1
+
+
+def test_arac_gercekten_gidip_donerse_yeni_kayit_olusur(monkeypatch, sahte_api):
+    saat = [3000.0]
+    pipeline = _saat_ile_pipeline(monkeypatch, sahte_api, saat)
+    _kareleri_isle(pipeline, saat, 3000, 3005)
+    _KontrolluEngine.gorunur = False
+    _kareleri_isle(pipeline, saat, 3005.5, 3100, adim=2)  # 95 sn hiç yok: araç gitti
+    _KontrolluEngine.gorunur = True
+    _kareleri_isle(pipeline, saat, 3100.5, 3104)
+    _KontrolluEngine.gorunur = False
+    _kareleri_isle(pipeline, saat, 3104.5, 3108)
+    assert len(sahte_api.alinan_istekler) == 2

@@ -3797,3 +3797,33 @@ bilgisi, rapor, geçersiz değer), okuma kalitesi ucu (oranlar, rol, gün
 sınırı), model listesi, model adında yol karakterlerinin reddedilmesi.
 Frontend (okuma kalitesi tablosu, HTML kaçışlama, model seçimi, karşılaştırma
 tablosu, filtre parametresi) Playwright ile doğrulandı.
+
+## Bekleyen Araç Kısa Süre Okunamayınca İkinci Kayıt Oluşması (2026-09-25, kullanıcı ekran görüntüsü)
+
+Kullanıcının ekran görüntüsü: gece, bariyerde bekleyen "39 AES 145" aynı
+giriş kamerasından 21:31 ve 21:32'de İKİ ayrı "Yetkisiz" kayıt olarak
+düşmüş; ikinci karede aracın önünde bir görevli yürüyor.
+
+**Kök neden:** 2026-09-24'te eklenen "bekleyen araç" koruması, aracın gidip
+gitmediğine oturumun NASIL kapandığına bakarak karar veriyordu — plaka 1,2
+saniye okunmazsa araç "gitti" sayılıyordu. Ama bekleyen bir aracın plakası
+sık sık birkaç saniyeliğine okunamaz: önünden görevli geçer, gece far/IR
+parlaması okumayı bozar, araç biraz ilerler. Böyle bir kesinti "araç gitti"
+olarak yorumlanıyor; plaka tekrar okununca, son kayıttan beri 30 sn
+(`tekrar_gecikme_sn`) geçmişse YENİ bir geçiş kaydı oluşuyordu. Görevli
+aracı kontrol ederken bu tam olarak 1 dakika aralıkla iki kayıt demekti.
+
+**Düzeltme:** kamera artık her plaka için ham okumalardan ayrı bir "görünüm"
+tutuyor: plaka en az 60 sn (Ayarlar'daki tekrar gecikmesi daha büyükse o
+kadar) boyunca HİÇ okunmadıysa araç gerçekten gitmiş sayılıyor. Bundan kısa
+kesintiler aynı görünümün devamı ve aynı görünüm için en fazla BİR kayıt
+oluşuyor. Güveni düşük okumalar (ör. gece, oy birikimine girmeyen) da
+"araç hâlâ orada" kanıtı olarak sayılıyor. Aracın gerçekten gidip geri
+gelmesi (60 sn'den uzun hiç görülmemesi) eskisi gibi yeni bir geçiş olarak
+kaydediliyor.
+
+**Testler:** `tests/test_camera_reader.py`'ye gerçek pipeline üzerinden
+(sahte motor + kontrollü saat) çalıştırılan üç senaryo: bekleyen aracın
+önünden iki kez biri geçmesi (eski kodda 2 kayıt, yenide 1), 65 sn boyunca
+yalnızca düşük güvenli okumalar (eski kodda 2, yenide 1), aracın gerçekten
+gidip dönmesi (her iki kodda da 2). İlk ikisi eski kodda başarısız oluyor.
