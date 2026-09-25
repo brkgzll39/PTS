@@ -668,13 +668,21 @@ document.getElementById("sakinAracEkleForm")?.addEventListener("submit", async (
   }
 });
 
+// DÜZELTME (2026-09-25, sistem taraması): 2026-09-23'te confirm() TAM OLARAK
+// şu gerekçeyle onayAl()'a taşınmıştı: "tarayıcının yerleşik confirm()
+// penceresi sitenin adresini (ör. localhost:8000) gösteriyor ... uygulamanın
+// geri kalanıyla görsel olarak hiç tutarlı değil". alert() da aynı tarayıcı
+// penceresidir ve aynı kusuru taşır -- ama o zaman gözden kaçmış, bu dosyada
+// hâlâ 14 yerde kullanılıyordu. Bu bölümdeki tüm alert() çağrıları panelin
+// kendi toast bildirimine (toastGoster) veya (varsa) ilgili formun kendi
+// sonuç kutusuna taşındı.
 async function sakinAracSil(id) {
   if (!(await onayAl("Bu aracı listenizden kaldırmak istiyor musunuz?"))) return;
   try {
     await apiCagir(`/sakin/arac/${id}`, { method: "DELETE" });
     sakinPaneliYukle();
   } catch (err) {
-    alert(err.message);
+    toastGoster(err.message, "hata");
   }
 }
 
@@ -1409,7 +1417,7 @@ async function kameraYonDegistir(id, selectEl) {
     kameralariYukle();
   } catch (err) {
     selectEl.value = eskiDeger;  // istek başarısızsa arayüzü eski haline döndür
-    alert(err.message);
+    toastGoster(err.message, "hata");
   }
 }
 
@@ -1433,7 +1441,7 @@ function kameraAdDuzenleAc(id) {
   bootstrap.Modal.getOrCreateInstance(document.getElementById("kameraAdDuzenleModal")).show();
 }
 
-document.getElementById("kameraAdDuzenleKaydetBtn")?.addEventListener("click", async () => {
+async function kameraAdDuzenleKaydet() {
   const sonuc = document.getElementById("kameraAdDuzenleSonuc");
   const yeniAd = document.getElementById("kameraAdDuzenleGirdi").value.trim();
   if (!yeniAd) {
@@ -1458,6 +1466,20 @@ document.getElementById("kameraAdDuzenleKaydetBtn")?.addEventListener("click", a
     sonuc.textContent = err.message;
   } finally {
     btn.disabled = false;
+  }
+}
+
+document.getElementById("kameraAdDuzenleKaydetBtn")?.addEventListener("click", kameraAdDuzenleKaydet);
+
+// DÜZELTME (2026-09-25): modal-body bir <form> DEĞİL (aşağıdaki yorumda
+// açıklandığı gibi, ayrı bir işlem olduğu için bilinçli tercih edilmiş) --
+// bu yüzden bu diyalogdaki tek metin alanında Enter'a basmak hiçbir şey
+// yapmıyordu, uygulamanın geri kalanındaki tüm form alanlarından farklı
+// olarak (orada Enter = gönder). Kaydet düğmesiyle aynı işlemi tetikliyoruz.
+document.getElementById("kameraAdDuzenleGirdi")?.addEventListener("keydown", (e) => {
+  if (e.key === "Enter") {
+    e.preventDefault();
+    kameraAdDuzenleKaydet();
   }
 });
 
@@ -1976,10 +1998,23 @@ function kameraDuvariniGuncelle(kameralar) {
 document.getElementById("kameraForm").addEventListener("submit", async (e) => {
   e.preventDefault();
   const sonuc = document.getElementById("kameraSonuc");
+  // DÜZELTME (2026-09-25, sistem taraması): bu form (ve aşağıdaki benzer
+  // ~12 form), kamera adı değiştirme/bariyer ekleme gibi YAKIN ZAMANDA
+  // eklenen formlarda uygulanan "gönderirken düğmeyi kilitle" korumasından
+  // yoksundu -- bir dokunmatik ekranda (bu tür kiosk tarzı bir bariyer
+  // terminalinde beklenen bir durum) hızlı çift dokunma, ilk yanıt daha
+  // dönmeden AYNI isteği iki kez gönderebiliyordu (ör. burada iki kamera
+  // kaydı oluşabilirdi).
+  const btn = e.target.querySelector('button[type="submit"]');
+  if (btn) btn.disabled = true;
   try {
     await apiCagir("/kameralar", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ad: document.getElementById("kameraAd").value, rtsp_url: document.getElementById("kameraRtsp").value, yon: document.getElementById("kameraYon").value }) });
     sonuc.className = "small mt-3 text-success"; sonuc.textContent = "Kamera kaydedildi."; e.target.reset(); kameralariYukle();
-  } catch (err) { sonuc.className = "small mt-3 text-danger"; sonuc.textContent = err.message; }
+  } catch (err) {
+    sonuc.className = "small mt-3 text-danger"; sonuc.textContent = err.message;
+  } finally {
+    if (btn) btn.disabled = false;
+  }
 });
 
 async function kameraSil(id) {
@@ -1995,25 +2030,45 @@ async function kameraYenidenBaslat(id) {
   try {
     const sonuc = await apiCagir(`/kameralar/${id}/yeniden-baslat`, { method: "POST" });
     if (sonuc.basarili) {
-      alert("Pipeline yeniden başlatıldı.");
+      toastGoster("Pipeline yeniden başlatıldı.", "basari");
     } else if (!sonuc.kutuphaneler_mevcut) {
-      alert("Gerekli kütüphaneler kurulu değil.\npip install \"fast-alpr[onnx]\" opencv-python requests");
+      toastGoster('Gerekli kütüphaneler kurulu değil: pip install "fast-alpr[onnx]" opencv-python requests', "hata");
     } else {
-      alert("Pipeline başlatılamadı. Log dosyasını kontrol edin.");
+      toastGoster("Pipeline başlatılamadı. Log dosyasını kontrol edin.", "hata");
     }
     kameralariYukle();
-  } catch (err) { alert(err.message); }
+  } catch (err) { toastGoster(err.message, "hata"); }
 }
 document.getElementById("lisansForm").addEventListener("submit", async (e) => {
   e.preventDefault();
   const sonuc = document.getElementById("lisansSonuc");
-  try { await apiCagir("/lisans/aktive-et", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ anahtar: document.getElementById("lisansAnahtari").value }) }); sonuc.className = "small mt-2 text-success"; sonuc.textContent = "Lisans başarıyla aktive edildi."; lisansYukle(); } catch (err) { sonuc.className = "small mt-2 text-danger"; sonuc.textContent = err.message; }
+  const btn = e.target.querySelector('button[type="submit"]');
+  if (btn) btn.disabled = true;
+  try {
+    await apiCagir("/lisans/aktive-et", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ anahtar: document.getElementById("lisansAnahtari").value }) });
+    sonuc.className = "small mt-2 text-success"; sonuc.textContent = "Lisans başarıyla aktive edildi."; lisansYukle();
+  } catch (err) {
+    sonuc.className = "small mt-2 text-danger"; sonuc.textContent = err.message;
+  } finally {
+    if (btn) btn.disabled = false;
+  }
 });
 
 // ---------------------- KAYITLAR (sayfalama destekli) ----------------------
 
 let _kayitlarSayfa = 0;
 const _kayitlarLimit = 50;
+// DÜZELTME (2026-09-25, sistem taraması): "Son Geçişler" panelinde
+// 2026-09-24'te tam olarak AYNI hata sınıfı (eski/bayat bir yanıtın daha
+// yeni bir yanıtın üzerine yazması) için eklenen istek-sıralama korumasının
+// (bkz. sonGecislerYukle'deki _sonGecislerIstekNo) BURADA -- asıl Kayıtlar
+// sekmesinde -- eksik olduğu tespit edildi. kayitlariYukle SSE otomatik
+// yenilemesi, sayfa değiştirme ve kayıt düzenleme kaydetme akışlarından
+// eşzamanlı/üst üste çağrılabiliyor; önceden ne bir istek numarası ne de
+// bir try/catch vardı -- bir istek başarısız olursa tablo eski sayfada
+// takılı kalırken sayaç zaten yeni sayfaya geçmiş olabiliyordu, ya da geç
+// gelen bayat bir yanıt daha yeni bir sayfanın üzerine yazabiliyordu.
+let _kayitlarIstekNo = 0;
 
 // Otomatik arka plan yenilemesi (bkz. _canliBolumleriTazeleDebounce ve
 // aşağıdaki 15 sn'lik yedek polling) kullanıcı tam o anda Kayıtlar filtre
@@ -2123,6 +2178,8 @@ function filtreParametreleri() {
 
 async function kayitlariYukle(sifirla = true) {
   if (sifirla) _kayitlarSayfa = 0;
+  const istekNo = ++_kayitlarIstekNo;
+  const sayfa = _kayitlarSayfa; // bu isteğin ait olduğu sayfa -- await sonrası tekrar okunmaz
   const params = filtreParametreleri();
   // NOT (2026-09-21): sayfa-bilgisi çağrısı, /kayitlar ile AYNI filtre
   // parametrelerini (özellikle yeni saat-birleştirmeli baslangic/bitis'i)
@@ -2134,48 +2191,63 @@ async function kayitlariYukle(sifirla = true) {
   // kullanılıyor.
   const sayfaBilgisiParams = new URLSearchParams(params);
   sayfaBilgisiParams.delete("offset");
-  const [kayitlar, sayfaBilgisi] = await Promise.all([
-    apiCagir(`/kayitlar?${params.toString()}`),
-    apiCagir(`/kayitlar/sayfa-bilgisi?${sayfaBilgisiParams.toString()}`),
-  ]);
-  _kayitCacheBirlestir(kayitlar);
-  const el = document.getElementById("kayitlarSayac");
-  if (el) el.textContent = `${sayfaBilgisi.toplam} kayıt · Sayfa ${_kayitlarSayfa + 1}/${sayfaBilgisi.sayfa_sayisi}`;
-  const tbody = document.getElementById("kayitlarTablo");
-  tbody.innerHTML = kayitlar.map(k => `
-    <tr>
-      <td>${k.goruntu_yolu ? `<img class="thumb" data-goruntu-yolu="${escapeHtml(k.goruntu_yolu)}" role="button" tabindex="0" alt="Geçiş görseli, büyütmek için tıklayın veya Enter'a basın">` : '<span class="text-muted small">-</span>'}</td>
-      <td>${k.id}</td>
-      <td class="fw-bold"><button class="plate-link" data-plaka-analiz="${escapeHtml(k.plaka_no)}">${escapeHtml(k.plaka_no)}</button></td>
-      <td>${tarihFormatla(k.tarih_saat)}</td>
-      <td>${escapeHtml(k.kamera_id)}</td>
-      <td>${k.yon === "giris" ? "Giriş" : "Çıkış"}</td>
-      <td>${durumRozeti(k.yetki_durumu)}</td>
-      <td>${tipRozeti(k.kisi_tip_anlik)}</td>
-      <td class="small">${kayitIsimGoster(k)}</td>
-      <td class="small">${k.surucu_adi ? escapeHtml(k.surucu_adi) : '<span class="text-muted">-</span>'}</td>
-      <td>${k.vardiya_adi ? `<span class="badge bg-info text-dark">${escapeHtml(k.vardiya_adi)}</span>` : '<span class="text-muted small">-</span>'}</td>
-      ${rolYeterli("yonetici") ? `<td>${dogrulamaRozeti(k.dogrulama_kare_sayisi, k.farkli_okuma_sayisi)}</td>` : ""}
-      <td class="text-nowrap">
-        <button class="btn btn-sm btn-outline-danger" onclick="kayitPdfIndir(${k.id})" title="PDF indir" aria-label="PDF indir"><i class="bi bi-file-earmark-pdf"></i></button>
-        ${rolYeterli("operatör") ? `<button class="btn btn-sm btn-outline-primary ms-1" onclick="kayitDuzenleAc(${k.id})" title="Kaydı düzenle" aria-label="Kaydı düzenle"><i class="bi bi-pencil"></i></button>` : ""}
-        ${rolYeterli("yonetici") ? `<button class="btn btn-sm btn-outline-secondary ms-1" onclick="kayitSil(${k.id})" title="Kaydı sil" aria-label="Kaydı sil"><i class="bi bi-trash"></i></button>` : ""}
-      </td>
-    </tr>
-  `).join("") || `<tr><td colspan="13" class="text-center text-muted py-3">Kayıt bulunamadı</td></tr>`;
-  korumaliGorselleriYukle(tbody);
+  try {
+    const [kayitlar, sayfaBilgisi] = await Promise.all([
+      apiCagir(`/kayitlar?${params.toString()}`),
+      apiCagir(`/kayitlar/sayfa-bilgisi?${sayfaBilgisiParams.toString()}`),
+    ]);
+    // Araya (bu istek başladıktan SONRA) başka bir kayitlariYukle çağrısı
+    // girdiyse (ör. kullanıcı hızlıca "Sonraki"ye tekrar bastı, bir SSE
+    // olayı arka planda yeniden yükleme tetikledi, ya da bir kayıt
+    // düzenleme kaydetme akışı da yeniden yüklüyorsa) -- bu artık BAYAT bir
+    // yanıt: DOM'a hiç dokunma, en son (daha yeni) çağrının kendi yanıtı
+    // ekranı zaten güncelleyecek/güncelledi (bkz. sonGecislerYukle'deki
+    // AYNI desen).
+    if (istekNo !== _kayitlarIstekNo) return;
 
-  // Sayfalama kontrolleri
-  const sayfaEl = document.getElementById("sayfalama");
-  if (sayfaEl) {
-    const onceki = _kayitlarSayfa > 0;
-    const sonraki = _kayitlarSayfa < sayfaBilgisi.sayfa_sayisi - 1;
-    sayfaEl.innerHTML = `
-      <div class="d-flex gap-2">
-        <button class="btn btn-sm btn-outline-secondary" ${!onceki ? "disabled" : ""} onclick="sayfaDegistir(-1)"><i class="bi bi-chevron-left"></i> Önceki</button>
-        <button class="btn btn-sm btn-outline-secondary" ${!sonraki ? "disabled" : ""} onclick="sayfaDegistir(1)">Sonraki <i class="bi bi-chevron-right"></i></button>
-      </div>
-      <span class="small text-muted">${_kayitlarSayfa * _kayitlarLimit + 1}–${Math.min((_kayitlarSayfa + 1) * _kayitlarLimit, sayfaBilgisi.toplam)} / ${sayfaBilgisi.toplam}</span>`;
+    _kayitCacheBirlestir(kayitlar);
+    const el = document.getElementById("kayitlarSayac");
+    if (el) el.textContent = `${sayfaBilgisi.toplam} kayıt · Sayfa ${sayfa + 1}/${sayfaBilgisi.sayfa_sayisi}`;
+    const tbody = document.getElementById("kayitlarTablo");
+    tbody.innerHTML = kayitlar.map(k => `
+      <tr>
+        <td>${k.goruntu_yolu ? `<img class="thumb" data-goruntu-yolu="${escapeHtml(k.goruntu_yolu)}" role="button" tabindex="0" alt="Geçiş görseli, büyütmek için tıklayın veya Enter'a basın">` : '<span class="text-muted small">-</span>'}</td>
+        <td>${k.id}</td>
+        <td class="fw-bold"><button class="plate-link" data-plaka-analiz="${escapeHtml(k.plaka_no)}">${escapeHtml(k.plaka_no)}</button></td>
+        <td>${tarihFormatla(k.tarih_saat)}</td>
+        <td>${escapeHtml(k.kamera_id)}</td>
+        <td>${k.yon === "giris" ? "Giriş" : "Çıkış"}</td>
+        <td>${durumRozeti(k.yetki_durumu)}</td>
+        <td>${tipRozeti(k.kisi_tip_anlik)}</td>
+        <td class="small">${kayitIsimGoster(k)}</td>
+        <td class="small">${k.surucu_adi ? escapeHtml(k.surucu_adi) : '<span class="text-muted">-</span>'}</td>
+        <td>${k.vardiya_adi ? `<span class="badge bg-info text-dark">${escapeHtml(k.vardiya_adi)}</span>` : '<span class="text-muted small">-</span>'}</td>
+        ${rolYeterli("yonetici") ? `<td>${dogrulamaRozeti(k.dogrulama_kare_sayisi, k.farkli_okuma_sayisi)}</td>` : ""}
+        <td class="text-nowrap">
+          <button class="btn btn-sm btn-outline-danger" onclick="kayitPdfIndir(${k.id})" title="PDF indir" aria-label="PDF indir"><i class="bi bi-file-earmark-pdf"></i></button>
+          ${rolYeterli("operatör") ? `<button class="btn btn-sm btn-outline-primary ms-1" onclick="kayitDuzenleAc(${k.id})" title="Kaydı düzenle" aria-label="Kaydı düzenle"><i class="bi bi-pencil"></i></button>` : ""}
+          ${rolYeterli("yonetici") ? `<button class="btn btn-sm btn-outline-secondary ms-1" onclick="kayitSil(${k.id})" title="Kaydı sil" aria-label="Kaydı sil"><i class="bi bi-trash"></i></button>` : ""}
+        </td>
+      </tr>
+    `).join("") || `<tr><td colspan="13" class="text-center text-muted py-3">Kayıt bulunamadı</td></tr>`;
+    korumaliGorselleriYukle(tbody);
+
+    // Sayfalama kontrolleri
+    const sayfaEl = document.getElementById("sayfalama");
+    if (sayfaEl) {
+      const onceki = sayfa > 0;
+      const sonraki = sayfa < sayfaBilgisi.sayfa_sayisi - 1;
+      sayfaEl.innerHTML = `
+        <div class="d-flex gap-2">
+          <button class="btn btn-sm btn-outline-secondary" ${!onceki ? "disabled" : ""} onclick="sayfaDegistir(-1)"><i class="bi bi-chevron-left"></i> Önceki</button>
+          <button class="btn btn-sm btn-outline-secondary" ${!sonraki ? "disabled" : ""} onclick="sayfaDegistir(1)">Sonraki <i class="bi bi-chevron-right"></i></button>
+        </div>
+        <span class="small text-muted">${sayfa * _kayitlarLimit + 1}–${Math.min((sayfa + 1) * _kayitlarLimit, sayfaBilgisi.toplam)} / ${sayfaBilgisi.toplam}</span>`;
+    }
+  } catch (e) {
+    if (istekNo !== _kayitlarIstekNo) return; // bayat bir isteğin hatası -- yok say
+    console.error("Kayıtlar yüklenemedi:", e);
+    toastGoster("Kayıtlar yüklenemedi: " + e.message, "hata");
   }
 }
 
@@ -2325,6 +2397,8 @@ document.getElementById("kayitDuzenleForm")?.addEventListener("submit", async (e
   } else if (kayit?.kisi_id) {
     govde.kisi_id_temizle = true;
   }
+  const btn = e.target.querySelector('button[type="submit"]');
+  if (btn) btn.disabled = true;
   try {
     const guncelKayit = await apiCagir(`/kayitlar/${id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(govde) });
     bootstrap.Modal.getInstance(document.getElementById("kayitDuzenleModal"))?.hide();
@@ -2338,6 +2412,8 @@ document.getElementById("kayitDuzenleForm")?.addEventListener("submit", async (e
     analizAcikSeAyniPlakayiYenile();
   } catch (err) {
     sonuc.className = "small text-danger"; sonuc.textContent = err.message;
+  } finally {
+    if (btn) btn.disabled = false;
   }
 });
 
@@ -2358,7 +2434,7 @@ async function kayitSil(id) {
     sonGecislerYukle(false);
     analizAcikSeAyniPlakayiYenile();
   } catch (e) {
-    alert(e.message);
+    toastGoster(e.message, "hata");
   }
 }
 
@@ -2457,12 +2533,19 @@ document.getElementById("kisiForm").addEventListener("submit", async (e) => {
     giris_saati_bitis: document.getElementById("kisiSaatBitis").value || null,
     izin_verilen_gunler: secilenGunler.length ? secilenGunler.join(",") : null,
   };
+  const btn = e.target.querySelector('button[type="submit"]');
+  if (btn) btn.disabled = true;
   try {
     await apiCagir("/kisiler", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(gövde) });
     document.getElementById("kisiForm").reset();
     ziyaretciAlanGoster();
     kisileriYukle(); panelYenile();
-  } catch (err) { alert("Hata: " + err.message); }
+    toastGoster("Kişi kaydedildi.", "basari");
+  } catch (err) {
+    toastGoster(err.message, "hata");
+  } finally {
+    if (btn) btn.disabled = false;
+  }
 });
 
 async function kisiDurumDegistir(id, yeniDurum) {
@@ -2501,13 +2584,13 @@ async function kisiGecmisKayitlariGuncelle(id) {
   try {
     const sonuc = await apiCagir(`/kisiler/${id}/gecmis-kayitlari-guncelle`, { method: "POST" });
     if (sonuc.guncellenen_kayit_sayisi > 0) {
-      alert(`${sonuc.guncellenen_kayit_sayisi} adet geçmiş kayıt bu kişiyle güncellendi (artık "Yetkili" görünecek).`);
+      toastGoster(`${sonuc.guncellenen_kayit_sayisi} adet geçmiş kayıt bu kişiyle güncellendi (artık "Yetkili" görünecek).`, "basari");
       panelYenile();
     } else {
-      alert("Bu kişiye ait güncellenecek geçmiş kayıt bulunamadı (zaten hepsi güncel ya da eşleşen kayıt yok).");
+      toastGoster("Bu kişiye ait güncellenecek geçmiş kayıt bulunamadı (zaten hepsi güncel ya da eşleşen kayıt yok).", "bilgi");
     }
   } catch (err) {
-    alert("Hata: " + err.message);
+    toastGoster(err.message, "hata");
   }
 }
 
@@ -2612,6 +2695,8 @@ document.getElementById("kisiDuzenleForm").addEventListener("submit", async (e) 
     aciklama: document.getElementById("duzenleAciklama").value || null,
     bitis_tarihi: document.getElementById("duzenleBitisTarihi").value || null,
   };
+  const btn = e.target.querySelector('button[type="submit"]');
+  if (btn) btn.disabled = true;
   try {
     await apiCagir(`/kisiler/${id}`, {
       method: "PUT",
@@ -2623,6 +2708,8 @@ document.getElementById("kisiDuzenleForm").addEventListener("submit", async (e) 
     panelYenile();
   } catch (err) {
     sonuc.className = "small text-danger"; sonuc.textContent = err.message;
+  } finally {
+    if (btn) btn.disabled = false;
   }
 });
 
@@ -2653,20 +2740,43 @@ document.getElementById("ledForm").addEventListener("submit", async (e) => {
     tcp_host: document.getElementById("ledTcpHost").value,
     tcp_port: parseInt(document.getElementById("ledTcpPort").value) || 5000,
   };
-  await apiCagir("/led/ayarlar", {
-    method: "PUT",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(gövde),
-  });
-  alert("LED ayarları kaydedildi.");
+  // DÜZELTME (2026-09-25, sistem taraması): bu form önceden hiç try/catch
+  // içermiyordu -- PUT /led/ayarlar başarısız olursa (ör. geçersiz port),
+  // gerçek hata mesajı hiçbir yere yazılmadan kayboluyordu; yalnızca
+  // uygulamanın genel "Beklenmeyen bir arayüz hatası oluştu" toast'ı
+  // görünüyordu, operatör asıl nedeni hiç göremiyordu. Ayrıca alert() de
+  // (bkz. dosyanın başındaki toplu not) toastGoster'a taşındı.
+  const btn = e.target.querySelector('button[type="submit"]');
+  if (btn) btn.disabled = true;
+  try {
+    await apiCagir("/led/ayarlar", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(gövde),
+    });
+    toastGoster("LED ayarları kaydedildi.", "basari");
+  } catch (err) {
+    toastGoster(err.message, "hata");
+  } finally {
+    if (btn) btn.disabled = false;
+  }
 });
 
 async function ledTestGonder() {
   const mesaj = document.getElementById("ledTestMesaj").value;
-  const sonuc = await apiCagir(`/led/test?mesaj=${encodeURIComponent(mesaj)}`, { method: "POST" });
-  document.getElementById("ledTestSonuc").innerHTML = sonuc.basarili
-    ? `<div class="alert alert-success mb-0">Mesaj gönderildi: "${escapeHtml(sonuc.mesaj)}"</div>`
-    : `<div class="alert alert-danger mb-0">Mesaj gönderilemedi. Ayarları ve bağlantıyı kontrol edin.</div>`;
+  const sonucEl = document.getElementById("ledTestSonuc");
+  try {
+    const sonuc = await apiCagir(`/led/test?mesaj=${encodeURIComponent(mesaj)}`, { method: "POST" });
+    sonucEl.innerHTML = sonuc.basarili
+      ? `<div class="alert alert-success mb-0">Mesaj gönderildi: "${escapeHtml(sonuc.mesaj)}"</div>`
+      : `<div class="alert alert-danger mb-0">Mesaj gönderilemedi. Ayarları ve bağlantıyı kontrol edin.</div>`;
+  } catch (err) {
+    // DÜZELTME (2026-09-25): bu fonksiyon da hiç try/catch içermiyordu --
+    // istek başarısız olursa (ör. sunucuya hiç ulaşılamazsa) sonuç kutusu
+    // hiç güncellenmiyor, işlemin sessizce hiçbir şey yapmadığı izlenimi
+    // veriyordu.
+    sonucEl.innerHTML = `<div class="alert alert-danger mb-0">${escapeHtml(err.message)}</div>`;
+  }
 }
 
 // ---------------------- TEST KAYDI EKLE ----------------------
@@ -2678,6 +2788,10 @@ document.getElementById("testKayitForm").addEventListener("submit", async (e) =>
     kamera_id: document.getElementById("testKamera").value,
     yon: document.getElementById("testYon").value,
   };
+  // DÜZELTME (2026-09-25): diğer formlarla aynı çifte-gönderim koruması --
+  // buton hızlıca iki kez tıklanırsa iki test kaydı oluşuyordu.
+  const btn = e.target.querySelector('button[type="submit"]');
+  if (btn) btn.disabled = true;
   try {
     const kayit = await apiCagir("/kayitlar", {
       method: "POST",
@@ -2692,7 +2806,9 @@ document.getElementById("testKayitForm").addEventListener("submit", async (e) =>
     panelYenile();
     sonGecislerYukle(false);
   } catch (err) {
-    alert("Hata: " + err.message);
+    toastGoster("Hata: " + err.message, "hata");
+  } finally {
+    if (btn) btn.disabled = false;
   }
 });
 
@@ -3116,11 +3232,14 @@ async function karaListesiYukle() {
 document.getElementById("karaListeForm")?.addEventListener("submit", async (e) => {
   e.preventDefault();
   const sonuc = document.getElementById("karaListeSonuc");
+  const btn = e.target.querySelector('button[type="submit"]');
+  if (btn) btn.disabled = true;
   try {
     await apiCagir("/kara-listesi", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ plaka_no: document.getElementById("karaPlaka").value, sebep: document.getElementById("karaSebep").value || null }) });
     sonuc.className = "small mt-2 text-success"; sonuc.textContent = "Araç kara listeye eklendi.";
     e.target.reset(); karaListesiYukle(); panelYenile();
   } catch (err) { sonuc.className = "small mt-2 text-danger"; sonuc.textContent = err.message; }
+  finally { if (btn) btn.disabled = false; }
 });
 
 async function karaListedenCikar(id) {
@@ -3256,11 +3375,21 @@ document.getElementById("bariyerDuzenleKaydetBtn")?.addEventListener("click", as
   }
 });
 
+// DÜZELTME (2026-09-25): bu buton fiziksel bariyer donanımına açma komutu
+// gönderiyor -- hızlı art arda iki tıklama, aynı bariyere iki ayrı "aç"
+// komutu göndermek anlamına gelebilir. Aynı bariyer için istek devam
+// ederken yeni bir isteğin gitmesini engelliyoruz (id başına, böylece
+// farklı bariyerler birbirini bloklamaz).
+const _bariyerAcimaDevamEden = new Set();
+
 async function bariyerAc(id) {
+  if (_bariyerAcimaDevamEden.has(id)) return;
+  _bariyerAcimaDevamEden.add(id);
   try {
     const r = await apiCagir(`/bariyer/${id}/ac`, { method: "POST" });
     toastGoster(r.mesaj, "basari");
   } catch (e) { toastGoster(e.message, "hata"); }
+  finally { _bariyerAcimaDevamEden.delete(id); }
 }
 
 async function bariyerSil(id) {
@@ -3303,6 +3432,8 @@ async function siteleriYukle() {
 document.getElementById("siteForm")?.addEventListener("submit", async (e) => {
   e.preventDefault();
   const sonuc = document.getElementById("siteSonuc");
+  const btn = e.target.querySelector('button[type="submit"]');
+  if (btn) btn.disabled = true;
   try {
     await apiCagir("/siteler", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({
       ad: document.getElementById("siteAd").value,
@@ -3311,6 +3442,7 @@ document.getElementById("siteForm")?.addEventListener("submit", async (e) => {
     sonuc.className = "small mt-3 text-success"; sonuc.textContent = "Site kaydedildi.";
     e.target.reset(); siteleriYukle();
   } catch (err) { sonuc.className = "small mt-3 text-danger"; sonuc.textContent = err.message; }
+  finally { if (btn) btn.disabled = false; }
 });
 
 async function siteSil(id) {
@@ -3374,6 +3506,8 @@ async function noktalariYukle() {
 document.getElementById("noktaForm")?.addEventListener("submit", async (e) => {
   e.preventDefault();
   const sonuc = document.getElementById("noktaSonuc");
+  const btn = e.target.querySelector('button[type="submit"]');
+  if (btn) btn.disabled = true;
   try {
     await apiCagir("/noktalar", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({
       site_id: Number(document.getElementById("noktaSiteId").value),
@@ -3386,6 +3520,7 @@ document.getElementById("noktaForm")?.addEventListener("submit", async (e) => {
     sonuc.className = "small mt-3 text-success"; sonuc.textContent = "Erişim noktası kaydedildi.";
     e.target.reset(); noktalariYukle();
   } catch (err) { sonuc.className = "small mt-3 text-danger"; sonuc.textContent = err.message; }
+  finally { if (btn) btn.disabled = false; }
 });
 
 async function noktaSil(id) {
@@ -3561,6 +3696,8 @@ document.getElementById("kullaniciForm")?.addEventListener("submit", async (e) =
     sonuc.textContent = "'Sakin' rolü için bağlı kişi seçilmeli.";
     return;
   }
+  const btn = e.target.querySelector('button[type="submit"]');
+  if (btn) btn.disabled = true;
   try {
     const govde = {
       kullanici_adi: document.getElementById("yeniKullanici").value,
@@ -3584,6 +3721,7 @@ document.getElementById("kullaniciForm")?.addEventListener("submit", async (e) =
     document.getElementById("yeniKullaniciKameraListesi").classList.add("d-none");
     kullanicilariYukle();
   } catch (err) { sonuc.className = "small mt-2 text-danger"; sonuc.textContent = err.message; }
+  finally { if (btn) btn.disabled = false; }
 });
 
 async function kullaniciDurumDegistir(id, yeniDurum) {
@@ -3654,6 +3792,8 @@ document.getElementById("kullaniciDuzenleForm")?.addEventListener("submit", asyn
   } else {
     govde.kamera_erisim_listesi = _isaretliKameraIdleriniAl("kdKamera");
   }
+  const btn = e.target.querySelector('button[type="submit"]');
+  if (btn) btn.disabled = true;
   try {
     await apiCagir(`/kullanicilar/${id}`, {
       method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(govde),
@@ -3661,6 +3801,7 @@ document.getElementById("kullaniciDuzenleForm")?.addEventListener("submit", asyn
     bootstrap.Modal.getInstance(document.getElementById("kullaniciDuzenleModal"))?.hide();
     kullanicilariYukle();
   } catch (err) { sonuc.className = "small text-danger"; sonuc.textContent = err.message; }
+  finally { if (btn) btn.disabled = false; }
 });
 
 async function kullaniciSil(id) {
@@ -4047,7 +4188,16 @@ async function diskBilgisiYukle() {
     const d = await apiCagir("/sistem/disk-kullanimi");
     const el = document.getElementById("diskBilgisi");
     if (el) el.innerHTML = `<span class="fw-bold">${d.goruntu_mb} MB</span> — ${d.goruntu_sayisi} görüntü dosyası`;
-  } catch (e) {}
+  } catch (e) {
+    // DÜZELTME (2026-09-25): bu catch bloğu tamamen boştu -- istek
+    // başarısız olduğunda disk bilgisi alanı eski (belki hiç
+    // doldurulmamış) haliyle sessizce kalıyor, hatanın hiçbir izi
+    // konsolda bile görünmüyordu. En azından konsola loglayıp alanda
+    // "bilinmiyor" göster.
+    console.error("Disk bilgisi yüklenemedi:", e);
+    const el = document.getElementById("diskBilgisi");
+    if (el) el.innerHTML = `<span class="text-muted">Disk bilgisi alınamadı</span>`;
+  }
 }
 
 async function goruntuleriTemizle() {
@@ -4136,6 +4286,8 @@ async function bildirimleriYukle() {
 document.getElementById("bildirimForm")?.addEventListener("submit", async (e) => {
   e.preventDefault();
   const sonuc = document.getElementById("bildirimSonuc");
+  const btn = e.target.querySelector('button[type="submit"]');
+  if (btn) btn.disabled = true;
   try {
     await apiCagir("/bildirim/ayarlar", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({
       ad: document.getElementById("bildirimAd").value,
@@ -4146,6 +4298,7 @@ document.getElementById("bildirimForm")?.addEventListener("submit", async (e) =>
     sonuc.className = "small mt-2 text-success"; sonuc.textContent = "Webhook kaydedildi.";
     e.target.reset(); bildirimleriYukle();
   } catch (err) { sonuc.className = "small mt-2 text-danger"; sonuc.textContent = err.message; }
+  finally { if (btn) btn.disabled = false; }
 });
 
 async function bildirimTestGonder(id) {
@@ -4211,7 +4364,14 @@ async function topluImport(input) {
     toastGoster(mesaj, sonuc.eklendi > 0 ? "basari" : "uyari");
     if (sonuc.hatalar?.length) {
       console.warn("İçe aktarma hataları:", sonuc.hatalar);
-      alert("Bazı satırlarda hata:\n" + sonuc.hatalar.slice(0, 5).join("\n"));
+      // DÜZELTME (2026-09-25): alert() burada da aynı sorunu taşıyordu --
+      // ayrıca sayfanın adresini gösteren tarayıcı penceresi kapatılana kadar
+      // arkadaki toplu içe aktarma sonucu görünmüyordu. Ayrıntılar zaten
+      // console.warn ile loglanıyor; toast ile de ilk birkaçını özetleyelim.
+      toastGoster(
+        "Bazı satırlarda hata: " + sonuc.hatalar.slice(0, 5).join(" | "),
+        "uyari"
+      );
     }
     kisileriYukle(); panelYenile();
   } catch (err) {

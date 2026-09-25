@@ -3436,3 +3436,67 @@ doğrulama testleri (boş klasör yolu, negatif saklama süresi → 400) ve
 otomatik yedek listeleme uç noktası için RBAC/içerik testleri eklendi.
 Frontend tarafı (yeni ayar alanları + durum satırı) Playwright ile
 doğrulandı.
+
+## Frontend Sağlamlık Paketi: Kayıtlar Sekmesi Yarış Durumu + Diğer Küçük Düzeltmeler (2026-09-25, sistem taraması devamı)
+
+Sistem taramasının frontend bulgularından, en görünür/en sık karşılaşılabilir
+olanları bu pakette düzeltildi (backend'e dokunulmadı — yalnızca
+`frontend/app.js`):
+
+- **Kayıtlar sekmesinde sayfa/filtre yarış durumu (en önemli düzeltme):**
+  `kayitlariYukle()` önceden istek sırasını takip etmiyordu — kullanıcı
+  filtreyi değiştirip hemen ardından sayfa değiştirirse (ya da art arda hızlı
+  filtre değiştirirse), önceki (yavaş) isteğin cevabı sonraki (hızlı) isteğin
+  cevabından SONRA dönerse tabloda YANLIŞ sayfanın/filtrenin sonuçları
+  görünebiliyordu, sessizce. Düzeltme, `sonGecislerYukle`'de 2026-09-24'te
+  kullanılan aynı "istek sıra numarası" desenini uyguluyor: her çağrıda bir
+  sayaç artırılıyor, `await` sonrası bu sayaç hâlâ aynıysa (yani araya başka
+  bir istek girmemişse) sonuç DOM'a yazılıyor, aksi halde cevap sessizce
+  atılıyor (daha yeni bir istek zaten devam ediyordur).
+- **`alert()`'in tamamen kaldırılması:** 2026-09-23'te `confirm()`'ün
+  `onayAl()`'a taşınmasına yol açan aynı UX sorunu (`alert()` de tarayıcının
+  sitenin adresini gösteren, kapatılana kadar TÜM sayfayı bloke eden yerleşik
+  penceresini kullanıyor) `alert()` çağrıları için de geçerliydi. Kalan tüm
+  `alert()` çağrıları (test kaydı ekleme hatası, toplu Excel içe aktarma satır
+  hataları) `toastGoster()`'a taşındı — artık hiçbir hata/bilgi mesajı sayfayı
+  bloke etmiyor.
+- **Çifte gönderim koruması genişletildi:** daha önce yalnızca birkaç formda
+  (kamera, lisans, kayıt düzenleme, kişi, kişi düzenleme, LED, bariyer) olan
+  "gönder düğmesini işlem sürerken devre dışı bırak" koruması artık kara
+  listesi, site, erişim noktası, kullanıcı ekleme/düzenleme, webhook bildirimi
+  ve test kaydı formlarına da eklendi — hızlı çift tıklama artık hiçbir yerde
+  aynı kaydı iki kez oluşturamıyor. Ayrıca fiziksel donanıma doğrudan komut
+  gönderen "Bariyer Aç" düğmesi için de benzer bir koruma eklendi (bariyer
+  başına, önceki istek sürerken aynı bariyer için yeni bir "aç" komutunun
+  gönderilmesini engelleyen bir bekleme kümesi) — bu, form gönderimi değil tek
+  bir düğme tıklaması olduğundan `disabled` yerine bariyer id'sine göre bir
+  koruma kümesi (`Set`) kullanıyor.
+- **LED ayarları formu ve LED test gönderimi artık hataları yakalıyor:**
+  önceden `ledForm`'un gönderim işleyicisinde ve `ledTestGonder()`'da hiç
+  `try/catch` YOKTU — istek başarısız olursa (ör. sunucuya hiç ulaşılamazsa)
+  kullanıcı hiçbir geri bildirim almıyor, işlemin sessizce hiçbir şey
+  yapmadığı izlenimine kapılıyordu. İkisine de hata yakalama eklendi (LED
+  test sonucu artık hatada da sonuç kutusunda kırmızı bir mesaj gösteriyor).
+- **`diskBilgisiYukle()`'nin tamamen boş `catch` bloğu dolduruldu:** istek
+  başarısız olursa artık en azından konsola loglanıyor ve disk bilgisi
+  alanında "Disk bilgisi alınamadı" gösteriliyor (önceden alan sessizce eski
+  haliyle kalıyordu, hatanın hiçbir izi yoktu).
+- **Kamera adı değiştirme modalında Enter tuşu artık çalışıyor:** bu modal bir
+  `<form>` değil (bilinçli bir tercih — bkz. 2026-09-25 tarihli ilgili yorum,
+  isim değiştirmenin geçmiş kayıtları da güncelleyen ayrı bir işlem olması),
+  bu yüzden uygulamanın geri kalanındaki tüm formlardan farklı olarak
+  girdi alanında Enter'a basmak hiçbir şey yapmıyordu. Kaydet mantığı ortak bir
+  `kameraAdDuzenleKaydet()` fonksiyonuna çıkarıldı ve hem Kaydet düğmesinin
+  `click` olayına hem de girdi alanının `keydown`/Enter olayına bağlandı.
+
+**Testler:** bu patch yalnızca `frontend/app.js` dosyasını değiştiriyor;
+backend testleri (230 test) etkilenmeden geçmeye devam ediyor. Üç düzeltme
+Playwright ile uçtan uca doğrulandı: (1) Kayıtlar sekmesindeki yarış durumu
+düzeltmesinin dayandığı istek-sıra-numarası deseni zaten `sonGecislerYukle`
+için 2026-09-24'te aynı yöntemle doğrulanmıştı; bu patchte aynı deseni
+`kayitlariYukle`'ye taşıyan kodun `node --check` ile sözdizimi doğrulaması
+yapıldı, (2) kamera adı değiştirme modalında Enter tuşuna basmanın gerçekten
+`PATCH /kameralar/{id}/ad` isteğini tetiklediği, (3) bir formun gönderim
+düğmesinin istek sürerken devre dışı kalıp tamamlanınca yeniden etkinleştiği,
+(4) "Bariyer Aç" düğmesinin aynı bariyer için istek sürerken ikinci bir
+tıklamayı engelleyip istek bitince yeni bir tıklamaya izin verdiği.
