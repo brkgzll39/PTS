@@ -245,3 +245,58 @@ def test_kutuya_cevir_x1y1x2y2_ve_xminyminxmaxymax_destekler():
     assert anpr_engine._kutuya_cevir(_SahteKutuIcIce(x1=1, y1=2, x2=3, y2=4)) == (1, 2, 3, 4)
     assert anpr_engine._kutuya_cevir({"xmin": 5, "ymin": 6, "xmax": 7, "ymax": 8}) == (5, 6, 7, 8)
     assert anpr_engine._kutuya_cevir(None) is None
+
+
+# ------------------------------------------------------------------
+# OCR MODELİ SEÇİMİ + GÜVENLİ GERİ DÖNÜŞ (2026-09-25)
+# ------------------------------------------------------------------
+
+def test_ocr_modeli_varsayilan_ve_ortam_degiskeniyle_secilebilir(monkeypatch, sahte_fast_alpr):
+    monkeypatch.delenv("PTS_ANPR_DETECTOR_MODEL", raising=False)
+    monkeypatch.delenv("PTS_ANPR_OCR_MODEL", raising=False)
+    motor = anpr_engine.ANPREngine()
+    assert motor.ocr_modeli_etkin == anpr_engine.OCR_MODELI_VARSAYILAN
+    assert motor._alpr.kwargs["ocr_model"] == anpr_engine.OCR_MODELI_VARSAYILAN
+
+    monkeypatch.setenv("PTS_ANPR_OCR_MODEL", "cct-s-v2-global-model")
+    motor = anpr_engine.ANPREngine()
+    assert motor.ocr_modeli_etkin == "cct-s-v2-global-model"
+    assert motor._alpr.kwargs["ocr_model"] == "cct-s-v2-global-model"
+    assert "PTS_ANPR_OCR_MODEL" in motor.ocr_modeli_kaynagi
+
+
+def test_yuklenemeyen_model_canli_sistemi_durdurmaz_varsayilana_doner(monkeypatch, sahte_fast_alpr, caplog):
+    class _SeciciALPR(_SahteALPR):
+        def __init__(self, **kwargs):
+            if kwargs.get("ocr_model") == "olmayan-model":
+                raise ValueError("model bulunamadı")
+            super().__init__(**kwargs)
+
+    monkeypatch.setattr(sahte_fast_alpr, "ALPR", _SeciciALPR)
+    monkeypatch.delenv("PTS_ANPR_DETECTOR_MODEL", raising=False)
+    monkeypatch.setenv("PTS_ANPR_OCR_MODEL", "olmayan-model")
+    with caplog.at_level("ERROR"):
+        motor = anpr_engine.ANPREngine()
+    assert motor.ocr_modeli_etkin == anpr_engine.OCR_MODELI_VARSAYILAN
+    assert motor._alpr.kwargs["ocr_model"] == anpr_engine.OCR_MODELI_VARSAYILAN
+    assert "VARSAYILAN modellere" in caplog.text
+
+
+def test_test_motoru_ortam_degiskenlerini_yok_sayar_cpu_kullanir_ve_hatayi_iletir(monkeypatch, sahte_fast_alpr):
+    monkeypatch.setenv("PTS_ANPR_DETECTOR_MODEL", "yolo-v9-t-384-license-plate-end2end")
+    monkeypatch.setenv("PTS_ANPR_OCR_MODEL", "cct-s-v2-global-model")
+    motor = anpr_engine.ANPREngine(
+        detector_model="yolo-v9-t-640-license-plate-end2end", ocr_model="cct-xs-v2-global-model",
+        modelleri_ortamdan_al=False, sadece_cpu=True,
+    )
+    assert motor._alpr.kwargs["detector_model"] == "yolo-v9-t-640-license-plate-end2end"
+    assert motor._alpr.kwargs["ocr_model"] == "cct-xs-v2-global-model"
+    assert motor._alpr.kwargs["detector_providers"] == ["CPUExecutionProvider"]
+
+    class _HataALPR(_SahteALPR):
+        def __init__(self, **kwargs):
+            raise ValueError("model bulunamadı")
+
+    monkeypatch.setattr(sahte_fast_alpr, "ALPR", _HataALPR)
+    with pytest.raises(ValueError):
+        anpr_engine.ANPREngine(ocr_model="olmayan-model", modelleri_ortamdan_al=False, sadece_cpu=True)

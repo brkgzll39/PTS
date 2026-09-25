@@ -5178,3 +5178,79 @@ def test_plaka_analiz_toplam_gecis_50_sinirina_takilmaz(client, operator_header)
     v = client.get("/kayitlar/analiz/34 ELL 053", headers=operator_header).json()
     assert v["toplam_gecis"] == 53
     assert len(v["son_kayitlar"]) == 50
+
+
+# ------------------------------------------------------------------
+# OKUMA DOĞRULUĞU ARAÇLARI (2026-09-25, Patch #107)
+# ------------------------------------------------------------------
+
+def _otomatik_kayit(client, plaka, kamera, kare, farkli=1, yon="giris"):
+    r = client.post("/kayitlar/otomatik", data={
+        "plaka_no": plaka, "kamera_id": kamera, "yon": yon, "guven_skoru": 0.99,
+        "dogrulama_kare_sayisi": kare, "farkli_okuma_sayisi": farkli,
+    })
+    assert r.status_code == 200, r.text
+    assert "atlandi" not in r.json(), r.json()
+    return r.json()
+
+
+def test_kayitlar_dogrulama_filtresi_riskli_okumalari_getirir(client, yetkili_header):
+    tek = _otomatik_kayit(client, "34 DGF 001", "DOGRULAMA-KAM-1", kare=1)
+    kararsiz = _otomatik_kayit(client, "34 DGF 002", "DOGRULAMA-KAM-2", kare=9, farkli=3)
+    saglam = _otomatik_kayit(client, "34 DGF 003", "DOGRULAMA-KAM-3", kare=12)
+    manuel = client.post("/kayitlar", json={"plaka_no": "34 DGF 004", "kamera_id": "DOGRULAMA-KAM-4", "yon": "giris"},
+                         headers=yetkili_header).json()
+
+    def idler(deger):
+        r = client.get("/kayitlar", params={"plaka": "34 DGF", "dogrulama": deger, "limit": 500}, headers=yetkili_header)
+        assert r.status_code == 200, r.text
+        return {k["id"] for k in r.json()}
+
+    assert tek["id"] in idler("tek_kare") and saglam["id"] not in idler("tek_kare")
+    assert idler("kararsiz") >= {kararsiz["id"]} and tek["id"] not in idler("kararsiz")
+    riskli = idler("riskli")
+    assert {tek["id"], kararsiz["id"]} <= riskli
+    assert saglam["id"] not in riskli and manuel["id"] not in riskli, "Elle girilen kayıt riskli sayılmamalı"
+
+    sayfa = client.get("/kayitlar/sayfa-bilgisi", params={"plaka": "34 DGF", "dogrulama": "riskli"}, headers=yetkili_header)
+    assert sayfa.json()["toplam"] == len(riskli)
+
+    assert client.get("/kayitlar", params={"dogrulama": "gecersiz"}, headers=yetkili_header).status_code == 400
+    assert client.get("/disa-aktar/excel/kayitlar", params={"dogrulama": "riskli"}, headers=yetkili_header).status_code == 200
+
+
+def test_kamera_okuma_kalitesi_kamera_basina_oranlari_verir(client, yetkili_header):
+    for i in range(8):
+        _otomatik_kayit(client, f"34 OKK {100 + i}", "OKUMA-KALITE-ZAYIF", kare=1, yon="giris" if i % 2 else "cikis")
+    for i in range(4):
+        _otomatik_kayit(client, f"34 OKK {200 + i}", "OKUMA-KALITE-ZAYIF", kare=10, yon="giris" if i % 2 else "cikis")
+
+    r = client.get("/kameralar/okuma-kalitesi", params={"gun": 7}, headers=yetkili_header)
+    assert r.status_code == 200, r.text
+    satir = next(k for k in r.json()["kameralar"] if k["kamera"] == "OKUMA-KALITE-ZAYIF")
+    assert satir["toplam"] >= 12
+    assert satir["tek_kare_orani"] >= 0.5
+    assert satir["durum"] == "zayif"
+    assert satir["tanimli"] is False  # cameras.json'da bu adla bir kamera yok
+    assert any("TEK karede" in o for o in satir["oneriler"])
+
+
+def test_kamera_okuma_kalitesi_izleyici_yetkisiz_ve_gun_sinirli(client, yetkili_header, izleyici_header):
+    assert client.get("/kameralar/okuma-kalitesi", headers=izleyici_header).status_code == 403
+    assert client.get("/kameralar/okuma-kalitesi", params={"gun": 0}, headers=yetkili_header).status_code == 422
+    assert client.get("/kameralar/okuma-kalitesi", params={"gun": 91}, headers=yetkili_header).status_code == 422
+
+
+def test_anpr_modelleri_listesi(client, yetkili_header, izleyici_header):
+    r = client.get("/sistem/anpr-modelleri", headers=yetkili_header)
+    assert r.status_code == 200, r.text
+    v = r.json()
+    assert any(m["ad"] == "yolo-v9-s-608-license-plate-end2end" for m in v["dedektor_modelleri"])
+    assert any(m["ad"] == "cct-xs-v2-global-model" for m in v["ocr_modelleri"])
+    assert v["canli_dedektor_modeli"] and v["canli_ocr_modeli"]
+    assert client.get("/sistem/anpr-modelleri", headers=izleyici_header).status_code == 403
+
+
+def test_dogruluk_testi_model_adi_yol_iceremez(client, operator_header):
+    r = client.post("/sistem/dogruluk-testi", json={"klasor": "/tmp", "ocr_modeli": "../../etc/passwd"}, headers=operator_header)
+    assert r.status_code == 422

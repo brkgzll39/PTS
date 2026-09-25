@@ -2253,7 +2253,7 @@ let _kayitlarIstekNo = 0;
 function _kayitlarFiltresiDuzenleniyorMu() {
   const aktif = document.activeElement;
   return !!aktif && [
-    "filtrePlaka", "filtreBaslangic", "filtreBaslangicSaat", "filtreBitis", "filtreBitisSaat", "filtreDurum",
+    "filtrePlaka", "filtreBaslangic", "filtreBaslangicSaat", "filtreBitis", "filtreBitisSaat", "filtreDurum", "filtreDogrulama",
   ].includes(aktif.id);
 }
 
@@ -2306,7 +2306,7 @@ function _tarihSaatDegeriOlustur(tarihId, saatId) {
   const kayitlarSekmeDugmesi = document.querySelector('[data-bs-target="#kayitlar-sekme"]');
   if (!kayitlarSekmeDugmesi) return;
   kayitlarSekmeDugmesi.addEventListener("hidden.bs.tab", () => {
-    const metinAlanIdleri = ["filtrePlaka", "filtreBaslangic", "filtreBaslangicSaat", "filtreBitis", "filtreBitisSaat", "filtreDurum", "filtreVardiyaAdi"];
+    const metinAlanIdleri = ["filtrePlaka", "filtreBaslangic", "filtreBaslangicSaat", "filtreBitis", "filtreBitisSaat", "filtreDurum", "filtreVardiyaAdi", "filtreDogrulama"];
     const doluAlanVarMi = metinAlanIdleri.some(id => document.getElementById(id)?.value);
     if (!doluAlanVarMi) return;
     metinAlanIdleri.forEach(id => { const el = document.getElementById(id); if (el) el.value = ""; });
@@ -2347,6 +2347,9 @@ function filtreParametreleri() {
   if (bitis) params.set("bitis", bitis);
   if (durum) params.set("yetki_durumu", durum);
   if (vardiyaAdi) params.set("vardiya_adi", vardiyaAdi);
+  // "Doğrulama" filtresi (2026-09-25) -- rapora (disaAktar) da uygulanır.
+  const dogrulama = document.getElementById("filtreDogrulama")?.value || "";
+  if (dogrulama) params.set("dogrulama", dogrulama);
   params.set("limit", _kayitlarLimit);
   params.set("offset", _kayitlarSayfa * _kayitlarLimit);
   return params;
@@ -4258,6 +4261,98 @@ async function loglariYukle() {
 // main.py::/sistem/dogruluk-testi) — canlı sisteme hiç dokunmadan, etiketli
 // bir fotoğraf klasörü üzerinde farklı eşik/model/kontrast ayarlarının
 // GERÇEK doğruluk oranını karşılaştırmak için kullanılır.
+// ---------------------- OKUMA KALİTESİ (2026-09-25) ----------------------
+// Kamera başına okuma kalitesi -- bkz. main.py::kamera_okuma_kalitesi ve
+// backend/okuma_kalitesi.py (eşikler/öneriler orada).
+let _okumaKalitesiIstekNo = 0;
+async function okumaKalitesiYukle() {
+  const tbody = document.getElementById("okumaKalitesiTablo");
+  if (!tbody || !rolYeterli("operatör")) return;
+  const gun = document.getElementById("okumaKalitesiGun")?.value || 7;
+  const istekNo = ++_okumaKalitesiIstekNo;
+  try {
+    const v = await apiCagir(`/kameralar/okuma-kalitesi?gun=${encodeURIComponent(gun)}`);
+    if (istekNo !== _okumaKalitesiIstekNo) return;
+    const durumlar = {
+      iyi: ["success", "İyi"], dikkat: ["warning text-dark", "Dikkat"], zayif: ["danger", "Zayıf"],
+      kayit_yok: ["secondary", "Kayıt yok"], yetersiz_veri: ["light text-dark border", "Yetersiz veri"],
+    };
+    const yuzde = (o, kotu, orta) => {
+      if (o == null) return '<span class="text-muted">—</span>';
+      const sinif = o >= kotu ? "text-danger fw-semibold" : o >= orta ? "text-warning fw-semibold" : "";
+      return `<span class="${sinif}">%${(o * 100).toFixed(1)}</span>`;
+    };
+    tbody.innerHTML = v.kameralar.map(k => {
+      const [renk, etiket] = durumlar[k.durum] || ["secondary", k.durum];
+      const ek = k.tanimli === false ? ' <span class="badge bg-light text-muted border" title="Bu adla tanımlı bir kamera yok (silinmiş/yeniden adlandırılmış ya da harici kaynak)">tanımsız</span>'
+        : k.aktif === false ? ' <span class="badge bg-light text-muted border">pasif</span>' : "";
+      const oneriler = (k.oneriler || []).map(o => `<li>${escapeHtml(o)}</li>`).join("");
+      return `<tr>
+        <td class="fw-semibold">${escapeHtml(k.kamera || "—")}${ek}</td>
+        <td><span class="badge bg-${renk}">${escapeHtml(etiket)}</span></td>
+        <td class="text-end">${k.toplam}</td>
+        <td class="text-end">${yuzde(k.tek_kare_orani, 0.25, 0.10)}</td>
+        <td class="text-end">${yuzde(k.kararsiz_okuma_orani, 0.30, 0.15)}</td>
+        <td class="text-end">${yuzde(k.ocr_duzeltme_orani, 0.25, 0.10)}</td>
+        <td class="text-end">${k.ortalama_kare != null ? k.ortalama_kare : "—"}</td>
+        <td class="small">${oneriler ? `<ul class="mb-0 ps-3">${oneriler}</ul>` : '<span class="text-muted">—</span>'}</td>
+      </tr>`;
+    }).join("") || '<tr><td colspan="8" class="text-center text-muted py-3">Tanımlı kamera yok</td></tr>';
+  } catch (e) {
+    if (istekNo !== _okumaKalitesiIstekNo) return;
+    tbody.innerHTML = `<tr><td colspan="8" class="text-center text-danger py-3">Okuma kalitesi alınamadı: ${escapeHtml(e.message)}</td></tr>`;
+  }
+}
+
+document.addEventListener("shown.bs.tab", (e) => {
+  if (e.target?.dataset?.bsTarget === "#kamera-sekme") okumaKalitesiYukle();
+});
+
+// 2026-09-25: model karşılaştırma -- seçilebilir modelleri ve canlı sistemin
+// kullandığı modeli yükler (bkz. main.py::/sistem/anpr-modelleri).
+let _anprModelleriYuklendi = false;
+async function anprModelleriniYukle() {
+  if (_anprModelleriYuklendi || !rolYeterli("operatör")) return;
+  const dedSec = document.getElementById("dogrulukTestiDedektor");
+  const ocrSec = document.getElementById("dogrulukTestiOcr");
+  if (!dedSec || !ocrSec) return;
+  try {
+    const m = await apiCagir("/sistem/anpr-modelleri");
+    const secenekler = (liste, canli) => '<option value="">Canlı sistemdeki model' + (canli ? ` (${escapeHtml(canli)})` : "") + "</option>"
+      + liste.map(x => `<option value="${escapeHtml(x.ad)}" title="${escapeHtml(x.aciklama)}">${escapeHtml(x.ad)}${x.ad === canli ? " — canlıda" : ""}</option>`).join("");
+    dedSec.innerHTML = secenekler(m.dedektor_modelleri, m.canli_dedektor_modeli);
+    ocrSec.innerHTML = secenekler(m.ocr_modelleri, m.canli_ocr_modeli);
+    _anprModelleriYuklendi = true;
+  } catch (e) {
+    _yuklemeHatasi("ANPR model listesi", e);
+  }
+}
+
+// Bu oturumda çalıştırılan testlerin özeti -- farklı model/eşik/kontrast
+// denemelerini yan yana karşılaştırabilmek için (yalnızca bellekte).
+const _dogrulukTestiGecmisi = [];
+function _dogrulukTestiKarsilastirmasiniGoster() {
+  const el = document.getElementById("dogrulukTestiKarsilastirma");
+  if (!el || _dogrulukTestiGecmisi.length < 2) { if (el) el.innerHTML = ""; return; }
+  const enIyi = Math.max(..._dogrulukTestiGecmisi.map(g => g.oran ?? -1));
+  el.innerHTML = `
+    <div class="small fw-semibold mb-1">Bu oturumdaki denemeler (karşılaştırma)</div>
+    <div class="table-responsive"><table class="table table-sm mb-0">
+      <thead><tr><th class="small">Dedektör</th><th class="small">OCR</th><th class="small">Eşik</th><th class="small">Kontrast</th><th class="small">Doğruluk</th><th class="small">Süre/foto</th></tr></thead>
+      <tbody>${_dogrulukTestiGecmisi.map(g => `<tr${g.oran === enIyi ? ' class="table-success"' : ""}>
+        <td class="small">${escapeHtml(g.dedektor || "—")}</td>
+        <td class="small">${escapeHtml(g.ocr || "—")}</td>
+        <td class="small">${g.esik ?? "ayar"}</td>
+        <td class="small">${g.kontrast ? "Açık" : "Kapalı"}</td>
+        <td class="small fw-semibold">${g.oran != null ? "%" + (g.oran * 100).toFixed(1) : "—"}</td>
+        <td class="small">${g.sure != null ? g.sure + " ms" : "—"}</td>
+      </tr>`).join("")}</tbody>
+    </table></div>
+    <div class="small text-muted mt-1">Seçtiğiniz modeli canlıya almak için sunucudaki <code>.env</code> dosyasına
+      <code>PTS_ANPR_DETECTOR_MODEL=...</code> / <code>PTS_ANPR_OCR_MODEL=...</code> yazıp PTS'i yeniden başlatın.
+      Çok daha yavaş bir model, çok kameralı kurulumda araç başına okunan kare sayısını düşürebilir.</div>`;
+}
+
 async function dogrulukTestiCalistir(olay) {
   olay.preventDefault();
   const buton = document.getElementById("dogrulukTestiButon");
@@ -4265,14 +4360,18 @@ async function dogrulukTestiCalistir(olay) {
   const klasor = document.getElementById("dogrulukTestiKlasor").value.trim();
   const esikHam = document.getElementById("dogrulukTestiEsik").value.trim();
   const kontrast = document.getElementById("dogrulukTestiKontrast").checked;
+  const dedektorModeli = document.getElementById("dogrulukTestiDedektor")?.value || "";
+  const ocrModeli = document.getElementById("dogrulukTestiOcr")?.value || "";
   if (!klasor) return;
 
   buton.disabled = true;
   buton.innerHTML = '<span class="spinner-border spinner-border-sm"></span> Çalışıyor…';
-  sonucEl.innerHTML = '<div class="text-muted small">Fotoğraflar işleniyor, klasör büyükse biraz sürebilir…</div>';
+  sonucEl.innerHTML = '<div class="text-muted small">Fotoğraflar işleniyor, klasör büyükse (ya da farklı bir model ilk kez yükleniyorsa) biraz sürebilir…</div>';
   try {
     const govde = { klasor, kontrast_iyilestir: kontrast };
     if (esikHam) govde.min_guven_skoru = parseFloat(esikHam.replace(",", "."));
+    if (dedektorModeli) govde.dedektor_modeli = dedektorModeli;
+    if (ocrModeli) govde.ocr_modeli = ocrModeli;
     const r = await apiCagir("/sistem/dogruluk-testi", {
       method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(govde),
     });
@@ -4299,10 +4398,19 @@ async function dogrulukTestiCalistir(olay) {
         <td${notSatiri}><span class="badge bg-${rozetRenk} text-${["light"].includes(rozetRenk) ? "dark" : "white"}">${escapeHtml(d.sonuc)}</span></td>
       </tr>`;
     }).join("");
+    _dogrulukTestiGecmisi.push({
+      dedektor: r.dedektor_modeli, ocr: r.ocr_modeli, esik: govde.min_guven_skoru ?? null,
+      kontrast, oran: r.dogruluk_orani, sure: r.ortalama_sure_ms,
+    });
+    _dogrulukTestiKarsilastirmasiniGoster();
     sonucEl.innerHTML = `
       <div class="alert alert-info py-2 px-3 mb-2">
         <strong>Doğruluk oranı: ${oranYuzde}</strong>
         (${r.dogru}/${r.toplam - r.etiketlenemedi} etiketli dosya doğru okundu)
+        <div class="small mt-1">Dedektör: <code>${escapeHtml(r.dedektor_modeli || "—")}</code> ·
+          OCR: <code>${escapeHtml(r.ocr_modeli || "—")}</code> ·
+          Fotoğraf başına: ${r.ortalama_sure_ms != null ? r.ortalama_sure_ms + " ms" : "—"}
+          ${r.canli_motor_mu === false ? '<span class="badge bg-secondary ms-1" title="Canlı sistem değiştirilmedi; ayrı bir test motoru (CPU) kullanıldı">ayrı test motoru</span>' : ""}</div>
       </div>
       <div class="small text-muted mb-2">
         Doğru: ${r.dogru} · Yanlış: ${r.yanlis} · Eşik altında: ${r.esik_altinda} ·
@@ -4325,7 +4433,7 @@ async function dogrulukTestiCalistir(olay) {
 
 // Sistem sekmesi açıldığında logları ve sağlık bilgisini otomatik yükle
 document.querySelector('[data-bs-target="#sistem-sekme"]')?.addEventListener("click", () => {
-  sistemSagliginiYukle(); loglariYukle(); sistemAyarlariYukle(); diskBilgisiYukle();
+  sistemSagliginiYukle(); loglariYukle(); sistemAyarlariYukle(); diskBilgisiYukle(); anprModelleriniYukle();
 });
 
 // Denetim Kayıtları sekmesi açıldığında otomatik yükle (bkz. yukarıdaki

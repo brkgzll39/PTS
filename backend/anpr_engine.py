@@ -54,6 +54,25 @@ DEDEKTOR_MODELI_BILGILERI: dict[str, dict] = {
 # bkz. README'deki "2026-09-24" başlıklı bölüm.
 DEDEKTOR_MODELI_VARSAYILAN = "yolo-v9-s-608-license-plate-end2end"
 
+# OCR (karakter okuma) modeli -- fast_plate_ocr projesinin "global" (çok
+# ülkeli) modelleri. 2026-09-25 (kullanıcı: "kameranın en doğru ve hatasız
+# kayıt alması için ... yazılım tarafında ekleyebileceklerini deneyelim"):
+# OCR modeli önceden kodda SABİTTİ ("xs" = en küçük/en hızlı sürüm) ve
+# değiştirilemiyordu. Artık PTS_ANPR_OCR_MODEL ortam değişkeniyle seçilebilir
+# ve -- asıl önemlisi -- Sistem sekmesindeki "Toplu Doğruluk Testi" ile
+# CANLI SİSTEME DOKUNMADAN, kendi gerçek plaka fotoğraflarınız üzerinde
+# karşılaştırılabilir (doğruluk VE fotoğraf başına süre). "s" sürümü daha
+# büyük bir ağdır: genellikle zor karelerde (gece, açılı, kirli plaka) daha
+# isabetlidir ama daha yavaştır -- hangisinin sizin kameralarınızda daha iyi
+# olduğu ÖLÇÜLEREK karar verilmeli, varsayılan bu yüzden DEĞİŞTİRİLMEDİ.
+# Kurulu kütüphane sürümü bir modeli tanımıyorsa canlı sistem ÇÖKMEZ: hata
+# loglanıp varsayılan modele dönülür (bkz. ANPREngine.__init__).
+OCR_MODELI_VARSAYILAN = "cct-xs-v2-global-model"
+OCR_MODELI_BILGILERI: dict[str, str] = {
+    "cct-xs-v2-global-model": "küçük ağ -- en hızlı (varsayılan)",
+    "cct-s-v2-global-model": "daha büyük ağ -- zor karelerde daha isabetli olabilir, daha yavaş",
+}
+
 
 @dataclass
 class PlakaSonucu:
@@ -63,14 +82,20 @@ class PlakaSonucu:
 
 
 class ANPREngine:
-    def __init__(self, detector_model: str = DEDEKTOR_MODELI_VARSAYILAN, ocr_model: str = "cct-xs-v2-global-model"):
+    def __init__(self, detector_model: str = DEDEKTOR_MODELI_VARSAYILAN, ocr_model: str = OCR_MODELI_VARSAYILAN,
+                 modelleri_ortamdan_al: bool = True, sadece_cpu: bool = False):
+        # `modelleri_ortamdan_al=False` + `sadece_cpu=True`: Toplu Doğruluk
+        # Testi'nin farklı bir modeli denemek için oluşturduğu GEÇİCİ motor
+        # (bkz. camera_reader.py::_test_motoru_al). Model adları ortam
+        # değişkenlerinden DEĞİL doğrudan parametreden alınır; GPU'yu canlı
+        # motorla paylaşıp sürücüyü kararsızlaştırmasın diye CPU'da çalışır.
         # PTS_ANPR_DETECTOR_MODEL ortam değişkeni, yapıcıya (constructor) verilen
         # değeri geçersiz kılar — tıpkı aşağıdaki PTS_ANPR_DETECTOR_ESIGI gibi,
         # panelden DEĞİL, ortam değişkeniyle ayarlanır ve yalnızca açılışta okunur.
         # Bilinmeyen bir isim verilirse (yazım hatası gibi) uyarı loglanır ama
         # yine de fast_alpr'a olduğu gibi geçirilir — kütüphane yeni modeller
         # eklerse burayı güncellemeden de kullanılabilsin.
-        dedektor_modeli_ortam = os.environ.get("PTS_ANPR_DETECTOR_MODEL", "").strip()
+        dedektor_modeli_ortam = os.environ.get("PTS_ANPR_DETECTOR_MODEL", "").strip() if modelleri_ortamdan_al else ""
         dedektor_modeli_kaynagi = "yapıcı/kütüphane varsayılanı"
         if dedektor_modeli_ortam:
             if dedektor_modeli_ortam not in DEDEKTOR_MODELI_BILGILERI:
@@ -92,6 +117,21 @@ class ANPREngine:
             f"beklenen recall: {DEDEKTOR_MODELI_BILGILERI[detector_model]['recall']:.3f})"
             if detector_model in DEDEKTOR_MODELI_BILGILERI else "",
         )
+        ocr_modeli_ortam = os.environ.get("PTS_ANPR_OCR_MODEL", "").strip() if modelleri_ortamdan_al else ""
+        ocr_modeli_kaynagi = "yapıcı/kütüphane varsayılanı"
+        if ocr_modeli_ortam:
+            if ocr_modeli_ortam not in OCR_MODELI_BILGILERI:
+                logger.warning(
+                    "PTS_ANPR_OCR_MODEL=%r bilinen OCR model listesinde yok (bkz. "
+                    "anpr_engine.py::OCR_MODELI_BILGILERI) -- yine de deneniyor; yüklenemezse "
+                    "varsayılan modele dönülecek.",
+                    ocr_modeli_ortam,
+                )
+            ocr_model = ocr_modeli_ortam
+            ocr_modeli_kaynagi = "PTS_ANPR_OCR_MODEL ortam değişkeni"
+        self.ocr_modeli_etkin = ocr_model
+        self.ocr_modeli_kaynagi = ocr_modeli_kaynagi
+        logger.info("ANPR OCR modeli = %s — kaynak: %s", ocr_model, ocr_modeli_kaynagi)
         try:
             from fast_alpr import ALPR
         except ImportError as exc:
@@ -107,7 +147,7 @@ class ANPREngine:
         # çağrıları serileştiriyor (bkz. `_paylasilan_motoru_al`), bu riski büyük
         # ölçüde azaltır; ama sürücü/donanım hâlâ kararsızsa bu değişkenle CPU'ya
         # tamamen zorlanabilir (birkaç kamera için tipik olarak yeterince hızlıdır).
-        if os.environ.get("PTS_ANPR_PROVIDERS", "").strip().lower() in ("cpu", "cpu_only", "cpu-only"):
+        if sadece_cpu or os.environ.get("PTS_ANPR_PROVIDERS", "").strip().lower() in ("cpu", "cpu_only", "cpu-only"):
             ek_parametreler["detector_providers"] = ["CPUExecutionProvider"]
             ek_parametreler["ocr_providers"] = ["CPUExecutionProvider"]
             ek_parametreler["ocr_device"] = "cpu"
@@ -175,7 +215,28 @@ class ANPREngine:
         )
         self.detektor_esigi_etkin = detektor_esigi_etkin
         self.detektor_esigi_kaynagi = detektor_esigi_kaynagi
-        self._alpr = ALPR(detector_model=detector_model, ocr_model=ocr_model, **ek_parametreler)
+        try:
+            self._alpr = ALPR(detector_model=detector_model, ocr_model=ocr_model, **ek_parametreler)
+        except Exception as exc:
+            # Ortam değişkeniyle seçilen bir model (yazım hatası ya da kurulu
+            # kütüphane sürümünde bulunmayan bir model) yüklenemezse, canlı
+            # sistemde TÜM kameraların tanıması durmasın: hata açıkça loglanıp
+            # varsayılan modellerle yeniden denenir. Test motorunda (ortamdan
+            # okumayan) ise hata çağırana iletilir -- kullanıcı denediği modelin
+            # yüklenemediğini açıkça görmeli.
+            varsayilandan_farkli = (detector_model, ocr_model) != (DEDEKTOR_MODELI_VARSAYILAN, OCR_MODELI_VARSAYILAN)
+            if not (modelleri_ortamdan_al and varsayilandan_farkli):
+                raise
+            logger.error(
+                "ANPR modeli yüklenemedi (dedektör=%s, OCR=%s): %s -- VARSAYILAN modellere "
+                "dönülüyor. PTS_ANPR_DETECTOR_MODEL / PTS_ANPR_OCR_MODEL ayarlarını kontrol edin.",
+                detector_model, ocr_model, exc,
+            )
+            self.dedektor_modeli_etkin = DEDEKTOR_MODELI_VARSAYILAN
+            self.dedektor_modeli_kaynagi = "varsayılan (ayarlanan model yüklenemedi)"
+            self.ocr_modeli_etkin = OCR_MODELI_VARSAYILAN
+            self.ocr_modeli_kaynagi = "varsayılan (ayarlanan model yüklenemedi)"
+            self._alpr = ALPR(detector_model=DEDEKTOR_MODELI_VARSAYILAN, ocr_model=OCR_MODELI_VARSAYILAN, **ek_parametreler)
 
     def tahmin_et(self, frame: Any) -> list[PlakaSonucu]:
         """Frame üzerinde plaka bulur; motorun sonuç nesnelerini PTS tipine çevirir.

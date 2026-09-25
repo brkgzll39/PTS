@@ -2481,6 +2481,79 @@ def kamera_roi_guncelle(kamera_id: str, veri: schemas.KameraRoiGuncelle, kullani
     return _kamera_guvenli_gorunum(kamera)
 
 
+@app.get("/kameralar/okuma-kalitesi")
+def kamera_okuma_kalitesi(
+    gun: int = Query(7, ge=1, le=90),
+    db: Session = Depends(get_db),
+    kullanici: models.Kullanici = Depends(_personel_girisi_gerekli),
+):
+    """Kamera başına plaka okuma kalitesi (2026-09-25, kullanıcı: "kameranın
+    en doğru ve hatasız kayıt alması için ..."). Son `gun` gündeki OTOMATİK
+    (kamera kaynaklı, elle girilmemiş) kayıtlardan: tek karede okunan kayıt
+    oranı, aynı geçişte farklı okunan (kararsız) kayıt oranı, kayıtlı plakaya
+    göre düzeltilen kayıt oranı, ortalama doğrulama kare sayısı ve güven.
+    Değerlendirme ve öneriler: backend/okuma_kalitesi.py. Sayılar veritabanında
+    tek bir GROUP BY sorgusuyla hesaplanır. Kamera erişimi kısıtlı hesaplar
+    yalnızca kendi kameralarını görür."""
+    _rol_dogrula(kullanici, ROL_YONETICI, ROL_OPERATOR)
+    from sqlalchemy import case
+    from backend.okuma_kalitesi import kalite_degerlendir
+
+    K = models.Kayit
+    sinir = datetime.now() - timedelta(days=gun)
+    sorgu = (
+        db.query(
+            K.kamera_id,
+            func.count(K.id),
+            func.sum(case((K.dogrulama_kare_sayisi.isnot(None), 1), else_=0)),
+            func.sum(case((K.dogrulama_kare_sayisi <= 1, 1), else_=0)),
+            func.sum(case((K.farkli_okuma_sayisi > 1, 1), else_=0)),
+            func.sum(case((K.ham_plaka_metni.isnot(None), 1), else_=0)),
+            func.avg(K.dogrulama_kare_sayisi),
+            func.avg(K.guven_skoru),
+        )
+        .filter(K.tarih_saat >= sinir, or_(K.manuel_giris == False, K.manuel_giris.is_(None)))  # noqa: E712
+    )
+    izinli_adlar = _kullanicinin_izinli_kamera_adlari(kullanici)
+    if izinli_adlar is not None:
+        sorgu = sorgu.filter(K.kamera_id.in_(izinli_adlar))
+    satirlar = {r[0]: r for r in sorgu.group_by(K.kamera_id).all()}
+
+    # Tanımlı ama bu dönemde HİÇ kayıt üretmemiş kameralar da listelensin --
+    # "hiç okumuyor" en kötü durumdur ve GROUP BY sonucunda görünmez.
+    izinli_idler = _kullanicinin_izinli_kameralari(kullanici)
+    tanimli = [
+        k for k in _kameralari_oku()
+        if (izinli_idler is None or k.get("id") in izinli_idler)
+    ]
+    sonuc = []
+    gorulen = set()
+    for k in tanimli:
+        ad = k.get("ad")
+        gorulen.add(ad)
+        r = satirlar.get(ad)
+        degerlendirme = kalite_degerlendir(
+            int(r[1]) if r else 0, int(r[2] or 0) if r else 0, int(r[3] or 0) if r else 0,
+            int(r[4] or 0) if r else 0, int(r[5] or 0) if r else 0,
+            float(r[6]) if r and r[6] is not None else None,
+            float(r[7]) if r and r[7] is not None else None,
+        )
+        sonuc.append({"kamera": ad, "yon": k.get("yon"), "aktif": k.get("aktif", True), "tanimli": True, **degerlendirme})
+    # Artık tanımlı olmayan (silinmiş/yeniden adlandırılmış) kamera adlarıyla
+    # gelen kayıtlar (ör. klasör izleyici, harici sistem) da görünür kalsın.
+    for ad, r in satirlar.items():
+        if ad in gorulen:
+            continue
+        degerlendirme = kalite_degerlendir(
+            int(r[1]), int(r[2] or 0), int(r[3] or 0), int(r[4] or 0), int(r[5] or 0),
+            float(r[6]) if r[6] is not None else None, float(r[7]) if r[7] is not None else None,
+        )
+        sonuc.append({"kamera": ad, "yon": None, "aktif": None, "tanimli": False, **degerlendirme})
+    sira = {"zayif": 0, "dikkat": 1, "kayit_yok": 2, "yetersiz_veri": 3, "iyi": 4}
+    sonuc.sort(key=lambda s: (sira.get(s["durum"], 9), str(s["kamera"])))
+    return {"gun": gun, "kameralar": sonuc}
+
+
 @app.get("/kameralar/{kamera_id}/goruntu")
 async def kamera_goruntu_al(kamera_id: str, kullanici: models.Kullanici = Depends(_personel_girisi_gerekli)):
     """Kameradan anlık JPEG kare alır. Pipeline çalışıyorsa cached (temiz,
@@ -4022,6 +4095,39 @@ async def arvento_webhook(istek: Request, x_arvento_anahtari: Optional[str] = He
     return {"durum": "ok", "plaka_no": plaka_no, "surucu_adi": surucu_adi}
 
 
+_DOGRULAMA_FILTRELERI = ("riskli", "tek_kare", "kararsiz", "duzeltilmis")
+
+
+def _dogrulama_filtresi_uygula(sorgu, dogrulama: Optional[str]):
+    """Kayıtlar ekranındaki "Doğrulama" filtresi (2026-09-25, kullanıcı:
+    "kameranın en doğru ve hatasız kayıt alması için ..."). Yanlış okunmuş
+    olma ihtimali EN YÜKSEK otomatik kayıtları hızlıca gözden geçirebilmek
+    için (bkz. backend/okuma_kalitesi.py'deki ölçütlerin açıklaması):
+
+    * tek_kare    -- plaka yalnızca 1 karede okunup kaydedilmiş
+    * kararsiz    -- aynı geçişte plaka farklı karelerde FARKLI okunmuş
+    * duzeltilmis -- kayıtlı bir plakaya bakılarak tek karakter düzeltilmiş
+    * riskli      -- yukarıdakilerden herhangi biri
+
+    Elle girilen kayıtlar bu filtrelerde hiç görünmez (doğrulanacak bir OCR
+    okuması yoktur)."""
+    if not dogrulama:
+        return sorgu
+    K = models.Kayit
+    kosullar = {
+        "tek_kare": K.dogrulama_kare_sayisi <= 1,
+        "kararsiz": K.farkli_okuma_sayisi > 1,
+        "duzeltilmis": K.ham_plaka_metni.isnot(None),
+    }
+    if dogrulama == "riskli":
+        kosul = or_(*kosullar.values())
+    elif dogrulama in kosullar:
+        kosul = kosullar[dogrulama]
+    else:
+        raise HTTPException(400, f"Geçersiz doğrulama filtresi: {dogrulama!r} (geçerli: {', '.join(_DOGRULAMA_FILTRELERI)})")
+    return sorgu.filter(kosul, or_(K.manuel_giris == False, K.manuel_giris.is_(None)))  # noqa: E712
+
+
 @app.get("/kayitlar", response_model=List[schemas.KayitCevap])
 def kayitlari_listele(
     plaka: Optional[str] = None,
@@ -4035,8 +4141,10 @@ def kayitlari_listele(
     offset: int = Query(0, ge=0),
     db: Session = Depends(get_db),
     kullanici: models.Kullanici = Depends(_personel_girisi_gerekli),
+    dogrulama: Optional[str] = None,
 ):
     sorgu = db.query(models.Kayit)
+    sorgu = _dogrulama_filtresi_uygula(sorgu, dogrulama)
     if plaka:
         sorgu = sorgu.filter(models.Kayit.plaka_no.ilike(f"%{plaka}%"))
     if yetki_durumu:
@@ -4108,9 +4216,11 @@ def kayitlar_sayfa_bilgisi(
     limit: int = Query(50, ge=1, le=500),
     db: Session = Depends(get_db),
     kullanici: models.Kullanici = Depends(_personel_girisi_gerekli),
+    dogrulama: Optional[str] = None,
 ):
     """Sayfalama için toplam kayıt sayısını döndürür."""
     sorgu = db.query(models.Kayit)
+    sorgu = _dogrulama_filtresi_uygula(sorgu, dogrulama)
     if plaka:
         sorgu = sorgu.filter(models.Kayit.plaka_no.ilike(f"%{plaka}%"))
     if yetki_durumu:
@@ -4931,7 +5041,7 @@ _XLSX_MEDIA = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet
 def kayitlari_excel_indir(
     plaka: Optional[str] = None, baslangic: Optional[str] = None,
     bitis: Optional[str] = None, vardiya_adi: Optional[str] = None,
-    yetki_durumu: Optional[str] = None, db: Session = Depends(get_db),
+    yetki_durumu: Optional[str] = None, dogrulama: Optional[str] = None, db: Session = Depends(get_db),
     kullanici: models.Kullanici = Depends(_personel_girisi_gerekli),
 ):
     # NOT: kayitlari_listele() burada FastAPI'nin DI mekanizması ÜZERİNDEN
@@ -4966,7 +5076,7 @@ def kayitlari_excel_indir(
         kayitlar = kayitlari_listele(
             plaka=plaka, baslangic=baslangic, bitis=bitis, yetki_durumu=yetki_durumu or None,
             kamera_id=None, yon=None, vardiya_adi=vardiya_adi,
-            limit=5000, offset=0, db=db, kullanici=kullanici,
+            limit=5000, offset=0, db=db, kullanici=kullanici, dogrulama=dogrulama or None,
         )
         satirlar = _kayitlari_rapor_satirlari(kayitlar, db)
         dosya_yolu = _gecici_rapor_yolu("pts_kayitlar", "xlsx")
@@ -4978,7 +5088,7 @@ def kayitlari_excel_indir(
 def kayitlari_pdf_indir(
     plaka: Optional[str] = None, baslangic: Optional[str] = None,
     bitis: Optional[str] = None, vardiya_adi: Optional[str] = None,
-    yetki_durumu: Optional[str] = None, db: Session = Depends(get_db),
+    yetki_durumu: Optional[str] = None, dogrulama: Optional[str] = None, db: Session = Depends(get_db),
     kullanici: models.Kullanici = Depends(_personel_girisi_gerekli),
 ):
     # bkz. kayitlari_excel_indir'deki AYNI başlıklı not: `kullanici` VE
@@ -4989,7 +5099,7 @@ def kayitlari_pdf_indir(
         kayitlar = kayitlari_listele(
             plaka=plaka, baslangic=baslangic, bitis=bitis, yetki_durumu=yetki_durumu or None,
             kamera_id=None, yon=None, vardiya_adi=vardiya_adi,
-            limit=2000, offset=0, db=db, kullanici=kullanici,
+            limit=2000, offset=0, db=db, kullanici=kullanici, dogrulama=dogrulama or None,
         )
         satirlar = _kayitlari_rapor_satirlari(kayitlar, db)
         tarih_araligi_metni = _rapor_tarih_araligi_metni(baslangic, bitis, kayitlar)
@@ -5749,11 +5859,38 @@ async def dogruluk_testi_calistir(
                 istek.klasor,
                 min_guven_skoru=istek.min_guven_skoru if istek.min_guven_skoru is not None else _varsayilan_esik,
                 kontrast_iyilestir=istek.kontrast_iyilestir,
+                dedektor_modeli=istek.dedektor_modeli or None,
+                ocr_modeli=istek.ocr_modeli or None,
             ),
         )
     except (ValueError, RuntimeError) as exc:
         raise HTTPException(400, str(exc)) from exc
     return sonuc
+
+
+@app.get("/sistem/anpr-modelleri")
+def anpr_modellerini_listele(kullanici: models.Kullanici = Depends(_personel_girisi_gerekli)):
+    """Toplu Doğruluk Testi'nde seçilebilecek bilinen dedektör/OCR modelleri
+    ve canlı sistemin şu an kullandığı modeller (2026-09-25). Canlı motor
+    henüz oluşturulmadıysa (hiç kamera başlamadıysa) `canli` alanları,
+    ortam değişkenlerinden/varsayılandan hesaplanan değerlerdir."""
+    _rol_dogrula(kullanici, ROL_YONETICI, ROL_OPERATOR)
+    try:
+        from backend import anpr_engine as _ae
+    except Exception as exc:  # anpr_engine yalnızca stdlib'e bağlı; yine de güvenli
+        raise HTTPException(400, f"ANPR modülü yüklenemedi: {exc}")
+    bilgi = _anpr_dedektor_esigi_bilgisi_al() or {}
+    return {
+        "dedektor_modelleri": [
+            {"ad": ad, "aciklama": f"{v['boyut']} px giriş, beklenen recall {v['recall']:.3f}"}
+            for ad, v in _ae.DEDEKTOR_MODELI_BILGILERI.items()
+        ],
+        "ocr_modelleri": [{"ad": ad, "aciklama": aciklama} for ad, aciklama in _ae.OCR_MODELI_BILGILERI.items()],
+        "canli_dedektor_modeli": bilgi.get("model")
+            or (os.getenv("PTS_ANPR_DETECTOR_MODEL", "").strip() or _ae.DEDEKTOR_MODELI_VARSAYILAN),
+        "canli_ocr_modeli": bilgi.get("ocr_model")
+            or (os.getenv("PTS_ANPR_OCR_MODEL", "").strip() or _ae.OCR_MODELI_VARSAYILAN),
+    }
 
 
 _RTSP_KIMLIK_MASKELE_DESENI = re.compile(r"(rtsp://)([^/@\s:]+):([^/@\s]+)@")

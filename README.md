@@ -3740,3 +3740,60 @@ dosyalarının indirildikten sonra silinmesi, küçük resim ucu (boyut, önbell
 başlığı, yol geçişi koruması, kimliksiz 401), Plaka Analizi'nde 50'yi aşan
 toplam. Frontend (küçük resim isteği, büyütmede tam görselin yüklenmesi,
 rapor indirme bildirimi/düğme kilidi/tek istek) Playwright ile doğrulandı.
+
+## Okuma Doğruluğu Araçları: Model Karşılaştırma, Kamera Okuma Kalitesi, Riskli Kayıt Filtresi (2026-09-25, kullanıcı isteği)
+
+Kullanıcı: "kameranın en doğru ve hatasız kayıt alması için yapmam gereken
+iyileştirme var mı" → "yazılım tarafında ekleyebileceklerini deneyelim".
+Kamera kurulumu (plakanın karede en az ~130-150 px görünmesi, 1/500 sn veya
+daha hızlı enstantane, ≤30° açı, gece IR ayarı, ana yayın/H.264/≥4 Mbps)
+en büyük etkiyi yapar; bu sürüm, yazılım tarafında neyin iyi neyin kötü
+okuduğunu ÖLÇMEYİ ve farklı modelleri GÜVENLE denemeyi sağlar:
+
+- **Kamera başına "Okuma Kalitesi" (Kameralar sekmesi):** son 24 saat / 7 /
+  30 gündeki otomatik kayıtlardan her kamera için: tek karede okunup
+  kaydedilen kayıt oranı (oylamayla doğrulanamamış, en riskli okumalar),
+  aynı geçişte farklı karelerde FARKLI okunan (kararsız) kayıt oranı,
+  kayıtlı plakaya bakılarak düzeltilen kayıt oranı, ortalama doğrulama kare
+  sayısı. Her kamera "İyi / Dikkat / Zayıf / Kayıt yok" olarak
+  değerlendirilir ve neyin kontrol edilmesi gerektiğine dair somut öneri
+  gösterilir (zoom, enstantane, odak, IR, sıkıştırma, OCR modeli). Hiç kayıt
+  üretmeyen tanımlı kameralar da listelenir. Eşikler:
+  `backend/okuma_kalitesi.py`.
+- **Kayıtlar'da "Doğrulama" filtresi:** "Riskli okumalar", "Tek karede
+  okunan", "Farklı okunan (kararsız)", "Kayıtlı plakaya göre düzeltilen" —
+  yanlış okunmuş olma ihtimali en yüksek otomatik kayıtları hızlıca gözden
+  geçirmek için. Excel/PDF raporuna da uygulanır. Elle girilen kayıtlar bu
+  filtrelerde görünmez.
+- **OCR modeli artık seçilebilir ve karşılaştırılabilir:** plaka
+  karakterlerini okuyan model önceden kodda sabitti (en küçük/en hızlı
+  "xs" sürümü). Artık `.env`'de `PTS_ANPR_OCR_MODEL` ile seçilebiliyor
+  (ör. daha büyük `cct-s-v2-global-model`). Sistem > Toplu Doğruluk
+  Testi'nde dedektör ve OCR modeli açılır listeden seçilip kendi gerçek plaka
+  fotoğraflarınızla denenebiliyor: test canlı sistemi DEĞİŞTİRMEDEN, ayrı ve
+  CPU'da çalışan geçici bir motorla yapılıyor (canlı kameraların GPU'sunu ve
+  ortak kilidini bekletmiyor). Sonuçta doğruluk oranının yanında fotoğraf
+  başına süre de gösteriliyor ve aynı oturumdaki denemeler yan yana bir
+  karşılaştırma tablosunda listeleniyor (en iyisi vurgulanıyor) — daha
+  isabetli ama çok daha yavaş bir model, çok kameralı kurulumda araç başına
+  okunan kare sayısını düşürebileceği için ikisi birlikte
+  değerlendirilmeli. Karar verilen model `.env`'ye yazılıp PTS yeniden
+  başlatılınca canlıya geçer.
+- **Güvenli geri dönüş:** `.env`'de yazılan bir dedektör/OCR modeli
+  yüklenemezse (yazım hatası ya da kurulu kütüphane sürümünde bulunmayan
+  bir model) canlı sistemde TÜM kameraların tanıması durmuyor: hata loglanıp
+  varsayılan modellerle devam ediliyor. Test ekranında ise yüklenemeyen
+  model açık bir hata mesajıyla bildiriliyor.
+
+**Testler:** gerçekten çalıştırılanlar: OCR modeli seçimi/ortam değişkeni,
+yüklenemeyen modelde varsayılana dönüş, test motorunun ortam
+değişkenlerini yok sayıp CPU'da çalışması (`tests/test_anpr_engine.py`);
+toplu doğruluk testinin farklı modeli ayrı motorla deneyip canlı motora
+dokunmaması, test motorunun önbelleklenmesi ve yüklenemeyen modelde
+anlaşılır hata (`tests/test_camera_reader.py`); okuma kalitesi
+değerlendirme eşikleri ve önerileri (`tests/test_okuma_kalitesi.py`).
+`tests/test_api.py`'ye (CI'da çalışır): Doğrulama filtresi (liste, sayfa
+bilgisi, rapor, geçersiz değer), okuma kalitesi ucu (oranlar, rol, gün
+sınırı), model listesi, model adında yol karakterlerinin reddedilmesi.
+Frontend (okuma kalitesi tablosu, HTML kaçışlama, model seçimi, karşılaştırma
+tablosu, filtre parametresi) Playwright ile doğrulandı.

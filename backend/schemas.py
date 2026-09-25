@@ -580,3 +580,10 @@ class DogrulukTestiIstegi(BaseModel):
     klasor: str
     min_guven_skoru: Optional[float] = None
     kontrast_iyilestir: bool = False
+    # 2026-09-25: boş/None = canlı sistemin kullandığı model. Farklı bir model
+    # verilirse test canlı motoru DEĞİŞTİRMEDEN ayrı bir geçici motorla yapılır
+    # (bkz. camera_reader.py::_test_motoru_al) -- /sistem/anpr-modelleri bilinen
+    # model adlarını listeler.
+    # Yalnızca model ADI (dosya yolu değil) kabul edilir.
+    dedektor_modeli: Optional[str] = Field(None, max_length=100, pattern=r"^[A-Za-z0-9._-]*$")
+    ocr_modeli: Optional[str] = Field(None, max_length=100, pattern=r"^[A-Za-z0-9._-]*$")

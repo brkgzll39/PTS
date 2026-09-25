@@ -1187,3 +1187,60 @@ def test_polygon_roi_icindeki_tespit_normal_sekilde_islenir(monkeypatch, sahte_e
     gonderilenler = pipeline._kareyi_isle(kare, oturumu_hemen_kapat=True)
 
     assert gonderilenler == ["34 ABC 123"]
+
+
+def test_toplu_dogruluk_testi_farkli_modeli_ayri_motorla_dener_canliya_dokunmaz(tmp_path, monkeypatch):
+    """2026-09-25: Toplu Doğruluk Testi'nde farklı bir dedektör/OCR modeli
+    seçilince canlı (paylaşılan) motor DEĞİŞMEMELİ; test ayrı, CPU'da
+    çalışan geçici bir motorla yapılmalı ve sonuçta kullanılan modeller +
+    fotoğraf başına süre raporlanmalı."""
+    olusturulanlar = []
+
+    class _ModelliSahteEngine(_SahteEngine):
+        def __init__(self, detector_model="canli-dedektor", ocr_model="canli-ocr",
+                     modelleri_ortamdan_al=True, sadece_cpu=False, **kw):
+            super().__init__(plaka="34ABC123", guven=0.95)
+            self.dedektor_modeli_etkin = detector_model
+            self.ocr_modeli_etkin = ocr_model
+            olusturulanlar.append({"det": detector_model, "ocr": ocr_model,
+                                   "ortam": modelleri_ortamdan_al, "cpu": sadece_cpu})
+
+    monkeypatch.setattr(camera_reader, "ANPREngine", _ModelliSahteEngine)
+    monkeypatch.setattr(camera_reader, "_paylasilan_motor", None)
+    monkeypatch.setattr(camera_reader, "_test_motoru", None)
+    monkeypatch.setattr(camera_reader, "_test_motoru_anahtari", None)
+    cv2.imwrite(str(tmp_path / "20260917_34ABC123.jpg"), np.full((240, 320, 3), 90, dtype=np.uint8))
+
+    canli = camera_reader.toplu_dogruluk_testi(str(tmp_path))
+    assert canli["canli_motor_mu"] is True
+    assert (canli["dedektor_modeli"], canli["ocr_modeli"]) == ("canli-dedektor", "canli-ocr")
+    assert canli["ortalama_sure_ms"] is not None
+
+    farkli = camera_reader.toplu_dogruluk_testi(str(tmp_path), ocr_modeli="cct-s-v2-global-model")
+    assert farkli["canli_motor_mu"] is False
+    assert (farkli["dedektor_modeli"], farkli["ocr_modeli"]) == ("canli-dedektor", "cct-s-v2-global-model")
+    assert farkli["dogru"] == 1
+    assert olusturulanlar[-1] == {"det": "canli-dedektor", "ocr": "cct-s-v2-global-model", "ortam": False, "cpu": True}
+    # Canlı motor değişmedi.
+    assert camera_reader._paylasilan_motor.ocr_modeli_etkin == "canli-ocr"
+
+    # Aynı modelle ikinci test motoru yeniden yüklemez (önbellek).
+    adet = len(olusturulanlar)
+    camera_reader.toplu_dogruluk_testi(str(tmp_path), ocr_modeli="cct-s-v2-global-model")
+    assert len(olusturulanlar) == adet
+
+
+def test_toplu_dogruluk_testi_yuklenemeyen_model_anlasilir_hata_verir(tmp_path, monkeypatch):
+    class _HataVerenEngine(_SahteEngine):
+        def __init__(self, *a, modelleri_ortamdan_al=True, **kw):
+            if not modelleri_ortamdan_al:
+                raise ValueError("model bulunamadı")
+            super().__init__()
+            self.ocr_modeli_etkin = "canli-ocr"
+
+    monkeypatch.setattr(camera_reader, "ANPREngine", _HataVerenEngine)
+    monkeypatch.setattr(camera_reader, "_paylasilan_motor", None)
+    monkeypatch.setattr(camera_reader, "_test_motoru", None)
+    monkeypatch.setattr(camera_reader, "_test_motoru_anahtari", None)
+    with pytest.raises(ValueError, match="Model yüklenemedi"):
+        camera_reader.toplu_dogruluk_testi(str(tmp_path), ocr_modeli="olmayan-model")

@@ -863,6 +863,18 @@
                 <option value="D">D Vardiyası</option>
               </select>
             </div>
+            <!-- 2026-09-25: yanlış okunmuş olma ihtimali en yüksek otomatik kayıtları
+                 gözden geçirmek için (bkz. main.py::_dogrulama_filtresi_uygula). -->
+            <div class="col-md-2">
+              <label class="form-label small" for="filtreDogrulama">Doğrulama</label>
+              <select class="form-select" id="filtreDogrulama" title="Yanlış okunmuş olabilecek otomatik kayıtları göster">
+                <option value="">Tümü</option>
+                <option value="riskli">Riskli okumalar (hepsi)</option>
+                <option value="tek_kare">Tek karede okunan</option>
+                <option value="kararsiz">Farklı okunan (kararsız)</option>
+                <option value="duzeltilmis">Kayıtlı plakaya göre düzeltilen</option>
+              </select>
+            </div>
             <div class="col-md-2 d-flex gap-2">
               <button class="btn btn-primary flex-fill" onclick="kayitlariYukle()"><i class="bi bi-search"></i> Filtrele</button>
             </div>
@@ -1129,6 +1141,32 @@
       <div class="row g-3">
         <div class="col-lg-5"><div class="card"><div class="card-header"><i class="bi bi-camera-video-fill me-1"></i>Kamera Ekle</div><div class="card-body"><form id="kameraForm" data-rol-min="operatör"><div class="mb-3"><label class="form-label small" for="kameraAd">Kamera adı</label><input class="form-control" id="kameraAd" placeholder="Nizamiye Giriş" required></div><div class="mb-3"><label class="form-label small" for="kameraRtsp">RTSP adresi</label><input class="form-control" id="kameraRtsp" placeholder="rtsp://kullanici:sifre@192.168.1.20:554/..." required></div><div class="mb-3"><label class="form-label small" for="kameraYon">Yön</label><select class="form-select" id="kameraYon"><option value="giris">Giriş</option><option value="cikis">Çıkış</option></select></div><button class="btn btn-primary" type="submit"><i class="bi bi-plus-circle"></i> Kamerayı Kaydet</button></form><div id="kameraSonuc" class="small mt-3"></div></div></div></div>
         <div class="col-lg-7"><div class="card"><div class="card-header d-flex justify-content-between"><span><i class="bi bi-list-ul me-1"></i>Tanımlı Kameralar</span><div class="d-flex gap-2 align-items-center"><span id="kameraSayac" class="small text-muted">-</span><button class="btn btn-sm btn-outline-info" onclick="tumKameralarSaglikKontrol()" title="Tüm kameraları ping'le"><i class="bi bi-activity"></i> Sağlık</button></div></div><div class="card-body p-0"><div class="table-responsive"><table class="table table-hover mb-0 align-middle"><thead class="table-light"><tr><th>Ad</th><th>Yön</th><th>RTSP adresi</th><th>Pipeline</th><th>TCP</th><th></th></tr></thead><tbody id="kameralarTablo"></tbody></table></div></div></div></div>
+        <!-- 2026-09-25: kamera başına okuma kalitesi (bkz. main.py::kamera_okuma_kalitesi,
+             backend/okuma_kalitesi.py) -- hangi kameranın zayıf okuduğunu ve
+             neyin düzeltilmesi gerektiğini tek bakışta gösterir. -->
+        <div class="col-12"><div class="card"><div class="card-header d-flex justify-content-between align-items-center flex-wrap gap-2">
+          <span><i class="bi bi-speedometer2 me-1"></i>Okuma Kalitesi</span>
+          <div class="d-flex gap-2 align-items-center">
+            <label for="okumaKalitesiGun" class="small text-muted mb-0">Dönem</label>
+            <select id="okumaKalitesiGun" class="form-select form-select-sm" style="width:auto" onchange="okumaKalitesiYukle()">
+              <option value="1">Son 24 saat</option><option value="7" selected>Son 7 gün</option><option value="30">Son 30 gün</option>
+            </select>
+            <button class="btn btn-sm btn-outline-secondary" onclick="okumaKalitesiYukle()" title="Yenile"><i class="bi bi-arrow-clockwise"></i></button>
+          </div>
+        </div><div class="card-body p-0">
+          <div class="table-responsive"><table class="table table-sm mb-0 align-middle">
+            <thead class="table-light"><tr>
+              <th>Kamera</th><th>Durum</th><th class="text-end">Otomatik kayıt</th>
+              <th class="text-end" title="Plakanın yalnızca 1 karede okunup kaydedildiği kayıtlar -- en riskli okumalar">Tek kare</th>
+              <th class="text-end" title="Aynı geçişte plakanın farklı karelerde farklı okunduğu kayıtlar">Kararsız okuma</th>
+              <th class="text-end" title="Kayıtlı bir plakaya bakılarak tek karakter hatası düzeltilen kayıtlar">Düzeltilen</th>
+              <th class="text-end" title="Plakanın ortalama kaç karede doğrulandığı">Ort. kare</th>
+              <th>Öneri</th>
+            </tr></thead>
+            <tbody id="okumaKalitesiTablo"><tr><td colspan="8" class="text-center text-muted py-3">Yükleniyor…</td></tr></tbody>
+          </table></div>
+          <div class="small text-muted px-3 py-2">Yalnızca kameradan otomatik gelen kayıtlar değerlendirilir (elle girilen kayıtlar hariç). "Tek kare" ve "Kararsız okuma" oranı yüksek bir kamerada yanlış plaka kaydı riski artar.</div>
+        </div></div></div>
       </div>
     </div>
 
@@ -1568,9 +1606,23 @@
                     </div>
                   </div>
                 </div>
+                <!-- 2026-09-25: model karşılaştırma -- canlı sistemi değiştirmeden
+                     farklı dedektör/OCR modellerini aynı fotoğraflarla dener
+                     (bkz. camera_reader.py::_test_motoru_al). -->
+                <div class="row g-2 mb-2">
+                  <div class="col-6">
+                    <label for="dogrulukTestiDedektor" class="form-label small mb-1">Dedektör modeli</label>
+                    <select class="form-select form-select-sm" id="dogrulukTestiDedektor"><option value="">Canlı sistemdeki model</option></select>
+                  </div>
+                  <div class="col-6">
+                    <label for="dogrulukTestiOcr" class="form-label small mb-1">OCR (okuma) modeli</label>
+                    <select class="form-select form-select-sm" id="dogrulukTestiOcr"><option value="">Canlı sistemdeki model</option></select>
+                  </div>
+                </div>
                 <button type="submit" class="btn btn-sm btn-primary" id="dogrulukTestiButon"><i class="bi bi-play-fill"></i> Testi Çalıştır</button>
               </form>
               <div id="dogrulukTestiSonuc" class="mt-3"></div>
+              <div id="dogrulukTestiKarsilastirma" class="mt-3"></div>
             </div>
           </div>
         </div>

@@ -124,7 +124,34 @@ def dedektor_esigi_bilgisi() -> Optional[dict]:
         "kaynak": getattr(_paylasilan_motor, "detektor_esigi_kaynagi", "bilinmiyor"),
         "model": getattr(_paylasilan_motor, "dedektor_modeli_etkin", None),
         "model_kaynagi": getattr(_paylasilan_motor, "dedektor_modeli_kaynagi", "bilinmiyor"),
+        "ocr_model": getattr(_paylasilan_motor, "ocr_modeli_etkin", None),
+        "ocr_model_kaynagi": getattr(_paylasilan_motor, "ocr_modeli_kaynagi", "bilinmiyor"),
     }
+
+
+# Toplu Doğruluk Testi'nde CANLI motordan FARKLI bir dedektör/OCR modeli
+# denenmek istendiğinde kullanılan geçici motor (2026-09-25). Tek bir örnek
+# önbellekte tutulur: aynı modelle art arda yapılan testler modeli her
+# seferinde yeniden yüklemesin, ama farklı modeller birikip belleği
+# doldurmasın. CPU'da çalışır (bkz. ANPREngine'in `sadece_cpu` notu) -- canlı
+# kameraların GPU'sunu paylaşmaz.
+_test_motoru: Optional["ANPREngine"] = None
+_test_motoru_anahtari: Optional[tuple] = None
+_test_motoru_kilit = threading.Lock()
+
+
+def _test_motoru_al(dedektor_modeli: str, ocr_modeli: str) -> "ANPREngine":
+    global _test_motoru, _test_motoru_anahtari
+    anahtar = (dedektor_modeli, ocr_modeli)
+    with _test_motoru_kilit:
+        if _test_motoru is None or _test_motoru_anahtari != anahtar:
+            _test_motoru = None  # önce eskisini bırak (bellek)
+            _test_motoru = ANPREngine(
+                detector_model=dedektor_modeli, ocr_model=ocr_modeli,
+                modelleri_ortamdan_al=False, sadece_cpu=True,
+            )
+            _test_motoru_anahtari = anahtar
+        return _test_motoru
 
 
 logger = logging.getLogger("pts.camera")
@@ -1435,7 +1462,8 @@ def tek_gorsel_test(gorsel_yolu: str, api_url: str = "http://localhost:8000/kayi
 
 
 def toplu_dogruluk_testi(klasor: str, min_guven_skoru: float = VARSAYILAN_MIN_GUVEN_SKORU,
-                          kontrast_iyilestir: bool = False) -> dict:
+                          kontrast_iyilestir: bool = False, dedektor_modeli: Optional[str] = None,
+                          ocr_modeli: Optional[str] = None) -> dict:
     """Etiketli bir fotoğraf klasörü üzerinde ANPR motorunun doğruluğunu ÖLÇER.
 
     CANLI SİSTEME HİÇBİR YAN ETKİSİ YOKTUR: API'ye kayıt POST ETMEZ,
@@ -1476,6 +1504,17 @@ def toplu_dogruluk_testi(klasor: str, min_guven_skoru: float = VARSAYILAN_MIN_GU
     değiştirince de hâlâ 0 tespit" aslında "dosyalar hiç okunamıyor"
     anlamına gelebilir). Her dosya için ayrıca uygulama logunda (INFO
     seviyesinde) hangi kategoriye düştüğü ve varsa kare boyutu loglanır.
+
+    MODEL KARŞILAŞTIRMA (2026-09-25): `dedektor_modeli`/`ocr_modeli`
+    verilirse ve canlı motorunkinden farklıysa, test CANLI motoru değiştirmeden
+    ayrı, CPU'da çalışan geçici bir motorla (bkz. `_test_motoru_al`) yapılır.
+    Sonuca kullanılan modeller ve fotoğraf başına ortalama çıkarım süresi
+    (`ortalama_sure_ms`) eklenir -- daha isabetli ama çok daha yavaş bir
+    model, çok kameralı bir kurulumda araç başına okunabilen kare sayısını
+    düşürüp toplamda doğruluğu KÖTÜLEŞTİREBİLİR; bu yüzden ikisi birlikte
+    değerlendirilmeli. (CPU'daki geçici motorun süresi, GPU kullanan canlı
+    motordan daha uzun olabilir; iki modeli AYNI koşulda karşılaştırmak için
+    her ikisini de bu alanlardan seçerek test edin.)
     """
     if not KUTUPHANELER_MEVCUT:
         raise RuntimeError(
@@ -1486,12 +1525,29 @@ def toplu_dogruluk_testi(klasor: str, min_guven_skoru: float = VARSAYILAN_MIN_GU
         raise ValueError(f"Klasör bulunamadı: {klasor}")
 
     motor = _paylasilan_motoru_al()
+    ayri_motor = False
+    canli_dedektor = getattr(motor, "dedektor_modeli_etkin", None)
+    canli_ocr = getattr(motor, "ocr_modeli_etkin", None)
+    istenen_dedektor = (dedektor_modeli or "").strip() or canli_dedektor
+    istenen_ocr = (ocr_modeli or "").strip() or canli_ocr
+    if (dedektor_modeli or ocr_modeli) and (istenen_dedektor, istenen_ocr) != (canli_dedektor, canli_ocr):
+        try:
+            motor = _test_motoru_al(istenen_dedektor, istenen_ocr)
+        except Exception as exc:
+            raise ValueError(
+                f"Model yüklenemedi (dedektör={istenen_dedektor}, OCR={istenen_ocr}): {exc}. "
+                "Model adı yanlış ya da kurulu kütüphane sürümünde bulunmuyor olabilir."
+            ) from exc
+        ayri_motor = True
     etkin_model = getattr(motor, "dedektor_modeli_etkin", "bilinmiyor")
+    etkin_ocr = getattr(motor, "ocr_modeli_etkin", "bilinmiyor")
     etkin_esik = getattr(motor, "detektor_esigi_etkin", "bilinmiyor")
+    toplam_cikarim_sn = 0.0
+    cikarim_sayisi = 0
     logger.info(
         "toplu_dogruluk_testi başlıyor: klasor=%r, min_guven_skoru=%.3f, "
-        "kontrast_iyilestir=%s, dedektör modeli=%s, dedektör eşiği=%s",
-        klasor, min_guven_skoru, kontrast_iyilestir, etkin_model, etkin_esik,
+        "kontrast_iyilestir=%s, dedektör modeli=%s, OCR modeli=%s, dedektör eşiği=%s, ayrı test motoru=%s",
+        klasor, min_guven_skoru, kontrast_iyilestir, etkin_model, etkin_ocr, etkin_esik, ayri_motor,
     )
     sayaclar = {
         "dogru": 0, "yanlis": 0, "esik_altinda": 0, "tespit_edilemedi": 0,
@@ -1535,8 +1591,17 @@ def toplu_dogruluk_testi(klasor: str, min_guven_skoru: float = VARSAYILAN_MIN_GU
         kare_boyutu = f"{frame.shape[1]}x{frame.shape[0]}"
         try:
             dedektore_giden = _kontrast_iyilestirmesi_uygula(frame) if kontrast_iyilestir else frame
-            with _motor_cagri_kilit:
+            if ayri_motor:
+                # Ayrı (CPU) test motoru canlı kameraların ortak kilidini
+                # BEKLETMEZ -- test sürerken canlı tanıma yavaşlamasın.
+                baslangic = time.perf_counter()
                 tespitler = motor.tahmin_et(dedektore_giden)
+            else:
+                with _motor_cagri_kilit:
+                    baslangic = time.perf_counter()
+                    tespitler = motor.tahmin_et(dedektore_giden)
+            toplam_cikarim_sn += time.perf_counter() - baslangic
+            cikarim_sayisi += 1
         except Exception as exc:
             sayaclar["hata"] += 1
             detaylar.append({
@@ -1592,5 +1657,9 @@ def toplu_dogruluk_testi(klasor: str, min_guven_skoru: float = VARSAYILAN_MIN_GU
         "toplam": len(dosyalar),
         **sayaclar,
         "dogruluk_orani": dogruluk_orani,
+        "dedektor_modeli": etkin_model,
+        "ocr_modeli": etkin_ocr,
+        "canli_motor_mu": not ayri_motor,
+        "ortalama_sure_ms": round(toplam_cikarim_sn / cikarim_sayisi * 1000, 1) if cikarim_sayisi else None,
         "detaylar": detaylar,
     }
