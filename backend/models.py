@@ -423,3 +423,55 @@ class DenetimKaydi(Base):
     kullanici_adi = Column(String(80), nullable=False, index=True)  # işlemi YAPAN kullanıcı
     eylem = Column(String(50), nullable=False, index=True)  # ör. "kullanici_sil", "kamera_sil"
     aciklama = Column(Text, nullable=False)  # insan-okunur detay (ör. "rol: izleyici -> operatör")
+
+
+class OturumTokeni(Base):
+    """Başarılı bir /auth/giris ile açılmış TEK BİR aktif oturumun kaydı --
+    "Hesap Güvenliği: Aktif Oturumları Görme ve Uzaktan Kapatma" (2026-09-26,
+    kullanıcı isteği).
+
+    KÖK NEDEN: kimlik doğrulama önceden TAMAMEN DURUMSUZDU (stateless) --
+    `main.py::_token_uret` yalnızca `kullanici_id` ve bir bitiş zaman
+    damgasını HMAC ile imzalıyordu, sunucu tarafında bu token'a dair HİÇBİR
+    kayıt tutulmuyordu. Bu şu iki soruyu YANITSIZ bırakıyordu: (1) "şu an bu
+    hesapla hangi cihazlar/tarayıcılardan oturum açılmış?" ve (2) parola
+    değiştirmeden, yalnızca "şu belirli oturumu" uzaktan kapatmak -- imzası
+    hâlâ matematiksel olarak geçerli bir token'ı, süresi (8 saat) dolmadan
+    iptal etmenin HİÇBİR yolu yoktu (bir hesabı `aktif=False` yapmak TÜM
+    oturumlarını keser ama hesabı da tamamen kullanılamaz hale getirir --
+    "yalnızca şüpheli BİR oturumu kapat, hesabı KİLİTLEME" isteğini
+    karşılamaz).
+
+    Artık her başarılı girişte burada rastgele/tahmin edilemez bir `jti`
+    (JWT terminolojisindeki "JWT ID" karşılığı, ama burada JWT değil kendi
+    imzalı biçimimiz kullanılıyor) ile bir satır açılıyor VE bu jti token'ın
+    imzalı GÖVDESİNE de ekleniyor (bkz. main.py::_token_uret/_token_coz).
+    `_giris_gerekli` (ve token'ı doğrudan çözen /kamera-akis, /olaylar/sse
+    uç noktaları) artık imza+süre kontrolüne EK olarak bu satırın hâlâ var
+    olmasını da zorunlu kılıyor -- satır silinirse (yönetici panelden
+    "Kapat" derse, ya da parola sıfırlanınca/hesap pasife alınınca ilgili
+    kullanıcının TÜM satırları toplu silinince, bkz. main.py::
+    kullanici_guncelle/kullanici_sil) imza hâlâ geçerli olsa bile bir
+    SONRAKİ istekte 401 döner. Süresi geçmiş satırlar `main.py::
+    _oturum_temizlik_dongu` tarafından periyodik olarak temizlenir (yoksa
+    tablo sınırsız büyür -- bkz. Patch #113'ün "disk doluyor" kök neden
+    notuyla AYNI türde bir sorun olurdu)."""
+    __tablename__ = "oturum_tokenleri"
+
+    id = Column(Integer, primary_key=True, index=True)
+    kullanici_id = Column(Integer, ForeignKey("kullanicilar.id"), nullable=False, index=True)
+    jti = Column(String(32), nullable=False, unique=True, index=True)
+    # İstemcinin IP adresi (bkz. main.py::giris_yap -- request.client.host).
+    # Yalnızca bilgilendirici amaçlıdır, hiçbir yetkilendirme kararı buna
+    # dayanmaz (ör. bir NAT/proxy arkasında birden çok kullanıcı aynı IP'yi
+    # paylaşabilir).
+    ip_adresi = Column(String(64), nullable=True)
+    olusturma_tarihi = Column(DateTime, default=datetime.now)
+    # _giris_gerekli tarafından THROTTLE edilerek güncellenir (bkz. main.py::
+    # _OTURUM_GUNCELLEME_ARALIK_SN) -- her istekte yazmak gereksiz DB
+    # yüküne yol açardı; panelde "son görülme" olarak gösterilir.
+    son_kullanim_tarihi = Column(DateTime, default=datetime.now)
+    # Token'ın imzalı gövdesindeki bitiş zaman damgasıyla AYNI değer --
+    # süresi geçmiş satırların temizlik döngüsünce bulunabilmesi için burada
+    # da (sorgulanabilir bir DateTime olarak) tutulur.
+    bitis_tarihi = Column(DateTime, nullable=False)

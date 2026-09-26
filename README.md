@@ -4149,3 +4149,96 @@ dışı değerleri reddettiği, ve `_disk_izleme_bir_kontrol`'ün eşiği aşan
 sahte bir disk için hem alarm hem dış bildirim ürettiği (ve hemen
 tekrarında spam üretmediği) ile `disk_izleme_aktif=False` iken hiçbir şey
 yapmadığı.
+
+## Hesap Güvenliği: Aktif Oturumları Görme, Uzaktan Kapatma ve Parola Kuralı (2026-09-26, kullanıcı isteği)
+
+Kullanıcının seçtiği dördüncü ve son iyileştirme. İki bağımsız kök neden
+sorununu birlikte ele alır.
+
+### 1) Aktif oturumlar önceden ne görülebiliyordu ne de tek tek kapatılabiliyordu
+
+Kimlik doğrulama TAMAMEN DURUMSUZDU (stateless): `/auth/giris` yalnızca
+`kullanici_id` ve bir bitiş zaman damgasını HMAC ile imzalayıp
+istemciye veriyordu, sunucu tarafında bu token'a dair HİÇBİR kayıt
+tutulmuyordu. Bu, iki soruyu yanıtsız bırakıyordu: "şu an bu hesapla hangi
+cihazlardan/tarayıcılardan oturum açılmış?" ve "yalnızca ŞÜPHELİ BİR
+oturumu -- hesabın tamamını pasife almadan veya parolasını değiştirmeden --
+nasıl uzaktan kapatırım?". İmzası hâlâ geçerli bir token'ı, süresi (8 saat)
+dolmadan iptal etmenin hiçbir yolu yoktu.
+
+**Nasıl çalışır:**
+
+- Yeni tablo `oturum_tokenleri` (`models.OturumTokeni`): her başarılı
+  `/auth/giris` çağrısında, rastgele/tahmin edilemez bir `jti` ile bir
+  satır açılır (IP adresi, giriş zamanı, "son kullanım" zamanı ve bitiş
+  zamanı ile birlikte). Bu `jti`, token'ın imzalı gövdesine de eklenir
+  (`_token_uret`/`_token_coz`).
+- `_giris_gerekli` (panelin kullandığı her korumalı uç nokta) artık imza+süre
+  kontrolüne EK olarak bu satırın hâlâ var olduğunu da doğrular
+  (`_oturum_dogrula_ve_guncelle`) -- satır silinirse imza hâlâ matematiksel
+  olarak geçerli olsa bile bir SONRAKİ istekte 401 döner. Aynı kontrol,
+  token'ı header'dan doğrudan çözen `/kameralar/{id}/akis` (canlı MJPEG
+  akışı) ve `/olaylar/sse` (canlı olay akışı) uç noktalarında da uygulanır
+  -- yoksa "oturumu kapattım" güvencesi bu iki akış için yanıltıcı kalırdı.
+  `son_kullanim_tarihi`, her istekte değil, en fazla dakikada bir güncellenir
+  (gereksiz DB yazımını önlemek için).
+- Panelde yeni "Aktif Oturumlar (Hesap Güvenliği)" kartı (Kullanıcılar
+  sekmesi, yalnızca yönetici): `GET /kullanicilar/oturumlar` tüm aktif
+  oturumları listeler (isteği yapan yöneticinin KENDİ oturumu "bu oturum"
+  rozetiyle işaretlenir), `DELETE /kullanicilar/oturumlar/{id}` belirli BİR
+  oturumu uzaktan kapatır -- işlem "Denetim Kayıtları"na da yazılır.
+- Bir hesabın parolası sıfırlandığında veya hesap pasife alındığında
+  (`kullanici_guncelle`), o hesaba ait TÜM oturum satırları HEMEN silinir --
+  yoksa eski (hâlâ imza olarak geçerli) bir token, süresi dolana kadar
+  (8 saate kadar) çalışmaya devam ederdi ve "parolayı değiştirdim/hesabı
+  kapattım" güvencesi yanıltıcı olurdu. Bir hesap tamamen silindiğinde
+  (`kullanici_sil`) da ona ait oturum satırları temizlenir.
+- Yeni arka plan görevi `_oturum_temizlik_dongu`, saatte bir süresi geçmiş
+  oturum satırlarını siler -- yoksa tablo, sistem ne kadar uzun çalışırsa
+  o kadar (her giriş başına bir satır) sınırsız büyürdü (Patch #113'ün
+  "disk doluyor" kök neden notuyla aynı türde, yalnızca disk yerine
+  veritabanı satırlarında yaşanan bir sorun).
+
+### 2) Parola kuralı: yalnızca uzunluk yeterli değildi
+
+Önceden yalnızca UZUNLUK (en az 8 karakter) kontrol ediliyordu (ilk yönetici
+kurulumunda main.py içinde elle, yeni kullanıcı ekleme/parola sıfırlamada
+ise pydantic şemasının `Field(min_length=8)` kısıtlamasıyla) -- "12345678"
+veya "aaaaaaaa" gibi tahmin edilmesi çok kolay ama 8 karakteri geçen
+parolalar sorunsuz kabul ediliyordu.
+
+**Nasıl çalışır:** yeni merkezi `_parola_politikasi_dogrula` fonksiyonu,
+parolanın oluşturulduğu/sıfırlandığı HER YERDE (ilk yönetici kurulumu, yeni
+kullanıcı ekleme, mevcut kullanıcının parolasını sıfırlama) TUTARLI olarak
+şunu zorunlu kılar: en az 8 karakter, en az bir HARF, en az bir RAKAM, ve
+kullanıcı adıyla (büyük/küçük harf farkı gözetmeksizin) AYNI OLMAMA. Panelde
+ilgili parola alanlarının altına bu kural açıklayıcı metin olarak eklendi.
+
+### Bilinçli sınırlamalar
+
+- Karmaşıklık kuralı özel karakter ZORUNLU KILMAZ (yalnızca harf+rakam) --
+  amaç, gerçek dünyada personelin hatırlayabileceği makul bir minimum
+  sağlamak, NIST tarzı aşırı karmaşık kurallarla "parolayı bir kağıda
+  yazma" davranışını teşvik etmemek.
+- Oturumun "son kullanım" zaman damgası dakikalık hassasiyette güncellenir
+  (throttle) -- saniye saniye "şu an aktif" takibi İÇİN değil, "bu oturum
+  ne zamandır kullanılmıyor" sorusuna kabaca cevap vermek içindir.
+- IP adresi yalnızca bilgilendirme amaçlıdır; bir NAT/proxy arkasında
+  birden çok kullanıcı aynı IP'yi paylaşabileceği için hiçbir yetkilendirme
+  kararı buna dayanmaz.
+
+### Testler
+
+`tests/test_api.py` (CI) — `_parola_politikasi_dogrula`'nın kısa, harfsiz,
+rakamsız ve kullanıcı adıyla aynı parolaları reddettiği (ve geçerli bir
+parolayı kabul ettiği); `/kullanicilar` (ekleme) ve `/kullanicilar/{id}`
+(güncelleme) uç noktalarının zayıf parolaları 400 ile reddettiği; başarılı
+girişte bir `OturumTokeni` satırı açıldığı; `/kullanicilar/oturumlar`'ın
+yalnızca yönetici tarafından görülebildiği ve isteği yapanın kendi oturumunu
+işaretlediği; bir oturum `DELETE` ile kapatılınca o token'ın hemen 401
+almaya başladığı (ve işlemin denetim kaydına yazıldığı, bulunamayan bir
+id için 404 döndüğü); parola sıfırlama veya hesabı pasife almanın o hesabın
+TÜM eski oturumlarını hemen geçersiz kıldığı; hesap silindiğinde oturum
+satırlarının da silindiği; temizlik döngüsünün yalnızca süresi geçmiş
+satırları sildiği; ve eski (jti içermeyen) biçimde bir token gönderilirse
+sunucunun çökmeden (500 değil) net bir 401 döndüğü.

@@ -2174,6 +2174,251 @@ def test_kullanici_silme_loglanir(client, caplog, yetkili_header):
 
 
 # ------------------------------------------------------------------
+# "Hesap Güvenliği: Parola Kuralı" (2026-09-26, kullanıcı isteği) -- bkz.
+# main.py::_parola_politikasi_dogrula. Önceden yalnızca UZUNLUK (en az 8
+# karakter) kontrol ediliyordu; "12345678"/"aaaaaaaa" gibi tahmin edilmesi
+# çok kolay parolalar sorunsuz kabul ediliyordu.
+# ------------------------------------------------------------------
+
+def test_parola_politikasi_dogrula_kisa_parola_reddeder():
+    with pytest.raises(Exception) as exc_info:
+        pts_main._parola_politikasi_dogrula("Ab1")
+    assert exc_info.value.status_code == 400
+
+
+def test_parola_politikasi_dogrula_harfsiz_parola_reddeder():
+    with pytest.raises(Exception) as exc_info:
+        pts_main._parola_politikasi_dogrula("12345678")
+    assert exc_info.value.status_code == 400
+    assert "harf" in exc_info.value.detail
+
+
+def test_parola_politikasi_dogrula_rakamsiz_parola_reddeder():
+    with pytest.raises(Exception) as exc_info:
+        pts_main._parola_politikasi_dogrula("abcdefgh")
+    assert exc_info.value.status_code == 400
+    assert "rakam" in exc_info.value.detail
+
+
+def test_parola_politikasi_dogrula_kullanici_adiyla_ayni_parola_reddeder():
+    with pytest.raises(Exception) as exc_info:
+        pts_main._parola_politikasi_dogrula("Bulent123", kullanici_adi="Bulent123")
+    assert exc_info.value.status_code == 400
+
+
+def test_parola_politikasi_dogrula_gecerli_parola_kabul_eder():
+    pts_main._parola_politikasi_dogrula("GucluParola123!", kullanici_adi="admin")  # hata fırlatmamalı
+
+
+def test_kullanici_ekle_zayif_parola_ile_reddedilir(client, yetkili_header):
+    r = client.post("/kullanicilar", json={
+        "kullanici_adi": "zayif-parola-testi", "parola": "aaaaaaaa", "rol": "izleyici",
+    }, headers=yetkili_header)
+    assert r.status_code == 400, r.text
+    assert "rakam" in r.json()["detail"]
+
+
+def test_kullanici_guncelle_zayif_parola_ile_reddedilir(client, yetkili_header):
+    r = client.post("/kullanicilar", json={
+        "kullanici_adi": "guncelle-zayif-parola-testi", "parola": "GucluParola123!", "rol": "izleyici",
+    }, headers=yetkili_header)
+    assert r.status_code == 200, r.text
+    kid = r.json()["id"]
+    r2 = client.put(f"/kullanicilar/{kid}", json={"parola": "12345678"}, headers=yetkili_header)
+    assert r2.status_code == 400, r2.text
+
+
+# ------------------------------------------------------------------
+# "Hesap Güvenliği: Aktif Oturumları Görme ve Uzaktan Kapatma" (2026-09-26,
+# kullanıcı isteği) -- bkz. models.OturumTokeni, main.py::_giris_gerekli/
+# _token_uret/_token_coz/_oturum_dogrula_ve_guncelle. KÖK NEDEN: kimlik
+# doğrulama önceden TAMAMEN DURUMSUZDU -- bir token'ın imzası geçerliyse
+# (süresi -8 saat- dolmadıysa) onu parola değiştirmeden iptal etmenin hiçbir
+# yolu yoktu.
+# ------------------------------------------------------------------
+
+def test_giris_yapinca_oturum_tokeni_satiri_olusturulur(client, yetkili_header):
+    from backend.database import SessionLocal
+    from backend import models
+
+    r = client.post("/kullanicilar", json={
+        "kullanici_adi": "oturum-satiri-testi", "parola": "GucluParola123!", "rol": "izleyici",
+    }, headers=yetkili_header)
+    assert r.status_code == 200, r.text
+    kid = r.json()["id"]
+    r2 = client.post("/auth/giris", json={"kullanici_adi": "oturum-satiri-testi", "parola": "GucluParola123!"})
+    assert r2.status_code == 200, r2.text
+
+    db = SessionLocal()
+    try:
+        satirlar = db.query(models.OturumTokeni).filter(models.OturumTokeni.kullanici_id == kid).all()
+        assert len(satirlar) == 1
+        assert satirlar[0].jti
+        assert satirlar[0].bitis_tarihi is not None
+    finally:
+        db.close()
+
+
+def test_oturumlari_listele_yalnizca_yonetici_gorebilir(client, izleyici_header):
+    r = client.get("/kullanicilar/oturumlar", headers=izleyici_header)
+    assert r.status_code == 403
+
+
+def test_oturumlari_listele_bu_oturumu_isaretler(client, yetkili_header):
+    r = client.get("/kullanicilar/oturumlar", headers=yetkili_header)
+    assert r.status_code == 200, r.text
+    satirlar = r.json()
+    assert any(s["bu_oturum"] for s in satirlar), "İsteği yapan yöneticinin KENDİ oturumu işaretlenmeli"
+
+
+def test_oturumu_kapatinca_token_gecersiz_olur(client, yetkili_header):
+    r = client.post("/kullanicilar", json={
+        "kullanici_adi": "oturum-kapatma-testi", "parola": "GucluParola123!", "rol": "izleyici",
+    }, headers=yetkili_header)
+    assert r.status_code == 200, r.text
+    kid = r.json()["id"]
+    r2 = client.post("/auth/giris", json={"kullanici_adi": "oturum-kapatma-testi", "parola": "GucluParola123!"})
+    assert r2.status_code == 200, r2.text
+    hedef_header = {"Authorization": f"Bearer {r2.json()['token']}"}
+
+    assert client.get("/kisiler", headers=hedef_header).status_code == 200
+
+    satirlar = client.get("/kullanicilar/oturumlar", headers=yetkili_header).json()
+    satir = next(s for s in satirlar if s["kullanici_id"] == kid)
+
+    r3 = client.delete(f"/kullanicilar/oturumlar/{satir['id']}", headers=yetkili_header)
+    assert r3.status_code == 200, r3.text
+
+    r4 = client.get("/kisiler", headers=hedef_header)
+    assert r4.status_code == 401, "Kapatılmış bir oturumun token'ı ARTIK kabul edilmemeli"
+
+
+def test_oturumu_kapatma_denetim_kaydina_yazilir(client, yetkili_header):
+    r = client.post("/kullanicilar", json={
+        "kullanici_adi": "oturum-denetim-testi", "parola": "GucluParola123!", "rol": "izleyici",
+    }, headers=yetkili_header)
+    kid = r.json()["id"]
+    client.post("/auth/giris", json={"kullanici_adi": "oturum-denetim-testi", "parola": "GucluParola123!"})
+    satirlar = client.get("/kullanicilar/oturumlar", headers=yetkili_header).json()
+    satir = next(s for s in satirlar if s["kullanici_id"] == kid)
+    r2 = client.delete(f"/kullanicilar/oturumlar/{satir['id']}", headers=yetkili_header)
+    assert r2.status_code == 200, r2.text
+    r3 = client.get("/denetim-kayitlari", params={"eylem": "oturum_kapat"}, headers=yetkili_header)
+    assert r3.status_code == 200, r3.text
+    assert any("oturum-denetim-testi" in k["aciklama"] for k in r3.json())
+
+
+def test_oturumu_kapatma_bulunamayan_id_404_doner(client, yetkili_header):
+    r = client.delete("/kullanicilar/oturumlar/999999999", headers=yetkili_header)
+    assert r.status_code == 404
+
+
+def test_parola_sifirlaninca_eski_oturumlar_kapatilir(client, yetkili_header):
+    r = client.post("/kullanicilar", json={
+        "kullanici_adi": "parola-sifirlama-oturum-testi", "parola": "GucluParola123!", "rol": "izleyici",
+    }, headers=yetkili_header)
+    kid = r.json()["id"]
+    r2 = client.post("/auth/giris", json={"kullanici_adi": "parola-sifirlama-oturum-testi", "parola": "GucluParola123!"})
+    eski_header = {"Authorization": f"Bearer {r2.json()['token']}"}
+    assert client.get("/kisiler", headers=eski_header).status_code == 200
+
+    r3 = client.put(f"/kullanicilar/{kid}", json={"parola": "YeniGucluParola456!"}, headers=yetkili_header)
+    assert r3.status_code == 200, r3.text
+
+    r4 = client.get("/kisiler", headers=eski_header)
+    assert r4.status_code == 401, "Parola sıfırlanınca ESKİ token hemen geçersiz olmalı"
+
+
+def test_hesap_pasife_alinca_eski_oturumlar_kapatilir(client, yetkili_header):
+    r = client.post("/kullanicilar", json={
+        "kullanici_adi": "pasif-oturum-testi", "parola": "GucluParola123!", "rol": "izleyici",
+    }, headers=yetkili_header)
+    kid = r.json()["id"]
+    r2 = client.post("/auth/giris", json={"kullanici_adi": "pasif-oturum-testi", "parola": "GucluParola123!"})
+    header = {"Authorization": f"Bearer {r2.json()['token']}"}
+    assert client.get("/kisiler", headers=header).status_code == 200
+
+    r3 = client.put(f"/kullanicilar/{kid}", json={"aktif": False}, headers=yetkili_header)
+    assert r3.status_code == 200, r3.text
+
+    r4 = client.get("/kisiler", headers=header)
+    assert r4.status_code == 401
+
+
+def test_kullanici_silinince_oturum_satirlari_da_silinir(client, yetkili_header):
+    from backend.database import SessionLocal
+    from backend import models
+
+    r = client.post("/kullanicilar", json={
+        "kullanici_adi": "silinen-hesap-oturum-testi", "parola": "GucluParola123!", "rol": "izleyici",
+    }, headers=yetkili_header)
+    kid = r.json()["id"]
+    client.post("/auth/giris", json={"kullanici_adi": "silinen-hesap-oturum-testi", "parola": "GucluParola123!"})
+
+    r2 = client.delete(f"/kullanicilar/{kid}", headers=yetkili_header)
+    assert r2.status_code == 200, r2.text
+
+    db = SessionLocal()
+    try:
+        kalan = db.query(models.OturumTokeni).filter(models.OturumTokeni.kullanici_id == kid).count()
+        assert kalan == 0
+    finally:
+        db.close()
+
+
+def test_oturum_temizlik_bir_kontrol_suresi_gecmis_satiri_siler():
+    from backend.database import SessionLocal
+    from backend import models
+
+    db = SessionLocal()
+    try:
+        gecmis = models.OturumTokeni(
+            kullanici_id=1, jti="gecmis-oturum-test-jti-0000", ip_adresi="127.0.0.1",
+            bitis_tarihi=datetime.now() - timedelta(hours=1),
+        )
+        gelecek = models.OturumTokeni(
+            kullanici_id=1, jti="gelecek-oturum-test-jti-000", ip_adresi="127.0.0.1",
+            bitis_tarihi=datetime.now() + timedelta(hours=1),
+        )
+        db.add_all([gecmis, gelecek])
+        db.commit()
+    finally:
+        db.close()
+
+    try:
+        pts_main._oturum_temizlik_bir_kontrol()
+
+        db = SessionLocal()
+        try:
+            assert db.query(models.OturumTokeni).filter(
+                models.OturumTokeni.jti == "gecmis-oturum-test-jti-0000"
+            ).first() is None
+            assert db.query(models.OturumTokeni).filter(
+                models.OturumTokeni.jti == "gelecek-oturum-test-jti-000"
+            ).first() is not None
+        finally:
+            db.close()
+    finally:
+        db = SessionLocal()
+        db.query(models.OturumTokeni).filter(models.OturumTokeni.jti == "gelecek-oturum-test-jti-000").delete()
+        db.commit()
+        db.close()
+
+
+def test_token_coz_eski_bicim_jtisiz_token_500_yerine_401_doner(client):
+    """Eski (jti eklenmeden ÖNceki) iki-parçalı imza biçimiyle üretilmiş bir
+    token gönderilirse -- ör. sunucu güncellenirken hâlâ tarayıcıda kalmış
+    bir oturum -- sunucu çökmeden (500) net bir 401 dönmelidir."""
+    import base64
+    bitis = int(pts_main.time.time()) + 3600
+    govde = f"1:{bitis}".encode("utf-8")
+    imza = pts_main.hmac.new(pts_main.AUTH_SECRET.encode("utf-8"), govde, pts_main.hashlib.sha256).digest()
+    eski_bicim_token = base64.urlsafe_b64encode(govde + b":" + imza).decode("ascii").rstrip("=")
+    r = client.get("/kisiler", headers={"Authorization": f"Bearer {eski_bicim_token}"})
+    assert r.status_code == 401
+
+
+# ------------------------------------------------------------------
 # "Nizamiye Bazlı Kamera Erişimi" (2026-09-21) -- bir kullanıcı hesabını
 # belirli kameralarla sınırlama (bkz. models.Kullanici.kamera_erisim_listesi,
 # main.py::_kullanicinin_izinli_kameralari). Kullanıcı talebi: aynı ağdaki

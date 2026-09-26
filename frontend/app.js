@@ -730,7 +730,7 @@ function authBasarili(kullanici) {
 async function uygulamaVerileriniYukle() {
   panelYenile(); sonGecislerYukle(); kayitlariYukle(); kisileriYukle(); ledAyarlariYukle(); lisansYukle(); kameralariYukle();
   grafikYukle(); karaListesiYukle(); bariyerleriYukle(); kullanicilariYukle(); sistemSagliginiYukle();
-  bildirimAyarlariYukle(); vardiyaOturumlariniYukle(); _panelYenilemeAyariniYukle();
+  bildirimAyarlariYukle(); vardiyaOturumlariniYukle(); oturumlariYukle(); _panelYenilemeAyariniYukle();
   await siteleriYukle(); noktalariYukle();
   sseBaslat();
 }
@@ -4255,6 +4255,48 @@ async function vardiyaOturumunuSonlandir(id) {
   try {
     await apiCagir(`/vardiya-oturumlari/${id}/sonlandir`, { method: "POST" });
     vardiyaOturumlariniYukle();
+  } catch (e) { toastGoster(e.message, "hata"); }
+}
+
+// ================================================================
+// HESAP GÜVENLİĞİ: AKTİF OTURUMLAR (2026-09-26, kullanıcı isteği) -- bkz.
+// backend/models.py::OturumTokeni'nin docstring'indeki kök neden notu.
+// Kimlik doğrulama önceden TAMAMEN DURUMSUZDU: bir token'ın imzası
+// geçerliyse (süresi -8 saat- dolmadıysa) onu iptal etmenin HİÇBİR yolu
+// yoktu. Bu ekran, o hesaplarla şu an hangi cihazlardan oturum açılmış
+// olduğunu gösterir ve tek tek "Kapat" ile uzaktan sonlandırmayı sağlar.
+// ================================================================
+
+async function oturumlariYukle() {
+  const tabloEl = document.getElementById("oturumlarTablo");
+  if (!tabloEl) return;
+  try {
+    const [oturumlar, kullanicilar] = await Promise.all([
+      apiCagir("/kullanicilar/oturumlar"),
+      apiCagir("/kullanicilar"),
+    ]);
+    const kullaniciAdi = Object.fromEntries(kullanicilar.map(k => [k.id, k.kullanici_adi]));
+    tabloEl.innerHTML = oturumlar.map(o => `
+      <tr class="${o.bu_oturum ? "table-info" : ""}">
+        <td>${escapeHtml(kullaniciAdi[o.kullanici_id] || `#${o.kullanici_id} (silinmiş)`)}
+          ${o.bu_oturum ? '<span class="badge bg-info text-dark ms-1">bu oturum</span>' : ""}</td>
+        <td>${escapeHtml(o.ip_adresi || "-")}</td>
+        <td>${o.olusturma_tarihi ? tarihFormatla(o.olusturma_tarihi) : "-"}</td>
+        <td>${o.son_kullanim_tarihi ? tarihFormatla(o.son_kullanim_tarihi) : "-"}</td>
+        <td>${o.bitis_tarihi ? tarihFormatla(o.bitis_tarihi) : "-"}</td>
+        <td><button class="btn btn-sm btn-outline-danger" onclick="oturumuKapat(${o.id})" title="Kapat"><i class="bi bi-x-circle"></i> Kapat</button></td>
+      </tr>
+    `).join("") || `<tr><td colspan="6" class="text-center text-muted py-3">Aktif oturum yok</td></tr>`;
+  } catch (e) {
+    tabloEl.innerHTML = `<tr><td colspan="6" class="text-center text-muted py-3">Bu bölümü sadece yönetici görebilir</td></tr>`;
+  }
+}
+
+async function oturumuKapat(id) {
+  if (!(await onayAl("Bu oturumu şimdi kapatmak istediğinize emin misiniz? İlgili cihaz/tarayıcı bir sonraki istekte oturumdan düşecek."))) return;
+  try {
+    await apiCagir(`/kullanicilar/oturumlar/${id}`, { method: "DELETE" });
+    oturumlariYukle();
   } catch (e) { toastGoster(e.message, "hata"); }
 }
 

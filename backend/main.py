@@ -1389,24 +1389,97 @@ def _parola_dogrula(parola: str, kayit: str) -> bool:
         return False
 
 
-def _token_uret(kullanici_id: int) -> str:
+_PAROLA_HARF_DESENI = re.compile(r"[A-Za-zÇĞİÖŞÜçğıöşü]")
+_PAROLA_RAKAM_DESENI = re.compile(r"\d")
+
+
+def _parola_politikasi_dogrula(parola: str, kullanici_adi: Optional[str] = None) -> None:
+    """Parola oluşturma/sıfırlama uçlarının HEPSİNDE (ilk yönetici kurulumu,
+    yeni kullanıcı ekleme, mevcut kullanıcının parolasını sıfırlama) TUTARLI
+    şekilde uygulanan TEK merkezi kural seti -- "Hesap Güvenliği: Parola
+    Kuralı" (2026-09-26, kullanıcı isteği).
+
+    KÖK NEDEN: önceden yalnızca UZUNLUK kontrol ediliyordu (en az 8 karakter
+    -- bkz. schemas.KullaniciOlustur/KullaniciGuncelle'nin
+    `Field(min_length=8)` kısıtlaması, ve `/auth/ilk-yonetici`'deki artık bu
+    fonksiyona TAŞINMIŞ elle `len(...) < 8` kontrolü); yani "12345678" veya
+    "aaaaaaaa" gibi TAHMİN EDİLMESİ ÇOK KOLAY ama 8 karakteri geçen parolalar
+    sorunsuz kabul ediliyordu. Artık uzunluğa EK olarak en az bir HARF ve en
+    az bir RAKAM zorunlu, ve parolanın kullanıcı adıyla (büyük/küçük harf
+    farkı gözetmeksizin) BİREBİR AYNI olması reddediliyor. `kullanici_adi`
+    çağıran yerde henüz bilinmiyorsa (olamaz ama savunmacı olsun diye)
+    `None` geçilebilir -- bu durumda yalnızca uzunluk/karışım kontrolü
+    yapılır."""
+    if len(parola) < 8:
+        raise HTTPException(400, "Parola en az 8 karakter olmalıdır")
+    if not _PAROLA_HARF_DESENI.search(parola):
+        raise HTTPException(400, "Parola en az bir harf içermelidir")
+    if not _PAROLA_RAKAM_DESENI.search(parola):
+        raise HTTPException(400, "Parola en az bir rakam içermelidir")
+    if kullanici_adi and parola.strip().lower() == kullanici_adi.strip().lower():
+        raise HTTPException(400, "Parola kullanıcı adıyla aynı olamaz")
+
+
+def _token_uret(kullanici_id: int, db: Session, ip_adresi: Optional[str] = None) -> str:
+    """Yeni bir oturum açar: hem imzalı token'ı üretir HEM DE bu token'ı
+    (uzaktan kapatılabilir kılmak için) `models.OturumTokeni` tablosunda bir
+    satır olarak kalıcı tutar -- bkz. o modelin docstring'indeki kök neden
+    notu. `jti`, imzalı gövdeye eklenir; `_token_coz` bunu geri çözer ve
+    `_giris_gerekli` (ve doğrudan token çözen /kamera-akis, /olaylar/sse uç
+    noktaları) bu satırın hâlâ var olduğunu doğrular."""
     bitis = int(time.time()) + 8 * 60 * 60
-    govde = f"{kullanici_id}:{bitis}".encode("utf-8")
+    jti = secrets.token_hex(16)
+    db.add(models.OturumTokeni(
+        kullanici_id=kullanici_id, jti=jti, ip_adresi=ip_adresi,
+        bitis_tarihi=datetime.fromtimestamp(bitis),
+    ))
+    db.commit()
+    govde = f"{kullanici_id}:{bitis}:{jti}".encode("utf-8")
     imza = hmac.new(AUTH_SECRET.encode("utf-8"), govde, hashlib.sha256).digest()
     return base64.urlsafe_b64encode(govde + b":" + imza).decode("ascii").rstrip("=")
 
 
-def _token_coz(token: str) -> int:
+def _token_coz(token: str) -> tuple:
+    """İmzayı ve süreyi doğrular, `(kullanici_id, jti)` döner. NOT: `jti`
+    doğrulanmış tek başına bu token'ın SUNUCU tarafında hâlâ geçerli
+    (kapatılmamış) bir oturuma karşılık geldiği anlamına GELMEZ -- bunun
+    için çağıran, dönen `jti` ile ayrıca `models.OturumTokeni` tablosunu
+    kontrol etmelidir (bkz. _giris_gerekli, _oturum_dogrula_ve_guncelle)."""
     try:
         veri = base64.urlsafe_b64decode(token + "=" * (-len(token) % 4))
-        kullanici_id, bitis, imza = veri.split(b":", 2)
-        govde = b":".join((kullanici_id, bitis))
+        kullanici_id, bitis, jti, imza = veri.split(b":", 3)
+        govde = b":".join((kullanici_id, bitis, jti))
         beklenen = hmac.new(AUTH_SECRET.encode("utf-8"), govde, hashlib.sha256).digest()
         if not hmac.compare_digest(imza, beklenen) or int(bitis) < int(time.time()):
             raise ValueError
-        return int(kullanici_id)
+        return int(kullanici_id), jti.decode("ascii")
     except (ValueError, TypeError, UnicodeDecodeError):
         raise HTTPException(401, "Oturum geçersiz veya süresi dolmuş")
+
+
+# jti -> son son_kullanim_tarihi GÜNCELLEME zamanı (time.monotonic()). Her
+# istekte DB'ye yazmamak için THROTTLE (bkz. _oturum_dogrula_ve_guncelle) --
+# _disk_son_alarm_zamani/_basarisiz_girisler ile AYNI bellek-içi desen.
+_oturum_son_guncelleme: dict = {}
+_OTURUM_GUNCELLEME_ARALIK_SN = 60
+
+
+def _oturum_dogrula_ve_guncelle(db: Session, jti: str) -> None:
+    """`jti`'ye karşılık gelen `models.OturumTokeni` satırı hâlâ var mı
+    kontrol eder (yoksa -- yönetici panelden kapattıysa, ya da parola
+    sıfırlama/hesap pasife alma yüzünden toplu silindiyse -- 401 fırlatır)
+    ve varsa `son_kullanim_tarihi`'ni (en fazla `_OTURUM_GUNCELLEME_ARALIK_SN`
+    saniyede bir) günceller. `_giris_gerekli`, `/kamera-akis` ve
+    `/olaylar/sse` tarafından ORTAK olarak kullanılır -- üçü de aynı token'ı
+    kabul ettiği için revoke davranışının TUTARLI olması gerekir."""
+    oturum = db.query(models.OturumTokeni).filter(models.OturumTokeni.jti == jti).first()
+    if not oturum:
+        raise HTTPException(401, "Oturum geçersiz veya süresi dolmuş (uzaktan kapatılmış olabilir)")
+    simdi = time.monotonic()
+    if simdi - _oturum_son_guncelleme.get(jti, 0.0) > _OTURUM_GUNCELLEME_ARALIK_SN:
+        oturum.son_kullanim_tarihi = datetime.now()
+        db.commit()
+        _oturum_son_guncelleme[jti] = simdi
 
 
 def _giris_gerekli(
@@ -1438,9 +1511,18 @@ def _giris_gerekli(
         ham_token = token.strip()
     if not ham_token:
         raise HTTPException(401, "Bearer token gerekli")
-    kullanici = db.query(models.Kullanici).filter(models.Kullanici.id == _token_coz(ham_token)).first()
+    kullanici_id, jti = _token_coz(ham_token)
+    _oturum_dogrula_ve_guncelle(db, jti)
+    kullanici = db.query(models.Kullanici).filter(models.Kullanici.id == kullanici_id).first()
     if not kullanici or not kullanici.aktif:
         raise HTTPException(401, "Kullanıcı hesabı aktif değil")
+    # "Hesap Güvenliği: Aktif Oturumlar" (2026-09-26): panelin "Aktif
+    # Oturumlar" listesinde, isteği yapan yöneticinin O ANDA kullandığı
+    # oturumu ("bu oturum") işaretleyebilmek için -- bkz.
+    # main.py::oturumlari_listele. Bu, `models.Kullanici`'nin bir SÜTUNU
+    # DEĞİL, yalnızca bu istek ömrü boyunca yaşayan geçici bir Python
+    # niteliği (kalıcı hale gelmez, `db.commit()` bunu ETKİLEMEZ).
+    kullanici._aktif_jti = jti
     return kullanici
 
 
@@ -2147,12 +2229,55 @@ async def _basarisiz_giris_temizligini_baslat():
     asyncio.ensure_future(_basarisiz_giris_temizlik_dongu())
 
 
+# "Hesap Güvenliği: Aktif Oturumlar" (2026-09-26) -- `models.OturumTokeni`
+# satırları yalnızca yönetici elle kapattığında ya da bağlı kullanıcının
+# parolası sıfırlandığında/hesabı pasife alındığında SİLİNİR (bkz.
+# kullanici_guncelle/kullanici_sil) -- token'ın kendi süresi (8 saat) dolduğu
+# için "artık geçersiz" hale gelen satırlar KENDİLİĞİNDEN silinmez. Bu
+# döngü olmasaydı tablo, sistem ne kadar uzun çalışırsa o kadar (her giriş
+# başına bir satır) SINIRSIZ büyürdü -- Patch #113'ün "disk doluyor" kök
+# neden notuyla AYNI türde, yalnızca disk yerine veritabanı satırlarında
+# yaşanan bir sorun.
+OTURUM_TEMIZLIK_ARALIK_SN = 60 * 60  # saatte bir
+
+
+def _oturum_temizlik_bir_kontrol() -> int:
+    """Tek bir kontrol turu: bitiş zamanı geçmiş TÜM oturum satırlarını
+    siler ve silinen satır sayısını döner. Döngüden AYRI, kendi başına
+    çağrılabilir bir fonksiyon olarak tutulur (bkz. _disk_izleme_bir_kontrol/
+    _otomatik_yedek_uret_ve_dogrula'daki AYNI test edilebilirlik deseni)."""
+    db = SessionLocal()
+    try:
+        silinen = db.query(models.OturumTokeni).filter(
+            models.OturumTokeni.bitis_tarihi < datetime.now()
+        ).delete(synchronize_session=False)
+        db.commit()
+        return silinen
+    finally:
+        db.close()
+
+
+async def _oturum_temizlik_dongu() -> None:
+    while True:
+        await asyncio.sleep(OTURUM_TEMIZLIK_ARALIK_SN)
+        try:
+            silinen = _oturum_temizlik_bir_kontrol()
+            if silinen:
+                logger.debug("Süresi dolmuş oturum kayıtları temizlendi: %d", silinen)
+        except Exception as exc:
+            logger.error("[oturum-temizlik] Temizlik döngüsünde hata: %s", exc, exc_info=True)
+
+
+@app.on_event("startup")
+async def _oturum_temizligini_baslat():
+    asyncio.ensure_future(_oturum_temizlik_dongu())
+
+
 @app.post("/auth/ilk-yonetici", response_model=schemas.KullaniciCevap)
 def ilk_yonetici_olustur(istek: schemas.IlkYoneticiOlustur, db: Session = Depends(get_db)):
     if db.query(models.Kullanici).count() > 0:
         raise HTTPException(409, "Yönetici hesabı zaten oluşturulmuş")
-    if len(istek.parola) < 8:
-        raise HTTPException(400, "Parola en az 8 karakter olmalıdır")
+    _parola_politikasi_dogrula(istek.parola, istek.kullanici_adi)
     kullanici = models.Kullanici(
         kullanici_adi=istek.kullanici_adi.strip(),
         parola_hash=_parola_hashle(istek.parola),
@@ -2170,7 +2295,7 @@ def auth_durumu(db: Session = Depends(get_db)):
 
 
 @app.post("/auth/giris", dependencies=[Depends(_hiz_sinir_giris)])
-def giris_yap(istek: schemas.GirisIstegi, db: Session = Depends(get_db)):
+def giris_yap(istek: schemas.GirisIstegi, request: Request, db: Session = Depends(get_db)):
     kullanici_adi = istek.kullanici_adi.strip()
     kalan_kilit = _giris_kilitli_mi(kullanici_adi)
     if kalan_kilit > 0:
@@ -2192,7 +2317,8 @@ def giris_yap(istek: schemas.GirisIstegi, db: Session = Depends(get_db)):
     # VardiyaOturumu açılır (ve varsa unutulmuş önceki açık oturum kapatılır).
     _guvenlik_oturum_baslat(db, kullanici)
     logger.info("Başarılı giriş: %s", kullanici_adi)
-    return {"token": _token_uret(kullanici.id), "kullanici": kullanici}
+    ip_adresi = request.client.host if request.client else None
+    return {"token": _token_uret(kullanici.id, db, ip_adresi=ip_adresi), "kullanici": kullanici}
 
 
 @app.post("/auth/cikis")
@@ -3040,7 +3166,8 @@ async def kamera_akis(kamera_id: str, request: Request, authorization: Optional[
     (frontend/app.js: `_kameraAkisiBaslat`)."""
     if not authorization or not authorization.lower().startswith("bearer "):
         raise HTTPException(401, "Bearer token gerekli")
-    kullanici_id = _token_coz(authorization[7:].strip())
+    kullanici_id, jti = _token_coz(authorization[7:].strip())
+    _oturum_dogrula_ve_guncelle(db, jti)
 
     kamera = next((k for k in _kameralari_oku() if k["id"] == kamera_id), None)
     if not kamera:
@@ -5160,7 +5287,8 @@ async def sse_baglantisi(request: Request, authorization: Optional[str] = Header
     """Server-Sent Events — yeni plaka geçişlerini anlık olarak istemciye iletir."""
     if not authorization or not authorization.lower().startswith("bearer "):
         raise HTTPException(401, "Bearer token gerekli")
-    kullanici_id = _token_coz(authorization[7:].strip())
+    kullanici_id, jti = _token_coz(authorization[7:].strip())
+    _oturum_dogrula_ve_guncelle(db, jti)
     # Güvenlik personeli için canlı akışın da vardiya penceresine göre
     # filtrelenebilmesi (bkz. _sse_yayinla) için bağlı istemcinin rolü de
     # tutulur -- token yalnızca ID doğrular, rolü vermez. 2026-09-21: aynı
@@ -5717,6 +5845,7 @@ def kullanici_ekle(istek: schemas.KullaniciOlustur, db: Session = Depends(get_db
     _rol_dogrula(kullanici, ROL_YONETICI)
     if db.query(models.Kullanici).filter(models.Kullanici.kullanici_adi == istek.kullanici_adi).first():
         raise HTTPException(409, "Bu kullanıcı adı zaten kullanımda")
+    _parola_politikasi_dogrula(istek.parola, istek.kullanici_adi)
     kisi_id = _sakin_kisi_id_dogrula(db, istek.rol, istek.kisi_id)
     # "Nizamiye Bazlı Kamera Erişimi" (2026-09-21): None = kısıtlama yok
     # (varsayılan, geriye dönük uyumlu); bir liste (BOŞ liste dahil)
@@ -5779,15 +5908,27 @@ def kullanici_guncelle(kullanici_id: int, istek: schemas.KullaniciGuncelle, db: 
             degisiklikler.append(f"rol: {onceki_rol} -> {istek.rol}")
     elif istek.kisi_id is not None and hedef.rol == ROL_SAKIN:
         hedef.kisi_id = _sakin_kisi_id_dogrula(db, ROL_SAKIN, istek.kisi_id)
+    # "Hesap Güvenliği: Aktif Oturumlar" (2026-09-26) -- parola sıfırlama ve
+    # hesabı pasife alma, TANIMI GEREĞİ "bu hesabı artık kimse kullanamasın"
+    # niyeti taşır; ama eski (hâlâ imza olarak geçerli) token'lar süreleri
+    # (8 saate kadar) dolana kadar çalışmaya devam ederdi -- bu, "parolayı
+    # değiştirdim/hesabı kapattım" güvencesini YANILTICI kılardı. Bu yüzden
+    # her iki durumda da hedef kullanıcının TÜM oturum satırları hemen
+    # silinir (bkz. models.OturumTokeni, _oturum_dogrula_ve_guncelle).
+    oturumlari_iptal_et = False
     if istek.aktif is not None:
         if hedef.id == kullanici.id:
             raise HTTPException(400, "Kendinizi pasif yapamazsınız")
         hedef.aktif = istek.aktif
         if istek.aktif != onceki_aktif:
             degisiklikler.append(f"aktif: {onceki_aktif} -> {istek.aktif}")
+            if not istek.aktif:
+                oturumlari_iptal_et = True
     if istek.parola:
+        _parola_politikasi_dogrula(istek.parola, hedef.kullanici_adi)
         hedef.parola_hash = _parola_hashle(istek.parola)
         degisiklikler.append("parola sıfırlandı")  # asla parolanın kendisini loglama
+        oturumlari_iptal_et = True
     # "Nizamiye Bazlı Kamera Erişimi" (2026-09-21) -- bkz. modelin docstring'i.
     # `kamera_erisimi_temizle=true` KASITLI OLARAK diğer alanların "None =
     # değiştirme" kuralının DIŞINDA: kısıtlamayı tamamen kaldırıp hesabı
@@ -5810,6 +5951,8 @@ def kullanici_guncelle(kullanici_id: int, istek: schemas.KullaniciGuncelle, db: 
         if yeni_vardiya_adi != hedef.vardiya_adi:
             degisiklikler.append(f"vardiya adı: {hedef.vardiya_adi or '(yok)'} -> {yeni_vardiya_adi or '(yok)'}")
             hedef.vardiya_adi = yeni_vardiya_adi
+    if oturumlari_iptal_et:
+        db.query(models.OturumTokeni).filter(models.OturumTokeni.kullanici_id == hedef.id).delete()
     db.commit()
     db.refresh(hedef)
     # 2026-09-20: bu uç nokta (rol değişikliği, hesap aktif/pasif yapma,
@@ -5831,12 +5974,68 @@ def kullanici_sil(kullanici_id: int, db: Session = Depends(get_db), kullanici: m
     if hedef.id == kullanici.id:
         raise HTTPException(400, "Kendi hesabınızı silemezsiniz")
     silinen_kullanici_adi, silinen_rol = hedef.kullanici_adi, hedef.rol
+    # Hesap silinince ona ait oturum satırları da temizlenir -- yoksa
+    # "Aktif Oturumlar" listesinde sonsuza kadar "#<id> (silinmiş)" olarak
+    # görünmeye devam ederlerdi (bkz. models.OturumTokeni).
+    db.query(models.OturumTokeni).filter(models.OturumTokeni.kullanici_id == hedef.id).delete()
     db.delete(hedef)
     db.commit()
     # 2026-09-20: bir hesabın silinmesi önceden hiçbir yere loglanmıyordu --
     # kim, hangi hesabı, ne zaman sildi sorusu tamamen cevapsızdı.
     _denetim_kaydet(db, kullanici.kullanici_adi, "kullanici_sil", f"{silinen_kullanici_adi} (rol: {silinen_rol})")
     return {"mesaj": "Kullanıcı silindi"}
+
+
+# ================================================================
+# HESAP GÜVENLİĞİ: AKTİF OTURUMLARI GÖRME VE UZAKTAN KAPATMA (2026-09-26,
+# kullanıcı isteği) -- bkz. models.OturumTokeni'nin docstring'indeki kök
+# neden notu.
+# ================================================================
+
+@app.get("/kullanicilar/oturumlar", response_model=List[schemas.OturumTokeniCevap])
+def oturumlari_listele(db: Session = Depends(get_db), kullanici: models.Kullanici = Depends(_personel_girisi_gerekli)):
+    """Sistemdeki TÜM aktif oturumları (tüm kullanıcılar, tüm cihazlar)
+    listeler -- yalnızca yönetici. `bu_oturum`, isteği yapan yöneticinin O
+    ANDA kullandığı token'a karşılık gelen satırı işaretler (bkz.
+    _giris_gerekli'nin `kullanici._aktif_jti` niteliğini nasıl ayarladığı)."""
+    _rol_dogrula(kullanici, ROL_YONETICI)
+    suanki_jti = getattr(kullanici, "_aktif_jti", None)
+    satirlar = db.query(models.OturumTokeni).order_by(models.OturumTokeni.olusturma_tarihi.desc()).all()
+    return [
+        schemas.OturumTokeniCevap(
+            id=o.id,
+            kullanici_id=o.kullanici_id,
+            ip_adresi=o.ip_adresi,
+            olusturma_tarihi=o.olusturma_tarihi,
+            son_kullanim_tarihi=o.son_kullanim_tarihi,
+            bitis_tarihi=o.bitis_tarihi,
+            bu_oturum=(o.jti == suanki_jti),
+        )
+        for o in satirlar
+    ]
+
+
+@app.delete("/kullanicilar/oturumlar/{oturum_id}")
+def oturumu_kapat(oturum_id: int, db: Session = Depends(get_db), kullanici: models.Kullanici = Depends(_personel_girisi_gerekli)):
+    """Belirli BİR oturumu uzaktan kapatır: satır silinir, bir SONRAKİ
+    istekte o token 401 alır (bkz. _oturum_dogrula_ve_guncelle) -- hesabın
+    KENDİSİ pasife alınmaz, yalnızca bu tek oturum sona erer. Hassas bir
+    güvenlik işlemi olduğu için denetim kaydına da yazılır."""
+    _rol_dogrula(kullanici, ROL_YONETICI)
+    hedef = db.query(models.OturumTokeni).filter(models.OturumTokeni.id == oturum_id).first()
+    if not hedef:
+        raise HTTPException(404, "Oturum bulunamadı")
+    hedef_kullanici = db.query(models.Kullanici).filter(models.Kullanici.id == hedef.kullanici_id).first()
+    hedef_adi = hedef_kullanici.kullanici_adi if hedef_kullanici else f"#{hedef.kullanici_id} (silinmiş)"
+    jti = hedef.jti
+    db.delete(hedef)
+    db.commit()
+    _oturum_son_guncelleme.pop(jti, None)
+    _denetim_kaydet(
+        db, kullanici.kullanici_adi, "oturum_kapat",
+        f"{hedef_adi} kullanıcısının bir oturumu uzaktan kapatıldı (ip: {hedef.ip_adresi or 'bilinmiyor'})",
+    )
+    return {"mesaj": "Oturum kapatıldı"}
 
 
 # ==================================================================

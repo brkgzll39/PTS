@@ -205,6 +205,29 @@ class VardiyaOturumuCevap(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
+class OturumTokeniCevap(BaseModel):
+    """Bir aktif giriş oturumunun (token'ının) özeti -- "Hesap Güvenliği:
+    Aktif Oturumları Görme ve Uzaktan Kapatma" (2026-09-26, kullanıcı
+    isteği). Elle oluşturma şeması YOK -- satırlar yalnızca başarılı
+    /auth/giris ile otomatik açılır (bkz. main.py::_token_uret,
+    models.OturumTokeni'nin docstring'i); yönetici yalnızca LİSTELEYEBİLİR
+    (GET /kullanicilar/oturumlar) ve UZAKTAN KAPATABİLİR (DELETE
+    /kullanicilar/oturumlar/{id})."""
+    id: int
+    kullanici_id: int
+    ip_adresi: Optional[str] = None
+    olusturma_tarihi: Optional[datetime] = None
+    son_kullanim_tarihi: Optional[datetime] = None
+    bitis_tarihi: Optional[datetime] = None
+    # main.py::oturumlari_listele tarafından, bu satırın isteği yapan
+    # yöneticinin O ANDA kullandığı token'a ait olup olmadığına göre
+    # doldurulur -- panelde "bu oturum" rozeti göstermek ve yöneticinin
+    # kendi anlık oturumunu YANLIŞLIKLA kapatmasını zorlaştırmak için.
+    bu_oturum: bool = False
+
+    model_config = ConfigDict(from_attributes=True)
+
+
 class KisiPlakaOlustur(BaseModel):
     plaka_no: str = Field(min_length=1, max_length=15)
     aciklama: Optional[str] = Field(None, max_length=100)

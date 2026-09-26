@@ -239,6 +239,8 @@
         <div class="mb-2">
           <label class="form-label small" for="kdParola">Yeni Parola</label>
           <input type="password" class="form-control" id="kdParola" minlength="8" placeholder="Değiştirmemek için boş bırakın">
+          <div class="form-text">En az 8 karakter, en az bir harf ve bir rakam içermeli; kullanıcı adıyla aynı olamaz.
+            Değiştirilirse bu hesabın TÜM açık oturumları hemen kapatılır.</div>
         </div>
         <div class="mb-2">
           <label class="form-label small" for="kdVardiyaAdi">Vardiya Grubu</label>
@@ -1434,7 +1436,9 @@
                 <div class="mb-2"><label class="form-label small" for="yeniKullanici">Kullanıcı Adı</label>
                   <input type="text" class="form-control" id="yeniKullanici" minlength="3" required></div>
                 <div class="mb-2"><label class="form-label small" for="yeniParola">Parola</label>
-                  <input type="password" class="form-control" id="yeniParola" minlength="8" required></div>
+                  <input type="password" class="form-control" id="yeniParola" minlength="8" required>
+                  <div class="form-text">En az 8 karakter, en az bir harf ve bir rakam içermeli; kullanıcı adıyla aynı olamaz.</div>
+                </div>
                 <div class="mb-2"><label class="form-label small" for="yeniRol">Rol</label>
                   <select class="form-select" id="yeniRol" onchange="yeniKullaniciRolDegisti()">
                     <option value="izleyici">İzleyici (salt okunur)</option>
@@ -1547,6 +1551,41 @@
               <table class="table table-hover mb-0 align-middle">
                 <thead class="table-light"><tr><th>Güvenlik Personeli</th><th>Vardiya Grubu</th><th>Giriş</th><th>Çıkış</th><th>Durum</th><th></th></tr></thead>
                 <tbody id="vardiyaOturumlariTablo"></tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ================= HESAP GÜVENLİĞİ: AKTİF OTURUMLAR (2026-09-26,
+           kullanıcı isteği) ================= -->
+      <!-- KÖK NEDEN: kimlik doğrulama önceden TAMAMEN DURUMSUZDU -- bir
+           token'ın imzası geçerliyse (süresi -8 saat- dolmadıysa) parola
+           değiştirilmeden onu iptal etmenin HİÇBİR yolu yoktu; "şu an bu
+           hesapla hangi cihazlardan oturum açılmış?" sorusunun da cevabı
+           yoktu (bkz. backend/models.py::OturumTokeni). Artık her giriş
+           burada bir satır olarak görünür ve tek tek "Kapat" ile uzaktan
+           sonlandırılabilir -- hesabın TAMAMI pasife alınmadan, yalnızca
+           şüpheli/unutulmuş TEK bir oturum kapatılabilir. -->
+      <div class="row g-3 mt-1">
+        <div class="col-12">
+          <div class="card">
+            <div class="card-header d-flex justify-content-between">
+              <span><i class="bi bi-shield-lock-fill me-1"></i>Aktif Oturumlar (Hesap Güvenliği)</span>
+              <button class="btn btn-sm btn-outline-secondary" onclick="oturumlariYukle()" title="Yenile" aria-label="Yenile"><i class="bi bi-arrow-clockwise"></i></button>
+            </div>
+            <div class="card-body">
+              <p class="text-muted small mb-2">Bu hesaplarla şu an hangi cihaz/tarayıcılardan oturum açılmış olduğunu
+                gösterir. Şüpheli veya unutulmuş bir oturumu -- ilgili hesabın parolasını değiştirmeden veya hesabı
+                tamamen pasife almadan -- "Kapat" ile tek başına, uzaktan sonlandırabilirsiniz; oturum bir sonraki
+                istekte otomatik olarak reddedilir. Bir oturum, giriş yapıldıktan <b>8 saat</b> sonra zaten
+                kendiliğinden sona erer. Parola sıfırlama veya hesabı pasife alma, o hesaba ait TÜM oturumları
+                otomatik olarak kapatır.</p>
+            </div>
+            <div class="card-body p-0">
+              <table class="table table-hover mb-0 align-middle">
+                <thead class="table-light"><tr><th>Kullanıcı Adı</th><th>IP Adresi</th><th>Giriş</th><th>Son Kullanım</th><th>Bitiş</th><th></th></tr></thead>
+                <tbody id="oturumlarTablo"></tbody>
               </table>
             </div>
           </div>
