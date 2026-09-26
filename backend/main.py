@@ -24,6 +24,42 @@ from urllib.parse import urlsplit, urlunsplit, urlparse
 from datetime import datetime, timedelta
 from typing import Optional, List
 
+# ================================================================
+# KURUMSAL AĞDA SSL/TLS İNCELEMESİ İÇİN İŞLETİM SİSTEMİ SERTİFİKA DEPOSU
+# ================================================================
+# KÖK NEDEN (2026-09-26, gerçek üretimde bulunan hata -- kullanıcı Telegram
+# bildirimini test ederken karşılaştı): TPAO'nun kurumsal ağı, TÜM dış HTTPS
+# trafiğini (Telegram, webhook hedefleri vb.) bir güvenlik cihazı/proxy
+# üzerinden "SSL inceleme" ile geçiriyor -- bu cihaz, gerçek sunucunun
+# sertifikası yerine KENDİ (kuruma özel, Windows'un zaten güvendiği)
+# sertifikasıyla imzalanmış bir sertifika sunuyor. Tarayıcılar bunu
+# sorunsuz kabul ediyor çünkü Windows'un sertifika deposunu kullanıyorlar;
+# ama Python'ın `ssl`/`urllib` modülü VARSAYILAN olarak Windows'un değil,
+# kendi (OpenSSL/certifi) sertifika listesini kullanıyor -- kurumun kendi
+# sertifikası bu listede OLAMAYACAĞI için her dış HTTPS isteği
+# "CERTIFICATE_VERIFY_FAILED: self-signed certificate in certificate chain"
+# hatasıyla BAŞARISIZ oluyordu (bkz. telegram_bildirim.py::
+# telegram_gonder_sync, aşağıdaki _webhook_gonder_sync -- ikisi de urllib
+# kullanıyor).
+#
+# Düzeltme: `truststore` (bkz. requirements.txt) kurulu ise, Python'ın SSL
+# doğrulamasını İŞLETİM SİSTEMİNİN (Windows'un) kendi sertifika deposunu
+# kullanacak şekilde değiştiriyoruz -- yani tarayıcı hangi sertifikalara
+# güveniyorsa Python da onlara güveniyor. KASITLI OLARAK sertifika
+# doğrulamasını KAPATMIYORUZ (`verify=False` gibi bir şey YOK) -- bu,
+# gerçek bir ortadaki-adam saldırısını da sessizce kabul eder hale
+# getirirdi; burada yalnızca HANGİ sertifika deposunun kullanılacağını
+# değiştiriyoruz. `truststore` kurulu değilse (ör. bu paketin henüz
+# kurulmadığı eski bir kurulum) eskisi gibi çalışmaya devam eder -- import
+# başarısızlığı SESSİZCE yutulur, uygulamanın başlamasını ENGELLEMEZ. Bu
+# enjeksiyonun, herhangi bir HTTPS isteği yapılmadan ÖNCE (dosyanın en
+# başında) çalışması gerekir.
+try:
+    import truststore
+    truststore.inject_into_ssl()
+except ImportError:
+    pass
+
 from fastapi import FastAPI, Depends, HTTPException, UploadFile, File, Form, Query, Body, Header, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
@@ -4272,8 +4308,35 @@ def _kayit_olustur_ve_bildir(db: Session, plaka_no: str, kamera_id: str, yon: st
     return kayit
 
 
-def _webhook_gonder_sync(url: str, metot: str, veri: dict) -> bool:
-    """Urllib ile senkron webhook isteği — arka plan thread'inde çalıştırılır."""
+def _disaridan_http_hatasi_aciklamasi(exc: Exception) -> str:
+    """`exc`'in insan-okunur açıklamasını döner; KURUMSAL AĞ SSL İNCELEME/
+    PROXY kök nedenini (2026-09-26, gerçek üretimde bulunan hata --
+    "CERTIFICATE_VERIFY_FAILED: self-signed certificate in certificate
+    chain") tanıyıp somut bir çözüm ipucu ekler -- bkz. bu dosyanın en
+    üstündeki `truststore` enjeksiyonu ve README.md'deki ilgili not.
+    telegram_bildirim.py'de de (modülün kendi kendine yeten tasarımını
+    korumak için) AYNI mantığın bir kopyası var."""
+    aciklama = str(exc)
+    if "CERTIFICATE_VERIFY_FAILED" in aciklama:
+        aciklama += (
+            " -- KURUMSAL AĞDA SSL İNCELEME/PROXY CİHAZI OLABİLİR: "
+            "'pip install -r requirements.txt' ile 'truststore' paketinin "
+            "kurulu olduğundan emin olup sunucuyu yeniden başlatın "
+            "(bkz. README.md'deki 'Kurumsal Ağda SSL Sertifika Hatası' notu)."
+        )
+    return aciklama
+
+
+def _webhook_gonder_sync(url: str, metot: str, veri: dict) -> "tuple[bool, Optional[str]]":
+    """Urllib ile senkron webhook isteği — arka plan thread'inde çalıştırılır.
+
+    DÜZELTME (2026-09-26): önceden yalnızca bool dönüyordu, gerçek hata
+    yalnızca sunucu LOGUNA yazılıp panelde/API'de her zaman sabit "Webhook
+    isteği başarısız oldu (bkz. sunucu logu)" görünüyordu -- ör. kurumsal
+    ağdaki bir SSL inceleme/proxy cihazı yüzünden başarısız olan bir
+    yönetici, sunucuya dosya erişimi olmadan asıl sebebi hiç göremiyordu.
+    Artık `telegram_gonder_sync` ile AYNI `(başarılı, hata)` biçiminde
+    dönüyor -- bkz. _bildirim_gonder_sync/bildirim_test_gonder."""
     import urllib.request
     govde = json.dumps(veri, ensure_ascii=False, default=str).encode("utf-8")
     req = urllib.request.Request(url, data=govde, method=metot,
@@ -4281,10 +4344,11 @@ def _webhook_gonder_sync(url: str, metot: str, veri: dict) -> bool:
     try:
         with urllib.request.urlopen(req, timeout=8):
             pass
-        return True
+        return True, None
     except Exception as exc:
-        logger.warning("Webhook gönderilemedi %s: %s", url, exc)
-        return False
+        aciklama = _disaridan_http_hatasi_aciklamasi(exc)
+        logger.warning("Webhook gönderilemedi %s: %s", url, aciklama)
+        return False, aciklama
 
 
 _BILDIRIM_TIPLERI = ("webhook", "telegram")
@@ -4304,8 +4368,7 @@ def _bildirim_gonder_sync(tip: str, hedef: str, http_metot: str, veri: dict) -> 
     zaman söylenmiyordu (sessiz/yanıltıcı başarısızlık). Artık tanımadığımız
     bir `tip` için açıkça "Desteklenmeyen bildirim tipi" hatası dönülür."""
     if tip == "webhook":
-        basarili = _webhook_gonder_sync(hedef, http_metot, veri)
-        return basarili, (None if basarili else "Webhook isteği başarısız oldu (bkz. sunucu logu)")
+        return _webhook_gonder_sync(hedef, http_metot, veri)
     if tip == "telegram":
         return telegram_bildirim.telegram_gonder_sync(hedef, veri)
     return False, f"Desteklenmeyen bildirim tipi: '{tip}' (yalnızca {'/'.join(_BILDIRIM_TIPLERI)} desteklenir)"
@@ -6354,9 +6417,10 @@ def bariyer_ac(bariyer_id: int, db: Session = Depends(get_db), kullanici: models
             with urllib.request.urlopen(req, timeout=5):
                 pass
         except Exception as exc:
-            logger.error("Bariyer HTTP hatası %s: %s", bariyer.ad, exc)
-            _denetim_kaydet(db, kullanici.kullanici_adi, "bariyer_ac_basarisiz", f"{bariyer.ad} (id={bariyer.id}): {exc}")
-            raise HTTPException(503, f"Bariyer komutuna yanıt alınamadı: {exc}")
+            aciklama = _disaridan_http_hatasi_aciklamasi(exc)
+            logger.error("Bariyer HTTP hatası %s: %s", bariyer.ad, aciklama)
+            _denetim_kaydet(db, kullanici.kullanici_adi, "bariyer_ac_basarisiz", f"{bariyer.ad} (id={bariyer.id}): {aciklama}")
+            raise HTTPException(503, f"Bariyer komutuna yanıt alınamadı: {aciklama}")
         logger.info("Bariyer HTTP komutu gönderildi: %s", bariyer.ad)
         _denetim_kaydet(db, kullanici.kullanici_adi, "bariyer_ac", f"{bariyer.ad} (id={bariyer.id}) elle açıldı (HTTP)")
         return {"basarili": True, "mod": "http", "mesaj": f"{bariyer.ad} komutu gönderildi"}

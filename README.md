@@ -4242,3 +4242,73 @@ TÜM eski oturumlarını hemen geçersiz kıldığı; hesap silindiğinde oturum
 satırlarının da silindiği; temizlik döngüsünün yalnızca süresi geçmiş
 satırları sildiği; ve eski (jti içermeyen) biçimde bir token gönderilirse
 sunucunun çökmeden (500 değil) net bir 401 döndüğü.
+
+## Kurumsal Ağda SSL Sertifika Hatası (2026-09-26, gerçek üretimde bulunan hata)
+
+Telegram bildirimini kurup test ederken TPAO'nun kurumsal ağında şu hata
+alındı:
+
+```
+Test bildirimi başarısız: <urlopen error [SSL: CERTIFICATE_VERIFY_FAILED]
+certificate verify failed: self-signed certificate in certificate chain
+(_ssl.c:1010)>
+```
+
+### Kök neden
+
+Kurumsal ağ, TÜM dış HTTPS trafiğini (Telegram, webhook hedefleri vb.) bir
+güvenlik cihazı/proxy üzerinden "SSL inceleme" ile geçiriyor -- bu cihaz,
+gerçek sunucunun sertifikası yerine KENDİ (kuruma özel, Windows'un zaten
+güvendiği) sertifikasıyla imzalanmış bir sertifika sunuyor. Tarayıcılar
+bunu sorunsuz kabul ediyor çünkü Windows'un sertifika deposunu
+kullanıyorlar; ama Python'ın `ssl`/`urllib` modülü VARSAYILAN olarak
+Windows'un değil, kendi (OpenSSL/certifi) sertifika listesini kullanıyor --
+kurumun kendi sertifikası bu listede olamayacağı için her dış HTTPS isteği
+(Telegram, webhook, elle bariyer HTTP komutu) bu hatayla başarısız
+oluyordu.
+
+### Nasıl çalışır
+
+- Yeni bağımlılık: `truststore` (bkz. `backend/requirements.txt`). Kurulu
+  olduğunda `backend/main.py`'nin en üstünde bir kez çağrılan
+  `truststore.inject_into_ssl()`, Python'ın SSL doğrulamasını İŞLETİM
+  SİSTEMİNİN (Windows'un) kendi sertifika deposunu kullanacak şekilde
+  değiştiriyor -- yani tarayıcı hangi sertifikalara güveniyorsa Python da
+  onlara güveniyor. Sertifika doğrulaması KAPATILMIYOR (`verify=False`
+  gibi bir şey yok) -- yalnızca HANGİ sertifika deposunun kullanılacağı
+  değişiyor, gerçek bir ortadaki-adam saldırısı hâlâ reddedilir.
+  `truststore` kurulu değilse import hatası sessizce yutulur, eski
+  davranış (yalnızca OpenSSL/certifi CA'ları) korunur -- uygulamanın
+  başlamasını ENGELLEMEZ.
+- Kurulum: `pip install -r requirements.txt` çalıştırmanız yeterli
+  (`truststore` artık listede); ayrıca sunucuyu yeniden başlatmanız
+  gerekir.
+- Panel tarafında da iyileştirme: webhook bildirimleri önceden başarısız
+  olunca panelde her zaman sabit "Webhook isteği başarısız oldu (bkz.
+  sunucu logu)" yazıyordu, gerçek sebep yalnızca sunucu logunda
+  görünüyordu. Artık Telegram'la AYNI şekilde gerçek hata metni doğrudan
+  panelde ("Test Gönder" sonucunda) görünüyor; bu hata bir
+  `CERTIFICATE_VERIFY_FAILED` ise yukarıdaki çözüme (`truststore` kurun)
+  işaret eden bir ipucu otomatik olarak ekleniyor. Aynı iyileştirme elle
+  bariyer HTTP açma hatalarına da uygulandı.
+
+### Bilinçli sınırlamalar
+
+- Bu düzeltme yalnızca Python'ın `urllib` tabanlı dış HTTPS isteklerini
+  (Telegram, webhook, elle bariyer HTTP komutu) kapsar; `camera_reader.py`/
+  `dahua_olay.py`'nin `requests` kütüphanesiyle yaptığı YEREL ağdaki kamera
+  bağlantıları farklı bir senaryo (kameranın kendi self-signed sertifikası)
+  olduğu için kapsam dışı bırakıldı.
+- `truststore` paketinin tam sürümü `requirements.txt`'de diğerleri gibi
+  `==` ile SABİTLENMEDİ, `>=0.8` ile alt sınır verildi -- küçük, tek amaçlı,
+  seyrek güncellenen bir paket olduğu için kurulum anındaki en güncel
+  sürümün alınması risksiz.
+
+### Testler
+
+`tests/test_api.py` (CI) -- `_webhook_gonder_sync`'in artık `(başarılı,
+hata)` biçiminde döndüğü, bir `CERTIFICATE_VERIFY_FAILED` hatasına
+`truststore` ipucunun eklendiği ama sıradan bir bağlantı hatasına
+eklenmediği (hem webhook hem Telegram gönderim fonksiyonları için ayrı
+ayrı), ve mevcut webhook test uç noktası testinin yeni tuple imzasına
+güncellendiği.

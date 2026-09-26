@@ -14,6 +14,17 @@ reportlab==4.2.5
 # reportlab'ın Image flowable'ı JPEG kodlamak için zaten dolaylı olarak
 # Pillow'a ihtiyaç duyar, burada doğrudan/açık bir bağımlılık olarak listelendi.
 Pillow==11.0.0
+# Kurumsal ağlarda (ör. TPAO) dış HTTPS trafiğini (Telegram, webhook)
+# bir SSL inceleme/proxy cihazından geçiren kurulumlarda Python'ın
+# kendi (OpenSSL/certifi) sertifika listesi yerine İŞLETİM SİSTEMİNİN
+# (Windows'un) zaten güvendiği sertifika deposunu kullanmasını sağlar --
+# bkz. backend/main.py'nin en üstündeki `truststore.inject_into_ssl()`
+# çağrısının kök neden notu ("CERTIFICATE_VERIFY_FAILED: self-signed
+# certificate in certificate chain" gerçek üretim hatası, 2026-09-26).
+# NOT: diğer bağımlılıkların aksine tam sürüm (==) yerine alt sınır (>=)
+# ile belirtildi -- küçük, tek amaçlı ve seyrek güncellenen bir paket;
+# kurulum anındaki en güncel sürümün alınması burada riskli değil.
+truststore>=0.8
 
 # -----------------------------------------------------------------
 # OPSİYONEL: Gerçek ANPR/RTSP kamera pipeline (backend/camera_reader.py)

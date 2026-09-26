@@ -113,8 +113,29 @@ def telegram_gonder_sync(chat_id: str, veri: dict) -> "tuple[bool, Optional[str]
         logger.warning("Telegram bildirimi gönderilemedi (chat_id=%s): %s", chat_id, aciklama)
         return False, aciklama
     except Exception as exc:
-        logger.warning("Telegram bildirimi gönderilemedi (chat_id=%s): %s", chat_id, exc)
-        return False, str(exc)
+        aciklama = _disaridan_baglanti_hatasi_aciklamasi(exc)
+        logger.warning("Telegram bildirimi gönderilemedi (chat_id=%s): %s", chat_id, aciklama)
+        return False, aciklama
+
+
+def _disaridan_baglanti_hatasi_aciklamasi(exc: Exception) -> str:
+    """`exc`'in insan-okunur açıklamasını döner; KURUMSAL AĞ SSL İNCELEME/
+    PROXY kök nedenini (2026-09-26, gerçek üretimde bulunan hata --
+    "CERTIFICATE_VERIFY_FAILED: self-signed certificate in certificate
+    chain") tanıyıp somut bir çözüm ipucu ekler -- bkz. main.py'nin en
+    üstündeki `truststore` enjeksiyonu ve README.md'deki ilgili not.
+    main.py::_disaridan_http_hatasi_aciklamasi ile AYNI mantığın bir
+    kopyası -- bu modülün kendi kendine yeten (main.py'ye bağımlı olmayan)
+    tasarımını korumak için kasıtlı olarak tekrar edildi."""
+    aciklama = str(exc)
+    if "CERTIFICATE_VERIFY_FAILED" in aciklama:
+        aciklama += (
+            " -- KURUMSAL AĞDA SSL İNCELEME/PROXY CİHAZI OLABİLİR: "
+            "'pip install -r requirements.txt' ile 'truststore' paketinin "
+            "kurulu olduğundan emin olup sunucuyu yeniden başlatın "
+            "(bkz. README.md'deki 'Kurumsal Ağda SSL Sertifika Hatası' notu)."
+        )
+    return aciklama
 
 
 def _http_hatasi_aciklamasi(exc: urllib.error.HTTPError) -> str:

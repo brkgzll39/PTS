@@ -5921,7 +5921,7 @@ def test_bildirim_test_webhook_basarisiz_hata_metni_doner(client, yetkili_header
     """`_bildirim_gonder_sync`'in gerçekten çağrıldığını VE yanıtın artık
     `tip`/`hata` alanlarını içerdiğini doğrular (önceden yalnızca
     `basarili`/`hedef` dönüyordu)."""
-    monkeypatch.setattr(pts_main, "_webhook_gonder_sync", lambda url, metot, veri: False)
+    monkeypatch.setattr(pts_main, "_webhook_gonder_sync", lambda url, metot, veri: (False, "sahte bağlantı hatası"))
     ayar_id = _bildirim_ayari_olustur(client, yetkili_header, tip="webhook")
     try:
         r = client.post(f"/bildirim/test/{ayar_id}", headers=yetkili_header)
@@ -5929,9 +5929,64 @@ def test_bildirim_test_webhook_basarisiz_hata_metni_doner(client, yetkili_header
         v = r.json()
         assert v["basarili"] is False
         assert v["tip"] == "webhook"
-        assert v["hata"]
+        assert v["hata"] == "sahte bağlantı hatası"
     finally:
         _bildirim_ayari_sil(client, yetkili_header, ayar_id)
+
+
+def test_webhook_gonder_sync_sertifika_hatasinda_ipucu_ekler(monkeypatch):
+    """Kök neden (2026-09-26, gerçek üretimde bulunan hata): kurumsal ağdaki
+    bir SSL inceleme/proxy cihazı yüzünden `CERTIFICATE_VERIFY_FAILED` alan
+    bir yönetici, önceden yalnızca sabit "Webhook isteği başarısız oldu
+    (bkz. sunucu logu)" görüyordu -- gerçek sebebi görmek için sunucuya
+    dosya erişimi gerekiyordu. Artık gerçek hata metni VE somut bir çözüm
+    ipucu ("truststore" paketini kurun) panelde doğrudan görünür."""
+    def _sahte_urlopen(*a, **kw):
+        raise Exception(
+            "<urlopen error [SSL: CERTIFICATE_VERIFY_FAILED] certificate verify "
+            "failed: self-signed certificate in certificate chain (_ssl.c:1010)>"
+        )
+    import urllib.request
+    monkeypatch.setattr(urllib.request, "urlopen", _sahte_urlopen)
+    basarili, hata = pts_main._webhook_gonder_sync("https://example.com/webhook", "POST", {"test": True})
+    assert basarili is False
+    assert "CERTIFICATE_VERIFY_FAILED" in hata
+    assert "truststore" in hata
+
+
+def test_webhook_gonder_sync_normal_hatada_ipucu_eklemez(monkeypatch):
+    def _sahte_urlopen(*a, **kw):
+        raise Exception("connection refused")
+    import urllib.request
+    monkeypatch.setattr(urllib.request, "urlopen", _sahte_urlopen)
+    basarili, hata = pts_main._webhook_gonder_sync("https://example.com/webhook", "POST", {"test": True})
+    assert basarili is False
+    assert hata == "connection refused"
+    assert "truststore" not in hata
+
+
+def test_disaridan_http_hatasi_aciklamasi_sertifika_disinda_dokunmaz():
+    assert pts_main._disaridan_http_hatasi_aciklamasi(Exception("connection refused")) == "connection refused"
+
+
+def test_telegram_gonder_sync_sertifika_hatasinda_ipucu_ekler(monkeypatch):
+    """`backend/telegram_bildirim.py`'nin -- main.py'den bağımsız, kendi
+    kendine yeten tasarımını korumak için kasıtlı olarak kopyalanmış --
+    AYNI kök neden düzeltmesi."""
+    import backend.telegram_bildirim as tb
+
+    monkeypatch.setenv("PTS_TELEGRAM_BOT_TOKEN", "123456:sahte-test-token")
+
+    def _sahte_urlopen(*a, **kw):
+        raise Exception(
+            "<urlopen error [SSL: CERTIFICATE_VERIFY_FAILED] certificate verify "
+            "failed: self-signed certificate in certificate chain (_ssl.c:1010)>"
+        )
+    monkeypatch.setattr(tb.urllib.request, "urlopen", _sahte_urlopen)
+    basarili, hata = tb.telegram_gonder_sync("123456789", {"test": True})
+    assert basarili is False
+    assert "CERTIFICATE_VERIFY_FAILED" in hata
+    assert "truststore" in hata
 
 
 def test_bildirim_test_telegram_basarili_ve_basarisiz(client, yetkili_header, monkeypatch):
