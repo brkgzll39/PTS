@@ -9,7 +9,7 @@
 # "Manuel Kurulum" bölümü). `kurulum.bat` (Windows) bunu `uv --python 3.12`
 # ile otomatik yönetir; elle kurulumda `py -3.12 -m venv .venv` kullanın.
 
-fastapi==0.115.0
+fastapi==0.141.1
 uvicorn[standard]==0.30.6
 sqlalchemy==2.0.35
 pyodbc==5.2.0
