@@ -1,7 +1,18 @@
 """
 PTS - Plaka Tanıma Sistemi - Ana Uygulama
 ==========================================
-Çalıştırma: uvicorn main:app --reload
+Çalıştırma: PROJE KÖKÜNDEN (bu dosyanın bulunduğu backend/ klasöründen DEĞİL)
+  uvicorn backend.main:app --reload
+Bu dosya, tüm iç modülleri "from backend import ..." (mutlak paket yolu) ile
+içe aktarıyor (bkz. aşağıdaki import'lar) -- bu yüzden "backend" bir PAKET
+olarak sys.path'te (yani proje kökü çalışma dizini/PYTHONPATH'te) görünmek
+zorunda. "cd backend && uvicorn main:app" ile çalıştırmaya çalışmak
+"ModuleNotFoundError: No module named 'backend'" ile başarısız olur (bu
+docstring'in kendisi eskiden yanlışlıkla "uvicorn main:app" yazıyordu ve
+gerçek bir kurulumda bu hataya yol açtığı görüldü, 2026-09-26 -- bkz.
+README.md'deki "Manuel Kurulum" bölümü ve calistir.bat/calistir.sh, ki
+onlar zaten her zaman doğru şekilde proje kökünden `backend.main:app`
+olarak çalıştırıyordu).
 Tarayıcıda açın: http://localhost:8000
 """
 import os

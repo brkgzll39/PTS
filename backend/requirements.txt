@@ -1,5 +1,13 @@
 # PTS - Plaka Tanıma Sistemi - Temel Bağımlılıklar
 # Kurulum: pip install -r requirements.txt
+#
+# ÖNEMLİ: Python 3.12 ile test edilip sabitlendi. Çok daha yeni bir Python
+# sürümünde (ör. 3.13, 3.14) Pillow/pydantic gibi paketlerin Windows için
+# henüz hazır kurulum dosyası (wheel) olmayabilir; pip kaynağından derlemeye
+# çalışır ve genellikle zlib/Rust derleyicisi eksik olduğu için başarısız
+# olur (2026-09-26, gerçek kurulumda karşılaşılan hata -- bkz. README.md'deki
+# "Manuel Kurulum" bölümü). `kurulum.bat` (Windows) bunu `uv --python 3.12`
+# ile otomatik yönetir; elle kurulumda `py -3.12 -m venv .venv` kullanın.
 
 fastapi==0.115.0
 uvicorn[standard]==0.30.6

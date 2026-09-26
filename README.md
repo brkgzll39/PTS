@@ -89,10 +89,54 @@ cd pts_sistemi
 Ardından tarayıcıdan **http://localhost:8000** adresine gidin.
 
 ### Manuel Kurulum (her iki platform)
+> **Python sürümü önemli** (2026-09-26, gerçek üretimde bulunan hata): `requirements.txt`
+> içindeki paketler (özellikle Pillow ve pydantic) Python 3.12 ile test edilip
+> sabitlendi. Windows'a python.org'dan indirilen EN GÜNCEL Python (örn. 3.13, 3.14, ...)
+> kurulursa, bu paketlerin o sürüm için henüz Windows'a hazır kurulum dosyası (wheel)
+> yayınlanmamış olabilir -- pip bu durumda paketi kaynağından derlemeye çalışır ve
+> genellikle "zlib başlık dosyaları bulunamadı" (Pillow) veya "PyO3 bu Python sürümünü
+> desteklemiyor" (pydantic-core, Rust derleyicisi gerektirir) gibi uzun, kafa karıştırıcı
+> hatalarla başarısız olur. Bu bir PTS hatası DEĞİL, saf ortam/sürüm uyumsuzluğudur --
+> ama panelde hiçbir iz bırakmadan (kurulum hiç tamamlanmadığı için) kurulumu yapan
+> kişiyi tamamen tıkar. Bu yüzden Windows/`kurulum.bat` yolunda olduğu gibi (bkz.
+> yukarıdaki "Windows" bölümü, `uv venv .venv --python 3.12`), burada da açıkça
+> Python 3.12'ye sabitlenmiş bir sanal ortam kullanın -- mümkünse zaten `kurulum.bat`
+> + `calistir.bat` yolu tercih edilmelidir, çünkü o `uv` ile 3.12'yi makinede hangi
+> Python sürümleri kurulu olursa olsun otomatik indirip izole bir şekilde kullanır.
+
+> **Çalışma dizini önemli** (2026-09-26, gerçek üretimde bulunan ikinci hata):
+> aşağıdaki komutlar PROJE KÖKÜNDEN (`pts_sistemi`, yani `backend`/`frontend`/
+> `calistir.bat` klasörlerinin bulunduğu üst klasör) çalıştırılmalı --
+> `backend` klasörünün İÇİNE girip orada `venv`/`uvicorn` çalıştırmayın.
+> Neden: `backend/main.py` kendi iç modüllerini `from backend import ...`
+> (mutlak paket yolu) ile içe aktarıyor; bu yüzden `backend`'in bir PAKET
+> olarak görünmesi için çalışma dizininin onun BİR ÜSTÜ olması gerekiyor --
+> `backend` klasörüne girip `uvicorn main:app` çalıştırmak
+> `ModuleNotFoundError: No module named 'backend'` ile başarısız olur.
+> (`calistir.bat`/`calistir.sh` zaten her zaman proje kökünden
+> `backend.main:app` olarak çalıştırıyordu; aşağıdaki komutlar da aynı
+> düzene uyacak şekilde güncellendi.)
+
+Windows (PowerShell), Python 3.12 kurulu olmalı (python.org, "3.12.x" sürümü --
+sitenin varsayılan gösterdiği en güncel sürüm değil):
+```powershell
+cd pts_sistemi
+py -3.12 -m venv .venv
+.venv\Scripts\python.exe -m pip install -r backend\requirements.txt
+.venv\Scripts\python.exe -m uvicorn backend.main:app --reload
+```
+(`.venv\Scripts\Activate.ps1` ile aktive etmeyi tercih ederseniz, kurumsal
+Windows kurulumlarında sık rastlanan "running scripts is disabled on this
+system" (PSSecurityException) hatası alabilirsiniz -- yukarıdaki gibi
+`.venv\Scripts\python.exe`'yi doğrudan tam yolla çağırmak aktivasyona hiç
+gerek bırakmadığı için bu sorunu tamamen atlar.)
+
+Linux / macOS, Python 3.12 kurulu olmalı:
 ```bash
-cd pts_sistemi/backend
-pip install -r requirements.txt
-uvicorn main:app --reload
+cd pts_sistemi
+python3.12 -m venv .venv
+.venv/bin/python -m pip install -r backend/requirements.txt
+.venv/bin/python -m uvicorn backend.main:app --reload
 ```
 
 ### Örnek/Demo Veri Eklemek (opsiyonel)
@@ -2674,8 +2718,9 @@ bu doküman yalnızca genel bilgilendirme amaçlıdır.
 
 - **"ModuleNotFoundError" hatası**: `pip install -r requirements.txt` komutunu
   `backend` klasörü içindeyken çalıştırdığınızdan emin olun.
-- **Port zaten kullanımda hatası**: `uvicorn main:app --port 8001` ile farklı bir
-  port deneyin, ardından `http://localhost:8001` adresine gidin.
+- **Port zaten kullanımda hatası**: proje kökünden (bkz. yukarıdaki "Manuel Kurulum"
+  bölümündeki çalışma dizini notu) `uvicorn backend.main:app --port 8001` ile farklı
+  bir port deneyin, ardından `http://localhost:8001` adresine gidin.
 - **Veritabanını sıfırlamak isterseniz**: `veritabani/pts.db` dosyasını silin,
   sunucuyu yeniden başlattığınızda boş bir veritabanı otomatik oluşturulur.
 - **Bir düzeltme uyguladım ama hiçbir şey değişmemiş gibi görünüyor**: Bir
