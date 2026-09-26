@@ -381,15 +381,24 @@ class BariyerAyarlari(Base):
 
 
 class BildirimAyarlari(Base):
-    """Webhook veya e-posta bildirim kuralları."""
+    """Webhook veya Telegram bildirim kuralları -- alarm/kayıt olaylarını
+    panelin DIŞINA (nöbetçinin telefonuna vb.) da anlık iletmek için (bkz.
+    main.py::_bildirim_tetikle, backend/telegram_bildirim.py).
+
+    NOT (2026-09-26): `tip` daha önce "webhook | email" olarak
+    belgeleniyordu ama "email" hiçbir zaman gerçekten UYGULANMADI -- bir
+    kullanıcı panelden/API'den `tip="email"` ile bir ayar oluştursaydı,
+    ayar sessizce hiçbir zaman çalışmayacaktı (bkz. main.py::
+    _bildirim_gonder_sync'in kök neden notu). Artık yalnızca gerçekten
+    desteklenen değerler kabul ediliyor: webhook | telegram."""
     __tablename__ = "bildirim_ayarlari"
 
     id = Column(Integer, primary_key=True, index=True)
     ad = Column(String(80), nullable=False)
-    tip = Column(String(20), default="webhook")  # webhook | email
-    hedef = Column(String(255), nullable=False)  # URL veya e-posta adresi
-    tetikleyici = Column(String(30), default="hepsi")  # hepsi | yetkisiz | kara_liste | suresi_dolmus
-    http_metot = Column(String(10), default="POST")
+    tip = Column(String(20), default="webhook")  # webhook | telegram
+    hedef = Column(String(255), nullable=False)  # webhook: hedef URL -- telegram: chat_id
+    tetikleyici = Column(String(30), default="hepsi")  # hepsi | yetkisiz | kara_liste | suresi_dolmus | supheli_arac | bariyer_hatasi | disk_hatasi | kamera_arizasi
+    http_metot = Column(String(10), default="POST")  # yalnızca tip="webhook" için anlamlıdır
     aktif = Column(Boolean, default=True)
     olusturma_tarihi = Column(DateTime, default=datetime.now)
 

@@ -42,6 +42,7 @@ from backend import led_panel
 from backend import lisans as lisans_modulu
 from backend.vardiya_eslestirme import kayitlari_oturumlarla_eslestir
 from backend import kucuk_gorsel
+from backend import telegram_bildirim
 from backend.metin_araclari import levenshtein_mesafesi, en_yakin_bilinen_plakayi_bul, plaka_hucresini_ayir
 
 # ---------------------- KLASÖR AYARLARI ----------------------
@@ -404,24 +405,15 @@ def _kamera_ariza_alarmi_olustur(kamera_ad: str, kamera_id: str, mesaj: str) -> 
         db.commit()
         logger.error("Kamera arıza alarmı oluşturuldu: %s — %s", kamera_ad, mesaj)
 
-        # Mevcut webhook bildirim sistemine bağla (hepsi | kamera_arizasi tetikleyicili olanlar)
+        # Mevcut bildirim sistemine bağla (webhook/telegram, hepsi |
+        # kamera_arizasi tetikleyicili olanlar) -- bkz. _bildirim_tetikle.
         try:
-            ayarlar = db.query(models.BildirimAyarlari).filter(
-                models.BildirimAyarlari.aktif == True,  # noqa: E712
-                models.BildirimAyarlari.tip == "webhook",
-                models.BildirimAyarlari.tetikleyici.in_(["hepsi", "kamera_arizasi"]),
-            ).all()
-            for a in ayarlar:
-                threading.Thread(
-                    target=_webhook_gonder_sync,
-                    args=(a.hedef, a.http_metot, {
-                        "olay": "kamera_arizasi",
-                        "kamera_id": kamera_id,
-                        "kamera_ad": kamera_ad,
-                        "mesaj": mesaj,
-                    }),
-                    daemon=True,
-                ).start()
+            _bildirim_tetikle(db, "kamera_arizasi", {
+                "olay": "kamera_arizasi",
+                "kamera_id": kamera_id,
+                "kamera_ad": kamera_ad,
+                "mesaj": mesaj,
+            })
         except Exception as exc:
             logger.error("Kamera arıza webhook bildirimi hazırlanamadı: %s", exc)
     except Exception as exc:
@@ -3793,13 +3785,22 @@ def _kayit_olustur_ve_bildir(db: Session, plaka_no: str, kamera_id: str, yon: st
                     models.Alarm.okundu == False,  # noqa: E712
                 ).first()
                 if not mevcut:
+                    supheli_mesaj = f"ŞÜPHELİ ARAÇ: {plaka_no} son 1 saatte {red_sayisi} kez reddedildi"
                     db.add(models.Alarm(
                         kayit_id=kayit.id,
                         plaka_no=plaka_no,
                         alarm_tipi="supheli_arac",
-                        mesaj=f"ŞÜPHELİ ARAÇ: {plaka_no} son 1 saatte {red_sayisi} kez reddedildi",
+                        mesaj=supheli_mesaj,
                     ))
                     logger.warning("Şüpheli araç: %s (%d red/saat)", plaka_no, red_sayisi)
+                    # DÜZELTME (2026-09-26): bu alarm ÖNCEDEN yalnızca panelde
+                    # görünüyordu, hiçbir dış bildirime (webhook/telegram)
+                    # bağlı değildi -- tam da "şüpheli araç" gibi ACİL bir
+                    # durumda nöbetçi ekrana bakmıyorsa hiç haberi olmuyordu.
+                    _bildirim_tetikle(db, "supheli_arac", {
+                        "olay": "supheli_arac", "alarm_tipi": "supheli_arac",
+                        "plaka_no": plaka_no, "mesaj": supheli_mesaj,
+                    })
         except Exception as exc:
             logger.error("Şüpheli araç kontrolü hatası: %s", exc)
 
@@ -3843,13 +3844,21 @@ def _kayit_olustur_ve_bildir(db: Session, plaka_no: str, kamera_id: str, yon: st
                         else f"'{b.ad}' bariyeri HTTP modunda ama http_url tanımlanmamış"
                     )
                     logger.error("Otomatik bariyer açılamadı (plaka=%s): %s", plaka_no, sebep)
+                    bariyer_mesaj = f"Yetkili araç girişinde bariyer otomatik AÇILAMADI: {sebep}"
                     db.add(models.Alarm(
                         kayit_id=kayit.id,
                         plaka_no=plaka_no,
                         alarm_tipi="bariyer_hatasi",
-                        mesaj=f"Yetkili araç girişinde bariyer otomatik AÇILAMADI: {sebep}",
+                        mesaj=bariyer_mesaj,
                     ))
                     db.commit()
+                    # DÜZELTME (2026-09-26): bkz. supheli_arac'taki AYNI notu --
+                    # bariyer açılamaması yetkili bir aracın nizamiyede
+                    # BEKLEMESİ demektir, panelin dışında da anında bilinmeli.
+                    _bildirim_tetikle(db, "bariyer_hatasi", {
+                        "olay": "bariyer_hatasi", "alarm_tipi": "bariyer_hatasi",
+                        "plaka_no": plaka_no, "mesaj": bariyer_mesaj,
+                    })
         except Exception as exc:
             logger.error("Otomatik bariyer hatası: %s", exc)
 
@@ -3899,21 +3908,57 @@ def _webhook_gonder_sync(url: str, metot: str, veri: dict) -> bool:
         return False
 
 
-async def _webhook_bildir(db: Session, yetki_durumu: str, veri: dict) -> None:
-    """Tetikleyiciye uyan aktif webhook kayıtlarına bildirim gönderir."""
+_BILDIRIM_TIPLERI = ("webhook", "telegram")
+
+
+def _bildirim_gonder_sync(tip: str, hedef: str, http_metot: str, veri: dict) -> "tuple[bool, Optional[str]]":
+    """`BildirimAyarlari.tip`'e göre GERÇEK gönderimi yapan tek dispatcher
+    (2026-09-26, kullanıcı isteği: "Telegram ile anlık dış bildirim").
+
+    KÖK NEDEN düzeltmesi: bu fonksiyondan ÖNCE `/bildirim/test/{id}` ve her
+    çağıran, `tip` alanına HİÇ bakmadan koşulsuz `_webhook_gonder_sync`'i
+    çağırıyordu -- panelden/API'den `tip="email"` (şemada belgelenen ama
+    hiçbir zaman gerçekten uygulanmamış bir değer) ya da bir yazım hatası
+    (`"webbhook"`) ile bir bildirim ayarı oluşturulursa, `hedef` bir URL
+    değilmiş gibi `urllib`'e verilip anlaşılmaz bir bağlantı hatasıyla
+    "başarısız" dönüyordu -- ayarın kendisinin desteklenmediği HİÇBİR
+    zaman söylenmiyordu (sessiz/yanıltıcı başarısızlık). Artık tanımadığımız
+    bir `tip` için açıkça "Desteklenmeyen bildirim tipi" hatası dönülür."""
+    if tip == "webhook":
+        basarili = _webhook_gonder_sync(hedef, http_metot, veri)
+        return basarili, (None if basarili else "Webhook isteği başarısız oldu (bkz. sunucu logu)")
+    if tip == "telegram":
+        return telegram_bildirim.telegram_gonder_sync(hedef, veri)
+    return False, f"Desteklenmeyen bildirim tipi: '{tip}' (yalnızca {'/'.join(_BILDIRIM_TIPLERI)} desteklenir)"
+
+
+def _bildirim_tetikle(db: Session, tetikleyici: str, veri: dict) -> None:
+    """Tetikleyicisi `tetikleyici` ile TAM eşleşen VEYA `hepsi` olan, aktif
+    TÜM bildirim ayarlarına (tip'ten bağımsız -- webhook/telegram) arka
+    planda (ayrı thread) bildirim gönderir. Hem senkron (ör. kamera bekçisi
+    thread'i) hem "async def" içinden (aşağıdaki `kayit_ekle_otomatik`
+    akışı gibi) çağrılabilir -- kendisi bloklamaz, yalnızca BildirimAyarlari
+    sorgusu (birkaç satır, hızlı) senkron çalışır."""
     try:
         ayarlar = db.query(models.BildirimAyarlari).filter(
             models.BildirimAyarlari.aktif == True,  # noqa: E712
-            models.BildirimAyarlari.tip == "webhook",
+            or_(models.BildirimAyarlari.tetikleyici == "hepsi", models.BildirimAyarlari.tetikleyici == tetikleyici),
         ).all()
-        loop = asyncio.get_event_loop()
-        for a in ayarlar:
-            tetik = a.tetikleyici
-            if tetik != "hepsi" and tetik != yetki_durumu:
-                continue
-            loop.run_in_executor(None, _webhook_gonder_sync, a.hedef, a.http_metot, veri)
     except Exception as exc:
-        logger.error("Webhook bildirim hatası: %s", exc)
+        logger.error("Bildirim ayarları okunamadı: %s", exc)
+        return
+    for a in ayarlar:
+        threading.Thread(
+            target=_bildirim_gonder_sync, args=(a.tip, a.hedef, a.http_metot, veri), daemon=True,
+        ).start()
+
+
+async def _webhook_bildir(db: Session, yetki_durumu: str, veri: dict) -> None:
+    """Kayıt oluşturma akışının (bkz. aşağıdaki `kayit_ekle_otomatik`/
+    `kayit_ekle_manuel` -> `_kayit_olustur_ve_bildir`) bildirim tetikleyici
+    noktası -- `yetki_durumu` ("yetkili"/"yetkisiz"/"kara_liste"/
+    "suresi_dolmus") tetikleyici değeri olarak kullanılır."""
+    _bildirim_tetikle(db, yetki_durumu, veri)
 
 
 @app.post("/kayitlar", response_model=schemas.KayitCevap)
@@ -4101,14 +4146,22 @@ def _gorsel_yazma_hatasini_bildir(db: Session, kamera_id: str, plaka_no: str, ex
             return
         _son_gorsel_yazma_alarm_zamani = simdi
     try:
+        disk_mesaji = f"Araç fotoğrafları diske YAZILAMIYOR (kayıtlar fotoğrafsız oluşturuluyor): {exc}"[:255]
         db.add(models.Alarm(
             # plaka_no NOT NULL + String(15) (bkz. models.Alarm); kamera
             # arızası alarmındaki gibi alarmın kaynağını (kamerayı) yazıyoruz.
             plaka_no=(re.sub(r"[^A-Za-z0-9 _.\-]", "", str(kamera_id)).strip() or "SISTEM")[:15],
             alarm_tipi="disk_hatasi",
-            mesaj=f"Araç fotoğrafları diske YAZILAMIYOR (kayıtlar fotoğrafsız oluşturuluyor): {exc}"[:255],
+            mesaj=disk_mesaji,
         ))
         db.commit()
+        # DÜZELTME (2026-09-26): bkz. supheli_arac/bariyer_hatasi'ndeki AYNI
+        # notu -- disk sorunu, kayıtların fotoğrafsız kalmaya BAŞLADIĞI andır,
+        # yönetici bunu panelin dışında da anında bilmeli (zaten 10 dakikada
+        # bir ile SINIRLI olduğu için burada bir bildirim spam riski yok).
+        _bildirim_tetikle(db, "disk_hatasi", {
+            "olay": "disk_hatasi", "alarm_tipi": "disk_hatasi", "mesaj": disk_mesaji,
+        })
     except Exception:
         db.rollback()
         logger.exception("Görsel yazma hatası alarmı kaydedilemedi")
@@ -6180,8 +6233,13 @@ def denetim_eylem_listesini_getir(db: Session = Depends(get_db), kullanici: mode
 
 
 # ==================================================================
-# BİLDİRİM AYARLARI (Webhook)
+# BİLDİRİM AYARLARI (Webhook / Telegram)
 # ==================================================================
+# 2026-09-26: `tip="telegram"` desteği eklendi -- bkz. backend/
+# telegram_bildirim.py'nin docstring'i. `hedef`, tip="webhook" için bir URL,
+# tip="telegram" için ise bot'un konuştuğu sohbetin chat_id'sidir (bot
+# TOKEN'ı panelden/DB'den DEĞİL, PTS_TELEGRAM_BOT_TOKEN ortam değişkeninden
+# okunur -- gizli bir değer düz metin olarak DB'de dolaşmasın diye).
 
 @app.get("/bildirim/ayarlar")
 def bildirim_ayarlarini_getir(db: Session = Depends(get_db), _: models.Kullanici = Depends(_personel_girisi_gerekli)):
@@ -6194,10 +6252,23 @@ def bildirim_ayari_ekle(istek: dict = Body(...), db: Session = Depends(get_db), 
     ad = re.sub(r"[<>&\"']", "", str(istek.get("ad", "Bildirim"))).strip()[:80] or "Bildirim"
     hedef = str(istek.get("hedef", "")).strip()
     if not hedef:
-        raise HTTPException(400, "Hedef URL boş olamaz")
+        raise HTTPException(400, "Hedef boş olamaz (webhook için URL, telegram için chat_id)")
+    tip = str(istek.get("tip", "webhook")).strip().lower()
+    # DÜZELTME (2026-09-26): bkz. _bildirim_gonder_sync'in docstring'indeki
+    # kök neden notu -- ÖNCEDEN `tip` HİÇ doğrulanmıyordu; artık desteklenen
+    # bir değer değilse ayar HİÇ oluşturulmadan, işe yaramayacağı en baştan
+    # (açık bir 400 ile) söylenir.
+    if tip not in _BILDIRIM_TIPLERI:
+        raise HTTPException(400, f"Desteklenmeyen bildirim tipi: '{tip}' (yalnızca {'/'.join(_BILDIRIM_TIPLERI)})")
+    if tip == "telegram" and not telegram_bildirim.telegram_ayarli_mi():
+        raise HTTPException(
+            400,
+            "Telegram bildirimi eklenemedi: sunucuda PTS_TELEGRAM_BOT_TOKEN ortam değişkeni ayarlanmamış "
+            "(bkz. README.md'deki Telegram kurulum notu)",
+        )
     yeni = models.BildirimAyarlari(
         ad=ad,
-        tip=str(istek.get("tip", "webhook")),
+        tip=tip,
         hedef=hedef,
         tetikleyici=str(istek.get("tetikleyici", "hepsi")),
         http_metot=str(istek.get("http_metot", "POST")),
@@ -6237,10 +6308,10 @@ async def bildirim_test_gonder(ayar_id: int, db: Session = Depends(get_db), kull
     if not ayar:
         raise HTTPException(404, "Ayar bulunamadı")
     test_veri = {"test": True, "mesaj": "PTS test bildirimi", "zaman": datetime.now().isoformat()}
-    basarili = await asyncio.get_event_loop().run_in_executor(
-        None, _webhook_gonder_sync, ayar.hedef, ayar.http_metot, test_veri
+    basarili, hata = await asyncio.get_event_loop().run_in_executor(
+        None, _bildirim_gonder_sync, ayar.tip, ayar.hedef, ayar.http_metot, test_veri
     )
-    return {"basarili": basarili, "hedef": ayar.hedef}
+    return {"basarili": basarili, "hedef": ayar.hedef, "tip": ayar.tip, "hata": hata}
 
 
 # ==================================================================

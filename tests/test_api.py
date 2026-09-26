@@ -5383,3 +5383,264 @@ def test_dahua_yetki_ve_olay_adi_dogrulamasi(client, yetkili_header, operator_he
                      headers=yetkili_header)
     assert r.status_code == 422
     assert client.patch("/kameralar/olmayan-id/dahua", json={"aktif": False}, headers=yetkili_header).status_code == 404
+
+
+# ------------------------------------------------------------------
+# BİLDİRİM AYARLARI: Telegram + genel dispatch (2026-09-26, Patch #111)
+# ------------------------------------------------------------------
+# Kullanıcı isteği: "Telegram ile anlık dış bildirim". Bu bölüm üç şeyi
+# doğrular: (1) `tip` alanı artık gerçekten doğrulanıyor (önceden "email"
+# gibi hiç uygulanmamış bir değer sessizce kabul edilip işe yaramıyordu),
+# (2) `/bildirim/test/{id}` artık tip'e göre GERÇEK dispatcher'ı
+# (_bildirim_gonder_sync) kullanıyor ve hata metnini yanıtta dönüyor,
+# (3) daha önce hiçbir dış bildirime bağlı olmayan üç alarm türü
+# (supheli_arac / bariyer_hatasi / disk_hatasi) artık gerçekten
+# _bildirim_tetikle çağırıyor.
+
+class _EszamanliThread:
+    """`threading.Thread`'i taklit eder: `start()` HEMEN ve AYNI thread'de
+    `target`'ı senkron çalıştırır. `_bildirim_tetikle` her eşleşen ayar için
+    gerçek bir arka plan thread'i başlattığından, testlerin bunu `time.sleep`
+    ile yarışmadan deterministik biçimde doğrulayabilmesi için kullanılır."""
+
+    def __init__(self, target=None, args=(), kwargs=None, daemon=None):
+        self._target = target
+        self._args = args
+        self._kwargs = kwargs or {}
+
+    def start(self):
+        if self._target:
+            self._target(*self._args, **self._kwargs)
+
+    def join(self, *a, **kw):
+        pass
+
+
+@pytest.fixture
+def eszamanli_bildirim(monkeypatch):
+    monkeypatch.setattr(pts_main.threading, "Thread", _EszamanliThread)
+
+
+def _bildirim_ayari_olustur(client, yetkili_header, **alanlar) -> int:
+    govde = {"ad": "Test Bildirimi", "hedef": "https://example.com/hook", "tetikleyici": "hepsi"}
+    govde.update(alanlar)
+    r = client.post("/bildirim/ayarlar", json=govde, headers=yetkili_header)
+    assert r.status_code == 200, r.text
+    return r.json()["id"]
+
+
+def _bildirim_ayari_sil(client, yetkili_header, ayar_id: int) -> None:
+    client.delete(f"/bildirim/ayarlar/{ayar_id}", headers=yetkili_header)
+
+
+def test_bildirim_ayari_desteklenmeyen_tip_400_doner(client, yetkili_header):
+    """Kök neden regresyonu: `tip="email"` (şemada belgelenen ama hiçbir
+    zaman uygulanmamış bir değer) artık ayar OLUŞTURULURKEN açıkça
+    reddedilir -- önceden sessizce kabul edilip hiç çalışmıyordu."""
+    r = client.post("/bildirim/ayarlar", json={
+        "ad": "X", "hedef": "test@example.com", "tip": "email",
+    }, headers=yetkili_header)
+    assert r.status_code == 400, r.text
+    assert "email" in r.json()["detail"]
+
+    r2 = client.post("/bildirim/ayarlar", json={
+        "ad": "X", "hedef": "https://example.com", "tip": "webbhook",
+    }, headers=yetkili_header)
+    assert r2.status_code == 400, r2.text
+
+
+def test_bildirim_ayari_telegram_token_yoksa_400_doner(client, yetkili_header, monkeypatch):
+    monkeypatch.delenv("PTS_TELEGRAM_BOT_TOKEN", raising=False)
+    r = client.post("/bildirim/ayarlar", json={
+        "ad": "Telegram Test", "hedef": "123456789", "tip": "telegram",
+    }, headers=yetkili_header)
+    assert r.status_code == 400, r.text
+    assert "PTS_TELEGRAM_BOT_TOKEN" in r.json()["detail"]
+
+
+def test_bildirim_ayari_telegram_token_varsa_olusturulabilir(client, yetkili_header, monkeypatch):
+    monkeypatch.setenv("PTS_TELEGRAM_BOT_TOKEN", "123456:sahte-test-token")
+    ayar_id = _bildirim_ayari_olustur(client, yetkili_header, ad="Telegram Test", hedef="987654321", tip="telegram")
+    try:
+        liste = client.get("/bildirim/ayarlar", headers=yetkili_header).json()
+        ayar = next(a for a in liste if a["id"] == ayar_id)
+        assert ayar["tip"] == "telegram"
+        assert ayar["hedef"] == "987654321"
+    finally:
+        _bildirim_ayari_sil(client, yetkili_header, ayar_id)
+
+
+def test_bildirim_test_webhook_basarisiz_hata_metni_doner(client, yetkili_header, monkeypatch):
+    """`_bildirim_gonder_sync`'in gerçekten çağrıldığını VE yanıtın artık
+    `tip`/`hata` alanlarını içerdiğini doğrular (önceden yalnızca
+    `basarili`/`hedef` dönüyordu)."""
+    monkeypatch.setattr(pts_main, "_webhook_gonder_sync", lambda url, metot, veri: False)
+    ayar_id = _bildirim_ayari_olustur(client, yetkili_header, tip="webhook")
+    try:
+        r = client.post(f"/bildirim/test/{ayar_id}", headers=yetkili_header)
+        assert r.status_code == 200, r.text
+        v = r.json()
+        assert v["basarili"] is False
+        assert v["tip"] == "webhook"
+        assert v["hata"]
+    finally:
+        _bildirim_ayari_sil(client, yetkili_header, ayar_id)
+
+
+def test_bildirim_test_telegram_basarili_ve_basarisiz(client, yetkili_header, monkeypatch):
+    monkeypatch.setenv("PTS_TELEGRAM_BOT_TOKEN", "123456:sahte-test-token")
+    ayar_id = _bildirim_ayari_olustur(client, yetkili_header, ad="Telegram Test", hedef="42", tip="telegram")
+    try:
+        import backend.telegram_bildirim as tb
+
+        monkeypatch.setattr(tb, "telegram_gonder_sync", lambda chat_id, veri: (True, None))
+        r = client.post(f"/bildirim/test/{ayar_id}", headers=yetkili_header)
+        assert r.status_code == 200, r.text
+        assert r.json() == {"basarili": True, "hedef": "42", "tip": "telegram", "hata": None}
+
+        monkeypatch.setattr(tb, "telegram_gonder_sync", lambda chat_id, veri: (False, "Bad Request: chat not found"))
+        r2 = client.post(f"/bildirim/test/{ayar_id}", headers=yetkili_header)
+        assert r2.status_code == 200, r2.text
+        assert r2.json()["basarili"] is False
+        assert "chat not found" in r2.json()["hata"]
+    finally:
+        _bildirim_ayari_sil(client, yetkili_header, ayar_id)
+
+
+def test_bildirim_test_operator_403_doner(client, operator_header, yetkili_header):
+    ayar_id = _bildirim_ayari_olustur(client, yetkili_header)
+    try:
+        assert client.post(f"/bildirim/test/{ayar_id}", headers=operator_header).status_code == 403
+    finally:
+        _bildirim_ayari_sil(client, yetkili_header, ayar_id)
+
+
+def test_bildirim_tetikle_yalnizca_aktif_ve_eslesen_tetikleyicileri_cagirir(client, yetkili_header, eszamanli_bildirim, monkeypatch):
+    """`_bildirim_tetikle`'i doğrudan çağırıp: (a) `tetikleyici="hepsi"` olan
+    aktif bir ayarın, (b) tam eşleşen tetikleyicili aktif bir ayarın
+    ÇAĞRILDIĞINI; (c) eşleşmeyen tetikleyicili ve (d) pasif bir ayarın
+    ÇAĞRILMADIĞINI doğrular."""
+    from backend.database import SessionLocal
+
+    hepsi_id = _bildirim_ayari_olustur(client, yetkili_header, ad="Hepsi", hedef="https://example.com/hepsi", tetikleyici="hepsi")
+    eslesen_id = _bildirim_ayari_olustur(client, yetkili_header, ad="Eslesen", hedef="https://example.com/eslesen", tetikleyici="supheli_arac")
+    eslesmeyen_id = _bildirim_ayari_olustur(client, yetkili_header, ad="Eslesmeyen", hedef="https://example.com/eslesmeyen", tetikleyici="disk_hatasi")
+    pasif_id = _bildirim_ayari_olustur(client, yetkili_header, ad="Pasif", hedef="https://example.com/pasif", tetikleyici="hepsi")
+    client.patch(f"/bildirim/ayarlar/{pasif_id}/aktif", headers=yetkili_header)
+    try:
+        cagrilan_hedefler = []
+        monkeypatch.setattr(pts_main, "_bildirim_gonder_sync",
+                            lambda tip, hedef, metot, veri: cagrilan_hedefler.append(hedef))
+
+        db = SessionLocal()
+        try:
+            pts_main._bildirim_tetikle(db, "supheli_arac", {"olay": "supheli_arac", "mesaj": "test"})
+        finally:
+            db.close()
+
+        assert set(cagrilan_hedefler) == {"https://example.com/hepsi", "https://example.com/eslesen"}
+    finally:
+        for aid in (hepsi_id, eslesen_id, eslesmeyen_id, pasif_id):
+            _bildirim_ayari_sil(client, yetkili_header, aid)
+
+
+def test_supheli_arac_alarmi_bildirim_tetikliyor(client, yetkili_header, eszamanli_bildirim, monkeypatch):
+    """Kök neden: ŞÜPHELİ ARAÇ alarmı önceden yalnızca panelde görünüyordu,
+    hiçbir dış bildirime bağlı değildi -- artık `_bildirim_tetikle` çağrılıyor."""
+    onceki_esik = client.get("/sistem/ayarlar", headers=yetkili_header).json()["supheli_esik"]
+    r0 = client.put("/sistem/ayarlar", json={"supheli_esik": 2}, headers=yetkili_header)
+    assert r0.status_code == 200, r0.text
+
+    cagrilanlar = []
+    monkeypatch.setattr(pts_main, "_bildirim_gonder_sync",
+                        lambda tip, hedef, metot, veri: cagrilanlar.append(veri) or (True, None))
+    ayar_id = _bildirim_ayari_olustur(client, yetkili_header, tetikleyici="supheli_arac")
+    try:
+        plaka = "34 SPH 01"
+        for _ in range(2):
+            r = client.post("/kayitlar", json={
+                "plaka_no": plaka, "kamera_id": "SUPHELI-KAM", "yon": "giris", "guven_skoru": 0.97,
+            }, headers=yetkili_header)
+            assert r.status_code == 200, r.text
+        assert any(v.get("plaka_no") == plaka and v.get("alarm_tipi") == "supheli_arac" for v in cagrilanlar)
+    finally:
+        _bildirim_ayari_sil(client, yetkili_header, ayar_id)
+        client.put("/sistem/ayarlar", json={"supheli_esik": onceki_esik}, headers=yetkili_header)
+
+
+def test_bariyer_hatasi_alarmi_bildirim_tetikliyor(client, yetkili_header, eszamanli_bildirim, monkeypatch):
+    """GPIO modunda tanımlı, otomatik açılması gereken bir bariyer başarısız
+    olduğunda artık yalnızca panel alarmı değil, dış bildirim de tetiklenir
+    (bkz. test_otomatik_bariyer_acma_gpio_modunda_sessiz_kalmaz_alarm_uretir)."""
+    from backend.database import SessionLocal
+    from backend import models
+
+    cagrilanlar = []
+    monkeypatch.setattr(pts_main, "_bildirim_gonder_sync",
+                        lambda tip, hedef, metot, veri: cagrilanlar.append(veri) or (True, None))
+
+    db = SessionLocal()
+    try:
+        bariyer = models.BariyerAyarlari(ad="Bildirim GPIO Bariyeri", mod="gpio", auto_ac=True, aktif=True)
+        db.add(bariyer)
+        db.commit()
+        db.refresh(bariyer)
+        bariyer_id = bariyer.id
+    finally:
+        db.close()
+
+    ayar_id = _bildirim_ayari_olustur(client, yetkili_header, tetikleyici="bariyer_hatasi")
+    try:
+        r = client.post("/kisiler", json={
+            "ad_soyad": "Bildirim GPIO Abone", "plaka_no": "34 BLD 02", "tip": "abone",
+        }, headers=yetkili_header)
+        assert r.status_code == 200, r.text
+
+        r2 = client.post("/kayitlar", json={"plaka_no": "34 BLD 02", "kamera_id": "BLD-GPIO-KAM", "yon": "giris"},
+                          headers=yetkili_header)
+        assert r2.status_code == 200, r2.text
+        assert any(v.get("alarm_tipi") == "bariyer_hatasi" and "Bildirim GPIO Bariyeri" in v.get("mesaj", "")
+                   for v in cagrilanlar)
+    finally:
+        _bildirim_ayari_sil(client, yetkili_header, ayar_id)
+        db = SessionLocal()
+        try:
+            db.query(models.BariyerAyarlari).filter(models.BariyerAyarlari.id == bariyer_id).delete()
+            db.commit()
+        finally:
+            db.close()
+
+
+def test_disk_hatasi_alarmi_bildirim_tetikliyor(client, yetkili_header, monkeypatch, eszamanli_bildirim):
+    """Diske yazma hatası alarmı da artık dış bildirime bağlı (bkz.
+    test_gorsel_diske_yazilamazsa_kayit_fotografsiz_olusur_ve_alarm_uretilir
+    -- burada aynı senaryo, ek olarak dispatch'in gerçekten çağrıldığını
+    doğruluyor)."""
+    import builtins
+
+    gercek_open = builtins.open
+
+    def _disk_dolu_open(yol, mod="r", *a, **kw):
+        if "wb" in mod and str(yol).startswith(pts_main.GORUNTU_KLASORU):
+            with gercek_open(yol, "wb") as f:
+                f.write(b"\xff\xd8yarim")
+            raise OSError(28, "No space left on device")
+        return gercek_open(yol, mod, *a, **kw)
+
+    cagrilanlar = []
+    monkeypatch.setattr(pts_main, "open", _disk_dolu_open, raising=False)
+    monkeypatch.setattr(pts_main, "_son_gorsel_yazma_alarm_zamani", 0.0)
+    monkeypatch.setattr(pts_main, "_bildirim_gonder_sync",
+                        lambda tip, hedef, metot, veri: cagrilanlar.append(veri) or (True, None))
+
+    ayar_id = _bildirim_ayari_olustur(client, yetkili_header, tetikleyici="disk_hatasi")
+    try:
+        r = client.post(
+            "/kayitlar/otomatik",
+            data={"plaka_no": "34 DSK 02", "kamera_id": "DISK-DOLU-KAM-2", "yon": "giris", "guven_skoru": 0.99},
+            files={"gorsel": ("kare.jpg", _KUCUK_JPEG, "image/jpeg")},
+        )
+        assert r.status_code == 200, r.text
+        assert any(v.get("alarm_tipi") == "disk_hatasi" for v in cagrilanlar)
+    finally:
+        _bildirim_ayari_sil(client, yetkili_header, ayar_id)

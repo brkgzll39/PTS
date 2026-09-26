@@ -730,7 +730,7 @@ function authBasarili(kullanici) {
 async function uygulamaVerileriniYukle() {
   panelYenile(); sonGecislerYukle(); kayitlariYukle(); kisileriYukle(); ledAyarlariYukle(); lisansYukle(); kameralariYukle();
   grafikYukle(); karaListesiYukle(); bariyerleriYukle(); kullanicilariYukle(); sistemSagliginiYukle();
-  bildirimleriYukle(); vardiyaOturumlariniYukle(); _panelYenilemeAyariniYukle();
+  bildirimAyarlariYukle(); vardiyaOturumlariniYukle(); _panelYenilemeAyariniYukle();
   await siteleriYukle(); noktalariYukle();
   sseBaslat();
 }
@@ -4601,7 +4601,113 @@ async function dogrulukTestiCalistir(olay) {
 // Sistem sekmesi açıldığında logları ve sağlık bilgisini otomatik yükle
 document.querySelector('[data-bs-target="#sistem-sekme"]')?.addEventListener("click", () => {
   sistemSagliginiYukle(); loglariYukle(); sistemAyarlariYukle(); diskBilgisiYukle(); anprModelleriniYukle();
+  bildirimAyarlariYukle();
 });
+
+// ================================================================
+// BİLDİRİM AYARLARI (Webhook / Telegram) -- bu ekran daha önce yalnızca
+// webhook destekliyordu ("Yeni Webhook Ekle"); 2026-09-26 kullanıcı isteği
+// ("Telegram ile anlık dış bildirim") ile Telegram desteği ve eksik
+// tetikleyici seçenekleri (şüpheli araç/bariyer hatası/disk hatası)
+// eklendi -- bkz. main.py::_bildirim_tetikle, backend/telegram_bildirim.py.
+// ================================================================
+
+function bildirimTipDegisti() {
+  const tip = document.getElementById("bildirimTip").value;
+  const webhookMu = tip === "webhook";
+  document.getElementById("bildirimWebhookAlani").classList.toggle("d-none", !webhookMu);
+  const hedefGirdi = document.getElementById("bildirimHedef");
+  const etiket = document.getElementById("bildirimHedefEtiket");
+  if (webhookMu) {
+    etiket.textContent = "Hedef URL";
+    hedefGirdi.placeholder = "https://ornek.com/webhook";
+  } else {
+    etiket.textContent = "Telegram chat_id";
+    hedefGirdi.placeholder = "123456789";
+  }
+}
+
+let _bildirimAyarCache = [];
+
+async function bildirimAyarlariYukle() {
+  const el = document.getElementById("bildirimAyarTablo");
+  if (!el || !rolYeterli("yonetici")) return;
+  try {
+    const ayarlar = await apiCagir("/bildirim/ayarlar");
+    _bildirimAyarCache = ayarlar;
+    const tetikleyiciEtiketleri = {
+      hepsi: "Hepsi", yetkisiz: "Yetkisiz araç", kara_liste: "Kara liste",
+      suresi_dolmus: "Süresi dolmuş", supheli_arac: "Şüpheli araç",
+      bariyer_hatasi: "Bariyer hatası", kamera_arizasi: "Kamera arızası",
+      disk_hatasi: "Disk hatası",
+    };
+    el.innerHTML = ayarlar.map(a => `<tr>
+      <td><strong>${escapeHtml(a.ad)}</strong></td>
+      <td><span class="badge ${a.tip === "telegram" ? "bg-info text-dark" : "bg-secondary"}">${escapeHtml(a.tip)}</span></td>
+      <td class="text-muted small text-truncate" style="max-width:150px" title="${escapeHtml(a.hedef)}">${escapeHtml(a.hedef)}</td>
+      <td class="small">${escapeHtml(tetikleyiciEtiketleri[a.tetikleyici] || a.tetikleyici)}</td>
+      <td>
+        <div class="form-check form-switch mb-0">
+          <input class="form-check-input" type="checkbox" role="switch" ${a.aktif ? "checked" : ""}
+                 onchange="bildirimAktifToggle(${a.id})" aria-label="Aktif/Pasif">
+        </div>
+      </td>
+      <td>
+        <button class="btn btn-sm btn-outline-secondary" onclick="bildirimTestGonder(${a.id})" title="Test bildirimi gönder"><i class="bi bi-send"></i></button>
+        <button class="btn btn-sm btn-outline-danger ms-1" onclick="bildirimSil(${a.id})"><i class="bi bi-trash"></i></button>
+      </td>
+    </tr>`).join("") || `<tr><td colspan="6" class="text-center text-muted py-3">Bildirim ayarı tanımlanmadı</td></tr>`;
+  } catch (e) { _yuklemeHatasi("Bildirim ayarları", e); }
+}
+
+document.getElementById("bildirimForm")?.addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const sonuc = document.getElementById("bildirimSonuc");
+  const btn = e.target.querySelector('button[type="submit"]');
+  if (btn) btn.disabled = true;
+  try {
+    await apiCagir("/bildirim/ayarlar", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({
+      ad: document.getElementById("bildirimAd").value,
+      tip: document.getElementById("bildirimTip").value,
+      hedef: document.getElementById("bildirimHedef").value,
+      http_metot: document.getElementById("bildirimMetot").value,
+      tetikleyici: document.getElementById("bildirimTetikleyici").value,
+    })});
+    sonuc.className = "small mt-2 text-success"; sonuc.textContent = "Bildirim ayarı kaydedildi.";
+    e.target.reset(); bildirimTipDegisti(); bildirimAyarlariYukle();
+  } catch (err) {
+    sonuc.className = "small mt-2 text-danger"; sonuc.textContent = err.message;
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+});
+
+async function bildirimAktifToggle(id) {
+  try {
+    await apiCagir(`/bildirim/ayarlar/${id}/aktif`, { method: "PATCH" });
+    bildirimAyarlariYukle();
+  } catch (e) { toastGoster(e.message, "hata"); bildirimAyarlariYukle(); }
+}
+
+async function bildirimTestGonder(id) {
+  try {
+    const r = await apiCagir(`/bildirim/test/${id}`, { method: "POST" });
+    if (r.basarili) {
+      toastGoster(`Test bildirimi gönderildi (${r.tip})`, "basari");
+    } else {
+      toastGoster(`Test bildirimi başarısız: ${r.hata || "bilinmeyen hata"}`, "hata");
+    }
+  } catch (e) { toastGoster(e.message, "hata"); }
+}
+
+async function bildirimSil(id) {
+  if (!(await onayAl("Bu bildirim ayarını silmek istiyor musunuz?"))) return;
+  try {
+    await apiCagir(`/bildirim/ayarlar/${id}`, { method: "DELETE" });
+    toastGoster("Bildirim ayarı silindi", "basari");
+    bildirimAyarlariYukle();
+  } catch (e) { toastGoster(e.message, "hata"); }
+}
 
 // Denetim Kayıtları sekmesi açıldığında otomatik yükle (bkz. yukarıdaki
 // denetimKayitlariniYukle -- aynı sistem-sekme deseni).
@@ -4847,75 +4953,6 @@ async function veritabaniIndir() {
   }
 }
 
-// ================================================================
-// BİLDİRİM AYARLARI (Webhook)
-// ================================================================
-
-async function bildirimleriYukle() {
-  try {
-    const liste = await apiCagir("/bildirim/ayarlar");
-    const el = document.getElementById("bildirimTablo");
-    if (!el) return;
-    const tetikEtiket = { hepsi: "Her geçiş", yetkisiz: "Yetkisiz", kara_liste: "Kara Liste", suresi_dolmus: "Süresi Dolmuş", kamera_arizasi: "Kamera Arızası" };
-    el.innerHTML = liste.map(b => `<tr>
-      <td><strong>${escapeHtml(b.ad)}</strong></td>
-      <td class="text-muted small text-truncate" style="max-width:160px">${escapeHtml(b.hedef)}</td>
-      <td><span class="badge bg-secondary">${escapeHtml(tetikEtiket[b.tetikleyici] || b.tetikleyici)}</span></td>
-      <td>${b.aktif ? '<span class="badge bg-success">Aktif</span>' : '<span class="badge bg-secondary">Pasif</span>'}</td>
-      <td class="text-nowrap">
-        ${rolYeterli("yonetici") ? `
-        <button class="btn btn-sm btn-outline-info" title="Test gönder" onclick="bildirimTestGonder(${b.id})"><i class="bi bi-send"></i></button>
-        <button class="btn btn-sm btn-outline-secondary ms-1" title="${b.aktif ? "Pasif yap" : "Aktif yap"}" onclick="bildirimToggle(${b.id})"><i class="bi bi-toggle2-on"></i></button>
-        <button class="btn btn-sm btn-outline-danger ms-1" onclick="bildirimSil(${b.id})"><i class="bi bi-trash"></i></button>
-        ` : '<span class="text-muted small">-</span>'}
-      </td>
-    </tr>`).join("") || `<tr><td colspan="5" class="text-center text-muted py-3">Henüz webhook tanımlanmadı</td></tr>`;
-  } catch (e) { _yuklemeHatasi("Webhook listesi", e); }
-}
-
-document.getElementById("bildirimForm")?.addEventListener("submit", async (e) => {
-  e.preventDefault();
-  const sonuc = document.getElementById("bildirimSonuc");
-  const btn = e.target.querySelector('button[type="submit"]');
-  if (btn) btn.disabled = true;
-  try {
-    await apiCagir("/bildirim/ayarlar", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({
-      ad: document.getElementById("bildirimAd").value,
-      hedef: document.getElementById("bildirimHedef").value,
-      tetikleyici: document.getElementById("bildirimTetikleyici").value,
-      http_metot: document.getElementById("bildirimMetot").value,
-    })});
-    sonuc.className = "small mt-2 text-success"; sonuc.textContent = "Webhook kaydedildi.";
-    e.target.reset(); bildirimleriYukle();
-  } catch (err) { sonuc.className = "small mt-2 text-danger"; sonuc.textContent = err.message; }
-  finally { if (btn) btn.disabled = false; }
-});
-
-async function bildirimTestGonder(id) {
-  try {
-    const r = await apiCagir(`/bildirim/test/${id}`, { method: "POST" });
-    toastGoster(r.basarili ? "Test isteği gönderildi ✓" : "Test isteği gönderilemedi", r.basarili ? "basari" : "hata");
-  } catch (e) { toastGoster(e.message, "hata"); }
-}
-
-async function bildirimToggle(id) {
-  try {
-    await apiCagir(`/bildirim/ayarlar/${id}/aktif`, { method: "PATCH" });
-  } catch (e) {
-    toastGoster(e.message, "hata");
-  }
-  bildirimleriYukle();
-}
-
-async function bildirimSil(id) {
-  if (!(await onayAl("Bu webhook'u silmek istediğinize emin misiniz?"))) return;
-  try {
-    await apiCagir(`/bildirim/ayarlar/${id}`, { method: "DELETE" });
-  } catch (e) {
-    toastGoster(e.message, "hata");
-  }
-  bildirimleriYukle();
-}
 
 // ================================================================
 // KAMERA SAĞLIK KONTROLÜ

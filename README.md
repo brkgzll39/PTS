@@ -3948,3 +3948,87 @@ gönderilmeden/True/False gönderilerek kaydedilip `/kayitlar`'dan aynen
 geri okunması, yeni uç noktanın Dahua açık/kapalı kameraları doğru
 işaretlemesi ve doğru sıralaması, yetki (yalnızca yönetici/operatör) ve
 `saat` sınırları (1-168).
+
+## Telegram ile Anlık Dış Bildirim (2026-09-26, kullanıcı isteği)
+
+Kullanıcıya "sisteme eklemek/geliştirmek istediğin şeyler varsa onları da
+konuşalım ve uygulayalım" denildiğinde, panel taramasında şu kök neden
+bulundu: sistemde zaten tam donanımlı bir webhook alt yapısı vardı
+(`BildirimAyarlari` tablosu + `/bildirim/ayarlar` CRUD uç noktaları +
+`/bildirim/test/{id}`) ama (1) panelde bunun İÇİN HİÇ EKRAN yoktu — bir
+yönetici webhook ayarı eklemek için doğrudan API'yi çağırmak zorundaydı;
+(2) yalnızca kayıt oluşturma (`yetkisiz`/`kara_liste`/`suresi_dolmus`/
+`yetkili`) ve `kamera_arizasi` alarmı gerçekten bir bildirim gönderiyordu —
+**ŞÜPHELİ ARAÇ**, bariyer açma hatası ve disk dolu alarmları panelde
+görünüyor ama dışarıya HİÇ bildirilmiyordu; (3) `tip` alanı şemada
+"webhook | email" olarak belgeleniyordu ama "email" hiçbir zaman
+uygulanmamıştı — biri `tip="email"` ile bir ayar oluştursaydı, sistem
+sessizce onu bir webhook URL'i gibi çağırmaya çalışıp anlaşılmaz bir
+bağlantı hatasıyla başarısız olurdu.
+
+**Neden yeni bir tablo değil, mevcut `BildirimAyarlari`'nın genişletilmesi:**
+Telegram için ayrı bir ayar ekranı/tablosu kurmak yerine, aynı tabloya yeni
+bir `tip="telegram"` değeri eklendi — `hedef` alanı bu durumda webhook URL'i
+yerine Telegram sohbet kimliğini (`chat_id`) tutuyor. Bu, hem daha az kod
+hem de yukarıdaki üç eksikliği (eksik UI, eksik alarm kapsaması, doğrulanmamış
+`tip`) aynı yamanın doğal bir parçası olarak düzeltiyor.
+
+### Nasıl çalışır
+
+- Yeni `backend/telegram_bildirim.py` modülü, Telegram Bot API'sine
+  (`https://api.telegram.org/bot<TOKEN>/sendMessage`) stdlib'in
+  `urllib.request`'i ile istek atar — projenin "gereksiz bağımlılık
+  eklememe" disiplinine uyularak `requests` gibi yeni bir paket
+  EKLENMEDİ (tıpkı mevcut webhook gönderiminin de `urllib` kullanması gibi).
+- Bot TOKEN'ı **tek, sistem geneli bir sır** olarak `PTS_TELEGRAM_BOT_TOKEN`
+  ortam değişkeninde tutulur (bkz. `.env.example`) — `PTS_KAMERA_ANAHTARI`
+  ile aynı desen. Her bildirim SATIRINA ayrı bir token GİRİLMEZ; kime
+  gönderileceği (`chat_id`) o satırın kendi `hedef` alanında tutulur.
+- `_bildirim_gonder_sync(tip, hedef, http_metot, veri)` (main.py), artık
+  TÜM gönderimlerin (webhook + Telegram + `/bildirim/test/{id}`) geçtiği
+  TEK dispatcher — `tip` desteklenmiyorsa (`webhook`/`telegram` dışında bir
+  şey) açık bir hata döner, sessizce "bağlantı hatası" gibi görünmez.
+- `_bildirim_tetikle(db, tetikleyici, veri)`, aktif VE (`tetikleyici="hepsi"`
+  ya da tam eşleşen) tüm `BildirimAyarlari` satırlarına, her biri için ayrı
+  bir arka plan thread'inde gönderim yapar (bir satırın yavaş/başarısız
+  olması diğerlerini ya da asıl isteği bekletmez). Artık kayıt bildirimine
+  ek olarak `supheli_arac`, `bariyer_hatasi` ve `disk_hatasi` alarmları da
+  bu fonksiyonu çağırıyor — önceden bu üçü yalnızca panelde görünür, dış
+  dünyaya hiç bildirilmez durumdaydı.
+- Sistem sekmesinde yeni "Yeni Bildirim Ayarı" / "Tanımlı Bildirim
+  Ayarları" kartları (yalnızca yönetici): tip seçimi (Telegram/Webhook),
+  hedef, tetikleyici olayı, aktif/pasif anahtarı, "Test" ve "Sil" düğmeleri
+  — bu ekran ÖNCEDEN hiç yoktu, API doğrudan çağrılmadan kullanılamıyordu.
+
+### Kurulum
+
+1. Telegram'da @BotFather ile yeni bir bot oluşturup verdiği TOKEN'ı
+   `.env` dosyasında `PTS_TELEGRAM_BOT_TOKEN=` satırına yazın.
+2. Botu, bildirim almak istediğiniz sohbete/kanala EKLEYİN (ya da
+   @userinfobot ile kendi `chat_id`'nizi öğrenip botla özelden konuşmaya
+   başlayın) — bot eklenmeden mesaj gönderemez.
+3. Panelde Sistem sekmesi > "Yeni Bildirim Ayarı"nda tip olarak "Telegram"ı
+   seçip hedefe `chat_id`'yi, tetikleyici olarak da (ör. "Şüpheli Araç" ya
+   da "Hepsi") girin, "Test" düğmesiyle gerçekten ulaştığını doğrulayın.
+
+### Bilinçli sınırlamalar
+
+- `PTS_TELEGRAM_BOT_TOKEN` ayarlanmamışsa `tip="telegram"` bir ayar hiç
+  OLUŞTURULAMAZ (açık bir 400 hatasıyla) — var olan bir ayar sonradan
+  token silinirse gönderim başarısız olur, "Test" düğmesiyle görülebilir.
+- `email` tipi artık TAMAMEN kaldırıldı (hiçbir zaman çalışmıyordu); yalnızca
+  `webhook` ve `telegram` desteklenir.
+
+### Testler
+
+`tests/test_telegram_bildirim.py` — token temizleme/eksiklik, boş
+`chat_id`, mesaj metni oluşturma (bilinmeyen alanları sessizce atlama),
+başarılı gönderim, Telegram'ın kendi hata açıklamasının (`400 Bad Request:
+chat not found` gibi) doğru şekilde yakalanıp döndürülmesi, ağ hatası
+senaryosu. `tests/test_api.py` (CI) — desteklenmeyen `tip` ile ayar
+oluşturmanın reddi, token yokken Telegram ayarı oluşturmanın reddi,
+`/bildirim/test/{id}`'in artık `tip`/`hata` alanlarını dönmesi (webhook ve
+Telegram için ayrı ayrı, başarılı/başarısız), `_bildirim_tetikle`'in yalnızca
+aktif ve eşleşen tetikleyicili ayarları çağırdığı, ve şüpheli araç/bariyer
+hatası/disk hatası alarmlarının ÜÇÜNÜN de artık gerçekten dispatch'i
+tetiklediği.

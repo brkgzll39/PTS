@@ -622,7 +622,7 @@
     <div class="sidebar-section-label" data-rol-min="yonetici" data-rol-davranis="gizle">YÖNETİM</div>
     <button class="side-link" data-target="#kamera-sekme" data-rol-min="yonetici" data-rol-davranis="gizle"><i class="bi bi-camera-video"></i>Kameralar</button>
     <button class="side-link" data-target="#bariyer-sekme" data-rol-min="yonetici" data-rol-davranis="gizle"><i class="bi bi-door-open"></i>Bariyer Kontrolü</button>
-    <button class="side-link" data-target="#bildirim-sekme" data-rol-min="yonetici" data-rol-davranis="gizle"><i class="bi bi-bell"></i>Webhook Bildirimleri</button>
+    <button class="side-link" data-target="#bildirim-sekme" data-rol-min="yonetici" data-rol-davranis="gizle"><i class="bi bi-bell"></i>Bildirimler (Webhook/Telegram)</button>
     <button class="side-link" data-target="#lisans-sekme" data-rol-min="yonetici" data-rol-davranis="gizle"><i class="bi bi-key"></i>Lisans Yönetimi</button>
     <button class="side-link" data-target="#led-sekme" data-rol-min="yonetici" data-rol-davranis="gizle"><i class="bi bi-broadcast-pin"></i>LED Paneller</button>
     <button class="side-link" data-target="#site-sekme" data-rol-min="yonetici" data-rol-davranis="gizle"><i class="bi bi-diagram-3"></i>Site / Erişim Noktası</button>
@@ -1555,46 +1555,66 @@
     </div>
 
     <!-- ================= BİLDİRİM AYARLARI ================= -->
+    <!-- DÜZELTME (2026-09-26, kullanıcı isteği: "Telegram ile anlık dış
+         bildirim"): bu ekran önceden yalnızca webhook destekliyordu; artık
+         Telegram tipi ve daha önce panelde hiç seçenek olarak sunulmayan
+         (ama backend'de zaten var olan) şüpheli araç/bariyer hatası/disk
+         hatası tetikleyicileri de eklendi -- bkz. main.py::_bildirim_tetikle,
+         backend/telegram_bildirim.py. -->
     <div class="tab-pane fade" id="bildirim-sekme">
       <div class="row g-3">
         <div class="col-lg-5">
           <div class="card">
-            <div class="card-header"><i class="bi bi-bell-fill me-1"></i>Yeni Webhook Ekle</div>
+            <div class="card-header"><i class="bi bi-bell-fill me-1"></i>Yeni Bildirim Ayarı</div>
             <div class="card-body">
               <form id="bildirimForm" data-rol-min="yonetici">
                 <div class="mb-2"><label class="form-label small" for="bildirimAd">Ad</label>
-                  <input type="text" class="form-control" id="bildirimAd" placeholder="N8N / Slack / Teams vb." required></div>
-                <div class="mb-2"><label class="form-label small" for="bildirimHedef">Webhook URL</label>
-                  <input type="url" class="form-control" id="bildirimHedef" placeholder="https://..." required></div>
+                  <input type="text" class="form-control" id="bildirimAd" placeholder="N8N / Slack / Teams / Nöbetçi Telegram" required></div>
+                <div class="mb-2"><label class="form-label small" for="bildirimTip">Tip</label>
+                  <select class="form-select" id="bildirimTip" onchange="bildirimTipDegisti()">
+                    <option value="webhook">Webhook</option>
+                    <option value="telegram">Telegram</option>
+                  </select>
+                </div>
+                <div class="mb-2"><label class="form-label small" for="bildirimHedef" id="bildirimHedefEtiket">Webhook URL</label>
+                  <input type="text" class="form-control" id="bildirimHedef" placeholder="https://..." required></div>
+                <div id="bildirimWebhookAlani">
+                  <div class="mb-2"><label class="form-label small" for="bildirimMetot">HTTP Metot</label>
+                    <select class="form-select" id="bildirimMetot"><option>POST</option><option>GET</option></select></div>
+                </div>
                 <div class="mb-2"><label class="form-label small" for="bildirimTetikleyici">Tetikleyici</label>
                   <select class="form-select" id="bildirimTetikleyici">
                     <option value="hepsi">Her geçiş</option>
                     <option value="yetkisiz">Sadece yetkisiz</option>
                     <option value="kara_liste">Sadece kara liste</option>
                     <option value="suresi_dolmus">Sadece süresi dolmuş</option>
+                    <option value="supheli_arac">Sadece şüpheli araç (tekrarlı red)</option>
+                    <option value="bariyer_hatasi">Sadece bariyer açma hatası</option>
                     <option value="kamera_arizasi">Sadece kamera arızası</option>
+                    <option value="disk_hatasi">Sadece disk/görsel yazma hatası</option>
                   </select>
                 </div>
-                <div class="mb-2"><label class="form-label small" for="bildirimMetot">HTTP Metot</label>
-                  <select class="form-select" id="bildirimMetot"><option>POST</option><option>GET</option></select></div>
                 <button type="submit" class="btn btn-primary w-100"><i class="bi bi-save"></i> Kaydet</button>
               </form>
               <div id="bildirimSonuc" class="small mt-2"></div>
               <hr>
-              <p class="small text-muted mb-0">Tetikleyici koşulu oluştuğunda JSON gövdeli bir HTTP isteği gönderilir. N8N, Zapier, Make, Slack Incoming Webhook veya kendi API'nize bağlanabilir.</p>
+              <p class="small text-muted mb-0">Tetikleyici koşulu oluştuğunda Telegram'a mesaj ya da JSON gövdeli bir
+                HTTP isteği gönderilir. Telegram için sunucuda <code>PTS_TELEGRAM_BOT_TOKEN</code> ortam değişkeni
+                ayarlı olmalı (bkz. README.md); webhook N8N, Zapier, Make, Slack Incoming Webhook veya kendi
+                API'nize bağlanabilir.</p>
             </div>
           </div>
         </div>
         <div class="col-lg-7">
           <div class="card">
             <div class="card-header d-flex justify-content-between">
-              <span><i class="bi bi-list-ul me-1"></i>Tanımlı Webhook'lar</span>
-              <button class="btn btn-sm btn-outline-secondary" onclick="bildirimleriYukle()" title="Yenile" aria-label="Yenile"><i class="bi bi-arrow-clockwise"></i></button>
+              <span><i class="bi bi-list-ul me-1"></i>Tanımlı Bildirim Ayarları</span>
+              <button class="btn btn-sm btn-outline-secondary" onclick="bildirimAyarlariYukle()" title="Yenile" aria-label="Yenile"><i class="bi bi-arrow-clockwise"></i></button>
             </div>
             <div class="card-body p-0">
               <table class="table table-hover mb-0 align-middle">
-                <thead class="table-light"><tr><th>Ad</th><th>URL</th><th>Tetikleyici</th><th>Durum</th><th></th></tr></thead>
-                <tbody id="bildirimTablo"></tbody>
+                <thead class="table-light"><tr><th>Ad</th><th>Tip</th><th>Hedef</th><th>Tetikleyici</th><th>Aktif</th><th></th></tr></thead>
+                <tbody id="bildirimAyarTablo"></tbody>
               </table>
             </div>
           </div>
