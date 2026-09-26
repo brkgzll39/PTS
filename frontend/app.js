@@ -2801,16 +2801,11 @@ async function kayitDuzenleAc(id) {
   }
   denetim.innerHTML = denetimSatirlari.join("<br>");
 
-  const kisiSecim = document.getElementById("duzenleKayitKisi");
-  kisiSecim.innerHTML = '<option value="">Eşleştirme yok</option>';
-  try {
-    const kisiler = await apiCagir("/kisiler");
-    kisiSecim.innerHTML += kisiler.map(k =>
-      `<option value="${k.id}">${escapeHtml(k.ad_soyad)} (${escapeHtml(k.plaka_no)})</option>`
-    ).join("");
-    if (kayit.kisi_id) kisiSecim.value = String(kayit.kisi_id);
-  } catch (e) { /* kişi listesi yüklenemezse eşleştirme alanı boş kalır, kritik değil */ }
-  aramaliSecimEkle(kisiSecim);
+  // 2026-09-27 kullanıcı isteği ("kişi eşleştirmesi istemiyorum"): bu panel
+  // eskiden burada bir "Kişi eşleştirmesi" <select>'i doldurup (bkz. eski
+  // #duzenleKayitKisi, /kisiler çağrısı) gösteriyordu -- artık HİÇ
+  // gösterilmiyor/doldurulmuyor (bkz. index.html'deki aynı tarihli yorum ve
+  // aşağıdaki submit handler'ın artık kisi_id/kisi_id_temizle GÖNDERMEDİĞİ).
 
   // 2026-09-27: bu artık bir Bootstrap Modal DEĞİL, bir Offcanvas (bkz.
   // index.html::kayitDuzenleModal'ın üstündeki 2026-09-27 tarihli yorum).
@@ -2820,9 +2815,11 @@ async function kayitDuzenleAc(id) {
 document.getElementById("kayitDuzenleForm")?.addEventListener("submit", async (e) => {
   e.preventDefault();
   const id = document.getElementById("duzenleKayitId").value;
-  const kayit = sonKayitlarCache.find(k => k.id === Number(id));
-  const kisiSecim = document.getElementById("duzenleKayitKisi").value;
   const sonuc = document.getElementById("duzenleKayitSonuc");
+  // 2026-09-27 kullanıcı isteği ("kişi eşleştirmesi istemiyorum"): govde
+  // artık kisi_id/kisi_id_temizle İÇERMİYOR -- bu panelden kişi eşleştirmesi
+  // eklenmiyor/kaldırılmıyor, kaydın mevcut eşleşmesi (varsa) ne ise öyle
+  // kalıyor (main.py::kayit_duzenle, bu iki alan gönderilmezse dokunmuyor).
   const govde = {
     plaka_no: document.getElementById("duzenleKayitPlaka").value,
     yon: document.getElementById("duzenleKayitYon").value,
@@ -2830,11 +2827,6 @@ document.getElementById("kayitDuzenleForm")?.addEventListener("submit", async (e
     misafir_adi: document.getElementById("duzenleKayitMisafirAdi").value || null,
     not_metni: document.getElementById("duzenleKayitNot").value || null,
   };
-  if (kisiSecim) {
-    govde.kisi_id = Number(kisiSecim);
-  } else if (kayit?.kisi_id) {
-    govde.kisi_id_temizle = true;
-  }
   const btn = e.target.querySelector('button[type="submit"]');
   if (btn) btn.disabled = true;
   try {

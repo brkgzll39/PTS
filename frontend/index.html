@@ -333,18 +333,15 @@
           </select>
         </div>
       </div>
-      <div class="mb-2 mt-2">
-        <label class="form-label small" for="duzenleKayitKisi">Kişi eşleştirmesi</label>
-        <select class="form-select" id="duzenleKayitKisi"><option value="">Eşleştirme yok</option></select>
-      </div>
-      <!-- 2026-09-22 kullanıcı isteği: "gelen tüm araçların bu ekranda
-           misafirse de isim soyisimlerini kaydetmek için bir sütun'a daha
-           ihtiyacım var" -- sistemde kayıtlı bir Kişi'ye BAĞLANAMAYAN
-           (yukarıdaki eşleştirme boş bırakılan) bir misafirin adını da
-           kaydedebilmek için (bkz. models.Kayit.misafir_adi). Kişi
-           eşleştirmesi yapıldıysa bu alanın normalde gereği yoktur (isim
-           zaten Kisi kaydından gelir), o yüzden Kişi eşleştirmesinin HEMEN
-           altında, ikincil bir alan olarak duruyor. -->
+      <!-- 2026-09-27 kullanıcı isteği ("kişi eşleştirmesi istemiyorum"): bu
+           panelde bir zamanlar bir "Kişi eşleştirmesi" <select>'i vardı (bkz.
+           git geçmişi/app.js::kayitDuzenleAc'ın eski sürümü) -- kullanıcı
+           artık bu paneli sade tutmak istiyor. Var olan bir kisi_id eşlemesi
+           (varsa) DOKUNULMADAN kalır (bkz. app.js: PATCH gövdesine artık ne
+           kisi_id ne kisi_id_temizle eklenmiyor); bu alan yalnızca YENİ bir
+           eşleştirme yapmanın panelden kaldırılması, backend'deki eşleştirme
+           özelliğinin kendisi (main.py::kayit_duzenle, hâlâ olayDetayAc/
+           kişiler ekranından erişilebilir) kaldırılmadı. -->
       <div class="mb-2">
         <label class="form-label small" for="duzenleKayitMisafirAdi">Misafir Adı Soyadı (sistemde kayıtlı değilse)</label>
         <input type="text" class="form-control" id="duzenleKayitMisafirAdi" maxlength="100" placeholder="Örn. Ahmet Yılmaz">
