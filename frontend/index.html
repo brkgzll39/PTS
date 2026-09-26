@@ -772,6 +772,29 @@
           <div class="card-body d-flex justify-content-center"><canvas id="yetkiPie" height="180" width="180"></canvas></div></div>
         </div>
       </div>
+
+      <!-- 2026-09-26 kullanıcı isteği ("görsel istatistik panosu"): yukarıdaki
+           günlük/yetki grafikleri "hangi GÜNLERDE ne kadar geçiş oldu"
+           sorusunu cevaplıyordu; bu ikisi de aynı /kayitlar/grafik verisinden
+           (bkz. app.js::grafikYukle) "hangi SAATLERDE yoğunluk yaşanıyor" ve
+           "hangi plakalar tekrar tekrar sorun çıkarıyor" sorularını cevaplar
+           -- vardiya planlaması ve güvenlik incelemesi için. -->
+      <div class="row g-3 mb-3">
+        <div class="col-lg-8">
+          <div class="card"><div class="card-header"><i class="bi bi-clock-fill me-1"></i>Saatlik Yoğunluk (seçili gün aralığı)</div>
+          <div class="card-body"><canvas id="saatlikGrafik" height="90"></canvas></div></div>
+        </div>
+        <div class="col-lg-4">
+          <div class="card">
+            <div class="card-header"><i class="bi bi-exclamation-triangle-fill me-1"></i>En Sık Yetkisiz/Engellenen Plakalar</div>
+            <div class="card-body p-0">
+              <table class="table table-hover mb-0 align-middle small">
+                <tbody id="sorunluPlakaTablo"><tr><td class="text-muted p-3">Yükleniyor…</td></tr></tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </div>
     </div>
 
     <!-- ================= SON GEÇİŞLER (sınırsız, sayfalanabilir) ================= -->
@@ -1633,6 +1656,7 @@
                     <option value="disk_hatasi">Sadece disk/görsel yazma hatası</option>
                     <option value="disk_doluyor">Sadece disk doluluk erken uyarısı</option>
                     <option value="yedek_bozuk">Sadece otomatik yedek bozuk üretildi</option>
+                    <option value="gunluk_ozet">Sadece günlük özet (her sabah)</option>
                   </select>
                 </div>
                 <button type="submit" class="btn btn-primary w-100"><i class="bi bi-save"></i> Kaydet</button>
@@ -1642,7 +1666,9 @@
               <p class="small text-muted mb-0">Tetikleyici koşulu oluştuğunda Telegram'a mesaj ya da JSON gövdeli bir
                 HTTP isteği gönderilir. Telegram için sunucuda <code>PTS_TELEGRAM_BOT_TOKEN</code> ortam değişkeni
                 ayarlı olmalı (bkz. README.md); webhook N8N, Zapier, Make, Slack Incoming Webhook veya kendi
-                API'nize bağlanabilir.</p>
+                API'nize bağlanabilir. "Günlük özet" her sabah (varsayılan 08:00,
+                <code>PTS_GUNLUK_OZET_SAATI</code> ile değiştirilebilir) bir önceki günün toplam geçiş/yetkisiz
+                deneme/disk doluluk özetini otomatik gönderir -- panele hiç girmeden haberdar olmak için.</p>
             </div>
           </div>
         </div>

@@ -6255,3 +6255,140 @@ def test_disk_izleme_bir_kontrol_kapaliysa_hicbir_sey_yapmaz(monkeypatch):
     monkeypatch.setattr(pts_main, "_bildirim_tetikle", lambda *a, **kw: cagrildi.append(1))
     pts_main._disk_izleme_bir_kontrol({"disk_izleme_aktif": False, "disk_uyari_esik_yuzde": 90})
     assert not cagrildi
+
+
+# ================================================================
+# GÜNLÜK ÖZET BİLDİRİMİ + GÖRSEL İSTATİSTİK PANOSU (2026-09-26 kullanıcı
+# isteği: "başka ne yapsak bu proje güzel ve kullanışlı olur")
+# ================================================================
+
+def test_gunluk_ozet_verisi_hesapla_yalnizca_dunu_sayar():
+    """_gunluk_ozet_verisi_hesapla yalnızca DÜN (dün 00:00 - bugün 00:00)
+    aralığındaki kayıtları sayar; bugünün ve önceki günün kayıtları
+    (mevcut, başka testlerden kalma veriler dahil) DIŞARIDA kalmalı. Test,
+    başlangıç sayılarını ÖNCE okuyup sonra DELTA'ya bakarak diğer testlerin
+    (module-scope paylaşılan veritabanı) kayıtlarından etkilenmeden çalışır."""
+    from backend.database import SessionLocal
+    from backend import models
+
+    db = SessionLocal()
+    try:
+        onceki = pts_main._gunluk_ozet_verisi_hesapla(db)
+        dun = datetime.now() - timedelta(days=1)
+        on_ek = "GNLKOZET"
+        db.add_all([
+            models.Kayit(plaka_no=f"{on_ek} 1", kamera_id="TEST", yetki_durumu="yetkili",
+                         tarih_saat=dun.replace(hour=10, minute=0, second=0, microsecond=0)),
+            models.Kayit(plaka_no=f"{on_ek} 2", kamera_id="TEST", yetki_durumu="yetkisiz",
+                         tarih_saat=dun.replace(hour=11, minute=0, second=0, microsecond=0)),
+            models.Kayit(plaka_no=f"{on_ek} 3", kamera_id="TEST", yetki_durumu="kara_liste",
+                         tarih_saat=dun.replace(hour=12, minute=0, second=0, microsecond=0)),
+            models.Kayit(plaka_no=f"{on_ek} 4", kamera_id="TEST", yetki_durumu="suresi_dolmus",
+                         tarih_saat=dun.replace(hour=13, minute=0, second=0, microsecond=0)),
+            # Bugün ve dünden önceki gün -- SAYILMAMALI.
+            models.Kayit(plaka_no=f"{on_ek} BUGUN", kamera_id="TEST", yetki_durumu="yetkisiz",
+                         tarih_saat=datetime.now()),
+            models.Kayit(plaka_no=f"{on_ek} ONCEKI", kamera_id="TEST", yetki_durumu="yetkisiz",
+                         tarih_saat=dun - timedelta(days=1)),
+        ])
+        db.commit()
+
+        veri = pts_main._gunluk_ozet_verisi_hesapla(db)
+        assert veri["toplam_gecis"] == onceki["toplam_gecis"] + 4
+        assert veri["yetkisiz_deneme"] == onceki["yetkisiz_deneme"] + 1
+        assert veri["kara_liste_gecis"] == onceki["kara_liste_gecis"] + 1
+        assert veri["suresi_dolmus_gecis"] == onceki["suresi_dolmus_gecis"] + 1
+        assert veri["olay"] == "Günlük Özet"
+        assert "Toplam geçiş" in veri["mesaj"]
+        assert str(veri["toplam_gecis"]) in veri["mesaj"]
+    finally:
+        db.close()
+
+
+def test_gunluk_ozet_gonder_dogru_tetikleyiciyle_cagirir(monkeypatch):
+    """_gunluk_ozet_gonder, mevcut _bildirim_tetikle dispatch'ini "gunluk_ozet"
+    tetikleyicisiyle çağırmalı -- yeni bir gönderim yolu icat edilmediğini
+    doğrular (bkz. main.py'deki tasarım notu)."""
+    cagrilar = []
+    monkeypatch.setattr(pts_main, "_bildirim_tetikle", lambda db, tetikleyici, veri: cagrilar.append((tetikleyici, veri)))
+    pts_main._gunluk_ozet_gonder()
+    assert len(cagrilar) == 1
+    tetikleyici, veri = cagrilar[0]
+    assert tetikleyici == "gunluk_ozet"
+    assert "toplam_gecis" in veri and "mesaj" in veri
+
+
+def test_gunluk_ozet_bildirimi_uctan_uca_gonderilir(client, yetkili_header, eszamanli_bildirim, monkeypatch):
+    """tetikleyici='gunluk_ozet' olan bir bildirim ayarı, _gunluk_ozet_gonder()
+    çağrıldığında GERÇEKTEN dispatch edilir (disk/webhook testleriyle AYNI
+    uçtan uca desen)."""
+    cagrilanlar = []
+    monkeypatch.setattr(pts_main, "_bildirim_gonder_sync",
+                        lambda tip, hedef, metot, veri: cagrilanlar.append(veri) or (True, None))
+    ayar_id = _bildirim_ayari_olustur(client, yetkili_header, tetikleyici="gunluk_ozet")
+    try:
+        pts_main._gunluk_ozet_gonder()
+        assert any(v.get("olay") == "Günlük Özet" for v in cagrilanlar)
+    finally:
+        _bildirim_ayari_sil(client, yetkili_header, ayar_id)
+
+
+def test_gunluk_ozet_bir_kontrol_gunde_bir_kez_ve_gec_baslarsa_yakalar(monkeypatch):
+    """_gunluk_ozet_bir_kontrol: (1) hedef saatten önce hiç göndermez, (2) hedef
+    saate ulaşınca günde bir kez gönderir, aynı gün tekrar tekrar ÇAĞRILMAZ,
+    (3) sunucu geç açılmış gibi hedef saat geçtikten SONRA ilk kez çalışırsa
+    bile o gün için YAKALAYIP gönderir (bkz. fonksiyonun docstring'i)."""
+    cagrilar = []
+    monkeypatch.setattr(pts_main, "_gunluk_ozet_gonder", lambda: cagrilar.append(1))
+    monkeypatch.setattr(pts_main, "_son_gunluk_ozet_gunu", None)
+    monkeypatch.setattr(pts_main, "GUNLUK_OZET_SAATI", 8)
+
+    gun1_erken = datetime(2026, 3, 1, 7, 59, 0)
+    assert pts_main._gunluk_ozet_bir_kontrol(gun1_erken) is False
+    assert len(cagrilar) == 0
+
+    gun1_saat8 = datetime(2026, 3, 1, 8, 0, 0)
+    assert pts_main._gunluk_ozet_bir_kontrol(gun1_saat8) is True
+    assert len(cagrilar) == 1
+
+    gun1_saat8_1 = datetime(2026, 3, 1, 8, 1, 0)
+    assert pts_main._gunluk_ozet_bir_kontrol(gun1_saat8_1) is False
+    assert len(cagrilar) == 1, "Aynı gün için ikinci kez gönderilmemeli"
+
+    # Sunucu ikinci gün 12:00'da (yeniden başlamış gibi) ilk kez kontrol ediyor.
+    gun2_gec = datetime(2026, 3, 2, 12, 0, 0)
+    assert pts_main._gunluk_ozet_bir_kontrol(gun2_gec) is True, "Hedef saat geçmiş olsa bile o gün YAKALANIP gönderilmeli"
+    assert len(cagrilar) == 2
+
+
+def test_kayitlar_grafik_saatlik_ve_sorunlu_plakalar(client, yetkili_header):
+    """/kayitlar/grafik artık saatlik yoğunluk ve en sık yetkisiz/kara liste/
+    süresi dolmuş plakaları da dönüyor (Panel sekmesindeki yeni grafikler
+    için, kullanıcı isteği: "görsel istatistik panosu")."""
+    from backend.database import SessionLocal
+    from backend import models
+
+    db = SessionLocal()
+    try:
+        simdi = datetime.now()
+        on_ek = "GRAFIKSAAT"
+        db.add_all([
+            models.Kayit(plaka_no=f"{on_ek} TEKRAR", kamera_id="TEST", yetki_durumu="yetkisiz", tarih_saat=simdi),
+            models.Kayit(plaka_no=f"{on_ek} TEKRAR", kamera_id="TEST", yetki_durumu="yetkisiz", tarih_saat=simdi),
+            models.Kayit(plaka_no=f"{on_ek} TEKRAR", kamera_id="TEST", yetki_durumu="kara_liste", tarih_saat=simdi),
+            models.Kayit(plaka_no=f"{on_ek} TEK", kamera_id="TEST", yetki_durumu="yetkisiz", tarih_saat=simdi),
+        ])
+        db.commit()
+
+        v = client.get("/kayitlar/grafik?gun=1", headers=yetkili_header).json()
+
+        assert "saatlik" in v and isinstance(v["saatlik"], list) and len(v["saatlik"]) == 24
+        assert v["saatlik"][simdi.hour] >= 4
+
+        assert "en_sik_sorunlu_plakalar" in v
+        assert len(v["en_sik_sorunlu_plakalar"]) <= 5
+        eslesen = [p for p in v["en_sik_sorunlu_plakalar"] if p["plaka_no"] == f"{on_ek} TEKRAR"]
+        assert eslesen, "Tekrarlı sorunlu plaka en sık sorunlu plakalar listesinde görünmeli"
+        assert eslesen[0]["sayi"] >= 3
+    finally:
+        db.close()

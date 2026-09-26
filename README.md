@@ -4,15 +4,31 @@ Localhost üzerinde çalışan, tarayıcıdan erişilen tam bir Plaka Tanıma Si
 
 ## Özellikler
 
+> Not (2026-09-26): bu liste ilk sürümden beri onlarca yamayla genişledi --
+> aşağıdaki, panelde gerçekten var olan özelliklerin güncel bir özeti.
+
 - **Plaka kayıtları takibi**: Her geçişi tarih/saat, kamera, yön ve yetki durumuyla kaydeder.
 - **Abone / Personel / Ziyaretçi yönetimi**: Ekleme, düzenleme, aktif/pasif yapma, silme. Ziyaretçiler için otomatik süre kontrolü (süresi dolan ziyaretçi plakası "süresi dolmuş" olarak işaretlenir).
+- **Ziyaretçi Girişi ve Sakin Öz-Hizmet Portalı**: sakinler kendi hesaplarıyla (sınırlı, sadeleştirilmiş bir arayüzden) yalnızca kendi bilgilerini/plakalarını/geçmişlerini görüp ziyaretçi plakası tanımlayabilir -- personel arayüzüne erişimleri yoktur.
 - **Otomatik yetki kontrolü**: Gelen her plaka, kişi listesiyle karşılaştırılır; yetkili/yetkisiz/süresi dolmuş durumu otomatik belirlenir.
+- **Kara liste**: İstenmeyen/şüpheli plakaları engelleyip geçişte otomatik alarm oluşturur.
+- **Bariyer kontrolü**: Yetkili geçişte bariyeri seri port, TCP veya HTTP üzerinden otomatik/manuel açar; her erişim noktası kendi kamera+bariyer eşleşmesine sahiptir.
+- **Çoklu site / erişim noktası yönetimi**: Birden fazla yerleşke ve kapı tanımlanabilir, kamera erişimi nizamiye/site bazında kısıtlanabilir.
+- **Vardiya (nöbet) takibi**: Güvenlik personelinin vardiya oturumları kaydedilir; kayıtlar vardiyaya göre filtrelenip raporlanabilir.
+- **Rol bazlı yetkilendirme (RBAC)**: Yönetici / operatör / güvenlik / sakin rolleri, sayfa ve aksiyon bazlı izinlerle ayrılır.
+- **Hesap güvenliği**: Aktif oturumları görme ve uzaktan kapatma, parola kuralları, başarısız girişe karşı otomatik kilitleme.
+- **Anlık dış bildirim (Telegram / Webhook)**: Kara liste geçişi, kamera/bariyer arızası, disk sorunu gibi olaylarda Telegram'a veya bir webhook'a (N8N, Slack, Teams, Zapier, kendi API'niz) anlık uyarı gönderir; birden fazla kişi/grup hedefi tanımlanabilir.
+- **Arvento sürücü kimliği entegrasyonu**: Webhook ile araç-sürücü eşleşmesi.
+- **Dahua kamera olay entegrasyonu**: Uyumlu kameraların kendi yerleşik ANPR'ından doğrudan olay alma.
+- **Denetim kayıtları (audit log)**: Kim, ne zaman, neyi değiştirdi -- kalıcı ve silinemez kayıt.
+- **Otomatik veritabanı yedekleme**: Bütünlük doğrulamalı otomatik yedekleme ve disk doluluğu için erken uyarı.
+- **Lisans yönetimi**: Bilgisayara özel üretilmiş lisans anahtarı, süre takibi ve süresi dolmadan önce uyarı.
 - **LED panel entegrasyonu**: Simülasyon, Seri Port (RS232/USB) veya TCP/IP üzerinden mesaj gönderimi. Panel arayüzünden ayarlanabilir ve test edilebilir.
 - **Geçmişe dönük kayıt görüntüleme**: Plaka, tarih aralığı ve yetki durumuna göre filtreleme.
 - **Excel dışa aktarma**: Kayıtlar ve kişi listesi `.xlsx` olarak indirilebilir.
 - **PDF dışa aktarma**: Filtrelenmiş kayıt listesi PDF olarak, tekil kayıtlar ise araç görseliyle birlikte PDF olarak indirilebilir.
 - **Web paneli**: `http://localhost:8000` adresinden tarayıcıyla erişilir, kurulum gerektirmez (sadece tarayıcı yeterli).
-- **Opsiyonel gerçek kamera entegrasyonu**: RTSP + YOLO + EasyOCR ile gerçek ANPR pipeline'ı hazır (isteğe bağlı, ağır bağımlılıklar gerektirir).
+- **Opsiyonel gerçek kamera entegrasyonu**: RTSP + YOLO + EasyOCR ile gerçek ANPR pipeline'ı hazır (isteğe bağlı, ağır bağımlılıklar gerektirir); okuma doğruluğunu ölçmek için toplu doğruluk testi aracı dahildir.
 
 ## Klasör Yapısı
 
@@ -150,14 +166,29 @@ sekmesinden bu plakayı girip "yetkili" olarak tanındığını görebilirsiniz.
 
 ## Panel Sekmeleri
 
+> Not (2026-09-26): aşağıdaki tablo panelin sol menüsündeki GERÇEK sekme
+> sırasını ve adlarını yansıtır; *(yönetici)* işaretli sekmeler yalnızca
+> yönetici rolüne görünür.
+
 | Sekme | Ne işe yarar |
 |---|---|
-| **Panel** | Genel istatistikler (toplam/bugünkü kayıt, yetkisiz deneme sayısı, aktif kişi sayısı) ve son kayıtlar |
-| **Kayıtlar** | Tüm geçiş kayıtlarını plaka/tarih/durum bazında filtreleme, Excel/PDF indirme |
-| **Kişiler** | Abone, personel, ziyaretçi ekleme/düzenleme/silme |
-| **LED Panel** | Bağlantı modu (Simülasyon/Seri/TCP) ayarı ve test mesajı gönderme |
-| **Test Kaydı Ekle** | Gerçek kamera olmadan manuel plaka kaydı oluşturup sistemi test etme |
-| **Site / Erişim Noktası** *(sadece yönetici)* | Yerleşke (site) tanımlama ve her erişim noktasını (nokta) bir kameraya ve bir bariyere bağlama — olay detayındaki "Bariyer Aç" butonu bu bağlantıyı kullanır |
+| **Canlı** | Kameralardan gelen görüntüyü ve anlık (SSE) geçiş bildirimlerini gerçek zamanlı izleme |
+| **Kontrol Merkezi** | Genel istatistikler (toplam/bugünkü kayıt, yetkisiz deneme sayısı, aktif kişi sayısı), nizamiye/site durumu özeti |
+| **Son Geçişler** | En son geçişlerin sınırsız, sayfalanabilir akışı |
+| **Kayıtlar** | Tüm geçiş kayıtlarını plaka/tarih/durum/vardiya bazında filtreleme, Excel/PDF indirme |
+| **Kişiler** | Abone, personel, ziyaretçi ekleme/düzenleme/silme, toplu Excel içe/dışa aktarma |
+| **Kara Liste** | İstenmeyen/şüpheli plakaları tanımlayıp geçişte otomatik alarm oluşturma |
+| **Kameralar** *(yönetici)* | Kamera tanımlama, RTSP/Dahua bağlantı ayarları, nizamiye/site bazlı erişim kısıtlaması |
+| **Bariyer** *(yönetici)* | Bariyer bağlantı ayarları (seri/TCP/HTTP) ve manuel açma/test |
+| **Site/Nokta** *(yönetici)* | Yerleşke (site) tanımlama ve her erişim noktasını (nokta) bir kameraya ve bir bariyere bağlama — olay detayındaki "Bariyer Aç" butonu bu bağlantıyı kullanır |
+| **Bildirim** *(yönetici)* | Telegram/webhook bildirim hedefleri tanımlama, tetikleyici seçme, test mesajı gönderme |
+| **LED** *(yönetici)* | Bağlantı modu (Simülasyon/Seri/TCP) ayarı ve test mesajı gönderme |
+| **Kullanıcılar** *(yönetici)* | Kullanıcı ekleme/düzenleme/silme, vardiya oturumları, aktif oturumları görme/uzaktan kapatma |
+| **Test** *(yönetici)* | Gerçek kamera olmadan manuel plaka kaydı oluşturup sistemi test etme |
+| **Lisans** *(yönetici)* | Bilgisayara özel lisans anahtarını görüntüleme/aktive etme, süre takibi |
+| **Sistem** *(yönetici)* | Sistem sağlığı (disk, yedek, dedektör ayarları), sunucu logları |
+| **Denetim Kayıtları** *(yönetici)* | Kim ne zaman neyi değiştirdi -- kalıcı denetim (audit) kayıtları |
+| **İletişim** | Arıza/sorun bildirimi gönderme |
 
 ## Rol Bazlı Yetkilendirme (RBAC)
 
@@ -4357,3 +4388,63 @@ hata)` biçiminde döndüğü, bir `CERTIFICATE_VERIFY_FAILED` hatasına
 eklenmediği (hem webhook hem Telegram gönderim fonksiyonları için ayrı
 ayrı), ve mevcut webhook test uç noktası testinin yeni tuple imzasına
 güncellendiği.
+
+## Günlük Özet Bildirimi ve Görsel İstatistik Panosu (2026-09-26, kullanıcı isteği)
+
+Kullanıcının açık talebi: "başka ne yapsak bu proje güzel ve kullanışlı
+olur" -- kod tarafında güvenlik/sağlamlık zaten çok kapsamlı işlendiği için
+(CI, pip-audit, brute-force koruması, oturum güvenliği, yedekleme
+bütünlüğü vb.) bu kez üç somut geliştirme seçildi: README'nin güncellenmesi
+(ayrı bir not olarak yukarıda, Patch #116 ile), otomatik günlük özet
+bildirimi ve Kontrol Merkezi'ne iki yeni grafik.
+
+### Otomatik günlük özet bildirimi
+
+Her gün belirli bir saatte (varsayılan **08:00**, `PTS_GUNLUK_OZET_SAATI`
+ortam değişkeniyle 0-23 arası değiştirilebilir), bir önceki günün özetini
+zaten var olan Telegram/webhook bildirim altyapısı üzerinden otomatik
+gönderir -- nöbetçi/yönetici panele hiç girmeden "dün kaç geçiş oldu, kaç
+yetkisiz deneme oldu, disk ne durumda" bilgisine sahip olur.
+
+- Yeni bir gönderim yolu icat EDİLMEDİ: mevcut `_bildirim_tetikle`
+  dispatch'i, yeni bir tetikleyici değeri (`"gunluk_ozet"`) ile çağrılıyor
+  -- Bildirim sekmesindeki dropdown'a bu seçenek eklendi, `tetikleyici`
+  alanı zaten serbest metin olarak saklandığı için şemaya/veritabanına
+  dokunulmadı.
+- Özet metni: dün tarihi, toplam geçiş, yetkisiz deneme, kara liste
+  geçişi, (varsa) süresi dolmuş ziyaretçi girişi ve izlenen disklerin en
+  dolu olanının doluluk yüzdesi.
+- Arka plan görevi her dakika saate bakar; hedef saate ULAŞILMIŞSA (tam
+  eşitlik değil) ve bugün için henüz gönderilmemişse gönderir -- bu
+  BİLİNÇLİ bir tasarım: sunucu tam hedef dakikada yeniden başlıyorken kısa
+  bir kesinti yaşarsa bile, o gün için özet sessizce hiç gönderilmeden
+  atlanmaz, bir sonraki kontrolde yakalanıp gönderilir.
+- Vardiya/güvenlik-rolü filtresi BİLİNÇLİ olarak uygulanmadı -- bu tek bir
+  kullanıcının değil, sistemin kendi günlük raporu.
+
+### Görsel istatistik panosu
+
+Kontrol Merkezi'ndeki mevcut "Günlük Geçiş Grafiği" ve "Yetki Dağılımı"
+grafikleri (Chart.js) yalnızca "hangi GÜNLERDE ne kadar geçiş oldu"
+sorusunu cevaplıyordu. Aynı `/kayitlar/grafik` uç noktasına (ekstra sorgu
+eklemeden, zaten çekilen kayıt listesi üzerinden hesaplanarak) iki yeni
+alan eklenip iki yeni grafik/kart eklendi:
+
+- **Saatlik Yoğunluk**: seçili gün aralığındaki geçişlerin saat (00-23)
+  bazında dağılımı -- vardiya planlaması için ("hangi saatlerde en
+  yoğunuz").
+- **En Sık Yetkisiz/Engellenen Plakalar**: seçili aralıkta en çok
+  yetkisiz/kara liste/süresi dolmuş kaydı üreten ilk 5 plaka -- önceden bu
+  bilgi yalnızca tek tek plaka aratılarak (`/kayitlar/analiz/{plaka}`)
+  bulunabiliyordu, artık dashboard'da tek bakışta görünüyor ve tıklanınca
+  aynı analiz ekranını açıyor.
+
+### Testler
+
+`tests/test_api.py`: `_gunluk_ozet_verisi_hesapla`'nın yalnızca dünü
+saydığı (bugünü/önceki günü saymadığı), `_gunluk_ozet_gonder`'in doğru
+tetikleyiciyle `_bildirim_tetikle`'yi çağırdığı, uçtan uca bir bildirim
+ayarının gerçekten tetiklendiği, `_gunluk_ozet_bir_kontrol`'ün günde bir
+kez gönderdiği VE sunucu geç açılsa bile o gün için yakaladığı, ve
+`/kayitlar/grafik`'in yeni `saatlik`/`en_sik_sorunlu_plakalar` alanlarını
+doğru hesapladığı test edildi.

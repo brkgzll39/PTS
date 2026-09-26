@@ -1369,6 +1369,17 @@ async def _vardiya_otomatik_kapamayi_baslat():
     )
 
 
+@app.on_event("startup")
+async def _gunluk_ozeti_baslat():
+    """Arka planda sürekli çalışan, her gün `GUNLUK_OZET_SAATI`'nde (varsayılan
+    08:00, `PTS_GUNLUK_OZET_SAATI` ortam değişkeniyle değiştirilebilir) otomatik
+    özet bildirimi gönderen görevi başlatır (bkz. yukarısı, kullanıcı isteği:
+    "otomatik günlük özet bildirimi")."""
+    asyncio.ensure_future(_gunluk_ozet_dongu())
+    logger.info("Günlük özet bildirimi başlatıldı (her gün saat %02d:00, her %d sn kontrol)",
+                GUNLUK_OZET_SAATI, GUNLUK_OZET_KONTROL_ARALIK_SN)
+
+
 _klasor_izleyici = None  # bkz. _klasor_izlemeyi_baslat_gerekirse — /sistem/saglik'te de raporlanır
 
 
@@ -4406,6 +4417,134 @@ def _bildirim_tetikle(db: Session, tetikleyici: str, veri: dict) -> None:
         ).start()
 
 
+# ================================================================
+# GÜNLÜK ÖZET BİLDİRİMİ (2026-09-26 kullanıcı isteği: "otomatik günlük özet
+# bildirimi" -- nöbetçi/yönetici her sabah panele hiç girmeden, bir önceki
+# günün "kaç geçiş oldu, kaç yetkisiz deneme oldu, disk ne durumda" özetini
+# doğrudan Telegram'dan/webhook'tan alsın istedi. Mevcut _bildirim_tetikle
+# dispatch'i AYNEN yeniden kullanılıyor -- yeni bir gönderim yolu icat
+# edilmedi, yalnızca yeni bir tetikleyici değeri ("gunluk_ozet") eklendi.
+# `tetikleyici` alanı serbest metin olarak saklanıyor (bkz. yukarıdaki
+# bildirim_ayari_ekle -- yalnızca `tip` doğrulanıyor), bu yüzden burada
+# şemaya/veritabanına dokunmadan yeni bir değer kullanılabiliyor; panelde
+# seçilebilmesi için frontend'deki dropdown'a da eklendi (bkz. index.html).
+# ================================================================
+
+def _gunluk_ozet_saatini_coz() -> int:
+    """`PTS_GUNLUK_OZET_SAATI` geçersiz/eksik olsa bile (ör. yanlışlıkla
+    boş bırakılmış ya da sayı olmayan bir değer girilmiş) UYGULAMANIN
+    AÇILAMAMASI riske edilemez -- varsayılan 08:00'e sessizce döner, ama
+    yanlış girildiyse sunucu logunda görülebilir bir uyarı bırakır."""
+    ham = os.getenv("PTS_GUNLUK_OZET_SAATI")
+    if not ham or not ham.strip():
+        return 8
+    try:
+        return max(0, min(23, int(ham.strip())))
+    except ValueError:
+        logger.warning("PTS_GUNLUK_OZET_SAATI geçersiz ('%s'), varsayılan 08:00 kullanılıyor", ham)
+        return 8
+
+
+GUNLUK_OZET_SAATI = _gunluk_ozet_saatini_coz()
+GUNLUK_OZET_KONTROL_ARALIK_SN = 60  # her dakika hedef saate gelinip gelinmediğini kontrol et
+
+_son_gunluk_ozet_gunu = None  # bkz. _son_not_onbellek_temizlik_dongu'daki AYNI "günde bir" deseni
+
+
+def _gunluk_ozet_verisi_hesapla(db: Session) -> dict:
+    """Bir önceki takvim gününün (dün 00:00 - bugün 00:00) özetini hesaplar.
+    BİLİNÇLİ tasarım: vardiya/güvenlik-rolü filtresi buraya UYGULANMIYOR --
+    diğer bildirimlerin aksine bu tek bir kullanıcının değil, SİSTEMİN
+    kendi günlük raporu; tüm günü kapsamalı. `mesaj` alanı Telegram için
+    hazır, okunaklı bir metin olarak da üretilir (bkz.
+    telegram_bildirim._mesaj_metni_olustur'un `veri["mesaj"]`'ı olduğu gibi
+    kullanması)."""
+    bugun = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+    dun_baslangic = bugun - timedelta(days=1)
+    kayitlar = db.query(models.Kayit).filter(
+        models.Kayit.tarih_saat >= dun_baslangic, models.Kayit.tarih_saat < bugun
+    ).all()
+    toplam = len(kayitlar)
+    yetkisiz = sum(1 for k in kayitlar if k.yetki_durumu == "yetkisiz")
+    kara_liste = sum(1 for k in kayitlar if k.yetki_durumu == "kara_liste")
+    suresi_dolmus = sum(1 for k in kayitlar if k.yetki_durumu == "suresi_dolmus")
+
+    en_dolu_disk_yuzde = None
+    en_dolu_disk_etiket = None
+    try:
+        for etiket, yol in _izlenen_disk_yollari(_sistem_ayarlari_oku()).items():
+            yuzde = _disk_kullanim_yuzdesi(yol)
+            if yuzde is not None and (en_dolu_disk_yuzde is None or yuzde > en_dolu_disk_yuzde):
+                en_dolu_disk_yuzde, en_dolu_disk_etiket = yuzde, etiket
+    except Exception as exc:
+        logger.warning("[gunluk-ozet] Disk bilgisi okunamadı (özet yine de gönderilecek): %s", exc)
+
+    tarih_str = dun_baslangic.strftime("%d.%m.%Y")
+    satirlar = [f"Tarih: {tarih_str}", f"Toplam geçiş: {toplam}"]
+    satirlar.append(f"Yetkisiz deneme: {yetkisiz}")
+    satirlar.append(f"Kara liste geçişi: {kara_liste}")
+    if suresi_dolmus:
+        satirlar.append(f"Süresi dolmuş ziyaretçi girişi: {suresi_dolmus}")
+    if en_dolu_disk_yuzde is not None:
+        satirlar.append(f"En dolu disk ({en_dolu_disk_etiket}): %{en_dolu_disk_yuzde:.0f}")
+    mesaj = "\n".join(satirlar)
+
+    return {
+        "olay": "Günlük Özet",
+        "mesaj": mesaj,
+        "tarih": tarih_str,
+        "toplam_gecis": toplam,
+        "yetkisiz_deneme": yetkisiz,
+        "kara_liste_gecis": kara_liste,
+        "suresi_dolmus_gecis": suresi_dolmus,
+        "en_dolu_disk_yuzde": en_dolu_disk_yuzde,
+        "en_dolu_disk_etiket": en_dolu_disk_etiket,
+    }
+
+
+def _gunluk_ozet_gonder() -> None:
+    """Kendi veritabanı oturumunu açıp kapatan, dıştan tek satırla
+    çağrılabilen sarmalayıcı (bkz. _gunluk_ozet_dongu ve testler)."""
+    db = SessionLocal()
+    try:
+        veri = _gunluk_ozet_verisi_hesapla(db)
+        _bildirim_tetikle(db, "gunluk_ozet", veri)
+    finally:
+        db.close()
+
+
+def _gunluk_ozet_bir_kontrol(simdi: datetime) -> bool:
+    """Tek bir kontrol turu: `simdi` saat `GUNLUK_OZET_SAATI`'ne ULAŞMIŞSA
+    (tam eşitlik DEĞİL, `>=`) ve bugün için henüz gönderilmemişse özeti
+    gönderir, `True` döner (test edilebilirlik için -- bkz.
+    _disk_izleme_bir_kontrol/_oturum_temizlik_bir_kontrol'daki AYNI "döngüden
+    ayrı, deterministik tek tık" deseni). `>=` kullanılması BİLİNÇLİ:
+    `_son_not_onbellek_temizlik_dongu`'nun aksine ("tam 23:59'da olmazsa
+    yarın tekrar dener, kayıp kritik değil"), bir günün özetinin HİÇ
+    gönderilmemesi (ör. sunucu tam o dakikada yeniden başlıyorken kısa bir
+    kesinti yaşanması) sessiz bir veri kaybı sayılır -- bu yüzden hedef saat
+    geçildiyse (sunucu geç açılmış olsa bile) o gün içinde bir sonraki
+    kontrolde YAKALANIP gönderilir."""
+    global _son_gunluk_ozet_gunu
+    if simdi.hour >= GUNLUK_OZET_SAATI and _son_gunluk_ozet_gunu != simdi.date():
+        _gunluk_ozet_gonder()
+        _son_gunluk_ozet_gunu = simdi.date()
+        logger.info("Günlük özet bildirimi tetiklendi (%s)", simdi.date())
+        return True
+    return False
+
+
+async def _gunluk_ozet_dongu() -> None:
+    """Sonsuz döngü: her dakika `_gunluk_ozet_bir_kontrol`'ü çağırır (bkz.
+    onun docstring'i)."""
+    while True:
+        try:
+            _gunluk_ozet_bir_kontrol(datetime.now())
+        except Exception as exc:
+            logger.error("[gunluk-ozet] Döngüde beklenmeyen hata: %s", exc, exc_info=True)
+        await asyncio.sleep(GUNLUK_OZET_KONTROL_ARALIK_SN)
+
+
 async def _webhook_bildir(db: Session, yetki_durumu: str, veri: dict) -> None:
     """Kayıt oluşturma akışının (bkz. aşağıdaki `kayit_ekle_otomatik`/
     `kayit_ekle_manuel` -> `_kayit_olustur_ve_bildir`) bildirim tetikleyici
@@ -5165,7 +5304,16 @@ def istatistikler(db: Session = Depends(get_db), kullanici: models.Kullanici = D
 
 @app.get("/kayitlar/grafik")
 def grafik_verisi(gun: int = 7, db: Session = Depends(get_db), kullanici: models.Kullanici = Depends(_personel_girisi_gerekli)):
-    """Son N günlük istatistik — dashboard grafikleri için."""
+    """Son N günlük istatistik — dashboard grafikleri için.
+
+    DÜZELTME (2026-09-26, kullanıcı isteği: "görsel istatistik panosu"):
+    önceden yalnızca günlük toplam/yetki dağılımı dönüyordu -- hangi SAATLERDE
+    yoğunluk yaşandığı (vardiya planlaması için faydalı) ve hangi plakaların
+    tekrar tekrar yetkisiz/kara liste denemesi yaptığı (güvenlik incelemesi
+    için faydalı) hiçbir yerde TEK BAKIŞTA görünmüyordu -- yalnızca tek tek
+    plaka aratılarak (`/kayitlar/analiz/{plaka}`) bulunabiliyordu. Artık aynı
+    N günlük pencereden iki ek alan da hesaplanıp dönüyor -- ekstra sorgu
+    YOK, zaten çekilmiş olan `kayitlar` listesi üzerinden hesaplanıyor."""
     baslangic = datetime.now() - timedelta(days=max(1, min(gun, 90)))
     sorgu = _guvenlik_kayit_filtresi_uygula(
         db.query(models.Kayit).filter(models.Kayit.tarih_saat >= baslangic), kullanici, db
@@ -5173,6 +5321,8 @@ def grafik_verisi(gun: int = 7, db: Session = Depends(get_db), kullanici: models
     kayitlar = sorgu.all()
 
     gunluk: dict = {}
+    saatlik = [0] * 24
+    sorunlu_plaka_sayaci: dict = {}
     for k in kayitlar:
         gun_str = k.tarih_saat.strftime("%Y-%m-%d")
         e = gunluk.setdefault(gun_str, {"toplam": 0, "yetkili": 0, "yetkisiz": 0, "kara_liste": 0})
@@ -5183,13 +5333,26 @@ def grafik_verisi(gun: int = 7, db: Session = Depends(get_db), kullanici: models
             e["kara_liste"] += 1
         elif k.yetki_durumu in ("yetkisiz", "suresi_dolmus"):
             e["yetkisiz"] += 1
+        saatlik[k.tarih_saat.hour] += 1
+        if k.yetki_durumu in ("yetkisiz", "kara_liste", "suresi_dolmus"):
+            sorunlu_plaka_sayaci[k.plaka_no] = sorunlu_plaka_sayaci.get(k.plaka_no, 0) + 1
 
     yetki_dagilimi = {"yetkili": 0, "yetkisiz": 0, "kara_liste": 0, "suresi_dolmus": 0}
     for k in kayitlar:
         if k.yetki_durumu in yetki_dagilimi:
             yetki_dagilimi[k.yetki_durumu] += 1
 
-    return {"gunluk": gunluk, "yetki_dagilimi": yetki_dagilimi}
+    en_sik_sorunlu_plakalar = [
+        {"plaka_no": p, "sayi": s}
+        for p, s in sorted(sorunlu_plaka_sayaci.items(), key=lambda x: x[1], reverse=True)[:5]
+    ]
+
+    return {
+        "gunluk": gunluk,
+        "yetki_dagilimi": yetki_dagilimi,
+        "saatlik": saatlik,
+        "en_sik_sorunlu_plakalar": en_sik_sorunlu_plakalar,
+    }
 
 
 @app.get("/kayitlar/son-not")

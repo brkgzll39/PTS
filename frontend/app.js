@@ -3446,6 +3446,7 @@ function _canliBolumleriTazeleDebounce() {
 
 let _gunlukGrafik = null;
 let _yetkiPie = null;
+let _saatlikGrafik = null;
 
 async function grafikYukle() {
   const gun = document.getElementById("grafikGunSec")?.value || 7;
@@ -3453,7 +3454,50 @@ async function grafikYukle() {
     const veri = await apiCagir(`/kayitlar/grafik?gun=${gun}`);
     _gunlukGrafigCiz(veri.gunluk);
     _yetkiPieCiz(veri.yetki_dagilimi);
+    _saatlikGrafigCiz(veri.saatlik);
+    _sorunluPlakalariCiz(veri.en_sik_sorunlu_plakalar);
   } catch (e) { _yuklemeHatasi("Grafik", e); }
+}
+
+// 2026-09-26 kullanıcı isteği ("görsel istatistik panosu"): saat 0-23 için
+// geçiş yoğunluğu -- ör. "gece yarısından sonra çok geçiş var mı" ya da
+// "vardiya değişim saatinde yoğunluk artıyor mu" gibi soruların panelde tek
+// bakışta cevaplanması için (önceden yalnızca günlük toplamlar vardı).
+function _saatlikGrafigCiz(saatlik) {
+  if (_saatlikGrafik) _saatlikGrafik.destroy();
+  const ctx = document.getElementById("saatlikGrafik");
+  if (!ctx || !Array.isArray(saatlik)) return;
+  const etiketler = Array.from({ length: 24 }, (_, s) => `${String(s).padStart(2, "0")}:00`);
+  _saatlikGrafik = new Chart(ctx, {
+    type: "bar",
+    data: {
+      labels: etiketler,
+      datasets: [{ label: "Geçiş sayısı", data: saatlik, backgroundColor: "#6ea8fe55", borderColor: "#6ea8fe", borderWidth: 1 }],
+    },
+    options: {
+      responsive: true,
+      plugins: { legend: { display: false } },
+      scales: { y: { beginAtZero: true, ticks: { precision: 0 } } },
+    },
+  });
+}
+
+// Aynı kullanıcı isteği: "hangi plakalar tekrar tekrar yetkisiz/kara liste
+// denemesi yapıyor" sorusu önceden yalnızca plaka plaka aratılarak
+// (plakaAnalizAc) bulunabiliyordu -- artık dashboard'da doğrudan görünür,
+// tıklanınca aynı analiz ekranı açılır (mevcut fonksiyon yeniden kullanıldı).
+function _sorunluPlakalariCiz(liste) {
+  const el = document.getElementById("sorunluPlakaTablo");
+  if (!el) return;
+  if (!Array.isArray(liste) || liste.length === 0) {
+    el.innerHTML = '<tr><td class="text-muted p-3">Seçili aralıkta tekrarlı yetkisiz/engellenen plaka yok.</td></tr>';
+    return;
+  }
+  el.innerHTML = liste.map(p => `
+    <tr style="cursor:pointer" onclick="plakaAnalizAc('${p.plaka_no.replace(/'/g, "\\'")}')">
+      <td class="fw-bold">${p.plaka_no}</td>
+      <td class="text-end text-danger">${p.sayi} kez</td>
+    </tr>`).join("");
 }
 
 function _gunlukGrafigCiz(gunluk) {
@@ -4682,7 +4726,7 @@ async function bildirimAyarlariYukle() {
       suresi_dolmus: "Süresi dolmuş", supheli_arac: "Şüpheli araç",
       bariyer_hatasi: "Bariyer hatası", kamera_arizasi: "Kamera arızası",
       disk_hatasi: "Disk hatası", yedek_bozuk: "Otomatik yedek bozuk",
-      disk_doluyor: "Disk doluluk erken uyarısı",
+      disk_doluyor: "Disk doluluk erken uyarısı", gunluk_ozet: "Günlük özet (her sabah)",
     };
     el.innerHTML = ayarlar.map(a => `<tr>
       <td><strong>${escapeHtml(a.ad)}</strong></td>
