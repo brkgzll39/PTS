@@ -1205,6 +1205,35 @@
           </table></div>
           <div class="small text-muted px-3 py-2">Yalnızca kameradan otomatik gelen kayıtlar değerlendirilir (elle girilen kayıtlar hariç). "Tek kare" ve "Kararsız okuma" oranı yüksek bir kamerada yanlış plaka kaydı riski artar.</div>
         </div></div></div>
+        <!-- 2026-09-25 kullanıcı isteği: "Bu akşamki geçişleri takip etmek için
+             yeni yaptığım dahua eklemesiyle hangisi daha verimli çalışmış tespit
+             edebilmem için bir grafik" -- bkz. main.py::kamera_dahua_karsilastirma.
+             Dahua ANPR'ı açık kameralarla kapalı kameraların, seçilen dönemdeki
+             geçiş sayısını/Dahua katkılı kayıt sayısını yan yana gösteren bir
+             çubuk grafik. -->
+        <div class="col-12"><div class="card"><div class="card-header d-flex justify-content-between align-items-center flex-wrap gap-2">
+          <span><i class="bi bi-bar-chart-fill me-1"></i>Kamera Karşılaştırma (Dahua Katkısı)</span>
+          <div class="d-flex gap-2 align-items-center">
+            <label for="dahuaKarsilastirmaSaat" class="small text-muted mb-0">Dönem</label>
+            <select id="dahuaKarsilastirmaSaat" class="form-select form-select-sm" style="width:auto" onchange="dahuaKarsilastirmaYukle()">
+              <option value="6">Son 6 saat</option><option value="12" selected>Bu akşam (son 12 saat)</option>
+              <option value="24">Son 24 saat</option><option value="72">Son 3 gün</option><option value="168">Son 7 gün</option>
+            </select>
+            <button class="btn btn-sm btn-outline-secondary" onclick="dahuaKarsilastirmaYukle()" title="Yenile"><i class="bi bi-arrow-clockwise"></i></button>
+          </div>
+        </div><div class="card-body">
+          <div id="dahuaKarsilastirmaBos" class="text-center text-muted py-3 d-none">Seçilen dönemde hiçbir kameradan otomatik kayıt gelmedi.</div>
+          <canvas id="dahuaKarsilastirmaGrafik" height="90"></canvas>
+          <div class="table-responsive mt-3"><table class="table table-sm mb-0 align-middle">
+            <thead class="table-light"><tr>
+              <th>Kamera</th><th>Dahua ANPR</th><th class="text-end">Otomatik kayıt</th>
+              <th class="text-end" title="Kazanan plaka metninin kameranın kendi Dahua ANPR okumasıyla desteklendiği kayıtlar">Dahua katkılı</th>
+              <th class="text-end">Ort. güven</th><th class="text-end" title="Plakanın yalnızca 1 karede okunup kaydedildiği kayıtlar">Tek kare</th>
+            </tr></thead>
+            <tbody id="dahuaKarsilastirmaTablo"><tr><td colspan="6" class="text-center text-muted py-3">Yükleniyor…</td></tr></tbody>
+          </table></div>
+          <div class="small text-muted pt-2">"Dahua katkılı" yalnızca bu özellik eklendikten SONRA oluşan kayıtlarda hesaplanır -- daha eski kayıtlar bu sayıma girmez. Yalnızca kameradan otomatik gelen kayıtlar değerlendirilir.</div>
+        </div></div></div>
       </div>
     </div>
 

@@ -5184,11 +5184,14 @@ def test_plaka_analiz_toplam_gecis_50_sinirina_takilmaz(client, operator_header)
 # OKUMA DOĞRULUĞU ARAÇLARI (2026-09-25, Patch #107)
 # ------------------------------------------------------------------
 
-def _otomatik_kayit(client, plaka, kamera, kare, farkli=1, yon="giris"):
-    r = client.post("/kayitlar/otomatik", data={
+def _otomatik_kayit(client, plaka, kamera, kare, farkli=1, yon="giris", harici_katkili=None):
+    gonderi = {
         "plaka_no": plaka, "kamera_id": kamera, "yon": yon, "guven_skoru": 0.99,
         "dogrulama_kare_sayisi": kare, "farkli_okuma_sayisi": farkli,
-    })
+    }
+    if harici_katkili is not None:
+        gonderi["harici_katkili"] = harici_katkili
+    r = client.post("/kayitlar/otomatik", data=gonderi)
     assert r.status_code == 200, r.text
     assert "atlandi" not in r.json(), r.json()
     return r.json()
@@ -5239,6 +5242,78 @@ def test_kamera_okuma_kalitesi_izleyici_yetkisiz_ve_gun_sinirli(client, yetkili_
     assert client.get("/kameralar/okuma-kalitesi", headers=izleyici_header).status_code == 403
     assert client.get("/kameralar/okuma-kalitesi", params={"gun": 0}, headers=yetkili_header).status_code == 422
     assert client.get("/kameralar/okuma-kalitesi", params={"gun": 91}, headers=yetkili_header).status_code == 422
+
+
+# ------------------------------------------------------------------
+# "DAHUA KATKISI" GRAFİĞİ (2026-09-25/26, Patch #110) -- kullanıcı isteği:
+# "Bu akşamki geçişleri takip etmek için yeni yaptığım dahua eklemesiyle
+# hangisi daha verimli çalışmış tespit edebilmem için bir grafik patch'i
+# atabilir misin". bkz. main.py::kayit_ekle_otomatik'in harici_katkili
+# form alanı, models.Kayit.harici_katkili ve main.py::kamera_dahua_karsilastirma.
+# ------------------------------------------------------------------
+
+def test_kayit_ekle_otomatik_harici_katkili_alani_kaydedilir_ve_donulur(client, yetkili_header):
+    """`harici_katkili` gönderilmezse (harici bir ANPR sistemi/eski
+    camera_reader.py sürümü) None kalmalı; True/False açıkça gönderildiğinde
+    aynen kaydedilip /kayitlar üzerinden de geri okunabilmeli."""
+    hesaplanmadi = _otomatik_kayit(client, "34 HKT 001", "HKT-KAM", kare=3)
+    assert hesaplanmadi["harici_katkili"] is None
+
+    dahua_katkili = _otomatik_kayit(client, "34 HKT 002", "HKT-KAM", kare=1, harici_katkili=True)
+    assert dahua_katkili["harici_katkili"] is True
+
+    sadece_pts = _otomatik_kayit(client, "34 HKT 003", "HKT-KAM", kare=5, harici_katkili=False)
+    assert sadece_pts["harici_katkili"] is False
+
+    liste = client.get("/kayitlar", params={"plaka": "34 HKT"}, headers=yetkili_header).json()
+    donenler = {k["id"]: k["harici_katkili"] for k in liste}
+    assert donenler[hesaplanmadi["id"]] is None
+    assert donenler[dahua_katkili["id"]] is True
+    assert donenler[sadece_pts["id"]] is False
+
+
+def test_kamera_dahua_karsilastirma_dahua_aktif_kameralari_isaretler(client, yetkili_header):
+    r = client.post("/kameralar", json={
+        "ad": "Dahua Karsilastirma Kam", "rtsp_url": "rtsp://admin:gizli@127.0.0.1:554/cam", "yon": "giris",
+    }, headers=yetkili_header)
+    assert r.status_code == 200, r.text
+    kid = r.json()["id"]
+    try:
+        r = client.patch(f"/kameralar/{kid}/dahua", json={"aktif": True, "olaylar": "TrafficJunction"},
+                         headers=yetkili_header)
+        assert r.status_code == 200, r.text
+
+        for i in range(3):
+            _otomatik_kayit(client, f"34 DKB {100 + i}", "Dahua Karsilastirma Kam", kare=5,
+                            harici_katkili=(i == 0))
+        _otomatik_kayit(client, "34 DKB 200", "OKUMA-KALITE-ZAYIF-2", kare=1)
+
+        v = client.get("/kameralar/dahua-karsilastirma", params={"saat": 24}, headers=yetkili_header)
+        assert v.status_code == 200, v.text
+        veri = v.json()
+        assert veri["saat"] == 24
+
+        aktif_kamera = next(k for k in veri["kameralar"] if k["kamera"] == "Dahua Karsilastirma Kam")
+        assert aktif_kamera["dahua_aktif"] is True
+        assert aktif_kamera["toplam"] >= 3
+        assert aktif_kamera["harici_katkili_kayit"] >= 1
+        assert aktif_kamera["harici_katki_orani"] is not None
+
+        kapali_kamera = next(k for k in veri["kameralar"] if k["kamera"] == "OKUMA-KALITE-ZAYIF-2")
+        assert kapali_kamera["dahua_aktif"] is False
+        assert kapali_kamera["harici_katkili_kayit"] == 0
+
+        # Dahua açık kameralar listenin başında görünmeli.
+        assert veri["kameralar"][0]["dahua_aktif"] is True
+    finally:
+        client.delete(f"/kameralar/{kid}", headers=yetkili_header)
+
+
+def test_kamera_dahua_karsilastirma_yetki_ve_saat_sinirlari(client, yetkili_header, izleyici_header):
+    assert client.get("/kameralar/dahua-karsilastirma", headers=izleyici_header).status_code == 403
+    assert client.get("/kameralar/dahua-karsilastirma", params={"saat": 0}, headers=yetkili_header).status_code == 422
+    assert client.get("/kameralar/dahua-karsilastirma", params={"saat": 169}, headers=yetkili_header).status_code == 422
+    assert client.get("/kameralar/dahua-karsilastirma", params={"saat": 12}, headers=yetkili_header).status_code == 200
 
 
 def test_anpr_modelleri_listesi(client, yetkili_header, izleyici_header):

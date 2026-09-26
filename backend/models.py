@@ -228,6 +228,19 @@ class Kayit(Base):
     # ilgili not). Kamera pipeline'ından gelmeyen kayıtlarda (manuel giriş,
     # eski kayıtlar) None kalır.
     farkli_okuma_sayisi = Column(Integer, nullable=True)
+    # DAHUA ANPR KATKISI (2026-09-25 kullanıcı isteği: "Bu akşamki geçişleri
+    # takip etmek için yeni yaptığım dahua eklemesiyle hangisi daha verimli
+    # çalışmış tespit edebilmem için bir grafik"). Bu geçiş oturumunda
+    # KAMERANIN KENDİ Dahua ANPR okuması (bkz. camera_reader.py::
+    # KameraPipeline.harici_okuma_ekle, HARICI_OKUMA_OY_AGIRLIGI) kazanan
+    # plaka metnine oy verdiyse True; PTS'in kendi OCR'ı tek başına
+    # kesinleştirdiyse False; kamera pipeline'ından GELMEYEN kayıtlarda
+    # (manuel giriş, eski kayıtlar, dahua_anpr hiç açılmamış kameralar)
+    # None kalır -- "Dahua'nın hiç katkısı olmadı" ile "bu bilgi bu kayıt
+    # için hiç hesaplanmadı" birbirinden ayırt edilebilsin diye BİLİNÇLİ
+    # olarak False değil None kullanılır. Kamera bazında karşılaştırma:
+    # main.py::kamera_dahua_karsilastirma.
+    harici_katkili = Column(Boolean, nullable=True)
     # Tek seferlik, bu kayda özel not (örn. "görevli tarafından elle içeri
     # alındı, sebep: teslimat"). Kişinin KENDİ profilindeki kalıcı notlar
     # (bkz. Kisi.aciklama) ile KARIŞTIRILMAMALI -- bu SADECE bu tekil geçişe

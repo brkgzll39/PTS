@@ -4407,8 +4407,73 @@ async function okumaKalitesiYukle() {
 }
 
 document.addEventListener("shown.bs.tab", (e) => {
-  if (e.target?.dataset?.bsTarget === "#kamera-sekme") okumaKalitesiYukle();
+  if (e.target?.dataset?.bsTarget === "#kamera-sekme") { okumaKalitesiYukle(); dahuaKarsilastirmaYukle(); }
 });
+
+// ------------------ KAMERA KARŞILAŞTIRMA (Dahua Katkısı, 2026-09-25) ------------------
+// Kullanıcı isteği: "Bu akşamki geçişleri takip etmek için yeni yaptığım
+// dahua eklemesiyle hangisi daha verimli çalışmış tespit edebilmem için bir
+// grafik" -- bkz. main.py::kamera_dahua_karsilastirma. Çubuk grafik + altında
+// aynı veriyi taşıyan bir tablo (grafik tek başına ekran okuyucularla/tam
+// sayı ile karşılaştırma için yetersiz kalır, bkz. bu depodaki diğer
+// grafiklerin -- ör. Toplu Doğruluk Testi -- yanına da hep bir tablo/liste
+// eklenmiş olması geleneği).
+let _dahuaKarsilastirmaGrafik = null;
+let _dahuaKarsilastirmaIstekNo = 0;
+
+async function dahuaKarsilastirmaYukle() {
+  const grafikEl = document.getElementById("dahuaKarsilastirmaGrafik");
+  const tbody = document.getElementById("dahuaKarsilastirmaTablo");
+  if (!grafikEl || !tbody || !rolYeterli("operatör")) return;
+  const saat = document.getElementById("dahuaKarsilastirmaSaat")?.value || 12;
+  const istekNo = ++_dahuaKarsilastirmaIstekNo;
+  try {
+    const v = await apiCagir(`/kameralar/dahua-karsilastirma?saat=${encodeURIComponent(saat)}`);
+    if (istekNo !== _dahuaKarsilastirmaIstekNo) return;
+    const bosEl = document.getElementById("dahuaKarsilastirmaBos");
+    const toplamVar = v.kameralar.some(k => k.toplam > 0);
+    if (bosEl) bosEl.classList.toggle("d-none", toplamVar);
+    grafikEl.classList.toggle("d-none", !toplamVar);
+
+    const etiketler = v.kameralar.map(k => k.kamera + (k.dahua_aktif ? " (Dahua)" : ""));
+    const toplam = v.kameralar.map(k => k.toplam);
+    const dahuaKatkili = v.kameralar.map(k => k.harici_katkili_kayit || 0);
+
+    if (_dahuaKarsilastirmaGrafik) _dahuaKarsilastirmaGrafik.destroy();
+    if (toplamVar) {
+      _dahuaKarsilastirmaGrafik = new Chart(grafikEl, {
+        type: "bar",
+        data: {
+          labels: etiketler,
+          datasets: [
+            { label: "Toplam Geçiş", data: toplam, backgroundColor: "#6ea8fe55", borderColor: "#6ea8fe", borderWidth: 1 },
+            { label: "Dahua Katkılı Kayıt", data: dahuaKatkili, backgroundColor: "#75b79855", borderColor: "#75b798", borderWidth: 1 },
+          ],
+        },
+        options: { responsive: true, plugins: { legend: { position: "top" } }, scales: { y: { beginAtZero: true, ticks: { precision: 0 } } } },
+      });
+    }
+
+    const yuzde = (o) => o == null ? '<span class="text-muted">—</span>' : `%${(o * 100).toFixed(1)}`;
+    tbody.innerHTML = v.kameralar.map(k => {
+      const dahuaRozet = k.dahua_aktif
+        ? '<span class="badge bg-success">Açık</span>'
+        : '<span class="badge bg-light text-muted border">Kapalı</span>';
+      const ek = k.tanimli === false ? ' <span class="badge bg-light text-muted border" title="Bu adla tanımlı bir kamera yok">tanımsız</span>' : "";
+      return `<tr>
+        <td class="fw-semibold">${escapeHtml(k.kamera || "—")}${ek}</td>
+        <td>${dahuaRozet}</td>
+        <td class="text-end">${k.toplam}</td>
+        <td class="text-end">${k.harici_katkili_kayit || 0}${k.harici_katki_orani != null ? ` <span class="text-muted small">(${yuzde(k.harici_katki_orani)})</span>` : ""}</td>
+        <td class="text-end">${k.ortalama_guven != null ? yuzde(k.ortalama_guven) : "—"}</td>
+        <td class="text-end">${yuzde(k.tek_kare_orani)}</td>
+      </tr>`;
+    }).join("") || '<tr><td colspan="6" class="text-center text-muted py-3">Tanımlı kamera yok</td></tr>';
+  } catch (e) {
+    if (istekNo !== _dahuaKarsilastirmaIstekNo) return;
+    tbody.innerHTML = `<tr><td colspan="6" class="text-center text-danger py-3">Karşılaştırma alınamadı: ${escapeHtml(e.message)}</td></tr>`;
+  }
+}
 
 // 2026-09-25: model karşılaştırma -- seçilebilir modelleri ve canlı sistemin
 // kullandığı modeli yükler (bkz. main.py::/sistem/anpr-modelleri).

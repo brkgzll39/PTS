@@ -13,6 +13,7 @@ kopması/donması durumunu birebir simüle eder. Şunları doğrular:
   6) Tespit edilen plaka gerçek bir HTTP sunucusuna multipart POST olarak ulaşıyor.
 """
 import http.server
+import re
 import socketserver
 import threading
 import time
@@ -76,13 +77,50 @@ def sentetik_video(tmp_path):
     return str(yol)
 
 
+def _multipart_form_alanlarini_ayristir(govde: bytes, content_type: str) -> dict:
+    """Basit bir `multipart/form-data` gövdesinden (dosya HARİÇ) metin
+    alanlarını ayıklar -- camera_reader.py'nin gönderdiği `harici_katkili`
+    gibi form alanlarının GERÇEKTEN doğru değerle iletildiğini test etmek
+    için (bkz. aşağıdaki test_harici_katkili_* testleri). fastapi/starlette'in
+    kendisi bu sandboxta kurulu olmadığından (bkz. modülün üst notu), tam bir
+    multipart kütüphanesine bağımlı olmayan, bilinçli olarak KÜÇÜK ve
+    dosya-değeri atlayan bir ayrıştırıcıdır."""
+    boundary_marker = None
+    for parca in content_type.split(";"):
+        parca = parca.strip()
+        if parca.startswith("boundary="):
+            boundary_marker = parca[len("boundary="):].strip('"')
+    if not boundary_marker:
+        return {}
+    sinir = ("--" + boundary_marker).encode()
+    alanlar = {}
+    for parca in govde.split(sinir):
+        if b"Content-Disposition" not in parca:
+            continue
+        try:
+            basliklar, deger = parca.split(b"\r\n\r\n", 1)
+        except ValueError:
+            continue
+        if b"filename=" in basliklar:
+            continue  # dosya alanı (görsel) -- burada ilgilenmiyoruz
+        m = re.search(rb'name="([^"]+)"', basliklar)
+        if not m:
+            continue
+        ad = m.group(1).decode()
+        deger = deger.rstrip(b"\r\n-")
+        alanlar[ad] = deger.decode("utf-8", errors="replace")
+    return alanlar
+
+
 class _SahteAPISunucusu:
     """/kayitlar/otomatik yerine geçen, gelen istekleri sayan minik stdlib HTTP sunucu."""
 
     def __init__(self):
         self.alinan_istekler = []
+        self.alinan_alanlar = []  # her istek için _multipart_form_alanlarini_ayristir sonucu
         kilit = threading.Lock()
         alinan = self.alinan_istekler
+        alinan_alanlar = self.alinan_alanlar
 
         class Handler(http.server.BaseHTTPRequestHandler):
             def log_message(self, *a):
@@ -93,6 +131,9 @@ class _SahteAPISunucusu:
                 govde = self.rfile.read(uzunluk)
                 with kilit:
                     alinan.append(len(govde))
+                    alinan_alanlar.append(
+                        _multipart_form_alanlarini_ayristir(govde, self.headers.get("Content-Type", ""))
+                    )
                 self.send_response(200)
                 self.send_header("Content-Type", "application/json")
                 self.end_headers()
@@ -1411,3 +1452,63 @@ def test_dahua_ayari_aciksa_pipeline_dinleyiciyi_baslatir_ve_durdurur(monkeypatc
     kapali = camera_reader.KameraPipeline(video_kaynagi="x", api_url=sahte_api.url, kamera_id="K2",
                                           dahua_ayarlari={"aktif": False})
     assert kapali._dahua_ayarlari is None and kapali.dahua_durumu() is None
+
+
+# ------------------------------------------------------------------
+# 2026-09-25: "Bu akşamki geçişleri takip etmek için yeni yaptığım dahua
+# eklemesiyle hangisi daha verimli çalışmış tespit edebilmem için bir
+# grafik" -- kayıtla birlikte API'ye gönderilen `harici_katkili` alanı, bu
+# grafiğin (main.py::kamera_dahua_karsilastirma) verilerini besleyen kaynak
+# alandır: kazanan plaka metnini kameranın kendi Dahua okumasının mı yoksa
+# yalnızca PTS'in kendi OCR'ının mı belirlediğini kaydeder.
+# ------------------------------------------------------------------
+
+def test_harici_katkili_yalnizca_kameranin_kendi_okumasinda_true(monkeypatch, sahte_api):
+    """PTS'in modeli plakayı HİÇ okuyamadığı (gece/parlama), yalnızca
+    kameranın kendi Dahua okumasının kazandığı vakada `harici_katkili=True`
+    gönderilmeli -- bkz. test_kameranin_kendi_okumasi_pts_okuyamasa_da_kayit_
+    olusturur'daki AYNI senaryo, burada API'ye giden form alanı doğrulanıyor."""
+    saat = [7000.0]
+    pipeline = _saat_ile_pipeline(monkeypatch, sahte_api, saat)
+    _KontrolluEngine.gorunur = False
+    pipeline.harici_okuma_ekle("39AES145", b"\xff\xd8kamera-fotosu\xff\xd9")
+    _gonderilenleri_topla(pipeline, saat, 7000, 7004)
+    assert len(sahte_api.alinan_alanlar) == 1
+    assert sahte_api.alinan_alanlar[0]["harici_katkili"] == "True"
+
+
+def test_harici_katkili_yalniz_pts_okudugunda_false(monkeypatch, sahte_api):
+    """Kameranın Dahua okuması HİÇ devreye girmediği (sıradan) bir geçişte
+    `harici_katkili=False` gönderilmeli -- yoksa grafik, Dahua'nın hiç
+    katkısı olmayan sıradan kayıtları da "Dahua katkılı" sayardı. Oturumun
+    KAPANMASI için (bkz. diğer testlerdeki AYNI iki fazlı desen) önce birkaç
+    kare PTS okuması, sonra araç kareden ayrılmış gibi sessizlik gerekir --
+    aksi halde PTS her karede yeniden okuduğu için oturum hiç kapanmaz."""
+    saat = [7100.0]
+    pipeline = _saat_ile_pipeline(monkeypatch, sahte_api, saat)
+    gonderilen = _gonderilenleri_topla(pipeline, saat, 7100, 7101.5)  # 4 kare PTS okuması
+    _KontrolluEngine.gorunur = False
+    gonderilen += _gonderilenleri_topla(pipeline, saat, 7102, 7104)  # sessizlik -> oturum kapanır
+    assert gonderilen == ["39 AES 145"]
+    assert len(sahte_api.alinan_alanlar) == 1
+    assert sahte_api.alinan_alanlar[0]["harici_katkili"] == "False"
+
+
+def test_harici_katkili_celiskide_pts_kazanirsa_false(monkeypatch, sahte_api):
+    """Dahua bir okuma gönderse BİLE, oylamayı sonunda PTS'in kendi (daha
+    ağır basan) okumaları kazanırsa `harici_katkili` KAZANAN metne göre
+    False olmalı -- oturuma herhangi bir harici okuma girmiş olması TEK
+    BAŞINA yeterli değildir (bkz. PlakaOyBirikimi.kazanan'ın 2026-09-25
+    notu). test_celiskide_kameranin_okumasi_agir_basar'ın TERSİ: burada
+    Dahua'nın TEK zayıf oyu (agirlik=5 * güven=0.98 = 4.9), PTS'in kendi
+    motorunun (_KontrolluEngine, varsayılan okuma zaten doğru "39AES145")
+    6 karelik oydaşmasını (0.95 * 6 = 5.7) YENEMEZ."""
+    saat = [7200.0]
+    pipeline = _saat_ile_pipeline(monkeypatch, sahte_api, saat)
+    pipeline.harici_okuma_ekle("39AES146")  # Dahua bu kez YANLIŞ okudu (tek zayıf oy)
+    gonderilen = _gonderilenleri_topla(pipeline, saat, 7200, 7202.5)  # PTS 6 kare doğru okuma
+    _KontrolluEngine.gorunur = False
+    gonderilen += _gonderilenleri_topla(pipeline, saat, 7203, 7205)  # sessizlik -> oturum kapanır
+    assert gonderilen == ["39 AES 145"]
+    assert len(sahte_api.alinan_alanlar) == 1
+    assert sahte_api.alinan_alanlar[0]["harici_katkili"] == "False"

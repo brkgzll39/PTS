@@ -136,6 +136,12 @@ def _veritabani_migrasyon() -> None:
         f"ALTER TABLE noktalar ADD {col_kw}bariyer_id INTEGER",
         f"ALTER TABLE plaka_kayitlari ADD {col_kw}dogrulama_kare_sayisi INTEGER",
         f"ALTER TABLE plaka_kayitlari ADD {col_kw}farkli_okuma_sayisi INTEGER",
+        # "Dahua ANPR Katkısı" (2026-09-25) -- bkz. models.Kayit.harici_katkili'nin
+        # docstring'i. NULL kabul eden, DEFAULT'suz bir BOOLEAN sütun olduğu
+        # için (misafir_adi/kisi_id ile AYNI gerekçe) burada "WITH VALUES"
+        # ihtiyacı YOK -- var olan (bu alanın hiç hesaplanmadığı) satırlar
+        # zaten istenen değer olan NULL'a düşer.
+        f"ALTER TABLE plaka_kayitlari ADD {col_kw}harici_katkili {'INTEGER' if sqlite_mod else 'BIT'}",
         f"ALTER TABLE plaka_kayitlari ADD {col_kw}not_metni {'TEXT' if sqlite_mod else 'NVARCHAR(MAX)'}",
         # "Misafir Adı Soyadı" (2026-09-22) -- bkz. models.Kayit.misafir_adi'nin
         # docstring'i. NULL kabul eden, DEFAULT'suz bir metin sütunu olduğu
@@ -2629,6 +2635,111 @@ def kamera_okuma_kalitesi(
     return {"gun": gun, "kameralar": sonuc}
 
 
+@app.get("/kameralar/dahua-karsilastirma")
+def kamera_dahua_karsilastirma(
+    saat: int = Query(12, ge=1, le=168),
+    db: Session = Depends(get_db),
+    kullanici: models.Kullanici = Depends(_personel_girisi_gerekli),
+):
+    """Kamera bazında "Dahua ANPR katkısı" karşılaştırması (2026-09-25
+    kullanıcı isteği: "Bu akşamki geçişleri takip etmek için yeni yaptığım
+    dahua eklemesiyle hangisi daha verimli çalışmış tespit edebilmem için
+    bir grafik"). `/kameralar/okuma-kalitesi` ile AYNI GROUP BY sorgu
+    şeklini kullanır (bkz. yukarıdaki `kamera_okuma_kalitesi`) ama iki
+    farkla:
+
+    1) Varsayılan pencere GÜN değil SAAT'tir (varsayılan 12 -- "bu akşam"),
+       çünkü kullanıcı belirli bir vardiya/gece dilimini karşılaştırmak
+       istiyor, genel bir kalite trendini değil.
+    2) Her kamera için ayrıca `harici_katkili_kayit`/`harici_katki_orani`
+       (kaç/% kaydın KAZANAN metninin kameranın kendi Dahua ANPR okumasıyla
+       desteklendiği -- bkz. models.Kayit.harici_katkili'nin docstring'i)
+       ve `dahua_aktif` (bkz. cameras.json'daki dahua_anpr.aktif) döner ki
+       panel Dahua'sı açık kameralarla kapalı kameraları aynı grafikte yan
+       yana gösterebilsin. `harici_katkili` sütunu YALNIZCA bu değişiklikten
+       SONRA oluşan kayıtlarda doludur -- eski kayıtlarda None'dır ve
+       `harici_katki_orani` hesabında (toplam PAYDA olsa da) pay olarak hiç
+       sayılmaz; yani bu oran, "Dahua kaç kaydı GERÇEKTEN etkiledi" sorusunun
+       eldeki VERİYLE ölçülebilen alt sınırıdır, üst sınırı değil."""
+    _rol_dogrula(kullanici, ROL_YONETICI, ROL_OPERATOR)
+    from sqlalchemy import case
+    from backend.okuma_kalitesi import kalite_degerlendir
+
+    K = models.Kayit
+    sinir = datetime.now() - timedelta(hours=saat)
+    sorgu = (
+        db.query(
+            K.kamera_id,
+            func.count(K.id),
+            func.sum(case((K.dogrulama_kare_sayisi.isnot(None), 1), else_=0)),
+            func.sum(case((K.dogrulama_kare_sayisi <= 1, 1), else_=0)),
+            func.sum(case((K.farkli_okuma_sayisi > 1, 1), else_=0)),
+            func.sum(case((K.ham_plaka_metni.isnot(None), 1), else_=0)),
+            func.avg(K.dogrulama_kare_sayisi),
+            func.avg(K.guven_skoru),
+            func.sum(case((K.harici_katkili == True, 1), else_=0)),  # noqa: E712
+        )
+        .filter(K.tarih_saat >= sinir, or_(K.manuel_giris == False, K.manuel_giris.is_(None)))  # noqa: E712
+    )
+    izinli_adlar = _kullanicinin_izinli_kamera_adlari(kullanici)
+    if izinli_adlar is not None:
+        sorgu = sorgu.filter(K.kamera_id.in_(izinli_adlar))
+    satirlar = {r[0]: r for r in sorgu.group_by(K.kamera_id).all()}
+
+    # okuma-kalitesi ile AYNI GEREKÇE: tanımlı ama bu pencerede hiç kayıt
+    # üretmemiş kameralar da (özellikle "Dahua'yı yeni açtım ama hiç geçiş
+    # olmadı" durumunu görünür kılmak için) listelensin.
+    izinli_idler = _kullanicinin_izinli_kameralari(kullanici)
+    tanimli = [
+        k for k in _kameralari_oku()
+        if (izinli_idler is None or k.get("id") in izinli_idler)
+    ]
+    sonuc = []
+    gorulen = set()
+    for k in tanimli:
+        ad = k.get("ad")
+        gorulen.add(ad)
+        r = satirlar.get(ad)
+        toplam = int(r[1]) if r else 0
+        degerlendirme = kalite_degerlendir(
+            toplam, int(r[2] or 0) if r else 0, int(r[3] or 0) if r else 0,
+            int(r[4] or 0) if r else 0, int(r[5] or 0) if r else 0,
+            float(r[6]) if r and r[6] is not None else None,
+            float(r[7]) if r and r[7] is not None else None,
+        )
+        harici = int(r[8] or 0) if r else 0
+        degerlendirme["harici_katkili_kayit"] = harici
+        degerlendirme["harici_katki_orani"] = round(harici / toplam, 3) if toplam else None
+        dahua_ayari = k.get("dahua_anpr") or {}
+        sonuc.append({
+            "kamera": ad,
+            "yon": k.get("yon"),
+            "aktif": k.get("aktif", True),
+            "tanimli": True,
+            "dahua_aktif": bool(dahua_ayari.get("aktif")),
+            **degerlendirme,
+        })
+    for ad, r in satirlar.items():
+        if ad in gorulen:
+            continue
+        toplam = int(r[1])
+        degerlendirme = kalite_degerlendir(
+            toplam, int(r[2] or 0), int(r[3] or 0), int(r[4] or 0), int(r[5] or 0),
+            float(r[6]) if r[6] is not None else None, float(r[7]) if r[7] is not None else None,
+        )
+        harici = int(r[8] or 0)
+        degerlendirme["harici_katkili_kayit"] = harici
+        degerlendirme["harici_katki_orani"] = round(harici / toplam, 3) if toplam else None
+        sonuc.append({
+            "kamera": ad, "yon": None, "aktif": None, "tanimli": False,
+            "dahua_aktif": False, **degerlendirme,
+        })
+    # Dahua açık kameralar önce -- kullanıcının asıl merak ettiği karşılaştırma
+    # bu ikisi arasında olduğu için grafikte/tabloda hemen göze çarpsınlar.
+    sonuc.sort(key=lambda s: (not s["dahua_aktif"], str(s["kamera"])))
+    return {"saat": saat, "kameralar": sonuc}
+
+
 @app.get("/kameralar/{kamera_id}/goruntu")
 async def kamera_goruntu_al(kamera_id: str, kullanici: models.Kullanici = Depends(_personel_girisi_gerekli)):
     """Kameradan anlık JPEG kare alır. Pipeline çalışıyorsa cached (temiz,
@@ -3563,7 +3674,8 @@ def _kayit_olustur_ve_bildir(db: Session, plaka_no: str, kamera_id: str, yon: st
                               dogrulama_kare_sayisi: Optional[int] = None,
                               not_metni: Optional[str] = None, manuel_giris: bool = False,
                               farkli_okuma_sayisi: Optional[int] = None,
-                              misafir_adi: Optional[str] = None):
+                              misafir_adi: Optional[str] = None,
+                              harici_katkili: Optional[bool] = None):
     plaka_no = re.sub(r"[^A-Za-z0-9 ]", "", plaka_no).strip().upper() or "BILINMEYEN"
     kamera_id = re.sub(r"[^A-Za-z0-9 _.\-]", "", str(kamera_id)).strip()[:50] or "KAMERA-1"
 
@@ -3630,6 +3742,7 @@ def _kayit_olustur_ve_bildir(db: Session, plaka_no: str, kamera_id: str, yon: st
         surucu_adi=surucu_adi,
         manuel_giris=manuel_giris,
         farkli_okuma_sayisi=farkli_okuma_sayisi,
+        harici_katkili=harici_katkili,
     )
     db.add(kayit)
     db.commit()
@@ -3821,6 +3934,12 @@ async def kayit_ekle_otomatik(
     guven_skoru: Optional[float] = Form(None),
     dogrulama_kare_sayisi: Optional[int] = Form(None),
     farkli_okuma_sayisi: Optional[int] = Form(None),
+    # "Dahua Katkısı" (2026-09-25) -- bkz. models.Kayit.harici_katkili'nin
+    # docstring'i. Yalnızca camera_reader.py'nin kendi pipeline'ından gelir
+    # (bkz. oradaki POST gövdesi); harici bir ANPR sisteminin bu alanı hiç
+    # göndermediği (Optional, varsayılan None) durumda "hesaplanmadı" anlamına
+    # gelmeye devam eder.
+    harici_katkili: Optional[bool] = Form(None),
     gorsel: Optional[UploadFile] = File(None),
     x_pts_kamera_anahtari: Optional[str] = Header(None),
     db: Session = Depends(get_db),
@@ -3930,7 +4049,8 @@ async def kayit_ekle_otomatik(
                 kamera_id, plaka_no, guven_skoru, esik, bilinen_esik,
             )
             return _kaydi_olustur_gorseli_koru(db, plaka_no, kamera_id, yon, guven_skoru, goruntu_yolu,
-                                               dogrulama_kare_sayisi, farkli_okuma_sayisi)
+                                               dogrulama_kare_sayisi, farkli_okuma_sayisi,
+                                               harici_katkili=harici_katkili)
 
         if goruntu_yolu and os.path.isfile(goruntu_yolu):
             try:
@@ -3950,7 +4070,8 @@ async def kayit_ekle_otomatik(
         })
 
     return _kaydi_olustur_gorseli_koru(db, plaka_no, kamera_id, yon, guven_skoru, goruntu_yolu,
-                                       dogrulama_kare_sayisi, farkli_okuma_sayisi)
+                                       dogrulama_kare_sayisi, farkli_okuma_sayisi,
+                                       harici_katkili=harici_katkili)
 
 
 def _yarim_dosyayi_sil(yol: Optional[str]) -> None:
@@ -3995,7 +4116,8 @@ def _gorsel_yazma_hatasini_bildir(db: Session, kamera_id: str, plaka_no: str, ex
 
 def _kaydi_olustur_gorseli_koru(db: Session, plaka_no: str, kamera_id: str, yon: str,
                                 guven_skoru: Optional[float], goruntu_yolu: Optional[str],
-                                dogrulama_kare_sayisi: Optional[int], farkli_okuma_sayisi: Optional[int]):
+                                dogrulama_kare_sayisi: Optional[int], farkli_okuma_sayisi: Optional[int],
+                                harici_katkili: Optional[bool] = None):
     """`_kayit_olustur_ve_bildir`'i çağırır; kayıt oluşturma bir istisnayla
     başarısız olursa (ör. veritabanı o an erişilemez) ve bu görsel hiçbir
     kayda BAĞLANMADIYSA diskteki dosyayı siler -- eskiden bu durumda dosya,
@@ -4005,7 +4127,8 @@ def _kaydi_olustur_gorseli_koru(db: Session, plaka_no: str, kamera_id: str, yon:
     dosya SİLİNMEZ, çünkü artık bir kayda bağlı."""
     try:
         return _kayit_olustur_ve_bildir(db, plaka_no, kamera_id, yon, guven_skoru, goruntu_yolu,
-                                         dogrulama_kare_sayisi, farkli_okuma_sayisi=farkli_okuma_sayisi)
+                                         dogrulama_kare_sayisi, farkli_okuma_sayisi=farkli_okuma_sayisi,
+                                         harici_katkili=harici_katkili)
     except Exception:
         if goruntu_yolu:
             try:

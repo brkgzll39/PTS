@@ -3888,3 +3888,63 @@ okumasının ağır basması, dinleyicinin pipeline ile başlayıp durması.
 `tests/test_api.py` (CI) — aç/kapat, kimliksiz RTSP'de 400, yetki, olay adı
 doğrulaması, durum ve test uçları, denetim kaydı. Panel penceresi
 Playwright ile doğrulandı.
+
+## Kamera Karşılaştırma: Dahua ANPR Katkısı Grafiği (2026-09-25/26, kullanıcı isteği)
+
+Kullanıcı, bir önceki Dahua ANPR entegrasyonunun ardından: "Bu akşamki
+geçişleri takip etmek için yeni yaptığım dahua eklemesiyle hangisi daha
+verimli çalışmış tespit edebilmem için bir grafik patch'i atabilir misin"
+dedi. Yani soru kamera bazında: Dahua'sı açık kamera, PTS'in kendi OCR'ı
+tek başına çalışan kameralara göre GERÇEKTEN daha mı iyi sonuç veriyor?
+
+**Yeni "Dahua Katkısı" alanı (`Kayit.harici_katkili`):** Önceki sürümde
+(bkz. yukarıdaki bölüm) kameranın kendi Dahua okuması oylamaya güçlü bir
+oy olarak katılıyordu ama hangi kaydın SONUÇTA Dahua'nın okumasıyla mı
+yoksa yalnızca PTS'in kendi OCR'ıyla mı kesinleştiği hiçbir yerde
+SAKLANMIYORDU — yalnızca genel doğruluğu etkiliyordu, ölçülemiyordu. Artık
+`camera_reader.py::PlakaOyBirikimi`, oturumda kazanan METNİN en az bir
+harici (Dahua) oy alıp almadığını izliyor (`kazanan()`'ın döndürdüğü yeni
+`harici_katkili` alanı) ve bu bilgi `/kayitlar/otomatik` isteğiyle birlikte
+gönderilip yeni `plaka_kayitlari.harici_katkili` sütununda saklanıyor:
+
+- `True`: kazanan plaka metni en az bir Dahua oyu aldı (Dahua ya tek
+  başına kaydı oluşturdu ya da PTS'in okumasıyla aynı fikirde olup onu
+  destekledi ya da çelişkide kazandı).
+- `False`: kayıt tamamen PTS'in kendi OCR'ıyla kesinleşti, Dahua'nın hiç
+  katkısı olmadı (Dahua kapalıydı, bağlantı kopuktu ya da o an başka bir
+  okuma yapmadı).
+- `None`: bu bilgi hiç hesaplanmadı (elle girilen kayıtlar, bu özellikten
+  ÖNCEKİ eski kayıtlar, harici bir ANPR sisteminin bu alanı hiç
+  göndermediği istekler). BİLİNÇLİ olarak `False` değil `None` — "Dahua'nın
+  katkısı olmadığı BİLİNİYOR" ile "bu hiç ölçülmedi" birbirine
+  karıştırılmasın diye.
+
+**Yeni uç nokta ve grafik:** `/kameralar/dahua-karsilastirma?saat=12`
+(varsayılan 12 saat — "bu akşam"; panelden 6/12/24/72/168 saat seçilebilir),
+`/kameralar/okuma-kalitesi` ile AYNI GROUP BY sorgu deseniyle kamera başına
+şunları döner: toplam otomatik kayıt, `harici_katkili_kayit`/
+`harici_katki_orani`, ortalama güven, tek kare/kararsız okuma/OCR düzeltme
+oranları (bkz. `backend/okuma_kalitesi.py::kalite_degerlendir`, aynen
+yeniden kullanıldı) ve `dahua_aktif` (kameranın `dahua_anpr.aktif` ayarı).
+Kameralar sekmesinde, Okuma Kalitesi kartının altında yeni bir "Kamera
+Karşılaştırma (Dahua Katkısı)" kartı: Dahua açık/kapalı kameraları yan yana
+gösteren bir çubuk grafik (Chart.js — panelde zaten kullanılıyor, yeni bir
+kütüphane eklenmedi) + aynı veriyi taşıyan bir tablo (grafik tek başına tam
+sayı karşılaştırması için yetersiz kalır). Dahua'sı açık kameralar hem
+grafikte hem tabloda önce listelenir.
+
+**Bilinçli sınırlama:** `harici_katkili_orani`, yalnızca bu özellik
+eklendikten SONRA oluşan kayıtları sayar — daha eski kayıtlarda alan
+`None` olduğu için ne payda ne pay olarak hesaba katılır. Yani bu oran
+"Dahua'nın ÖLÇÜLEBİLEN en az katkısı"dır, geriye dönük tam bir karşılaştırma
+değildir; birkaç günlük veri biriktikten sonra daha anlamlı hale gelir.
+
+**Testler:** `tests/test_camera_reader.py` — kazanan metnin gerçekten
+Dahua'dan mı yoksa PTS'ten mi geldiğinin (yalnızca Dahua, yalnızca PTS,
+çelişkide her iki taraf da kazanabilir senaryoları) API'ye giden form
+alanına doğru yansıdığı, basit bir multipart form ayrıştırıcısıyla
+doğrulanıyor. `tests/test_api.py` (CI) — `harici_katkili` alanının
+gönderilmeden/True/False gönderilerek kaydedilip `/kayitlar`'dan aynen
+geri okunması, yeni uç noktanın Dahua açık/kapalı kameraları doğru
+işaretlemesi ve doğru sıralaması, yetki (yalnızca yönetici/operatör) ve
+`saat` sınırları (1-168).

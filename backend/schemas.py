@@ -408,6 +408,11 @@ class KayitCevap(BaseModel):
     # "A/B") adı -- Kayıtlar ekranındaki "Vardiya" sütunu/filtresi ve Plaka
     # Analizi için.
     vardiya_adi: Optional[str] = None
+    # "Dahua ANPR Katkısı" (2026-09-25) -- bkz. models.Kayit.harici_katkili'nin
+    # docstring'i. Optional olduğu için (manuel_giris'in aksine) None'ı False'a
+    # çeviren bir field_validator'a ihtiyaç YOK -- None burada zaten anlamlı
+    # bir değerdir ("bu bilgi hiç hesaplanmadı").
+    harici_katkili: Optional[bool] = None
 
     model_config = ConfigDict(from_attributes=True)
 

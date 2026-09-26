@@ -329,6 +329,7 @@ class PlakaOyBirikimi:
     __slots__ = (
         "oylar", "_varyant_maks_guven", "ilk_gorulme", "son_gorulme",
         "en_iyi_jpeg", "_en_iyi_jpeg_guveni", "toplam_kare_sayisi",
+        "_harici_katkili_varyantlar",
     )
 
     def __init__(self, plaka: str, guven: float, simdi: float, jpeg: Optional[bytes] = None,
@@ -344,12 +345,23 @@ class PlakaOyBirikimi:
         self.en_iyi_jpeg = jpeg
         self._en_iyi_jpeg_guveni = guven
         self.toplam_kare_sayisi = 1
+        # "Dahua Katkısı" grafiği (2026-09-25, bkz. models.Kayit.harici_katkili
+        # ve main.py::kamera_dahua_karsilastirma): agirlik != 1.0 ile eklenen
+        # HER okuma bir harici (kameranın kendi Dahua ANPR'ı) oyudur --
+        # varsayılan iç OCR oyları her zaman agirlik=1.0 ile gelir. Hangi metin
+        # VARYANTLARININ en az bir harici oy aldığı burada tutulur; `kazanan()`
+        # yalnızca SEÇİLEN varyant bu kümedeyse "harici_katkili=True" der --
+        # yani oturuma bir Dahua okuması girmiş olması TEK BAŞINA yetmez, o
+        # okumanın gerçekten KAZANAN metni desteklemiş olması gerekir.
+        self._harici_katkili_varyantlar: set = {plaka} if agirlik != 1.0 else set()
 
     def ekle(self, plaka: str, guven: float, simdi: float, jpeg: Optional[bytes] = None,
              agirlik: float = 1.0) -> None:
         self.oylar[plaka] += guven * agirlik
         if guven > self._varyant_maks_guven.get(plaka, -1.0):
             self._varyant_maks_guven[plaka] = guven
+        if agirlik != 1.0:
+            self._harici_katkili_varyantlar.add(plaka)
         self.son_gorulme = simdi
         self.toplam_kare_sayisi += 1
         if jpeg is not None and guven >= self._en_iyi_jpeg_guveni:
@@ -400,6 +412,11 @@ class PlakaOyBirikimi:
             # görünümünü takip eden `KameraPipeline._gorunumler` için (bkz.
             # `_oturum_gonderilmeli_mi`'nin 2026-09-25 notu).
             "varyantlar": list(self.oylar.keys()),
+            # Bkz. __init__'teki 2026-09-25 notu: kazanan METNİN kendisi en az
+            # bir harici (Dahua) oy aldıysa True, PTS'in kendi OCR'ı tek başına
+            # kesinleştirdiyse False -- main.py::kayit_ekle_otomatik'e iletilip
+            # Kayit.harici_katkili olarak saklanır.
+            "harici_katkili": secilen_plaka in self._harici_katkili_varyantlar,
         }
 
 
@@ -1110,7 +1127,14 @@ class KameraPipeline:
                               # olarak ayrıca işaretler (bkz. README.md'deki ilgili
                               # not) -- önceden bu bilgi yalnızca log satırına
                               # yazılıp kayıtla birlikte SAKLANMIYORDU.
-                              "farkli_okuma_sayisi": oturum.get("farkli_okuma_sayisi")},
+                              "farkli_okuma_sayisi": oturum.get("farkli_okuma_sayisi"),
+                              # "Dahua Katkısı" (2026-09-25) -- bkz.
+                              # PlakaOyBirikimi.kazanan'ın 2026-09-25 notu ve
+                              # models.Kayit.harici_katkili'nin docstring'i.
+                              # requests bunu form alanı olarak string'e çevirir
+                              # ("True"/"False"); kayit_ekle_otomatik tarafı
+                              # gevşek biçimde ayrıştırır (bkz. orada).
+                              "harici_katkili": oturum.get("harici_katkili", False)},
                         files={"gorsel": f},
                         headers=_istek_basliklari,
                         timeout=5,
