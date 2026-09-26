@@ -224,6 +224,16 @@ body {
 .event-image-wrap { min-height: 320px; background: #eef3f6; display: grid; place-items: center; overflow: hidden; }
 .event-image-wrap img { width: 100%; height: 390px; object-fit: cover; }
 .event-image-wrap .empty-state { padding: 4rem 1rem; }
+
+/* "Kaydı Düzenle" ekranındaki küçük, salt-okunur araç görseli (2026-09-26,
+   kullanıcı isteği: "son geçişlerdeki araç görselleri, açılan not ekleme
+   ekranı -- bunlarda başka ne yapılabilir" -- bkz. index.html::
+   kayitDuzenleModal, app.js::kayitDuzenleAc). `.event-image-wrap` ile AYNI
+   amaca hizmet eder, ama bu modal `modal-dialog-centered` (küçük/orta
+   genişlik) olduğu için çok daha kısa bir yükseklik kullanır. */
+.duzenle-gorsel-wrap { min-height: 130px; max-height: 170px; background: #eef3f6; display: grid; place-items: center; overflow: hidden; border-radius: 6px; }
+.duzenle-gorsel-wrap img { width: 100%; height: 170px; object-fit: cover; }
+.duzenle-gorsel-wrap .empty-state { padding: 1rem; }
 .plate-display { background: #63a2d4; border: 1px solid #344c60; color: #1f3445; text-align: center; font-size: 1.65rem; font-weight: 800; padding: .25rem; margin-bottom: .6rem; letter-spacing: .04em; }
 .vehicle-facts { border: 1px solid #c5ced5; margin-bottom: .7rem; }
 .vehicle-facts > div { display: grid; grid-template-columns: 46% 54%; min-height: 33px; border-bottom: 1px solid #c5ced5; font-size: .78rem; }

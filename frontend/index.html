@@ -281,6 +281,19 @@
     <form id="kayitDuzenleForm" data-rol-min="operatör">
       <div class="modal-body">
         <input type="hidden" id="duzenleKayitId">
+        <!-- 2026-09-26 kullanıcı isteği ("son geçişlerdeki araç görselleri, açılan
+             not ekleme ekranı -- bunlarda başka ne yapılabilir"): bu ekran önceden
+             SADECE metin alanlarından oluşuyordu -- hangi aracı düzenlediğini
+             görmek için önce ayrı #olayDetayModal'ı açıp görseline bakman, notu
+             değiştirmek içinse BURAYA dönmen gerekiyordu (iki ayrı modal arası
+             gidiş geliş). Artık aynı (salt okunur, küçük boyutlu) görsel burada da
+             gösteriliyor; `.zoomable-img` sınıfı sayesinde (bkz. app.js::
+             buyukGorselAc) tıklanınca/Enter'a basılınca yine büyütülüp
+             yakınlaştırılabiliyor -- görüntüleme ve düzenleme artık tek ekranda. -->
+        <div class="duzenle-gorsel-wrap mb-2">
+          <img id="duzenleKayitGorsel" class="zoomable-img" role="button" tabindex="0" alt="Araç geçiş görseli, büyütmek için tıklayın veya Enter'a basın">
+          <div id="duzenleKayitGorselYok" class="empty-state small py-3">Bu kayıt için görsel bulunmuyor</div>
+        </div>
         <div class="mb-2">
           <label class="form-label small" for="duzenleKayitPlaka">Plaka</label>
           <input type="text" class="form-control" id="duzenleKayitPlaka" required>
@@ -320,6 +333,15 @@
         <div class="mb-2">
           <label class="form-label small" for="duzenleKayitMisafirAdi">Misafir Adı Soyadı (sistemde kayıtlı değilse)</label>
           <input type="text" class="form-control" id="duzenleKayitMisafirAdi" maxlength="100" placeholder="Örn. Ahmet Yılmaz">
+        </div>
+        <div class="mb-2">
+          <label class="form-label small d-block">Hızlı Not Şablonları</label>
+          <!-- 2026-09-26 kullanıcı isteği: tekrar tekrar elle yazılan tipik notları
+               ("görevli onayı", "ziyaretçi", "bakım/teslimat", "OCR hatası") tek
+               tıkla doldurmak için. İçerik app.js::NOT_SABLONLARI listesinden JS
+               ile doldurulur -- yeni bir şablon eklemek için burada HİÇBİR
+               değişiklik gerekmez, sadece o listeye bir satır eklenir. -->
+          <div class="d-flex flex-wrap gap-1" id="duzenleNotSablonlari"></div>
         </div>
         <div class="mb-2">
           <label class="form-label small" for="duzenleKayitNot">Not</label>

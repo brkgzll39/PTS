@@ -157,6 +157,22 @@ document.addEventListener("click", (e) => {
   if (thumbEl) {
     buyukGorselAc(thumbEl);
   }
+  // "Kaydı Düzenle" ekranındaki Hızlı Not Şablonları (2026-09-26 kullanıcı
+  // isteği) -- yukarıdaki data-plaka-analiz/data-kara-ekle/data-gate-hedef ile
+  // AYNI kalıp: şablonun kendi metnini bir onclick içine JS string'i olarak
+  // gömmek yerine (kullanıcı verisi olmasa da tutarlılık için) sabit bir
+  // sayısal indeks data-* attribute'unda taşınır, gerçek metin NOT_SABLONLARI
+  // dizisinden okunur (bkz. aşağısı).
+  const notSablonEl = e.target.closest("[data-not-sablon-index]");
+  if (notSablonEl) {
+    const sablon = NOT_SABLONLARI[Number(notSablonEl.dataset.notSablonIndex)];
+    const notEl = document.getElementById("duzenleKayitNot");
+    if (sablon && notEl) {
+      notEl.value = notEl.value.trim() ? `${notEl.value.trim()}\n${sablon.metin}` : sablon.metin;
+      notEl.focus();
+    }
+    return;
+  }
 });
 
 document.addEventListener("keydown", (e) => {
@@ -2673,6 +2689,28 @@ function _kayitCacheYerindeGuncelle(guncelKayit) {
   }
 }
 
+// Hızlı Not Şablonları (2026-09-26, kullanıcı isteği: "son geçişlerdeki araç
+// görselleri, açılan not ekleme ekranı -- bunlarda başka ne yapılabilir"):
+// operatörlerin aynı birkaç notu (görevli onayı, ziyaretçi, bakım/teslimat,
+// OCR hatası) tekrar tekrar elle yazdığı gözlemine dayanıyor -- bkz. aynı
+// tarihli "PTS Panel Yeniden Tasarım Örnekleri" tasarım canvas'ındaki
+// "Olay Detayı + Hızlı Not" mockup'ı. Yeni bir şablon eklemek için SADECE bu
+// diziye bir satır eklemek yeterli; #duzenleNotSablonlari (index.html) ve
+// yukarıdaki data-not-sablon-index tık delegasyonu bu diziyi kaynak alır.
+const NOT_SABLONLARI = [
+  { etiket: "Görevli Onayı", metin: "Görevli tarafından elle içeri alındı." },
+  { etiket: "Ziyaretçi", metin: "Ziyaretçi girişi, kimlik kontrolü yapıldı." },
+  { etiket: "Bakım / Teslimat", metin: "Bakım/teslimat aracı, görevli onayıyla içeri alındı." },
+  { etiket: "Yanlış Okuma (OCR)", metin: "Plaka OCR tarafından hatalı okunmuş, elle düzeltildi." },
+];
+(function () {
+  const kutu = document.getElementById("duzenleNotSablonlari");
+  if (!kutu) return;
+  kutu.innerHTML = NOT_SABLONLARI.map((s, i) =>
+    `<button type="button" class="btn btn-sm btn-outline-secondary" data-not-sablon-index="${i}">${escapeHtml(s.etiket)}</button>`
+  ).join("");
+})();
+
 async function kayitDuzenleAc(id) {
   const kayit = sonKayitlarCache.find(k => k.id === id);
   if (!kayit) return;
@@ -2691,10 +2729,25 @@ async function kayitDuzenleAc(id) {
     });
   }
   document.getElementById("duzenleKayitSonuc").textContent = "";
+  // 2026-09-26 kullanıcı isteği: bu ekran artık görselin KENDİSİNİ de
+  // gösteriyor (bkz. index.html::duzenle-gorsel-wrap) -- aynen
+  // olayDetayAc()'daki #olayModalGorsel/#olayModalGorselYok anahtarlama
+  // deseninin BİREBİR aynısı, bilinçli olarak (bkz. o fonksiyondaki yorum).
+  const gorsel = document.getElementById("duzenleKayitGorsel");
+  const gorselYok = document.getElementById("duzenleKayitGorselYok");
+  if (kayit.goruntu_yolu) { korumaliGorselAta(gorsel, kayit.goruntu_yolu); gorsel.classList.remove("d-none"); gorselYok.classList.add("d-none"); } else { gorsel.removeAttribute("src"); gorsel.classList.add("d-none"); gorselYok.classList.remove("d-none"); }
   const denetim = document.getElementById("duzenleKayitDenetim");
-  denetim.textContent = kayit.duzenleyen
-    ? `Son düzenleyen: ${kayit.duzenleyen} · ${tarihFormatla(kayit.duzenleme_tarihi)}`
-    : (kayit.manuel_giris ? "Bu kayıt manuel olarak eklendi." : "");
+  // 2026-09-26: eskiden yalnızca "son düzenleyen" (varsa) gösteriliyordu --
+  // kaydın NE ZAMAN oluşturulduğu bu ekranda hiç görünmüyordu. Artık ilk
+  // satır her zaman oluşturulma zamanı/kamerası, ikinci satır (varsa) son
+  // düzenleme bilgisi.
+  const denetimSatirlari = [`Oluşturuldu: ${tarihFormatla(kayit.tarih_saat)} · ${escapeHtml(kayit.kamera_id || "-")}`];
+  if (kayit.duzenleyen) {
+    denetimSatirlari.push(`Son düzenleyen: ${escapeHtml(kayit.duzenleyen)} · ${tarihFormatla(kayit.duzenleme_tarihi)}`);
+  } else if (kayit.manuel_giris) {
+    denetimSatirlari.push("Bu kayıt manuel olarak eklendi.");
+  }
+  denetim.innerHTML = denetimSatirlari.join("<br>");
 
   const kisiSecim = document.getElementById("duzenleKayitKisi");
   kisiSecim.innerHTML = '<option value="">Eşleştirme yok</option>';
