@@ -4308,6 +4308,16 @@ def _kayit_olustur_ve_bildir(db: Session, plaka_no: str, kamera_id: str, yon: st
         "yetki_durumu": kayit.yetki_durumu,
         "tarih_saat": kayit.tarih_saat.isoformat(),
         "guven_skoru": kayit.guven_skoru,
+        # 2026-09-27 kullanıcı isteği ("board4 gibi olsun" -- Canlı İzleme'deki
+        # "Son Geçişler" satırlarına araç görseli eklendi, bkz. frontend/
+        # app.js::_canliOlayHtml/korumaliGorselAta): bu alan olmadan, bir kayıt
+        # SSE ile CANLI geldiğinde satır görselsiz (yalnızca ikon) görünüyor,
+        # ancak bir sonraki tam yenilemede (panelYenile -> GET /kayitlar) aynı
+        # kayıt görselli görünüyordu -- aynı satırın "önce/sonra" farklı
+        # görünmesi kafa karıştırıcıydı. Görsel zaten bu noktada diskte
+        # yazılmış/kayda işlenmiş olduğu için eklemek yeni bir sorgu/gecikme
+        # GETİRMİYOR.
+        "goruntu_yolu": kayit.goruntu_yolu,
     }
     try:
         loop = asyncio.get_event_loop()

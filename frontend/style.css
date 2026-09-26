@@ -206,7 +206,22 @@ body {
 .event-icon { width: 30px; height: 30px; display: grid; place-items: center; border-radius: 50%; color: #fff; }
 .event-icon.allowed { background: #2b9a68; }
 .event-icon.blocked { background: #d65b55; }
-.event-main { display: flex; flex-direction: column; flex: 1; font-size: .85rem; }
+
+/* Canlı İzleme > "Son Geçişler" satırları (2026-09-27 kullanıcı isteği:
+   "board4 gibi olsun" -- tasarım canvas'ındaki "Yön 1 Genişletme: Canlı
+   İzleme" mockup'ının araç görselli satır fikri). `.event-icon`'un (düz
+   renkli daire ikon) YERİNE geçer -- görsel varsa küçük bir thumbnail,
+   yoksa aynı giriş/çıkış ikonu gösterilir; ayrıca satırın sonuna, tıklanınca
+   #kayitDuzenleModal'ı açan bir kalem düğmesi eklenir (bkz. app.js::
+   panelYenile/_sseKayitAl, kayitDuzenleAc). Bu, "not ekleme ekranını nerede
+   bulacağım" sorusuna panelin en çok bakılan yerinden doğrudan bir cevap. */
+.event-thumb { width: 44px; height: 34px; flex: 0 0 auto; border-radius: 7px; overflow: hidden; background: #111827; display: grid; place-items: center; color: #fff; box-shadow: 0 0 0 2px transparent; }
+.event-thumb img { width: 100%; height: 100%; object-fit: cover; }
+.event-thumb.allowed { box-shadow: 0 0 0 2px #2b9a68; }
+.event-thumb.blocked { box-shadow: 0 0 0 2px #d65b55; }
+.event-edit-btn { flex: 0 0 auto; border: none; background: #eef2f5; width: 28px; height: 28px; border-radius: 8px; display: grid; place-items: center; color: #55606b; opacity: .85; }
+.event-edit-btn:hover { opacity: 1; background: #e2e8ee; }
+.event-main { display: flex; flex-direction: column; flex: 1; font-size: .85rem; min-width: 0; }
 .event-main span, .event-time { color: #82909b; font-size: .72rem; }
 .empty-state { color: #8996a1; padding: 2rem 1rem; text-align: center; }
 .license-status { display: flex; align-items: center; gap: 1rem; padding: 1.1rem; background: #f4f7f9; border: 1px solid #dce4e9; }
@@ -231,9 +246,28 @@ body {
    kayitDuzenleModal, app.js::kayitDuzenleAc). `.event-image-wrap` ile AYNI
    amaca hizmet eder, ama bu modal `modal-dialog-centered` (küçük/orta
    genişlik) olduğu için çok daha kısa bir yükseklik kullanır. */
-.duzenle-gorsel-wrap { min-height: 130px; max-height: 170px; background: #eef3f6; display: grid; place-items: center; overflow: hidden; border-radius: 6px; }
-.duzenle-gorsel-wrap img { width: 100%; height: 170px; object-fit: cover; }
-.duzenle-gorsel-wrap .empty-state { padding: 1rem; }
+/* 2026-09-27 kullanıcı geri bildirimi ("board5 te olan ekleme yerini de
+   göremedim kafam karıştı"): görsel kutusu artık Board5 mockup'ındaki koyu
+   kahraman görsel gibi -- açık gri değil koyu zemin, üzerine bindirilmiş
+   plaka rozeti (bkz. .duzenle-gorsel-rozet, aşağısı). */
+.duzenle-gorsel-wrap { position: relative; min-height: 150px; max-height: 200px; background: #10151c; display: grid; place-items: center; overflow: hidden; border-radius: 10px; }
+.duzenle-gorsel-wrap img { width: 100%; height: 200px; object-fit: cover; }
+.duzenle-gorsel-wrap .empty-state { padding: 1rem; color: #8996a1; }
+.duzenle-gorsel-rozet { position: absolute; left: 12px; bottom: 12px; background: var(--bs-primary, #0d6efd); color: #fff; font-weight: 700; font-size: .82rem; letter-spacing: .02em; padding: 4px 10px; border-radius: 6px 6px 6px 0; box-shadow: 0 2px 8px rgba(0,0,0,.35); }
+.duzenle-plaka-baslik { font-size: 1.35rem; font-weight: 800; letter-spacing: -.01em; }
+
+/* "Kaydı Düzenle" paneli artık ortalanmış bir modal değil, sağdan kayan bir
+   Bootstrap Offcanvas (bkz. index.html::kayitDuzenleModal) -- masaüstünde
+   varsayılan 400px yerine biraz daha ferah bir genişlik kullanılır; dar
+   ekranda (bkz. Bootstrap'ın kendi offcanvas medya sorgusu) zaten tam
+   genişliğe yayılır. */
+.kayit-duzenle-panel { --bs-offcanvas-width: 440px; }
+
+/* Hızlı Not Şablonu düğmeleri: Board5 mockup'ındaki yuvarlak "pill" görünümü
+   -- Bootstrap'ın standart (hafif köşeli) btn-outline-secondary'sinin ÜZERİNE
+   eklenir, sınıfları DEĞİŞTİRMEZ (bkz. app.js'deki render, hâlâ aynı
+   btn/btn-sm/btn-outline-secondary sınıflarını taşıyor). */
+#duzenleNotSablonlari button { border-radius: 999px; font-size: .78rem; }
 .plate-display { background: #63a2d4; border: 1px solid #344c60; color: #1f3445; text-align: center; font-size: 1.65rem; font-weight: 800; padding: .25rem; margin-bottom: .6rem; letter-spacing: .04em; }
 .vehicle-facts { border: 1px solid #c5ced5; margin-bottom: .7rem; }
 .vehicle-facts > div { display: grid; grid-template-columns: 46% 54%; min-height: 33px; border-bottom: 1px solid #c5ced5; font-size: .78rem; }

@@ -950,6 +950,27 @@ async function nizamiyeSemasiniYukle() {
   }
 }
 
+// Canlı İzleme > "Son Geçişler" listesindeki TEK bir satırın HTML'i --
+// panelYenile() (ilk yükleme/tam yenileme) VE _sseKayitAl() (anlık SSE
+// ekleme) TAM OLARAK aynı satır biçimini üretsin diye (2026-09-24 tarihli
+// "sol/sağ taraf tutarsız" hata sınıfının bir benzerine burada da
+// düşülmesin) tek bir yerde tanımlanır. 2026-09-27 kullanıcı isteği
+// ("board4 gibi olsun"): düz renkli daire ikon yerine küçük bir araç
+// görseli (varsa) + doğrudan #kayitDuzenleModal'ı açan bir kalem düğmesi.
+function _canliOlayHtml(k) {
+  const yon = k.yon === "giris" ? "Giriş" : "Çıkış";
+  const durumSinif = k.yetki_durumu === "yetkili" ? "allowed" : "blocked";
+  const thumb = k.goruntu_yolu
+    ? `<img data-goruntu-yolu="${escapeHtml(k.goruntu_yolu)}" alt="${escapeHtml(k.plaka_no)} geçiş görseli">`
+    : `<i class="bi ${k.yon === "giris" ? "bi-box-arrow-in-right" : "bi-box-arrow-right"}"></i>`;
+  return `<div class="event-row event-button" role="button" tabindex="0" onclick="olayDetayAc(${k.id})" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();olayDetayAc(${k.id})}">` +
+    `<div class="event-thumb ${durumSinif}">${thumb}</div>` +
+    `<div class="event-main"><strong>${escapeHtml(k.plaka_no)}</strong><span>${escapeHtml(k.kamera_id)} · ${yon}</span></div>` +
+    `<div class="event-time">${new Date(k.tarih_saat).toLocaleTimeString("tr-TR")}</div>` +
+    (rolYeterli("operatör") ? `<button type="button" class="event-edit-btn" title="Kaydı düzenle / not ekle" aria-label="Kaydı düzenle / not ekle" onclick="event.stopPropagation(); kayitDuzenleAc(${k.id})"><i class="bi bi-pencil"></i></button>` : "") +
+    `</div>`;
+}
+
 async function panelYenile() {
   try {
     nizamiyeSemasiniYukle();
@@ -993,8 +1014,12 @@ async function panelYenile() {
           : "";
         return `<div class="event-row alarm-row${tiklanabilirMi ? " alarm-row-tiklanabilir" : ""}"${tiklanabilirOznitelikler}><div class="event-icon blocked"><i class="bi bi-exclamation-triangle-fill"></i></div><div class="event-main"><strong>${escapeHtml(a.plaka_no)}</strong><span>${alarmTipiEtiketi(a.alarm_tipi)}</span></div>${rolYeterli("operatör") ? `<button class="btn btn-sm btn-light" title="Okundu işaretle" aria-label="Okundu işaretle" onclick="event.stopPropagation(); alarmOkundu(${a.id})"><i class="bi bi-check2"></i></button>` : ""}</div>`;
       }).join("");
-      const olaySatirlari = kayitlar.slice(0, 8).map(k => `<button class="event-row event-button" onclick="olayDetayAc(${k.id})"><div class="event-icon ${k.yetki_durumu === "yetkili" ? "allowed" : "blocked"}"><i class="bi ${k.yon === "giris" ? "bi-box-arrow-in-right" : "bi-box-arrow-right"}"></i></div><div class="event-main"><strong>${escapeHtml(k.plaka_no)}</strong><span>${escapeHtml(k.kamera_id)} · ${k.yon === "giris" ? "Giriş" : "Çıkış"}</span></div><div class="event-time">${tarihFormatla(k.tarih_saat).split(",")[1] || "-"}</div></button>`).join("");
+      const olaySatirlari = kayitlar.slice(0, 8).map(k => _canliOlayHtml(k)).join("");
       canliOlaylar.innerHTML = alarmSatirlari + olaySatirlari || '<div class="empty-state">Henüz geçiş kaydı yok</div>';
+      // Yukarıdaki satırlardaki `data-goruntu-yolu` taşıyan (henüz src'siz)
+      // <img>'lere korumalı görseli asenkron olarak atar (bkz. fonksiyonun
+      // kendi docstring'i, gecis-karti/kayıtlar tablosuyla AYNI kalıp).
+      korumaliGorselleriYukle(canliOlaylar);
     }
     _kayitCacheBirlestir(kayitlar);
     const canliYenileme = document.getElementById("canliYenileme");
@@ -2711,6 +2736,28 @@ const NOT_SABLONLARI = [
   ).join("");
 })();
 
+// 2026-09-27 kullanıcı geri bildirimi ("board5 te olan ekleme yerini de
+// göremedim kafam karıştı"): panelin üstündeki büyük plaka başlığı + renkli
+// durum rozeti (bkz. index.html::duzenleKayitPlakaBaslik/RozetideDurumRozeti)
+// kullanıcı Plaka'yı düzeltir ya da Durum'u değiştirirse CANLI güncellensin
+// diye -- programatik `.value =` ataması 'input'/'change' olayını TETİKLEMEZ,
+// bu yüzden kayitDuzenleAc() panel açılırken bu ikisini bir kere de doğrudan
+// çağırır (bkz. aşağısı).
+function _duzenlePlakaBaslikGuncelle() {
+  const baslik = document.getElementById("duzenleKayitPlakaBaslik");
+  const rozet = document.getElementById("duzenleKayitPlakaRozeti");
+  const deger = document.getElementById("duzenleKayitPlaka")?.value?.trim() || "-";
+  if (baslik) baslik.textContent = deger;
+  if (rozet) rozet.textContent = deger;
+}
+function _duzenleDurumRozetiGuncelle() {
+  const el = document.getElementById("duzenleKayitDurumRozeti");
+  const durum = document.getElementById("duzenleKayitDurum")?.value;
+  if (el) el.innerHTML = durum ? durumRozeti(durum) : "";
+}
+document.getElementById("duzenleKayitPlaka")?.addEventListener("input", _duzenlePlakaBaslikGuncelle);
+document.getElementById("duzenleKayitDurum")?.addEventListener("change", _duzenleDurumRozetiGuncelle);
+
 async function kayitDuzenleAc(id) {
   const kayit = sonKayitlarCache.find(k => k.id === id);
   if (!kayit) return;
@@ -2719,6 +2766,11 @@ async function kayitDuzenleAc(id) {
   document.getElementById("duzenleKayitYon").value = kayit.yon;
   document.getElementById("duzenleKayitDurum").value = kayit.yetki_durumu;
   document.getElementById("duzenleKayitMisafirAdi").value = kayit.misafir_adi || "";
+  // Yukarıdaki iki `.value =` ataması olay tetiklemediği için başlık/rozet
+  // burada elle senkronize edilir (bkz. _duzenlePlakaBaslikGuncelle/
+  // _duzenleDurumRozetiGuncelle'nin tanımındaki not).
+  _duzenlePlakaBaslikGuncelle();
+  _duzenleDurumRozetiGuncelle();
   document.getElementById("duzenleKayitNot").value = kayit.not_metni || "";
   if (!kayit.not_metni) {
     // Bu kaydın kendi notu yoksa, aynı plakanın bugün için "son kullanılan
@@ -2760,7 +2812,9 @@ async function kayitDuzenleAc(id) {
   } catch (e) { /* kişi listesi yüklenemezse eşleştirme alanı boş kalır, kritik değil */ }
   aramaliSecimEkle(kisiSecim);
 
-  bootstrap.Modal.getOrCreateInstance(document.getElementById("kayitDuzenleModal")).show();
+  // 2026-09-27: bu artık bir Bootstrap Modal DEĞİL, bir Offcanvas (bkz.
+  // index.html::kayitDuzenleModal'ın üstündeki 2026-09-27 tarihli yorum).
+  bootstrap.Offcanvas.getOrCreateInstance(document.getElementById("kayitDuzenleModal")).show();
 }
 
 document.getElementById("kayitDuzenleForm")?.addEventListener("submit", async (e) => {
@@ -2785,7 +2839,7 @@ document.getElementById("kayitDuzenleForm")?.addEventListener("submit", async (e
   if (btn) btn.disabled = true;
   try {
     const guncelKayit = await apiCagir(`/kayitlar/${id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(govde) });
-    bootstrap.Modal.getInstance(document.getElementById("kayitDuzenleModal"))?.hide();
+    bootstrap.Offcanvas.getInstance(document.getElementById("kayitDuzenleModal"))?.hide();
     // 2026-09-22 KRİTİK HATA DÜZELTMESİ: "bu ekran şimdi not ve isim
     // ekledim ekranı kapatıp açmadan güncellenmiyor" -- bkz. aşağıdaki
     // _kayitCacheYerindeGuncelle'nin docstring'i.
@@ -3456,8 +3510,10 @@ function _sseKayitAl(kayit) {
   // Panel'deki canlı olay listesini anlık güncelle (sıfır gecikmeli ilk his)
   const canliOlaylar = document.getElementById("canliOlaylar");
   if (canliOlaylar) {
-    const yeniSatir = `<button class="event-row event-button" onclick="olayDetayAc(${kayit.id})"><div class="event-icon ${kayit.yetki_durumu === "yetkili" ? "allowed" : "blocked"}"><i class="bi ${kayit.yon === "giris" ? "bi-box-arrow-in-right" : "bi-box-arrow-right"}"></i></div><div class="event-main"><strong>${escapeHtml(kayit.plaka_no)}</strong><span>${escapeHtml(kayit.kamera_id)} · ${yon}</span></div><div class="event-time">${new Date(kayit.tarih_saat).toLocaleTimeString("tr-TR")}</div></button>`;
-    canliOlaylar.insertAdjacentHTML("afterbegin", yeniSatir);
+    // _canliOlayHtml: panelYenile() ile BİREBİR aynı satır biçimi (bkz. o
+    // fonksiyonun tanımındaki 2026-09-24/2026-09-27 tarihli notlar).
+    canliOlaylar.insertAdjacentHTML("afterbegin", _canliOlayHtml(kayit));
+    korumaliGorselleriYukle(canliOlaylar);
     // 8'den fazla satır varsa sonuncuları kaldır
     const satirlar = canliOlaylar.querySelectorAll(".event-button");
     if (satirlar.length > 8) satirlar[satirlar.length - 1].remove();
