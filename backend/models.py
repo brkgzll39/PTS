@@ -397,7 +397,7 @@ class BildirimAyarlari(Base):
     ad = Column(String(80), nullable=False)
     tip = Column(String(20), default="webhook")  # webhook | telegram
     hedef = Column(String(255), nullable=False)  # webhook: hedef URL -- telegram: chat_id
-    tetikleyici = Column(String(30), default="hepsi")  # hepsi | yetkisiz | kara_liste | suresi_dolmus | supheli_arac | bariyer_hatasi | disk_hatasi | kamera_arizasi
+    tetikleyici = Column(String(30), default="hepsi")  # hepsi | yetkisiz | kara_liste | suresi_dolmus | supheli_arac | bariyer_hatasi | disk_hatasi | kamera_arizasi | yedek_bozuk
     http_metot = Column(String(10), default="POST")  # yalnızca tip="webhook" için anlamlıdır
     aktif = Column(Boolean, default=True)
     olusturma_tarihi = Column(DateTime, default=datetime.now)

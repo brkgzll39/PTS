@@ -3995,10 +3995,11 @@ hem de yukarıdaki üç eksikliği (eksik UI, eksik alarm kapsaması, doğrulanm
   ek olarak `supheli_arac`, `bariyer_hatasi` ve `disk_hatasi` alarmları da
   bu fonksiyonu çağırıyor — önceden bu üçü yalnızca panelde görünür, dış
   dünyaya hiç bildirilmez durumdaydı.
-- Sistem sekmesinde yeni "Yeni Bildirim Ayarı" / "Tanımlı Bildirim
-  Ayarları" kartları (yalnızca yönetici): tip seçimi (Telegram/Webhook),
-  hedef, tetikleyici olayı, aktif/pasif anahtarı, "Test" ve "Sil" düğmeleri
-  — bu ekran ÖNCEDEN hiç yoktu, API doğrudan çağrılmadan kullanılamıyordu.
+- Panelin "Bildirim" sekmesi (önceden yalnızca webhook destekleyen "Yeni
+  Webhook Ekle" ekranıydı) artık tip seçimi (Telegram/Webhook) sunuyor ve
+  daha önce panelden hiç seçilemeyen (ama backend'de zaten var olan)
+  `supheli_arac`/`bariyer_hatasi`/`disk_hatasi` tetikleyicilerini de
+  listeliyor; "Test" ve "Sil" düğmeleri aynı kalıyor.
 
 ### Kurulum
 
@@ -4032,3 +4033,68 @@ Telegram için ayrı ayrı, başarılı/başarısız), `_bildirim_tetikle`'in ya
 aktif ve eşleşen tetikleyicili ayarları çağırdığı, ve şüpheli araç/bariyer
 hatası/disk hatası alarmlarının ÜÇÜNÜN de artık gerçekten dispatch'i
 tetiklediği.
+
+## Yedek Dosyasının Gerçekten Sağlam Olduğunu Doğrulama (2026-09-26, kullanıcı isteği)
+
+Kullanıcının seçtiği ikinci iyileştirme: "yedek dosyasının gerçekten sağlam
+olduğunu otomatik doğrulama". Kök neden: otomatik yedekleme (bkz. yukarıdaki
+"Otomatik Veritabanı Yedekleme" bölümü) `sqlite3.Connection.backup()`'ın
+İSTİSNASIZ tamamlanmasını "başarılı" sayıyordu — ama kopyalama sırasında
+disk dolarsa, süreç yarıda kesilirse ya da hedef klasör bozuk bir dosya
+sistemindeyse, ortada duran ".db" dosyası panelde/klasörde tamamen normal
+bir yedek gibi GÖRÜNÜR ama gerçek bir geri yükleme ihtiyacında (asıl felaket
+anında) açılamayabilir/eksik olabilir — bu, ta ki birileri onu geri
+yüklemeye çalışana kadar fark edilmez.
+
+### Nasıl çalışır
+
+- Yeni `_yedek_dosyasi_saglam_mi(yol)` (main.py), her yedek dosyasında iki
+  kontrol yapar: (1) SQLite'ın kendi `PRAGMA integrity_check`'i (sayfa/
+  b-tree bütünlük taraması); (2) üretim şemasının temel tablolarının
+  (`plaka_kayitlari`, `kullanicilar`, `kisiler`) GERÇEKTEN var olduğu —
+  tamamen boş/ilgisiz bir sqlite dosyası da integrity_check'ten geçebilir
+  ama hiçbir PTS verisi içermeyebilir, bu ayrı bir sessiz başarısızlık
+  türüdür.
+- Otomatik yedekleme döngüsü artık HER yedekten hemen sonra bunu çağırıyor
+  (bkz. `_otomatik_yedek_uret_ve_dogrula`). Sağlamsa yanına küçük, boş bir
+  `<dosya>.verified` işaretçisi bırakılır. Bozuksa dosya ".BOZUK.db" olarak
+  yeniden adlandırılır (silinmez — incelenebilsin diye) VE panelde görülebilir
+  bir `yedek_bozuk` alarmı oluşturulup Patch #111'deki `_bildirim_tetikle`
+  ile Telegram/webhook'a da bildirilir — böylece bir yönetici bunu panele
+  bakmadan da (Telegram/webhook bağlıysa) anında öğrenir.
+- Panel: Sistem sekmesi > "Otomatik yedek klasörü" altındaki durum satırı
+  artık son yedeğin bütünlük durumunu (✓ doğrulandı / BOZUK / henüz
+  doğrulanmadı) bir rozetle gösteriyor, yanında bir "Şimdi Doğrula" düğmesi
+  var (yalnızca yönetici) — bu, bu özellikten ÖNCE alınmış eski yedekleri
+  de (ki onlar hiç doğrulanmadığı için `saglam: null` görünür) isteğe bağlı
+  olarak kontrol edebilmeyi sağlar.
+- Yeni `POST /sistem/yedek/otomatik-liste/{dosya_adi}/dogrula` uç noktası,
+  listelenen belirli bir yedeği yeniden doğrular (`/goruntuler/{dosya_adi}`
+  ile AYNI yol geçişi korumasıyla).
+- Elle indirilen `/sistem/yedek` de artık AYNI kontrolden geçiyor —
+  bütünlük kontrolünden geçemezse indirme İPTAL edilir (kullanıcıya bozuk
+  bir dosya sessizce verilmez), geçici dosya diskte bırakılmaz.
+
+### Bilinçli sınırlamalar
+
+- Bu özellikten ÖNCE alınmış otomatik yedekler hiç doğrulanmamıştır (panelde
+  `saglam: null`/"Henüz doğrulanmadı" görünür) — "Şimdi Doğrula" ile elle
+  kontrol edilebilirler.
+- `integrity_check`, dosyanın SQLite düzeyinde tutarlı olduğunu doğrular;
+  uygulama verisinin (ör. belirli bir kaydın) doğruluğunu garanti etmez —
+  bu, "dosya açılabilir ve temel tablolar var" garantisidir, tam bir veri
+  denetimi değildir.
+- ".BOZUK.db" olarak işaretlenen dosyalar saklama süresi (`otomatik_yedek_saklama_gun`)
+  dolduğunda normal temizlikle silinir — süresiz saklanmaz.
+
+### Testler
+
+`tests/test_api.py` (CI) — `_yedek_dosyasi_saglam_mi`'nin geçerli/bozuk/boş/
+şema-dışı dosyalar için doğru sonucu döndüğü, `/sistem/yedek/otomatik-liste/
+{dosya_adi}/dogrula`'nın geçerli bir yedeği `.verified` ile işaretleyip
+listeye yansıttığı, bozuk bir yedeği ".BOZUK.db" olarak yeniden adlandırıp
+`saglam: false` gösterdiği, yol geçişi/bulunamadı/yetki sınırları, elle
+indirmenin (`/sistem/yedek`) bütünlük kontrolünden geçemeyen bir yedeği
+İPTAL ettiği ve geçici dosya bırakmadığı, ve `_otomatik_yedek_uret_ve_dogrula`'nın
+bozuk bir yedek ürettiğinde hem panel alarmı hem de (Patch #111'in
+`_bildirim_tetikle`'si üzerinden) dış bildirim tetiklediği.

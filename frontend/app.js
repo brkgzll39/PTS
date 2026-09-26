@@ -4639,7 +4639,7 @@ async function bildirimAyarlariYukle() {
       hepsi: "Hepsi", yetkisiz: "Yetkisiz araç", kara_liste: "Kara liste",
       suresi_dolmus: "Süresi dolmuş", supheli_arac: "Şüpheli araç",
       bariyer_hatasi: "Bariyer hatası", kamera_arizasi: "Kamera arızası",
-      disk_hatasi: "Disk hatası",
+      disk_hatasi: "Disk hatası", yedek_bozuk: "Otomatik yedek bozuk",
     };
     el.innerHTML = ayarlar.map(a => `<tr>
       <td><strong>${escapeHtml(a.ad)}</strong></td>
@@ -4852,6 +4852,13 @@ async function sistemAyarlariYukle() {
 // DÜZELTME (2026-09-25): otomatik yedekleme arka planda sessizce çalıştığı
 // için, bir yöneticinin "gerçekten çalışıyor mu" sorusuna panelden cevap
 // bulabilmesi gerekir -- bkz. main.py::otomatik_yedekleri_listele.
+//
+// DÜZELTME (2026-09-26, kullanıcı isteği: "yedek dosyasının gerçekten sağlam
+// olduğunu otomatik doğrulama"): yalnızca "yedek alındı" değil, artık
+// "bütünlüğü doğrulandı mı" bilgisi de gösteriliyor -- bkz.
+// main.py::_yedek_dosyasi_saglam_mi. Bu özellikten ÖNCE alınmış eski
+// yedekler `saglam: null` döner ("Henüz doğrulanmadı"); "Şimdi Doğrula"
+// düğmesiyle istendiğinde kontrol edilebilir.
 async function otomatikYedekDurumunuYukle() {
   const el = document.getElementById("otomatikYedekDurumu");
   if (!el) return;
@@ -4864,10 +4871,32 @@ async function otomatikYedekDurumunuYukle() {
     }
     const son = veri.yedekler[0];
     const boyutMb = (son.boyut_bayt / (1024 * 1024)).toFixed(1);
+    let saglamlikRozeti;
+    if (son.saglam === true) {
+      saglamlikRozeti = '<span class="badge bg-success">Bütünlük doğrulandı ✓</span>';
+    } else if (son.saglam === false) {
+      saglamlikRozeti = '<span class="badge bg-danger">BOZUK — geri yüklenemeyebilir!</span>';
+    } else {
+      saglamlikRozeti = '<span class="badge bg-secondary">Henüz doğrulanmadı</span>';
+    }
     el.className = "small mb-2 text-muted";
-    el.textContent = `Son otomatik yedek: ${new Date(son.tarih_saat).toLocaleString("tr-TR")} (${boyutMb} MB) — toplam ${veri.yedekler.length} yedek, klasör: ${veri.klasor}`;
+    el.innerHTML = `Son otomatik yedek: ${new Date(son.tarih_saat).toLocaleString("tr-TR")} (${boyutMb} MB) — toplam ${veri.yedekler.length} yedek, klasör: ${escapeHtml(veri.klasor)}<br>
+      ${saglamlikRozeti}
+      ${rolYeterli("yonetici") ? `<button type="button" class="btn btn-sm btn-outline-secondary ms-2 py-0" onclick="otomatikYedekDogrula('${encodeURIComponent(son.dosya_adi)}')"><i class="bi bi-shield-check"></i> Şimdi Doğrula</button>` : ""}`;
   } catch (e) {
     _yuklemeHatasi("Otomatik yedek durumu", e);
+  }
+}
+
+async function otomatikYedekDogrula(dosyaAdiKodlu) {
+  const dosyaAdi = decodeURIComponent(dosyaAdiKodlu);
+  try {
+    const r = await apiCagir(`/sistem/yedek/otomatik-liste/${encodeURIComponent(dosyaAdi)}/dogrula`, { method: "POST" });
+    toastGoster(r.saglam ? "Yedek dosyası sağlam (bütünlük doğrulandı) ✓" : `Yedek dosyası BOZUK: ${r.hata}`, r.saglam ? "basari" : "hata");
+  } catch (e) {
+    toastGoster(e.message, "hata");
+  } finally {
+    otomatikYedekDurumunuYukle();
   }
 }
 

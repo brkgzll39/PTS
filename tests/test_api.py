@@ -2969,6 +2969,208 @@ def test_otomatik_yedek_liste_operator_yetkisiz_403_doner(client, operator_heade
 
 
 # ------------------------------------------------------------------
+# Yedek dosyasının GERÇEKTEN sağlam olduğunu doğrulama (2026-09-26,
+# kullanıcı isteği: "yedek dosyasının gerçekten sağlam olduğunu otomatik
+# doğrulama")
+# ------------------------------------------------------------------
+# Kök neden: `_sqlite_yedek_al` istisnasız bitse bile (disk doluyken/
+# yazma sırasında kesintiye uğrarsa) sonuçtaki ".db" dosyası bozuk/eksik
+# olabilir -- önceden bu hiç kontrol edilmiyordu, sorun ancak GERÇEK bir
+# geri yükleme ihtiyacında (felaket anında) fark edilirdi.
+
+def test_yedek_dosyasi_saglam_mi_gecerli_yedek_icin_true_doner(client, yetkili_header, tmp_path):
+    """Gerçek (test) veritabanının kendisinden GERÇEK şemayla bir yedek
+    alınırsa sağlam kabul edilmeli."""
+    from backend.main import _sqlite_yedek_al, _yedek_dosyasi_saglam_mi, SQLALCHEMY_DATABASE_URL
+    from urllib.parse import urlparse
+
+    db_yolu = urlparse(SQLALCHEMY_DATABASE_URL).path.lstrip("/")
+    hedef = str(tmp_path / "gecerli_yedek.db")
+    _sqlite_yedek_al(db_yolu, hedef)
+    saglam, hata = _yedek_dosyasi_saglam_mi(hedef)
+    assert saglam is True, hata
+    assert hata is None
+
+
+def test_yedek_dosyasi_saglam_mi_bozuk_dosya_icin_false_doner(tmp_path):
+    from backend.main import _yedek_dosyasi_saglam_mi
+
+    bozuk = tmp_path / "bozuk_yedek.db"
+    bozuk.write_bytes(b"bu gecerli bir sqlite dosyasi degil, sadece rastgele bayt")
+    saglam, hata = _yedek_dosyasi_saglam_mi(str(bozuk))
+    assert saglam is False
+    assert hata
+
+
+def test_yedek_dosyasi_saglam_mi_bos_dosya_icin_false_doner(tmp_path):
+    from backend.main import _yedek_dosyasi_saglam_mi
+
+    bos = tmp_path / "bos_yedek.db"
+    bos.write_bytes(b"")
+    saglam, hata = _yedek_dosyasi_saglam_mi(str(bos))
+    assert saglam is False
+    assert "boş" in hata or "bulunamadı" in hata
+
+
+def test_yedek_dosyasi_saglam_mi_beklenen_tablolar_eksikse_false_doner(tmp_path):
+    """integrity_check GEÇEBİLİR ama dosya PTS şemasına hiç ait olmayabilir
+    (ör. tamamen farklı/boş bir sqlite dosyası) -- bu da ayrı bir sessiz
+    başarısızlık türü, ayrıca kontrol edilmeli."""
+    import sqlite3
+    from backend.main import _yedek_dosyasi_saglam_mi
+
+    ilgisiz = tmp_path / "ilgisiz.db"
+    con = sqlite3.connect(str(ilgisiz))
+    con.execute("CREATE TABLE ilgisiz_tablo (id INTEGER)")
+    con.commit()
+    con.close()
+    saglam, hata = _yedek_dosyasi_saglam_mi(str(ilgisiz))
+    assert saglam is False
+    assert "eksik" in hata.lower() or "tablo" in hata.lower()
+
+
+def test_otomatik_yedek_dogrula_gecerli_yedegi_isaretler(client, yetkili_header, tmp_path):
+    """POST /sistem/yedek/otomatik-liste/{dosya_adi}/dogrula -- geçerli bir
+    yedek için `.verified` işaretçisi bırakır, liste uç noktası artık
+    `saglam: true` göstermeli."""
+    from backend.main import _sqlite_yedek_al, OTOMATIK_YEDEK_DOSYA_ONEKI, SQLALCHEMY_DATABASE_URL
+    from urllib.parse import urlparse
+
+    onceki = client.get("/sistem/ayarlar", headers=yetkili_header).json()["otomatik_yedek_klasoru"]
+    yeni_klasor = str(tmp_path / "yedekler_dogrula_test")
+    os.makedirs(yeni_klasor, exist_ok=True)
+    try:
+        r0 = client.put("/sistem/ayarlar", json={"otomatik_yedek_klasoru": yeni_klasor}, headers=yetkili_header)
+        assert r0.status_code == 200, r0.text
+
+        db_yolu = urlparse(SQLALCHEMY_DATABASE_URL).path.lstrip("/")
+        dosya_adi = f"{OTOMATIK_YEDEK_DOSYA_ONEKI}20260101_010101.db"
+        _sqlite_yedek_al(db_yolu, os.path.join(yeni_klasor, dosya_adi))
+
+        # Doğrulamadan ÖNCE liste "saglam: null" (henüz doğrulanmadı) dönmeli.
+        liste_once = client.get("/sistem/yedek/otomatik-liste", headers=yetkili_header).json()
+        kayit_once = next(y for y in liste_once["yedekler"] if y["dosya_adi"] == dosya_adi)
+        assert kayit_once["saglam"] is None
+
+        r = client.post(f"/sistem/yedek/otomatik-liste/{dosya_adi}/dogrula", headers=yetkili_header)
+        assert r.status_code == 200, r.text
+        v = r.json()
+        assert v["saglam"] is True
+        assert v["hata"] is None
+        assert v["dosya_adi"] == dosya_adi
+        assert os.path.isfile(os.path.join(yeni_klasor, dosya_adi + ".verified"))
+
+        liste_sonra = client.get("/sistem/yedek/otomatik-liste", headers=yetkili_header).json()
+        kayit_sonra = next(y for y in liste_sonra["yedekler"] if y["dosya_adi"] == dosya_adi)
+        assert kayit_sonra["saglam"] is True
+    finally:
+        client.put("/sistem/ayarlar", json={"otomatik_yedek_klasoru": onceki}, headers=yetkili_header)
+
+
+def test_otomatik_yedek_dogrula_bozuk_yedegi_isaretler_ve_yeniden_adlandirir(client, yetkili_header, tmp_path):
+    """Bozuk bir yedek dosyası doğrulanınca ".BOZUK.db" olarak yeniden
+    adlandırılır (ki panelde/klasörde sağlammış gibi durup yanlışlıkla
+    güvenilmesin) ve liste bunu `saglam: false` olarak göstermeli."""
+    from backend.main import OTOMATIK_YEDEK_DOSYA_ONEKI
+
+    onceki = client.get("/sistem/ayarlar", headers=yetkili_header).json()["otomatik_yedek_klasoru"]
+    yeni_klasor = str(tmp_path / "yedekler_bozuk_test")
+    os.makedirs(yeni_klasor, exist_ok=True)
+    try:
+        r0 = client.put("/sistem/ayarlar", json={"otomatik_yedek_klasoru": yeni_klasor}, headers=yetkili_header)
+        assert r0.status_code == 200, r0.text
+
+        dosya_adi = f"{OTOMATIK_YEDEK_DOSYA_ONEKI}20260101_020202.db"
+        with open(os.path.join(yeni_klasor, dosya_adi), "wb") as f:
+            f.write(b"gecersiz sqlite icerigi")
+
+        r = client.post(f"/sistem/yedek/otomatik-liste/{dosya_adi}/dogrula", headers=yetkili_header)
+        assert r.status_code == 200, r.text
+        v = r.json()
+        assert v["saglam"] is False
+        assert v["hata"]
+        assert v["dosya_adi"] == dosya_adi.replace(".db", ".BOZUK.db")
+        assert os.path.isfile(os.path.join(yeni_klasor, dosya_adi.replace(".db", ".BOZUK.db")))
+        assert not os.path.isfile(os.path.join(yeni_klasor, dosya_adi))
+
+        liste = client.get("/sistem/yedek/otomatik-liste", headers=yetkili_header).json()
+        kayit = next(y for y in liste["yedekler"] if y["dosya_adi"] == dosya_adi.replace(".db", ".BOZUK.db"))
+        assert kayit["saglam"] is False
+    finally:
+        client.put("/sistem/ayarlar", json={"otomatik_yedek_klasoru": onceki}, headers=yetkili_header)
+
+
+def test_otomatik_yedek_dogrula_yol_gecisi_ve_bulunamadi(client, yetkili_header, operator_header):
+    assert client.post("/sistem/yedek/otomatik-liste/..gizli.db/dogrula", headers=yetkili_header).status_code == 400
+    assert client.post("/sistem/yedek/otomatik-liste/rastgele_dosya.db/dogrula", headers=yetkili_header).status_code == 400
+    assert client.post("/sistem/yedek/otomatik-liste/pts_otomatik_yedek_hicyok.db/dogrula", headers=yetkili_header).status_code == 404
+    assert client.post("/sistem/yedek/otomatik-liste/pts_otomatik_yedek_x.db/dogrula", headers=operator_header).status_code == 403
+
+
+def test_sistem_yedek_indirme_bozuksa_engellenir(client, yetkili_header, monkeypatch):
+    """Elle indirilen /sistem/yedek de artık aynı bütünlük kontrolünden
+    geçiyor -- bozuksa indirme İPTAL edilir (kullanıcıya bozuk bir dosya
+    sessizce verilmez) ve geçici dosya diskte bırakılmaz."""
+    from backend.main import DISA_AKTAR_KLASORU
+
+    monkeypatch.setattr(pts_main, "_yedek_dosyasi_saglam_mi", lambda yol: (False, "test: bilerek bozuk işaretlendi"))
+    once = set(os.listdir(DISA_AKTAR_KLASORU)) if os.path.isdir(DISA_AKTAR_KLASORU) else set()
+    r = client.get("/sistem/yedek", headers=yetkili_header)
+    assert r.status_code == 500, r.text
+    assert "bütünlük" in r.json()["detail"]
+    sonra = set(os.listdir(DISA_AKTAR_KLASORU)) if os.path.isdir(DISA_AKTAR_KLASORU) else set()
+    assert sonra == once, "Bütünlük kontrolünden geçemeyen geçici yedek dosyası diskte kalmamalı"
+
+
+def test_otomatik_yedek_uret_ve_dogrula_bozuk_ciktiginda_alarm_ve_bildirim_uretir(
+    client, yetkili_header, tmp_path, monkeypatch, eszamanli_bildirim
+):
+    """`_otomatik_yedek_uret_ve_dogrula` (otomatik yedekleme döngüsünün tek
+    adımı) bozuk bir yedek ürettiğinde: (1) panelde görülebilir bir
+    'yedek_bozuk' alarmı oluşturmalı, (2) artık genelleştirilmiş
+    _bildirim_tetikle'yi de çağırmalı (bkz. Patch #111)."""
+    from backend.database import SessionLocal
+    from backend import models
+
+    klasor = str(tmp_path / "yedekler_uret_test")
+    os.makedirs(klasor, exist_ok=True)
+    # Kaynak "veritabanı" olarak kasıtlı BOZUK bir dosya kullanılamaz (
+    # _sqlite_yedek_al zaten sqlite3.connect ile açamaz, exception fırlatır,
+    # ki bu farklı bir kod yoluna girer) -- bunun yerine gerçek
+    # _yedek_dosyasi_saglam_mi'yi SAHTE başarısız dönecek şekilde
+    # monkeypatch'liyoruz, tıpkı yukarıdaki indirme testinde olduğu gibi.
+    monkeypatch.setattr(pts_main, "_yedek_dosyasi_saglam_mi", lambda yol: (False, "test: bilerek bozuk"))
+
+    cagrilanlar = []
+    monkeypatch.setattr(pts_main, "_bildirim_gonder_sync",
+                        lambda tip, hedef, metot, veri: cagrilanlar.append(veri) or (True, None))
+    ayar_id = _bildirim_ayari_olustur(client, yetkili_header, tetikleyici="yedek_bozuk")
+    try:
+        from backend.main import SQLALCHEMY_DATABASE_URL
+        from urllib.parse import urlparse
+        db_yolu = urlparse(SQLALCHEMY_DATABASE_URL).path.lstrip("/")
+
+        pts_main._otomatik_yedek_uret_ve_dogrula(db_yolu, klasor)
+
+        db = SessionLocal()
+        try:
+            alarm = db.query(models.Alarm).filter(models.Alarm.alarm_tipi == "yedek_bozuk").order_by(
+                models.Alarm.id.desc()
+            ).first()
+            assert alarm is not None, "yedek_bozuk alarmı oluşturulmadı"
+        finally:
+            db.close()
+
+        assert any(v.get("alarm_tipi") == "yedek_bozuk" for v in cagrilanlar)
+
+        # Üretilen dosya ".BOZUK.db" ile işaretlenmiş olmalı.
+        bozuk_dosyalar = [ad for ad in os.listdir(klasor) if ad.endswith(".BOZUK.db")]
+        assert len(bozuk_dosyalar) == 1
+    finally:
+        _bildirim_ayari_sil(client, yetkili_header, ayar_id)
+
+
+# ------------------------------------------------------------------
 # Otomatik bariyer açma -- desteklenmeyen mod (gpio) sessiz kalmamalı
 # (2026-09-25, sistem taraması)
 # ------------------------------------------------------------------

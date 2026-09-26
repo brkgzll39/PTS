@@ -577,6 +577,84 @@ def _otomatik_yedek_klasoru_al(ayarlar: dict) -> str:
     return str(ayarlar.get("otomatik_yedek_klasoru") or "").strip() or _VARSAYILAN_YEDEK_KLASORU
 
 
+_YEDEK_BEKLENEN_TABLOLAR = ("plaka_kayitlari", "kullanicilar", "kisiler")
+
+
+def _yedek_dosyasi_saglam_mi(yol: str) -> "tuple[bool, Optional[str]]":
+    """Bir SQLite yedek dosyasının GERÇEKTEN geri yüklenebilir olduğunu
+    doğrular (2026-09-26, kullanıcı isteği: "yedek dosyasının gerçekten
+    sağlam olduğunu otomatik doğrulama").
+
+    KÖK NEDEN: `_sqlite_yedek_al` (sqlite3 Connection.backup() ile) her gece
+    sessizce çalışıyor ve "başarılı" loglanıyordu, ama bu yalnızca kopyalama
+    işleminin İSTİSNASIZ tamamlandığını gösterir -- disk yedekleme sırasında
+    dolarsa, süreç yarıda kesilirse ya da hedef klasör bozuk bir dosya
+    sistemindeyse, sonuçta ortada duran ".db" dosyası panelde/klasörde
+    tamamen normal bir yedek gibi GÖRÜNÜR ama gerçek bir geri yükleme
+    ihtiyacında (asıl felaket anında) açılamayabilir/eksik olabilir --
+    bu ta ki birileri onu geri yüklemeye çalışana kadar fark edilmez.
+
+    İki kontrol yapılır: (1) `PRAGMA integrity_check` -- SQLite'ın kendi
+    sayfa/b-tree bütünlük taraması; (2) üretim şemasının temel
+    tablolarının GERÇEKTEN var olduğu -- tamamen boş/ilgisiz bir sqlite
+    dosyası da integrity_check'ten "ok" geçebilir ama hiçbir PTS verisi
+    içermeyebilir, bu da ayrı bir sessiz-başarısızlık türüdür."""
+    import sqlite3
+    if not os.path.isfile(yol) or os.path.getsize(yol) == 0:
+        return False, "Yedek dosyası bulunamadı veya boş"
+    try:
+        con = sqlite3.connect(f"file:{yol}?mode=ro", uri=True)
+    except Exception as exc:
+        return False, f"Yedek dosyası açılamadı: {exc}"
+    try:
+        try:
+            sonuc = con.execute("PRAGMA integrity_check").fetchone()
+        except sqlite3.DatabaseError as exc:
+            return False, f"Yedek dosyası okunamadı (bozuk olabilir): {exc}"
+        if not sonuc or sonuc[0] != "ok":
+            return False, f"integrity_check başarısız: {sonuc[0] if sonuc else 'sonuç alınamadı'}"
+        tablolar = {r[0] for r in con.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+        eksik = [t for t in _YEDEK_BEKLENEN_TABLOLAR if t not in tablolar]
+        if eksik:
+            return False, f"Beklenen tablolar eksik: {', '.join(eksik)}"
+        return True, None
+    finally:
+        con.close()
+
+
+def _yedegi_bozuk_olarak_isaretle(tam_yol: str) -> str:
+    """Bütünlük doğrulaması başarısız olan bir otomatik yedeği adında AÇIKÇA
+    görülür biçimde işaretler -- dosyayı SİLMEZ (ileride incelenebilsin),
+    yalnızca ".BOZUK.db" ile yeniden adlandırır. Saklama süresi dolduğunda
+    yine normal temizlik tarafından silinir (bkz. _eski_otomatik_yedekleri_temizle,
+    hâlâ ".db" ile bitiyor ve aynı önekle başlıyor)."""
+    if tam_yol.endswith(".BOZUK.db"):
+        return tam_yol
+    if not tam_yol.endswith(".db"):
+        return tam_yol
+    yeni_yol = tam_yol[: -len(".db")] + ".BOZUK.db"
+    try:
+        os.replace(tam_yol, yeni_yol)
+        _dosyayi_sessizce_sil(tam_yol + ".verified")
+        return yeni_yol
+    except OSError as exc:
+        logger.error("Bozuk yedek yeniden adlandırılamadı '%s': %s", tam_yol, exc)
+        return tam_yol
+
+
+def _yedegi_dogrulandi_olarak_isaretle(tam_yol: str) -> None:
+    """Başarıyla doğrulanan bir yedeğin yanına küçük, boş bir işaretçi dosya
+    (`<dosya>.verified`) bırakır -- panelin `/sistem/yedek/otomatik-liste`
+    yanıtında hangi yedeklerin GERÇEKTEN doğrulandığını (yalnızca alındığını
+    değil) süreç yeniden başlasa bile kalıcı olarak gösterebilmesi için.
+    Doğrulanmamış (bu özellikten ÖNCEKİ) eski yedeklerle karıştırılmasın."""
+    try:
+        with open(tam_yol + ".verified", "w", encoding="utf-8") as f:
+            f.write(datetime.now().isoformat())
+    except OSError as exc:
+        logger.error("Yedek doğrulama işaretçisi yazılamadı '%s': %s", tam_yol, exc)
+
+
 def _eski_otomatik_yedekleri_temizle(klasor: str, saklama_gun: int) -> int:
     if saklama_gun <= 0 or not os.path.isdir(klasor):
         return 0
@@ -589,19 +667,69 @@ def _eski_otomatik_yedekleri_temizle(klasor: str, saklama_gun: int) -> int:
         try:
             if os.path.getmtime(tam_yol) < sinir:
                 os.remove(tam_yol)
+                # DÜZELTME (2026-09-26): yedekle BİRLİKTE oluşan doğrulama
+                # işaretçisi (bkz. _yedegi_dogrulandi_olarak_isaretle) yedek
+                # silinince YETİM kalmasın -- yoksa bu klasörde süresiz
+                # birikir.
+                _dosyayi_sessizce_sil(tam_yol + ".verified")
                 silinen += 1
         except OSError as exc:
             logger.error("[otomatik-yedek] '%s' silinemedi: %s", tam_yol, exc)
     return silinen
 
 
+def _otomatik_yedek_uret_ve_dogrula(db_yolu: str, klasor: str) -> None:
+    """Tek bir otomatik yedek üretir (zaman damgalı dosya adıyla), HEMEN
+    bütünlüğünü doğrular ve sonuca göre işaretler/alarm+bildirim üretir
+    (bkz. _otomatik_yedek_dongu'nun docstring'i). Döngüden ayrı, kendi
+    başına çağrılabilir bir fonksiyon olarak tutulur ki testler (ve
+    gerekirse ileride "şimdi yedek al" gibi elle tetiklenen bir uç nokta)
+    tek bir "tık"ı, sonsuz döngüyü hiç başlatmadan deterministik biçimde
+    çalıştırabilsin."""
+    zaman_damgasi = datetime.now().strftime("%Y%m%d_%H%M%S")
+    hedef_yol = os.path.join(klasor, f"{OTOMATIK_YEDEK_DOSYA_ONEKI}{zaman_damgasi}.db")
+    try:
+        _sqlite_yedek_al(db_yolu, hedef_yol)
+        # DÜZELTME (2026-09-26, kullanıcı isteği: "yedek dosyasının gerçekten
+        # sağlam olduğunu otomatik doğrulama"): kopyalama istisnasız bitse
+        # bile sonuçtaki dosya bozuk/eksik olabilir (bkz.
+        # _yedek_dosyasi_saglam_mi'nin docstring'i) -- artık HER otomatik
+        # yedekten hemen sonra gerçekten geri yüklenebilir mi diye kontrol
+        # ediliyor.
+        saglam, dogrulama_hatasi = _yedek_dosyasi_saglam_mi(hedef_yol)
+        if saglam:
+            _yedegi_dogrulandi_olarak_isaretle(hedef_yol)
+            logger.info("Otomatik veritabanı yedeği alındı ve bütünlüğü doğrulandı: %s", hedef_yol)
+        else:
+            bozuk_yol = _yedegi_bozuk_olarak_isaretle(hedef_yol)
+            logger.error(
+                "Otomatik veritabanı yedeği BOZUK üretildi (%s): %s",
+                dogrulama_hatasi, bozuk_yol,
+            )
+            db = SessionLocal()
+            try:
+                yedek_mesaji = f"Otomatik veritabanı yedeği bozuk üretildi: {dogrulama_hatasi}"[:255]
+                db.add(models.Alarm(plaka_no="SISTEM", alarm_tipi="yedek_bozuk", mesaj=yedek_mesaji))
+                db.commit()
+                _bildirim_tetikle(db, "yedek_bozuk", {
+                    "olay": "yedek_bozuk", "alarm_tipi": "yedek_bozuk", "mesaj": yedek_mesaji,
+                })
+            except Exception as exc2:
+                logger.error("Bozuk yedek alarmı kaydedilemedi: %s", exc2)
+            finally:
+                db.close()
+    except Exception as exc:
+        logger.error("Otomatik veritabanı yedeği alınamadı: %s", exc, exc_info=True)
+
+
 async def _otomatik_yedek_dongu() -> None:
     """Sonsuz döngü: ayarlarda etkinse, günde bir kez veritabanının tutarlı
-    bir kopyasını `otomatik_yedek_klasoru`'na yazar ve
-    `otomatik_yedek_saklama_gun`'dan eski otomatik yedekleri temizler.
-    Yalnızca SQLite için çalışır (SQL Server kurulumlarında kurumun kendi
-    veritabanı yedekleme araçları kullanılmalı, bkz. manuel /sistem/yedek
-    uç noktasındaki aynı kısıtlama)."""
+    bir kopyasını `otomatik_yedek_klasoru`'na yazar (bkz.
+    _otomatik_yedek_uret_ve_dogrula) ve `otomatik_yedek_saklama_gun`'dan
+    eski otomatik yedekleri temizler. Yalnızca SQLite için çalışır (SQL
+    Server kurulumlarında kurumun kendi veritabanı yedekleme araçları
+    kullanılmalı, bkz. manuel /sistem/yedek uç noktasındaki aynı
+    kısıtlama)."""
     son_yedek_gunu = None
     while True:
         try:
@@ -612,20 +740,13 @@ async def _otomatik_yedek_dongu() -> None:
                     db_yolu = urlparse(SQLALCHEMY_DATABASE_URL).path.lstrip("/")
                     klasor = _otomatik_yedek_klasoru_al(ayarlar)
                     if os.path.exists(db_yolu):
-                        zaman_damgasi = datetime.now().strftime("%Y%m%d_%H%M%S")
-                        hedef_yol = os.path.join(klasor, f"{OTOMATIK_YEDEK_DOSYA_ONEKI}{zaman_damgasi}.db")
-                        try:
-                            _sqlite_yedek_al(db_yolu, hedef_yol)
-                            logger.info("Otomatik veritabanı yedeği alındı: %s", hedef_yol)
-                        except Exception as exc:
-                            logger.error("Otomatik veritabanı yedeği alınamadı: %s", exc, exc_info=True)
-                        finally:
-                            # gün başarısız da olsa bir dahaki 6 saatlik kontrolde
-                            # HEMEN tekrar denenmesin diye (ör. disk o an geçici
-                            # olarak doluysa) gün işaretlenir -- bir sonraki gün
-                            # tekrar denenir; kalıcı bir sorun varsa bu, yukarıdaki
-                            # error logunda GÖRÜNÜR kalır (sessiz değildir).
-                            son_yedek_gunu = bugun
+                        _otomatik_yedek_uret_ve_dogrula(db_yolu, klasor)
+                        # gün başarısız da olsa bir dahaki 6 saatlik kontrolde
+                        # HEMEN tekrar denenmesin diye (ör. disk o an geçici
+                        # olarak doluysa) gün işaretlenir -- bir sonraki gün
+                        # tekrar denenir; kalıcı bir sorun varsa bu, yukarıdaki
+                        # error logunda GÖRÜNÜR kalır (sessiz değildir).
+                        son_yedek_gunu = bugun
                         try:
                             saklama_gun = int(ayarlar.get("otomatik_yedek_saklama_gun", 30) or 0)
                             silinen = _eski_otomatik_yedekleri_temizle(klasor, saklama_gun)
@@ -6840,6 +6961,17 @@ def veritabani_yedek(kullanici: models.Kullanici = Depends(_personel_girisi_gere
     gecici_yol = os.path.join(DISA_AKTAR_KLASORU, f"pts_yedek_gecici_{uuid.uuid4().hex}.db")
     try:
         _sqlite_yedek_al(db_yolu, gecici_yol)
+        # DÜZELTME (2026-09-26): elle indirilen yedek de artık otomatik
+        # yedekle AYNI bütünlük kontrolünden geçiyor -- kopyalama istisnasız
+        # bitse bile sonuç bozuk olabilir (bkz. _yedek_dosyasi_saglam_mi),
+        # bunu indirdikten SONRA (belki aylar sonra bir felakette) fark
+        # etmek yerine indirme ANINDA açıkça söylemek daha iyidir.
+        saglam, hata = _yedek_dosyasi_saglam_mi(gecici_yol)
+        if not saglam:
+            _dosyayi_sessizce_sil(gecici_yol)
+            raise HTTPException(500, f"Yedek dosyası bütünlük kontrolünden geçemedi, indirme iptal edildi: {hata}")
+    except HTTPException:
+        raise
     except Exception as exc:
         _dosyayi_sessizce_sil(gecici_yol)
         raise HTTPException(500, f"Yedek alınamadı: {exc}")
@@ -6856,7 +6988,14 @@ def otomatik_yedekleri_listele(kullanici: models.Kullanici = Depends(_personel_g
     GERÇEKTEN çalıştığını panelden görebilmesi gerekir -- yoksa "otomatik
     yedek aktif" ayarı işaretlense bile, aslında hiç yedek üretilmiyor olsa
     (ör. yanlış/erişilemez bir klasör yolu yazılmışsa) bunu fark etmenin tek
-    yolu sunucunun log dosyasına elle bakmak olurdu."""
+    yolu sunucunun log dosyasına elle bakmak olurdu.
+
+    DÜZELTME (2026-09-26): her yedeğin yanına artık `saglam` alanı eklendi --
+    `True` (yanında `.verified` işaretçisi var, bkz. _yedegi_dogrulandi_olarak_isaretle),
+    `False` (adı ".BOZUK.db" ile işaretli, bkz. _yedegi_bozuk_olarak_isaretle)
+    ya da `None` (bu özellikten ÖNCE alınmış, hiç doğrulanmamış eski yedek --
+    panelden "Şimdi Doğrula" ile istendiğinde doğrulanabilir, bkz.
+    otomatik_yedek_dogrula)."""
     _rol_dogrula(kullanici, ROL_YONETICI)
     ayarlar = _sistem_ayarlari_oku()
     klasor = _otomatik_yedek_klasoru_al(ayarlar)
@@ -6867,10 +7006,17 @@ def otomatik_yedekleri_listele(kullanici: models.Kullanici = Depends(_personel_g
                 tam_yol = os.path.join(klasor, ad)
                 try:
                     istat = os.stat(tam_yol)
+                    if ad.endswith(".BOZUK.db"):
+                        saglam = False
+                    elif os.path.isfile(tam_yol + ".verified"):
+                        saglam = True
+                    else:
+                        saglam = None
                     yedekler.append({
                         "dosya_adi": ad,
                         "boyut_bayt": istat.st_size,
                         "tarih_saat": datetime.fromtimestamp(istat.st_mtime).isoformat(),
+                        "saglam": saglam,
                     })
                 except OSError:
                     continue
@@ -6879,6 +7025,35 @@ def otomatik_yedekleri_listele(kullanici: models.Kullanici = Depends(_personel_g
         "aktif": bool(ayarlar.get("otomatik_yedek_aktif", True)),
         "yedekler": yedekler[:30],
     }
+
+
+@app.post("/sistem/yedek/otomatik-liste/{dosya_adi}/dogrula")
+def otomatik_yedek_dogrula(dosya_adi: str, kullanici: models.Kullanici = Depends(_personel_girisi_gerekli)):
+    """Panelden istek üzerine, listelenen belirli bir otomatik yedeğin
+    GERÇEKTEN geri yüklenebilir olduğunu (yeniden) doğrular -- hem bu
+    patch'ten ÖNCE alınmış (hiç doğrulanmamış, `saglam: null` görünen) eski
+    yedekler hem de zaten doğrulanmış bir yedek bir yöneticinin isteğiyle
+    her an yeniden kontrol edilebilsin diye (bkz. _yedek_dosyasi_saglam_mi)."""
+    _rol_dogrula(kullanici, ROL_YONETICI)
+    # /goruntuler/{dosya_adi}'daki ile AYNI yol geçişi koruması (bkz. o uç
+    # noktanın docstring'i): tek segment içinde kalan ama yine de ".." içeren
+    # bir değer de reddedilir.
+    if os.path.basename(dosya_adi) != dosya_adi or ".." in dosya_adi:
+        raise HTTPException(400, "Geçersiz dosya adı")
+    if not (dosya_adi.startswith(OTOMATIK_YEDEK_DOSYA_ONEKI) and dosya_adi.endswith(".db")):
+        raise HTTPException(400, "Geçersiz yedek dosyası adı")
+    ayarlar = _sistem_ayarlari_oku()
+    klasor = _otomatik_yedek_klasoru_al(ayarlar)
+    tam_yol = os.path.join(klasor, dosya_adi)
+    if not os.path.isfile(tam_yol):
+        raise HTTPException(404, "Yedek dosyası bulunamadı")
+    saglam, hata = _yedek_dosyasi_saglam_mi(tam_yol)
+    yeni_ad = dosya_adi
+    if saglam:
+        _yedegi_dogrulandi_olarak_isaretle(tam_yol)
+    else:
+        yeni_ad = os.path.basename(_yedegi_bozuk_olarak_isaretle(tam_yol))
+    return {"dosya_adi": yeni_ad, "saglam": saglam, "hata": hata}
 
 
 if __name__ == "__main__":
