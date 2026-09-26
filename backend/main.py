@@ -13,6 +13,7 @@ import tempfile
 import logging
 from logging.handlers import RotatingFileHandler
 import secrets
+import shutil
 import threading
 import time
 import uuid
@@ -267,6 +268,12 @@ _VARSAYILAN_AYARLAR = {
     "otomatik_yedek_aktif": True,
     "otomatik_yedek_klasoru": os.path.join(PROJE_KOKU, "yedekler"),
     "otomatik_yedek_saklama_gun": 30,
+    # DİSKİN GERÇEKTEN DOLMASINA KARŞI ERKEN UYARI (2026-09-26, kullanıcı
+    # isteği) -- bkz. _disk_izleme_dongu'nun docstring'i. Mevcut "disk_hatasi"
+    # alarmından FARKLIDIR: bu, bir yazma FİİLEN başarısız olmadan, disk
+    # doluluk YÜZDESİNE bakarak proaktif uyarır.
+    "disk_izleme_aktif": True,
+    "disk_uyari_esik_yuzde": 90,
 }
 
 
@@ -760,6 +767,121 @@ async def _otomatik_yedek_dongu() -> None:
 
 
 # ================================================================
+# DİSKİN GERÇEKTEN DOLMASINA KARŞI ERKEN UYARI (2026-09-26, kullanıcı
+# isteği: "diskin gerçekten dolmasına karşı erken uyarı")
+# ================================================================
+# Kök neden: mevcut "disk_hatasi" alarmı (bkz. _gorsel_yazma_hatasini_bildir)
+# yalnızca bir görsel yazma İSTİSNASI FİİLEN oluştuktan SONRA (yani disk
+# ZATEN dolduktan sonra) tetiklenir -- bu noktada kayıtlar artık fotoğrafsız
+# oluşuyor demektir, ki bu ÖNLENEBİLECEK bir durumdur. Bu döngü, veritabanı/
+# görsel/otomatik-yedek klasörlerinin bulunduğu disklerin doluluk YÜZDESİNİ
+# periyodik olarak izleyip bir eşiği aşınca (henüz hiçbir yazma
+# başarısız olmadan) proaktif bir uyarı üretir.
+
+DISK_IZLEME_ARALIK_SN = 1800            # her 30 dakikada bir kontrol et
+DISK_UYARI_TEKRAR_ARALIK_SN = 6 * 3600  # aynı disk için alarmı en fazla 6 saatte bir tekrar üret
+
+_disk_son_alarm_zamani: dict = {}  # izlenen yol -> son "disk_doluyor" alarmının zamanı (monotonic)
+
+
+def _var_olan_en_yakin_klasor(yol: str) -> str:
+    """`shutil.disk_usage`, henüz VAR OLMAYAN bir yol için FileNotFoundError
+    fırlatır (ör. otomatik yedek klasörü ilk yedekten önce, ya da elle
+    ayarlanmış ama henüz oluşturulmamış bir yol) -- bu yüzden var olan en
+    yakın üst klasöre çıkılır (aynı diskte olduğu için doluluk oranı
+    aynıdır)."""
+    yol = os.path.abspath(yol)
+    while yol and not os.path.isdir(yol):
+        ust = os.path.dirname(yol)
+        if ust == yol:
+            break
+        yol = ust
+    return yol if os.path.isdir(yol) else os.getcwd()
+
+
+def _disk_kullanim_yuzdesi(yol: str) -> Optional[float]:
+    try:
+        kullanim = shutil.disk_usage(_var_olan_en_yakin_klasor(yol))
+        if kullanim.total <= 0:
+            return None
+        return round(kullanim.used / kullanim.total * 100, 1)
+    except OSError as exc:
+        logger.error("[disk-izleme] '%s' için disk kullanımı okunamadı: %s", yol, exc)
+        return None
+
+
+def _izlenen_disk_yollari(ayarlar: dict) -> dict:
+    """Etiket -> yol: veritabanının, araç görsellerinin ve otomatik
+    yedeklerin bulunduğu (genellikle aynı ama FARKLI diskler de olabilen)
+    klasörler AYRI AYRI izlenir -- yalnızca biri dolmaya başlasa bile fark
+    edilebilsin diye (ör. yedekler ayrı bir harici diskteyken canlı
+    veritabanının bulunduğu disk dolabilir ya da tam tersi)."""
+    yollar = {"Araç görselleri": GORUNTU_KLASORU, "Otomatik yedekler": _otomatik_yedek_klasoru_al(ayarlar)}
+    if SQLALCHEMY_DATABASE_URL.startswith("sqlite"):
+        db_yolu = urlparse(SQLALCHEMY_DATABASE_URL).path.lstrip("/")
+        yollar["Veritabanı"] = os.path.dirname(os.path.abspath(db_yolu)) or "."
+    return yollar
+
+
+def _disk_izleme_bir_kontrol(ayarlar: dict) -> None:
+    """Tek bir kontrol turu: izlenen her diski kontrol eder, eşiği aşanlar
+    için alarm+bildirim üretir (bkz. _disk_izleme_dongu'nun docstring'i).
+    Döngüden AYRI, kendi başına çağrılabilir bir fonksiyon olarak tutulur
+    ki testler sonsuz döngüyü hiç başlatmadan tek bir "tık"ı deterministik
+    biçimde çalıştırabilsin (bkz. _otomatik_yedek_uret_ve_dogrula'daki AYNI
+    desen)."""
+    if not ayarlar.get("disk_izleme_aktif", True):
+        return
+    esik = float(ayarlar.get("disk_uyari_esik_yuzde", 90))
+    for etiket, yol in _izlenen_disk_yollari(ayarlar).items():
+        yuzde = _disk_kullanim_yuzdesi(yol)
+        if yuzde is None:
+            continue
+        if yuzde >= esik:
+            simdi = time.monotonic()
+            son = _disk_son_alarm_zamani.get(yol)
+            if son and (simdi - son) < DISK_UYARI_TEKRAR_ARALIK_SN:
+                continue
+            _disk_son_alarm_zamani[yol] = simdi
+            mesaj = (
+                f"Disk doluyor: '{etiket}' klasörünün bulunduğu disk %{yuzde:.1f} dolu "
+                f"(eşik: %{esik:.0f}) -- yol: {yol}"
+            )[:255]
+            logger.error("[disk-izleme] %s", mesaj)
+            db = SessionLocal()
+            try:
+                db.add(models.Alarm(plaka_no="SISTEM", alarm_tipi="disk_doluyor", mesaj=mesaj))
+                db.commit()
+                _bildirim_tetikle(db, "disk_doluyor", {
+                    "olay": "disk_doluyor", "alarm_tipi": "disk_doluyor", "mesaj": mesaj,
+                })
+            except Exception as exc:
+                logger.error("[disk-izleme] alarm kaydedilemedi: %s", exc)
+            finally:
+                db.close()
+        else:
+            _disk_son_alarm_zamani.pop(yol, None)
+
+
+async def _disk_izleme_dongu() -> None:
+    """Sonsuz döngü: ayarlarda etkinse (`disk_izleme_aktif`, varsayılan
+    açık), izlenen disklerin doluluk yüzdesini periyodik olarak kontrol
+    eder ve `disk_uyari_esik_yuzde` (varsayılan %90) eşiğini aşan bir disk
+    için panelde görülebilir bir `disk_doluyor` alarmı oluşturup Patch
+    #111'in _bildirim_tetikle'si ile dış bildirime de bağlar (bkz.
+    _disk_izleme_bir_kontrol). Aynı disk için tekrar tekrar alarm
+    üretmemek adına `DISK_UYARI_TEKRAR_ARALIK_SN` kadar beklenir; disk
+    tekrar eşiğin altına düşerse (ör. temizlik sonrası) bir dahaki dolmada
+    YENİDEN uyarabilmek için kayıt sıfırlanır."""
+    while True:
+        try:
+            _disk_izleme_bir_kontrol(_sistem_ayarlari_oku())
+        except Exception as exc:
+            logger.error("[disk-izleme] döngüsünde beklenmeyen hata: %s", exc, exc_info=True)
+        await asyncio.sleep(DISK_IZLEME_ARALIK_SN)
+
+
+# ================================================================
 # SON KULLANILAN NOT ÖNBELLEĞİ — kullanıcı talebi (2026-09-17, devam)
 # ================================================================
 # Kullanıcı senaryosu: yetkisiz bir araca (örn. bir kargo aracına) panelden
@@ -1170,6 +1292,15 @@ async def _otomatik_yedeklemeyi_baslat():
     başlatır (bkz. yukarısı, kullanıcı isteği: "günlük otomatik yedek ekle")."""
     asyncio.ensure_future(_otomatik_yedek_dongu())
     logger.info("Otomatik veritabanı yedekleme başlatıldı (her %d sn kontrol, günde 1 yedek)", YEDEK_KONTROL_ARALIK_SN)
+
+
+@app.on_event("startup")
+async def _disk_izlemeyi_baslat():
+    """Arka planda sürekli çalışan, diskin gerçekten dolmasına karşı ERKEN
+    uyaran görevi başlatır (bkz. yukarısı, kullanıcı isteği: "diskin
+    gerçekten dolmasına karşı erken uyarı")."""
+    asyncio.ensure_future(_disk_izleme_dongu())
+    logger.info("Disk doluluk izleme başlatıldı (her %d sn kontrol)", DISK_IZLEME_ARALIK_SN)
 
 
 @app.on_event("startup")
@@ -6760,6 +6891,8 @@ _AYAR_DOGRULAYICILAR = {
     "otomatik_yedek_aktif": _ayar_bool_dogrula,
     "otomatik_yedek_klasoru": _ayar_klasor_yolu_dogrula,
     "otomatik_yedek_saklama_gun": lambda v: _ayar_int_dogrula(v, 0, None),
+    "disk_izleme_aktif": _ayar_bool_dogrula,
+    "disk_uyari_esik_yuzde": lambda v: _ayar_int_dogrula(v, 50, 99),
 }
 
 
@@ -6845,7 +6978,23 @@ def disk_kullanimi(_: models.Kullanici = Depends(_personel_girisi_gerekli)):
                 dosya_sayisi += 1
     except OSError:
         pass
-    return {"goruntu_mb": round(toplam_mb, 2), "goruntu_sayisi": dosya_sayisi}
+    # DÜZELTME (2026-09-26, kullanıcı isteği: "diskin gerçekten dolmasına
+    # karşı erken uyarı"): bu uç nokta önceden yalnızca görüntü klasörünün
+    # BAYT boyutunu raporluyordu -- diskin kendisinin ne kadar dolu olduğu
+    # (yüzde olarak) panelde HİÇ görünmüyordu, yalnızca arka planda sessizce
+    # çalışan _disk_izleme_dongu bunu biliyordu. Artık aynı bilgi burada da
+    # (panelin görebileceği şekilde) döndürülüyor.
+    ayarlar = _sistem_ayarlari_oku()
+    diskler = []
+    for etiket, yol in _izlenen_disk_yollari(ayarlar).items():
+        yuzde = _disk_kullanim_yuzdesi(yol)
+        diskler.append({"etiket": etiket, "yol": yol, "kullanim_yuzdesi": yuzde})
+    return {
+        "goruntu_mb": round(toplam_mb, 2),
+        "goruntu_sayisi": dosya_sayisi,
+        "diskler": diskler,
+        "uyari_esigi_yuzde": ayarlar.get("disk_uyari_esik_yuzde", 90),
+    }
 
 
 def _goruntu_temizle_calistir(gun: int, db: Session) -> tuple[int, "datetime"]:

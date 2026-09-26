@@ -5846,3 +5846,112 @@ def test_disk_hatasi_alarmi_bildirim_tetikliyor(client, yetkili_header, monkeypa
         assert any(v.get("alarm_tipi") == "disk_hatasi" for v in cagrilanlar)
     finally:
         _bildirim_ayari_sil(client, yetkili_header, ayar_id)
+
+
+# ------------------------------------------------------------------
+# Diskin GERÇEKTEN dolmasına karşı ERKEN uyarı (2026-09-26, kullanıcı
+# isteği: "diskin gerçekten dolmasına karşı erken uyarı")
+# ------------------------------------------------------------------
+# Kök neden: mevcut "disk_hatasi" alarmı yalnızca bir yazma FİİLEN
+# başarısız OLDUKTAN SONRA (disk zaten doluyken) tetiklenir. Bu bölüm,
+# disk henüz dolmadan doluluk YÜZDESİNE bakarak proaktif uyaran YENİ
+# mekanizmayı (_disk_izleme_bir_kontrol) test eder.
+
+def test_disk_kullanim_yuzdesi_gercek_yol_icin_makul_deger_doner():
+    from backend.main import _disk_kullanim_yuzdesi
+
+    yuzde = _disk_kullanim_yuzdesi("/tmp")
+    assert yuzde is not None
+    assert 0.0 <= yuzde <= 100.0
+
+
+def test_disk_kullanim_yuzdesi_var_olmayan_alt_klasor_icin_de_calisir(tmp_path):
+    """`shutil.disk_usage` var olmayan bir yol için FileNotFoundError
+    fırlatır -- _var_olan_en_yakin_klasor var olan en yakın üst klasöre
+    çıkarak bunu önlemeli (ör. otomatik yedek klasörü ilk yedekten önce)."""
+    from backend.main import _disk_kullanim_yuzdesi
+
+    var_olmayan = tmp_path / "hic" / "olusturulmamis" / "alt_klasor"
+    yuzde = _disk_kullanim_yuzdesi(str(var_olmayan))
+    assert yuzde is not None
+    assert 0.0 <= yuzde <= 100.0
+
+
+def test_izlenen_disk_yollari_beklenen_etiketleri_icerir():
+    from backend.main import _izlenen_disk_yollari, _sistem_ayarlari_oku
+
+    yollar = _izlenen_disk_yollari(_sistem_ayarlari_oku())
+    assert "Araç görselleri" in yollar
+    assert "Otomatik yedekler" in yollar
+    assert "Veritabanı" in yollar  # test ortamı SQLite kullanıyor
+
+
+def test_sistem_disk_kullanimi_yeni_alanlari_doner(client, yetkili_header):
+    r = client.get("/sistem/disk-kullanimi", headers=yetkili_header)
+    assert r.status_code == 200, r.text
+    v = r.json()
+    assert "diskler" in v and isinstance(v["diskler"], list)
+    assert len(v["diskler"]) >= 1
+    for d in v["diskler"]:
+        assert "etiket" in d and "yol" in d and "kullanim_yuzdesi" in d
+    assert v["uyari_esigi_yuzde"] == 90  # varsayılan
+
+
+def test_sistem_ayarlari_disk_uyari_esigi_araligi_dogrulanir(client, yetkili_header):
+    onceki = client.get("/sistem/ayarlar", headers=yetkili_header).json()["disk_uyari_esik_yuzde"]
+    try:
+        assert client.put("/sistem/ayarlar", json={"disk_uyari_esik_yuzde": 40}, headers=yetkili_header).status_code == 400
+        assert client.put("/sistem/ayarlar", json={"disk_uyari_esik_yuzde": 100}, headers=yetkili_header).status_code == 400
+        r = client.put("/sistem/ayarlar", json={"disk_uyari_esik_yuzde": 85}, headers=yetkili_header)
+        assert r.status_code == 200, r.text
+        assert r.json()["disk_uyari_esik_yuzde"] == 85
+    finally:
+        client.put("/sistem/ayarlar", json={"disk_uyari_esik_yuzde": onceki}, headers=yetkili_header)
+
+
+def test_disk_izleme_bir_kontrol_esigi_asan_diski_alarma_baglar(client, yetkili_header, monkeypatch, eszamanli_bildirim):
+    """Sahte olarak %95 dolu döndüren bir disk için: panelde görülebilir bir
+    'disk_doluyor' alarmı oluşturulmalı VE _bildirim_tetikle üzerinden dış
+    bildirim de tetiklenmeli (bkz. Patch #111)."""
+    from backend.database import SessionLocal
+    from backend import models
+
+    monkeypatch.setattr(pts_main, "_izlenen_disk_yollari", lambda ayarlar: {"Sahte Disk": "/tmp"})
+    monkeypatch.setattr(pts_main, "_disk_kullanim_yuzdesi", lambda yol: 95.0)
+    monkeypatch.setattr(pts_main, "_disk_son_alarm_zamani", {})
+
+    cagrilanlar = []
+    monkeypatch.setattr(pts_main, "_bildirim_gonder_sync",
+                        lambda tip, hedef, metot, veri: cagrilanlar.append(veri) or (True, None))
+    ayar_id = _bildirim_ayari_olustur(client, yetkili_header, tetikleyici="disk_doluyor")
+    try:
+        pts_main._disk_izleme_bir_kontrol({"disk_izleme_aktif": True, "disk_uyari_esik_yuzde": 90})
+
+        db = SessionLocal()
+        try:
+            alarm = db.query(models.Alarm).filter(models.Alarm.alarm_tipi == "disk_doluyor").order_by(
+                models.Alarm.id.desc()
+            ).first()
+            assert alarm is not None, "disk_doluyor alarmı oluşturulmadı"
+            assert "Sahte Disk" in alarm.mesaj
+        finally:
+            db.close()
+
+        assert any(v.get("alarm_tipi") == "disk_doluyor" for v in cagrilanlar)
+
+        # Aynı disk için HEMEN tekrar çağrılırsa (spam önleme) yeni bir
+        # bildirim TETİKLENMEMELİ.
+        onceki_sayi = len(cagrilanlar)
+        pts_main._disk_izleme_bir_kontrol({"disk_izleme_aktif": True, "disk_uyari_esik_yuzde": 90})
+        assert len(cagrilanlar) == onceki_sayi, "Aynı disk için tekrar tekrar bildirim üretilmemeli (spam önleme)"
+    finally:
+        _bildirim_ayari_sil(client, yetkili_header, ayar_id)
+
+
+def test_disk_izleme_bir_kontrol_kapaliysa_hicbir_sey_yapmaz(monkeypatch):
+    monkeypatch.setattr(pts_main, "_izlenen_disk_yollari", lambda ayarlar: {"Sahte Disk": "/tmp"})
+    monkeypatch.setattr(pts_main, "_disk_kullanim_yuzdesi", lambda yol: 99.0)
+    cagrildi = []
+    monkeypatch.setattr(pts_main, "_bildirim_tetikle", lambda *a, **kw: cagrildi.append(1))
+    pts_main._disk_izleme_bir_kontrol({"disk_izleme_aktif": False, "disk_uyari_esik_yuzde": 90})
+    assert not cagrildi

@@ -4640,6 +4640,7 @@ async function bildirimAyarlariYukle() {
       suresi_dolmus: "Süresi dolmuş", supheli_arac: "Şüpheli araç",
       bariyer_hatasi: "Bariyer hatası", kamera_arizasi: "Kamera arızası",
       disk_hatasi: "Disk hatası", yedek_bozuk: "Otomatik yedek bozuk",
+      disk_doluyor: "Disk doluluk erken uyarısı",
     };
     el.innerHTML = ayarlar.map(a => `<tr>
       <td><strong>${escapeHtml(a.ad)}</strong></td>
@@ -4781,6 +4782,9 @@ async function sistemAyarlariYukle() {
       // OTOMATİK VERİTABANI YEDEKLEME (2026-09-25, kullanıcı isteği: "günlük
       // otomatik yedek ekle") -- bkz. main.py::_otomatik_yedek_dongu.
       { key: "otomatik_yedek_saklama_gun", label: "Otomatik yedek saklama süresi (gün, 0 = süresiz sakla)", tip: "number" },
+      // DİSKİN GERÇEKTEN DOLMASINA KARŞI ERKEN UYARI (2026-09-26, kullanıcı
+      // isteği) -- bkz. main.py::_disk_izleme_dongu.
+      { key: "disk_uyari_esik_yuzde", label: "Disk doluluk uyarı eşiği (%, 50-99)", tip: "number" },
     ];
     el.innerHTML = `<form id="sistemAyarlariForm" data-rol-min="yonetici">${satirlar.map(s =>
       `<div class="mb-2"><label class="form-label small">${escapeHtml(s.label)}</label>
@@ -4816,6 +4820,16 @@ async function sistemAyarlariYukle() {
         yedekler otomatik silinir. Uzun süreli/afet kurtarma amaçlı saklama için bu klasörü ayrı bir
         diske/harici depolamaya yönlendirmeniz önerilir.</p>
       <div id="otomatikYedekDurumu" class="small mb-2"></div>
+      <hr>
+      <div class="form-check mb-2">
+        <input type="checkbox" class="form-check-input" id="ayar_disk_izleme_aktif" ${ayarlar.disk_izleme_aktif ? "checked" : ""}>
+        <label class="form-check-label small" for="ayar_disk_izleme_aktif">Disk doluluk oranını izle, eşiği aşınca ERKEN uyar</label>
+      </div>
+      <p class="small text-muted mb-2">Veritabanı/görsel/otomatik-yedek klasörlerinin bulunduğu disklerin
+        doluluk yüzdesi her 30 dakikada bir kontrol edilir — bir yazma İSTİSNASI oluşmadan (disk henüz
+        dolmadan), yukarıdaki eşiği aşan bir disk için panelde alarm ve (Bildirim sekmesinden
+        tanımlanmışsa) Telegram/webhook bildirimi üretilir. Bu, sadece bir yazma FİİLEN başarısız
+        OLDUKTAN SONRA tetiklenen "disk hatası" alarmından FARKLIDIR.</p>
       ${rolYeterli("yonetici") ? '' : '<p class="small text-muted mb-2"><i class="bi bi-lock-fill"></i> Bu ayarları sadece yönetici değiştirebilir.</p>'}
       <button type="submit" class="btn btn-sm btn-primary w-100 mt-1"><i class="bi bi-save"></i> Kaydet</button></form>`;
     document.getElementById("sistemAyarlariForm").addEventListener("submit", async (ev) => {
@@ -4825,6 +4839,7 @@ async function sistemAyarlariYukle() {
       guncel.bilinen_plaka_duzeltme_aktif = document.getElementById("ayar_bilinen_plaka_duzeltme_aktif").checked;
       guncel.otomatik_yedek_aktif = document.getElementById("ayar_otomatik_yedek_aktif").checked;
       guncel.otomatik_yedek_klasoru = document.getElementById("ayar_otomatik_yedek_klasoru").value;
+      guncel.disk_izleme_aktif = document.getElementById("ayar_disk_izleme_aktif").checked;
       // DÜZELTME (2026-09-25): bu gönderim işleyicisinde try/catch YOKTU --
       // backend'in yeni ayar doğrulaması (Patch #100) geçersiz bir değeri
       // (ör. panel yenileme 1 sn) 400 ile reddettiğinde kullanıcı yalnızca
@@ -4908,7 +4923,22 @@ async function diskBilgisiYukle() {
   try {
     const d = await apiCagir("/sistem/disk-kullanimi");
     const el = document.getElementById("diskBilgisi");
-    if (el) el.innerHTML = `<span class="fw-bold">${d.goruntu_mb} MB</span> — ${d.goruntu_sayisi} görüntü dosyası`;
+    if (!el) return;
+    // DÜZELTME (2026-09-26, kullanıcı isteği: "diskin gerçekten dolmasına
+    // karşı erken uyarı"): görüntü klasörünün baytıyla birlikte, izlenen
+    // her diskin GERÇEK doluluk yüzdesi de gösteriliyor -- eşiği aşan bir
+    // disk kırmızı rozetle öne çıkar (arka planda zaten alarm/bildirim
+    // üretiliyor, bkz. main.py::_disk_izleme_dongu; bu yalnızca panelden de
+    // görülebilmesi için).
+    const diskSatirlari = (d.diskler || []).map(disk => {
+      if (disk.kullanim_yuzdesi === null || disk.kullanim_yuzdesi === undefined) {
+        return `<div>${escapeHtml(disk.etiket)}: <span class="text-muted">okunamadı</span></div>`;
+      }
+      const uyari = disk.kullanim_yuzdesi >= d.uyari_esigi_yuzde;
+      const rozetSinif = uyari ? "text-danger fw-bold" : "text-muted";
+      return `<div>${escapeHtml(disk.etiket)}: <span class="${rozetSinif}">%${disk.kullanim_yuzdesi}${uyari ? " ⚠ DOLUYOR" : ""}</span></div>`;
+    }).join("");
+    el.innerHTML = `<span class="fw-bold">${d.goruntu_mb} MB</span> — ${d.goruntu_sayisi} görüntü dosyası${diskSatirlari ? `<div class="mt-1">${diskSatirlari}</div>` : ""}`;
   } catch (e) {
     // DÜZELTME (2026-09-25): bu catch bloğu tamamen boştu -- istek
     // başarısız olduğunda disk bilgisi alanı eski (belki hiç

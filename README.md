@@ -4098,3 +4098,54 @@ indirmenin (`/sistem/yedek`) bütünlük kontrolünden geçemeyen bir yedeği
 İPTAL ettiği ve geçici dosya bırakmadığı, ve `_otomatik_yedek_uret_ve_dogrula`'nın
 bozuk bir yedek ürettiğinde hem panel alarmı hem de (Patch #111'in
 `_bildirim_tetikle`'si üzerinden) dış bildirim tetiklediği.
+
+## Diskin Gerçekten Dolmasına Karşı Erken Uyarı (2026-09-26, kullanıcı isteği)
+
+Kullanıcının seçtiği üçüncü iyileştirme. Kök neden: sistemde tek disk
+alarmı mevcut `disk_hatasi` idi ve bu, bir araç fotoğrafının yazılması
+FİİLEN BAŞARISIZ OLDUKTAN SONRA (yani disk ZATEN dolduktan sonra)
+tetiklenir -- bu noktada kayıtlar artık fotoğrafsız oluşuyor demektir.
+Diskin doluluk YÜZDESİNE proaktif olarak bakan, henüz hiçbir yazma
+başarısız olmadan uyaran bir mekanizma yoktu.
+
+### Nasıl çalışır
+
+- Yeni arka plan görevi `_disk_izleme_dongu` (main.py), her 30 dakikada
+  bir üç klasörün bulunduğu disklerin doluluk yüzdesini `shutil.disk_usage`
+  ile ayrı ayrı kontrol eder: araç görselleri, otomatik yedekler ve
+  (SQLite kullanılıyorsa) canlı veritabanı -- bunlar farklı fiziksel
+  disklerde olabilir (ör. yedekler harici bir diskte), bu yüzden HERBİRİ
+  bağımsız izlenir.
+- Panelden ayarlanabilen bir eşiği (`disk_uyari_esik_yuzde`, varsayılan
+  %90, Sistem sekmesi > Sistem Ayarları) aşan bir disk için panelde
+  görülebilir bir `disk_doluyor` alarmı oluşturulur VE Patch #111'in
+  `_bildirim_tetikle`'si ile Telegram/webhook'a da bildirilir. Aynı disk
+  için tekrar tekrar bildirim gönderilmesin diye en fazla 6 saatte bir
+  tekrarlanır; disk tekrar eşiğin altına düşerse (ör. temizlik sonrası)
+  bir dahaki dolmada yeniden uyarabilmek için kayıt sıfırlanır.
+  `disk_izleme_aktif` ayarıyla tamamen kapatılabilir.
+- `/sistem/disk-kullanimi` uç noktası artık yalnızca görüntü klasörünün
+  boyutunu değil, izlenen HER diskin gerçek doluluk yüzdesini de
+  döndürüyor; Sistem sekmesindeki disk bilgisi kartı eşiği aşan bir diski
+  artık kırmızı bir "⚠ DOLUYOR" rozetiyle gösteriyor.
+
+### Bilinçli sınırlamalar
+
+- Bu, mevcut `disk_hatasi` alarmının YERİNE geçmez -- ikisi birlikte
+  çalışır: bu yeni mekanizma proaktif (disk dolmadan ÖNCE), `disk_hatasi`
+  ise reaktif (bir yazma fiilen başarısız OLDUKTAN SONRA) bir güvenlik
+  ağıdır.
+- Kontrol aralığı (30 dakika) ile gerçek doluluk arasında bir gecikme
+  olabilir -- çok hızlı dolan bir disk (ör. saniyeler içinde) için ideal
+  değildir, ama günlük/haftalık normal doluluk artışı için yeterlidir.
+
+### Testler
+
+`tests/test_api.py` (CI) — `_disk_kullanim_yuzdesi`'nin gerçek ve var
+olmayan (üst klasöre çıkarak) yollar için makul bir yüzde döndürdüğü,
+`_izlenen_disk_yollari`'nın beklenen üç etiketi içerdiği, `/sistem/disk-kullanimi`'nin
+yeni alanları döndürdüğü, `disk_uyari_esik_yuzde` ayarının (50-99) aralık
+dışı değerleri reddettiği, ve `_disk_izleme_bir_kontrol`'ün eşiği aşan
+sahte bir disk için hem alarm hem dış bildirim ürettiği (ve hemen
+tekrarında spam üretmediği) ile `disk_izleme_aktif=False` iken hiçbir şey
+yapmadığı.
