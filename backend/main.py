@@ -2461,6 +2461,26 @@ def anasayfa():
     )
 
 
+@app.get("/sw.js")
+def servis_calisani():
+    """PWA service worker dosyası -- BİLİNÇLİ OLARAK /static/ mount'unun
+    ALTINDA DEĞİL, kök yolda (/sw.js) servis ediliyor. Bir service worker'ın
+    varsayılan "kapsamı" (scope), kaydedildiği dosyanın bulunduğu klasörle
+    sınırlıdır -- /static/sw.js olarak servis edilseydi yalnızca /static/
+    altındaki istekleri (yani zaten hiç yakalamak istemediğimiz durağan
+    dosyaları) görebilir, ana sayfa ("/") gezinme isteğini HİÇ göremezdi ve
+    çevrimdışı kabuk yedeklemesi işe yaramazdı. `Cache-Control: no-cache` ile
+    tarayıcı her kontrol ettiğinde güncel sürümü sunucudan doğrulamak zorunda
+    kalır -- bir SW düzeltmesi yayınlandığında eski sürümün günlerce cihazda
+    takılı kalmaması için (bkz. _OnbellegiHicDogrulamadanKullanma'daki aynı
+    gerekçe)."""
+    return FileResponse(
+        os.path.join(FRONTEND_KLASORU, "sw.js"),
+        media_type="application/javascript",
+        headers={"Cache-Control": "no-cache"},
+    )
+
+
 @app.get("/saglik")
 def saglik_kontrolu(db: Session = Depends(get_db)):
     """İzleme/servis denetleyicileri için basit sağlık kontrolü uç noktası."""

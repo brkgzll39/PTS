@@ -1,6 +1,40 @@
 const API = "";  // aynı sunucudan servis edildiği için boş bırakıldı
 let sonKayitlarCache = [];
 
+// ---------------------- PWA: "ana ekrana ekle" desteği (2026-09-27) ----------------------
+// Panelin telefona kurulabilir (installable) bir PWA olarak çalışabilmesi için
+// service worker kaydı. SW yalnızca statik kabuk dosyalarını (HTML/CSS/JS/ikon)
+// önbelleğe alır -- kayıtlar/canlı izleme/auth gibi hiçbir güvenlik verisi
+// SW'ye hiç uğramaz (bkz. sw.js'teki gerekçe). Kayıt başarısız olsa bile
+// (ör. eski tarayıcı, güvenlik profili SW'yi engelliyor) uygulamanın normal
+// çalışmasını hiçbir şekilde etkilemez -- panel her zaman SW'siz de tam
+// işlevseldir, bu sadece "ana ekrana ekle" kurulabilirliği için bir katkı.
+if ("serviceWorker" in navigator) {
+  window.addEventListener("load", () => {
+    navigator.serviceWorker.register("/sw.js").catch((err) => {
+      console.warn("PWA service worker kaydı başarısız (uygulama yine de normal çalışır):", err);
+    });
+  });
+}
+
+// manifest.json'daki "shortcuts" (Kontrol Merkezi / Son Geçişler / Kayıtlar)
+// ve PWA start_url'i "/?ekran=..." sorgu parametresiyle belirli bir sekmeyi
+// açar -- örn. yönetici telefonun ana ekranındaki kısayoldan doğrudan
+// "Kontrol Merkezi" özetine düşer, her seferinde varsayılan "Canlı İzleme"
+// sekmesinden elle gezinmesi gerekmez. Normal (parametresiz) girişte hiçbir
+// şey değişmez, varsayılan sekme aynı kalır.
+const _PWA_EKRAN_HEDEFLERI = {
+  kontrol: "#kontrol-sekme",
+  panel: "#panel-sekme",
+  kayitlar: "#kayitlar-sekme",
+};
+
+function _pwaKisaYolunuUygula() {
+  const ekran = new URLSearchParams(location.search).get("ekran");
+  const hedef = _PWA_EKRAN_HEDEFLERI[ekran];
+  if (hedef) sekmeAc(hedef);
+}
+
 // ---------------------- KÜRESEL HATA YAKALAYICI (2026-09-20) ----------------------
 // Backend'in "sıfır sessiz hata" ilkesi (küresel exception handler'lar,
 // hemen hemen her uçta try/except + loglama) frontend'de KARŞILIKSIZDI: bir
@@ -741,6 +775,7 @@ function authBasarili(kullanici) {
   }
   rolBazliArayuzuUygula();
   uygulamaVerileriniYukle();
+  _pwaKisaYolunuUygula();
 }
 
 async function uygulamaVerileriniYukle() {
