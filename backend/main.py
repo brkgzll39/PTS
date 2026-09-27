@@ -91,6 +91,7 @@ from backend import lisans as lisans_modulu
 from backend.vardiya_eslestirme import kayitlari_oturumlarla_eslestir
 from backend import kucuk_gorsel
 from backend import telegram_bildirim
+from backend import expo_push
 from backend.metin_araclari import levenshtein_mesafesi, en_yakin_bilinen_plakayi_bul, plaka_hucresini_ayir
 
 # ---------------------- KLASÖR AYARLARI ----------------------
@@ -2417,6 +2418,64 @@ def mevcut_kullanici(kullanici: models.Kullanici = Depends(_giris_gerekli)):
     return kullanici
 
 
+@app.post("/push/kaydet", response_model=schemas.PushTokenCevap)
+def push_token_kaydet(
+    istek: schemas.PushTokenIstegi,
+    db: Session = Depends(get_db),
+    kullanici: models.Kullanici = Depends(_personel_girisi_gerekli),
+):
+    """Mobil uygulama (React Native/Expo) girişten hemen sonra kendi Expo
+    push token'ını burada kaydettirir/günceller (bkz. models.PushToken'ın
+    docstring'i, expo_push.py). Yalnızca panel PERSONELİ (yönetici/operatör/
+    güvenlik/izleyici) -- "sakin" öz-hizmet hesapları için mobil uygulama
+    hedeflenmiyor (bkz. _personel_girisi_gerekli).
+
+    UPSERT: aynı token zaten kayıtlıysa (ör. aynı cihazda vardiya değişimi,
+    farklı kullanıcıyla tekrar giriş) o satır bu kullanıcıya DEVREDİLİR --
+    aksi halde eski kullanıcı hesabına bağlı kalan satır, artık o hesabı
+    kullanmayan birine ait cihaza bildirim göndermeye devam ederdi."""
+    token_deger = istek.expo_push_token.strip()
+    mevcut = db.query(models.PushToken).filter(models.PushToken.expo_push_token == token_deger).first()
+    simdi = datetime.now()
+    if mevcut:
+        mevcut.kullanici_id = kullanici.id
+        mevcut.platform = istek.platform or mevcut.platform
+        mevcut.son_kullanim_tarihi = simdi
+        db.commit()
+        db.refresh(mevcut)
+        return mevcut
+    yeni = models.PushToken(
+        kullanici_id=kullanici.id, expo_push_token=token_deger,
+        platform=istek.platform or "bilinmiyor", son_kullanim_tarihi=simdi,
+    )
+    db.add(yeni)
+    db.commit()
+    db.refresh(yeni)
+    return yeni
+
+
+@app.post("/push/kaydi-sil")
+def push_token_kaydi_sil(
+    istek: schemas.PushTokenIstegi,
+    db: Session = Depends(get_db),
+    kullanici: models.Kullanici = Depends(_personel_girisi_gerekli),
+):
+    """Mobil uygulamada çıkış yapılınca ya da bildirim izni geri alınınca
+    çağrılır -- token bu cihazdan silinir, bir daha bildirim gönderilmez.
+    Yalnızca TOKEN'IN O ANDAKİ SAHİBİ kendi kaydını silebilir (`kullanici_id`
+    filtresiyle) -- başka bir kullanıcının cihazını sessizce susturamaz."""
+    silinen = (
+        db.query(models.PushToken)
+        .filter(
+            models.PushToken.expo_push_token == istek.expo_push_token.strip(),
+            models.PushToken.kullanici_id == kullanici.id,
+        )
+        .delete()
+    )
+    db.commit()
+    return {"silindi": bool(silinen)}
+
+
 @app.get("/goruntuler/{dosya_adi}")
 def gorsel_getir(dosya_adi: str, kucuk: bool = False, _: models.Kullanici = Depends(_personel_girisi_gerekli)):
     """Araç/sürücü görsellerini (plaka + fotoğraf — KVKK kapsamında kişisel
@@ -4403,12 +4462,14 @@ def _webhook_gonder_sync(url: str, metot: str, veri: dict) -> "tuple[bool, Optio
         return False, aciklama
 
 
-_BILDIRIM_TIPLERI = ("webhook", "telegram")
+_BILDIRIM_TIPLERI = ("webhook", "telegram", "push")
 
 
 def _bildirim_gonder_sync(tip: str, hedef: str, http_metot: str, veri: dict) -> "tuple[bool, Optional[str]]":
     """`BildirimAyarlari.tip`'e göre GERÇEK gönderimi yapan tek dispatcher
-    (2026-09-26, kullanıcı isteği: "Telegram ile anlık dış bildirim").
+    (2026-09-26, kullanıcı isteği: "Telegram ile anlık dış bildirim";
+    2026-09-27: "push" tipi -- "daha profesyonel mobil uygulama" isteğiyle
+    eklendi, bkz. expo_push.py'nin docstring'i).
 
     KÖK NEDEN düzeltmesi: bu fonksiyondan ÖNCE `/bildirim/test/{id}` ve her
     çağıran, `tip` alanına HİÇ bakmadan koşulsuz `_webhook_gonder_sync`'i
@@ -4418,11 +4479,18 @@ def _bildirim_gonder_sync(tip: str, hedef: str, http_metot: str, veri: dict) -> 
     değilmiş gibi `urllib`'e verilip anlaşılmaz bir bağlantı hatasıyla
     "başarısız" dönüyordu -- ayarın kendisinin desteklenmediği HİÇBİR
     zaman söylenmiyordu (sessiz/yanıltıcı başarısızlık). Artık tanımadığımız
-    bir `tip` için açıkça "Desteklenmeyen bildirim tipi" hatası dönülür."""
+    bir `tip` için açıkça "Desteklenmeyen bildirim tipi" hatası dönülür.
+
+    NOT (tip="push"): `hedef` burada webhook/telegram'daki gibi bir ADRES
+    değil, hangi role gönderileceğini belirten bir FİLTRE metnidir
+    ("yonetici" | "izleyici" | "operatör" | "güvenlik" | "hepsi") -- bkz.
+    expo_push.py'nin başındaki mimari not."""
     if tip == "webhook":
         return _webhook_gonder_sync(hedef, http_metot, veri)
     if tip == "telegram":
         return telegram_bildirim.telegram_gonder_sync(hedef, veri)
+    if tip == "push":
+        return expo_push.expo_push_gonder_sync(hedef, veri)
     return False, f"Desteklenmeyen bildirim tipi: '{tip}' (yalnızca {'/'.join(_BILDIRIM_TIPLERI)} desteklenir)"
 
 
@@ -6971,7 +7039,7 @@ def bildirim_ayari_ekle(istek: dict = Body(...), db: Session = Depends(get_db), 
     ad = re.sub(r"[<>&\"']", "", str(istek.get("ad", "Bildirim"))).strip()[:80] or "Bildirim"
     hedef = str(istek.get("hedef", "")).strip()
     if not hedef:
-        raise HTTPException(400, "Hedef boş olamaz (webhook için URL, telegram için chat_id)")
+        raise HTTPException(400, "Hedef boş olamaz (webhook için URL, telegram için chat_id, push için rol adı/hepsi)")
     tip = str(istek.get("tip", "webhook")).strip().lower()
     # DÜZELTME (2026-09-26): bkz. _bildirim_gonder_sync'in docstring'indeki
     # kök neden notu -- ÖNCEDEN `tip` HİÇ doğrulanmıyordu; artık desteklenen
@@ -6984,6 +7052,18 @@ def bildirim_ayari_ekle(istek: dict = Body(...), db: Session = Depends(get_db), 
             400,
             "Telegram bildirimi eklenemedi: sunucuda PTS_TELEGRAM_BOT_TOKEN ortam değişkeni ayarlanmamış "
             "(bkz. README.md'deki Telegram kurulum notu)",
+        )
+    # tip="push" için `hedef` bir adres değil bir ROL FİLTRESİ (bkz.
+    # expo_push.py'nin başındaki mimari not) -- burada da erken, açık bir
+    # hata ile yakalanır; aksi halde bir yazım hatası ("yönetci" gibi)
+    # sessizce sıfır cihaza gönderim yapar, hiç kimse neden bildirim
+    # gelmediğini anlayamazdı (webhook/telegram tip doğrulamasındaki AYNI
+    # "sessiz/yanıltıcı başarısızlık" kök nedeni).
+    if tip == "push" and hedef.lower() not in ("hepsi", ROL_YONETICI, ROL_OPERATOR, ROL_GUVENLIK, ROL_IZLEYICI):
+        raise HTTPException(
+            400,
+            f"Push bildirimi için hedef 'hepsi' veya bir rol adı olmalı "
+            f"({ROL_YONETICI}/{ROL_OPERATOR}/{ROL_GUVENLIK}/{ROL_IZLEYICI})",
         )
     yeni = models.BildirimAyarlari(
         ad=ad,

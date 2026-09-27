@@ -626,3 +626,19 @@ class DogrulukTestiIstegi(BaseModel):
     # Yalnızca model ADI (dosya yolu değil) kabul edilir.
     dedektor_modeli: Optional[str] = Field(None, max_length=100, pattern=r"^[A-Za-z0-9._-]*$")
     ocr_modeli: Optional[str] = Field(None, max_length=100, pattern=r"^[A-Za-z0-9._-]*$")
+
+
+class PushTokenIstegi(BaseModel):
+    """Mobil uygulamanın (React Native/Expo) girişten hemen sonra kendi
+    Expo push token'ını kaydettirmek için gönderdiği istek -- bkz.
+    main.py::/push/kaydet, models.PushToken."""
+    expo_push_token: str = Field(..., min_length=10, max_length=200)
+    platform: Optional[str] = Field(None, max_length=20)
+
+
+class PushTokenCevap(BaseModel):
+    id: int
+    platform: Optional[str] = None
+    olusturma_tarihi: Optional[datetime] = None
+
+    model_config = ConfigDict(from_attributes=True)

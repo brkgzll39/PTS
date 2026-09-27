@@ -4843,6 +4843,14 @@ function bildirimTipDegisti() {
   if (webhookMu) {
     etiket.textContent = "Hedef URL";
     hedefGirdi.placeholder = "https://ornek.com/webhook";
+  } else if (tip === "push") {
+    // "push" tipinde hedef bir adres DEĞİL, hangi role gönderileceğini
+    // belirten bir filtredir (bkz. backend/expo_push.py'nin başındaki
+    // mimari not) -- serbest metin girdisi olarak kalıyor (yeni bir
+    // dropdown eklemek yerine, backend zaten geçersiz bir değeri 400 ile
+    // açıkça reddediyor, bkz. main.py::bildirim_ayari_ekle).
+    etiket.textContent = "Hedef rol (hepsi / yonetici / operatör / güvenlik / izleyici)";
+    hedefGirdi.placeholder = "hepsi";
   } else {
     etiket.textContent = "Telegram chat_id";
     hedefGirdi.placeholder = "123456789";
@@ -4866,7 +4874,7 @@ async function bildirimAyarlariYukle() {
     };
     el.innerHTML = ayarlar.map(a => `<tr>
       <td><strong>${escapeHtml(a.ad)}</strong></td>
-      <td><span class="badge ${a.tip === "telegram" ? "bg-info text-dark" : "bg-secondary"}">${escapeHtml(a.tip)}</span></td>
+      <td><span class="badge ${a.tip === "telegram" ? "bg-info text-dark" : a.tip === "push" ? "bg-primary" : "bg-secondary"}">${escapeHtml(a.tip)}</span></td>
       <td class="text-muted small text-truncate" style="max-width:150px" title="${escapeHtml(a.hedef)}">${escapeHtml(a.hedef)}</td>
       <td class="small">${escapeHtml(tetikleyiciEtiketleri[a.tetikleyici] || a.tetikleyici)}</td>
       <td>

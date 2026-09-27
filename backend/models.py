@@ -475,3 +475,30 @@ class OturumTokeni(Base):
     # süresi geçmiş satırların temizlik döngüsünce bulunabilmesi için burada
     # da (sorgulanabilir bir DateTime olarak) tutulur.
     bitis_tarihi = Column(DateTime, nullable=False)
+
+
+class PushToken(Base):
+    """Mobil uygulamanın (React Native/Expo) anlık bildirim alabilmesi için
+    kaydettiği Expo push token'ı (2026-09-27, kullanıcı isteği: "daha
+    profesyonel mobil uygulama" -- push bildirim istendi).
+
+    Mimari not: OturumTokeni (yukarısı) YETKİLENDİRME için, bu ise SADECE
+    BİLDİRİM HEDEFİ için -- ikisi bilinçli olarak ayrı tablolar. Bir push
+    token, kullanıcı çıkış yapıp token'ı (OturumTokeni) süresi dolsa bile
+    o CİHAZA bildirim gönderilebilmesi için ayrıca yaşamaya devam edebilir
+    (gerçek uygulamalarda normal davranış budur) -- bu yüzden OturumTokeni
+    silinince/süresi dolunca CASCADE ile silinmiyor.
+
+    `expo_push_token` TEKİL (unique): aynı fiziksel cihaz farklı bir
+    kullanıcıyla tekrar giriş yaparsa (ör. vardiya değişimi) aynı satır
+    GÜNCELLENİR (bkz. main.py::/push/kaydet'teki upsert) -- aksi halde eski
+    kullanıcı hesabına bağlı satır o cihaza bildirim göndermeye devam eder,
+    hesabı artık kullanmayan biri başkasının bildirimini görürdü."""
+    __tablename__ = "push_tokenlari"
+
+    id = Column(Integer, primary_key=True, index=True)
+    kullanici_id = Column(Integer, ForeignKey("kullanicilar.id"), nullable=False, index=True)
+    expo_push_token = Column(String(200), nullable=False, unique=True, index=True)
+    platform = Column(String(20), default="bilinmiyor")  # ios | android
+    olusturma_tarihi = Column(DateTime, default=datetime.now)
+    son_kullanim_tarihi = Column(DateTime, default=datetime.now)
