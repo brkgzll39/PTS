@@ -12,12 +12,17 @@
       "resizeMode": "contain",
       "backgroundColor": "#F4F6F9"
     },
-    "assetBundlePatterns": ["**/*"],
+    "assetBundlePatterns": [
+      "**/*"
+    ],
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.tpao.ptsmobil",
       "infoPlist": {
-        "UIBackgroundModes": ["remote-notification"]
+        "UIBackgroundModes": [
+          "remote-notification",
+          "remote-notification"
+        ]
       }
     },
     "android": {
@@ -26,7 +31,10 @@
         "backgroundColor": "#16233A"
       },
       "package": "com.tpao.ptsmobil",
-      "permissions": ["NOTIFICATIONS"]
+      "permissions": [
+        "NOTIFICATIONS",
+        "NOTIFICATIONS"
+      ]
     },
     "plugins": [
       [
@@ -39,8 +47,15 @@
     ],
     "extra": {
       "eas": {
-        "projectId": "BURAYA-KENDI-EAS-PROJECT-ID-NIZ-GELECEK"
+        "projectId": "4b97041b-607b-4a6c-9dda-acc34f59664c"
       }
+    },
+    "owner": "brkgzll39",
+    "runtimeVersion": {
+      "policy": "appVersion"
+    },
+    "updates": {
+      "url": "https://u.expo.dev/4b97041b-607b-4a6c-9dda-acc34f59664c"
     }
   }
 }
