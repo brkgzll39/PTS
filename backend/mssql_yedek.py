@@ -111,6 +111,16 @@ def hata_mesajini_sadelestir(exc: Exception) -> str:
             "kendi yedek klasörüne alın (ayar boş bırakılırsa otomatik kullanılır) ya da klasöre "
             f"servis hesabına yazma izni verin. Ayrıntı: {ham[:300]}"
         )
+    if "create database permission" in kucuk or "verify database is terminating" in kucuk:
+        # RESTORE VERIFYONLY, SQL Server'da `master` içinde CREATE ANY DATABASE
+        # izni ister (yedeğin kendisi alınmış olabilir; yalnızca doğrulama yetkisi eksik).
+        return (
+            "Yedek alındı ancak DOĞRULANAMADI: SQL Server, yedek doğrulaması (RESTORE VERIFYONLY) "
+            "için PTS'nin SQL kullanıcısına `master` içinde CREATE ANY DATABASE izni ister. "
+            "SSMS'te: USE master; CREATE USER [kullanici] FOR LOGIN [kullanici]; "
+            "GRANT CREATE ANY DATABASE TO [kullanici]; "
+            f"(Bu izin verilmezse yedek yine alınır, yalnızca doğrulama atlanır.) Ayrıntı: {ham[:300]}"
+        )
     if "permission" in kucuk or "izni" in kucuk or "(229)" in ham or "(262)" in ham:
         return (
             "SQL Server yedek alma/doğrulama izni vermedi. PTS'nin SQL kullanıcısını "

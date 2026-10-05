@@ -177,6 +177,19 @@ def test_yedegi_dogrula_siniflandirir():
     assert saglam is False and "corrupt" in mesaj
 
 
+def test_dogrulama_create_database_izni_eksikse_dogru_yonlendirir():
+    """Gerçek sahada görülen hata: BACKUP başarılı, RESTORE VERIFYONLY
+    `master`da CREATE DATABASE izni istedi. Mesaj db_backupoperator'a değil
+    CREATE ANY DATABASE iznine yönlendirmeli ve sonuç BOZUK (False) değil
+    'doğrulanamadı' (None) olmalı."""
+    ham = ("[42000] [SQL Server]CREATE DATABASE permission denied in database 'master'. (262); "
+           "[42000] [SQL Server]VERIFY DATABASE is terminating abnormally. (3013)")
+    saglam, mesaj = my.yedegi_dogrula(SahteEngine(SahteDbapi(hata=Exception(ham))), "x")
+    assert saglam is None
+    assert "CREATE ANY DATABASE" in mesaj and "Yedek alındı" in mesaj
+    assert "db_backupoperator" not in mesaj
+
+
 def test_varsayilan_klasor_veri_klasoru_ve_etkin_klasor_ve_onbellek():
     eng = SahteEngine(yanitlar={
         "InstanceDefaultBackupPath": SahteSonuc("C:\\Program Files\\SQL\\Backup"),
