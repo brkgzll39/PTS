@@ -33,3 +33,16 @@ os.environ["PTS_AUTH_SECRET"] = "test-suiti-icin-sabit-auth-secret-0123456789"
 os.environ["PTS_LICENSE_FILE"] = os.path.join(_TEST_DB_DIZINI, "license.json")
 os.environ["PTS_CAMERAS_FILE"] = os.path.join(_TEST_DB_DIZINI, "cameras.json")
 os.environ["PTS_SISTEM_AYARLARI_FILE"] = os.path.join(_TEST_DB_DIZINI, "sistem_ayarlari.json")
+
+
+def pytest_collection_modifyitems(config, items):
+    """Kamera okuyucu testlerini (gerçek thread/video/zamanlama kullanırlar)
+    test_api.py'den ÖNCE çalıştırır.
+
+    Tam koşuda bu testler, test_api.py'nin başlattığı uygulama (kamera
+    pipeline'ları, arka plan döngüleri, model yüklemesi) CPU'yu/GIL'i
+    kullanırken çalışıyor ve hazırlık adımları 200-300 sn sürüp zaman
+    aşımına düşüyordu; tek başına 13 sn'de geçiyorlardı (2026-10-05).
+    Temiz bir süreçte çalışmaları bu yarışı ortadan kaldırır. Sıralama kararlıdır:
+    diğer testlerin göreli sırası değişmez."""
+    items.sort(key=lambda item: 0 if item.path.name == "test_camera_reader.py" else 1)
