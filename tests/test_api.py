@@ -6392,3 +6392,89 @@ def test_kayitlar_grafik_saatlik_ve_sorunlu_plakalar(client, yetkili_header):
         assert eslesen[0]["sayi"] >= 3
     finally:
         db.close()
+
+
+# ------------------------------------------------------------------
+# 2026-10-05 gerçek kullanıcı geri bildirimi: "giriş yapınca F5 yapmadan
+# yönetici ekranları gelmiyor" + "her araç geçtiğinde alarmlar otomatik
+# okunsun" (bkz. main.py::giris_yap, _gecis_alarmlarini_otomatik_okundu_isaretle)
+# ------------------------------------------------------------------
+
+def test_giris_cevabi_kullanici_bilgisini_eksiksiz_icerir(client, admin_token):
+    """POST /auth/giris yanıtındaki `kullanici` ÖNCEDEN, `_token_uret`'in
+    commit'i nesneyi 'expire' ettiği için boş `{}` dönüyordu; frontend rol/
+    kullanıcı adı bulamayıp yönetici ekranlarını F5'e kadar gizliyordu."""
+    r = client.post("/auth/giris", json={"kullanici_adi": "admin", "parola": "GucluParola123!"})
+    assert r.status_code == 200, r.text
+    k = r.json()["kullanici"]
+    assert k["kullanici_adi"] == "admin"
+    assert k["rol"] == "yonetici"
+    assert k["aktif"] is True
+    assert isinstance(k["id"], int)
+    # /auth/me ile (F5 yolu) AYNI alanları içermeli
+    me = client.get("/auth/me", headers={"Authorization": f"Bearer {r.json()['token']}"}).json()
+    assert {a: k.get(a) for a in ("id", "kullanici_adi", "rol", "aktif")} == {a: me.get(a) for a in ("id", "kullanici_adi", "rol", "aktif")}
+
+
+def test_giris_cevabi_guvenlik_rolunde_de_kullanici_bilgisini_icerir(client, yetkili_header):
+    header = _rol_ile_kullanici_olustur_ve_giris_yap(client, yetkili_header, "guvenlik_giris_cevabi", "güvenlik")
+    me = client.get("/auth/me", headers=header).json()
+    assert me["rol"] == "güvenlik"
+    r = client.post("/auth/giris", json={"kullanici_adi": "guvenlik_giris_cevabi", "parola": "GucluParola123!"})
+    assert r.status_code == 200, r.text
+    assert r.json()["kullanici"]["rol"] == "güvenlik"
+    assert r.json()["kullanici"]["kullanici_adi"] == "guvenlik_giris_cevabi"
+
+
+def test_yeni_gecis_onceki_yetkisiz_alarmlari_otomatik_okundu_isaretler(client, yetkili_header):
+    onceki_ayar = client.get("/sistem/ayarlar", headers=yetkili_header).json().get("alarm_otomatik_okundu", True)
+    try:
+        r0 = client.put("/sistem/ayarlar", json={"alarm_otomatik_okundu": True}, headers=yetkili_header)
+        assert r0.status_code == 200, r0.text
+
+        r1 = client.post("/kayitlar", json={"plaka_no": "34 AOK 01", "kamera_id": "TEST", "yon": "giris"}, headers=yetkili_header)
+        assert r1.status_code == 200, r1.text
+        assert r1.json()["yetki_durumu"] == "yetkisiz"
+        a1 = [a for a in client.get("/alarmlar", headers=yetkili_header).json() if a["plaka_no"] == "34 AOK 01"]
+        assert a1 and a1[0]["alarm_tipi"] == "yetkisiz_arac"
+        # Geçişin KENDİ alarmı, bir sonraki geçişe kadar açık kalır.
+        assert a1[0]["okundu"] is False
+
+        r2 = client.post("/kayitlar", json={"plaka_no": "34 AOK 02", "kamera_id": "TEST", "yon": "giris"}, headers=yetkili_header)
+        assert r2.status_code == 200, r2.text
+        alarmlar = client.get("/alarmlar", headers=yetkili_header).json()
+        eski = [a for a in alarmlar if a["plaka_no"] == "34 AOK 01"]
+        yeni = [a for a in alarmlar if a["plaka_no"] == "34 AOK 02"]
+        assert eski and all(a["okundu"] is True for a in eski), "önceki geçişin alarmı otomatik okundu işaretlenmedi"
+        assert yeni and yeni[0]["okundu"] is False, "yeni geçişin kendi alarmı henüz okundu OLMAMALI"
+    finally:
+        client.put("/sistem/ayarlar", json={"alarm_otomatik_okundu": onceki_ayar}, headers=yetkili_header)
+
+
+def test_otomatik_okundu_kara_liste_alarmina_dokunmaz(client, yetkili_header):
+    plaka = "34 AOK 03"
+    assert client.post("/kara-listesi", json={"plaka_no": plaka, "sebep": "test"}, headers=yetkili_header).status_code == 200
+    onceki_ayar = client.get("/sistem/ayarlar", headers=yetkili_header).json().get("alarm_otomatik_okundu", True)
+    try:
+        client.put("/sistem/ayarlar", json={"alarm_otomatik_okundu": True}, headers=yetkili_header)
+        assert client.post("/kayitlar", json={"plaka_no": plaka, "kamera_id": "TEST", "yon": "giris"}, headers=yetkili_header).status_code == 200
+        assert client.post("/kayitlar", json={"plaka_no": "34 AOK 04", "kamera_id": "TEST", "yon": "giris"}, headers=yetkili_header).status_code == 200
+        kara = [a for a in client.get("/alarmlar", headers=yetkili_header).json() if a["plaka_no"] == plaka]
+        assert kara and kara[0]["alarm_tipi"] == "kara_liste"
+        assert kara[0]["okundu"] is False, "kara liste alarmı otomatik okundu OLMAMALI (açık onay gerekir)"
+    finally:
+        client.put("/sistem/ayarlar", json={"alarm_otomatik_okundu": onceki_ayar}, headers=yetkili_header)
+
+
+def test_alarm_otomatik_okundu_ayari_kapaliyken_alarmlar_acik_kalir(client, yetkili_header):
+    onceki_ayar = client.get("/sistem/ayarlar", headers=yetkili_header).json().get("alarm_otomatik_okundu", True)
+    try:
+        r0 = client.put("/sistem/ayarlar", json={"alarm_otomatik_okundu": False}, headers=yetkili_header)
+        assert r0.status_code == 200, r0.text
+        assert r0.json()["alarm_otomatik_okundu"] is False
+        assert client.post("/kayitlar", json={"plaka_no": "34 AOK 05", "kamera_id": "TEST", "yon": "giris"}, headers=yetkili_header).status_code == 200
+        assert client.post("/kayitlar", json={"plaka_no": "34 AOK 06", "kamera_id": "TEST", "yon": "giris"}, headers=yetkili_header).status_code == 200
+        eski = [a for a in client.get("/alarmlar", headers=yetkili_header).json() if a["plaka_no"] == "34 AOK 05"]
+        assert eski and eski[0]["okundu"] is False
+    finally:
+        client.put("/sistem/ayarlar", json={"alarm_otomatik_okundu": onceki_ayar}, headers=yetkili_header)

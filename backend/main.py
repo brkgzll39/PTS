@@ -254,6 +254,11 @@ _veritabani_migrasyon()
 SISTEM_AYARLARI_DOSYASI = os.getenv("PTS_SISTEM_AYARLARI_FILE") or os.path.join(BACKEND_DIR, "sistem_ayarlari.json")
 _VARSAYILAN_AYARLAR = {
     "supheli_esik": 3,           # saatte kaç red → şüpheli alarm
+    # 2026-10-05 kullanıcı isteği ("her araç geçtiğinde alarmlar otomatik
+    # okunsun"): True ise yeni bir araç geçişi kaydedildiğinde, ÖNCEKİ geçişlere
+    # ait açık "yetkisiz araç"/"süresi dolmuş" alarmları otomatik okundu
+    # işaretlenir -- bkz. _gecis_alarmlarini_otomatik_okundu_isaretle.
+    "alarm_otomatik_okundu": True,
     "goruntu_saklama_gun": 30,   # görüntü saklama süresi (gün)
     # AYNI KAMERANIN kendi tekrarını bastırma gecikmesi (sn) -- örn. bir araç
     # bariyer önünde birkaç saniye beklerse, aynı pipeline aynı plakayı tekrar
@@ -2377,7 +2382,22 @@ def giris_yap(istek: schemas.GirisIstegi, request: Request, db: Session = Depend
     _guvenlik_oturum_baslat(db, kullanici)
     logger.info("Başarılı giriş: %s", kullanici_adi)
     ip_adresi = request.client.host if request.client else None
-    return {"token": _token_uret(kullanici.id, db, ip_adresi=ip_adresi), "kullanici": kullanici}
+    # KRİTİK HATA DÜZELTMESİ (2026-10-05, gerçek kullanıcı geri bildirimi:
+    # "yönetici hesabıyla giriş yaptığımda f5 yapmadan yönetici ekranları
+    # gelmiyor"): bu uç nokta ÖNCEDEN çıplak SQLAlchemy `kullanici` nesnesini
+    # dönüyordu (response_model YOK). `_token_uret` içindeki `db.commit()`
+    # (oturum satırını kalıcılaştırır) SessionLocal'ın varsayılan
+    # `expire_on_commit=True` davranışıyla nesnenin TÜM alanlarını "süresi
+    # dolmuş" yapıyor; FastAPI yanıtı sonradan serileştirirken (vars(nesne))
+    # alan bulamayıp `"kullanici": {}` gönderiyordu. Tarayıcıda
+    # `kullanici.rol`/`kullanici_adi` undefined kaldığı için yönetici
+    # menüleri/düğmeleri gizli, header'da kullanıcı adı boş, otomatik panel
+    # yenileme (mevcutRol'e bağlı) çalışmıyor ve operatör düğmeleri (tüm
+    # alarmlar okundu vb.) pasif kalıyordu -- F5 sonrası /auth/me
+    # (response_model'li) doğru dönünce her şey düzeliyordu. Çözüm: kullanıcıyı
+    # commit'ten ÖNCE KullaniciCevap şemasına çevirip düz sözlük olarak dön.
+    kullanici_cevap = schemas.KullaniciCevap.model_validate(kullanici).model_dump(mode="json")
+    return {"token": _token_uret(kullanici.id, db, ip_adresi=ip_adresi), "kullanici": kullanici_cevap}
 
 
 @app.post("/auth/cikis")
@@ -4177,6 +4197,52 @@ def _arvento_surucu_bul(db: Session, plaka_no: str) -> Optional[str]:
     return olay.surucu_adi if olay else None
 
 
+# Otomatik okundu işaretlemeye (bkz. aşağıdaki fonksiyon) DAHİL OLAN alarm
+# tipleri: yalnızca bir araç GEÇİŞİNİN kendi doğurduğu, sonraki geçişle zaten
+# "görülmüş" sayılabilecek alarmlar. KARA LİSTE ve ŞÜPHELİ ARAÇ alarmları
+# bilerek HARİÇ: bunlar güvenlik açısından kritik olduğu için bir sonraki
+# aracın geçmesi onları "okunmuş" yapmamalı; bir kişi açıkça onaylamalı.
+# Sistem alarmları (kamera arızası, yedek bozuk, disk dolu, bariyer hatası
+# vb.) da araç trafiğiyle ilgisiz olduğu için dahil değildir.
+_OTOMATIK_OKUNDU_ALARM_TIPLERI = ("yetkisiz_arac", "suresi_dolmus")
+
+
+def _gecis_alarmlarini_otomatik_okundu_isaretle(db: Session) -> int:
+    """2026-10-05 kullanıcı isteği ("son geçişler alarm okuma dediğimiz yer,
+    her araç geçtiğinde otomatik alarmlar okunsun"): yeni bir araç geçişi
+    kaydedildiğinde, ÖNCEKİ geçişlere ait hâlâ açık alarmları okundu
+    işaretler -- operatörün her seferinde "tüm alarmlar okundu işaretle"ye
+    basması gerekmez. Bu geçişin KENDİ alarmı henüz oluşturulmadığı için
+    (çağıran, alarmı bundan SONRA ekler) en az bir geçiş boyunca ekranda
+    kalır. Alarm satırları ASLA silinmez (yalnızca okundu=True); denetim izi
+    korunur. Ayar `alarm_otomatik_okundu` ile kapatılabilir. Hata durumunda
+    geçiş kaydını ASLA engellemez; sessiz de kalmaz (log'a yazılır).
+    Güncellenen alarm sayısını döner."""
+    try:
+        if not _sistem_ayarlari_oku().get("alarm_otomatik_okundu", True):
+            return 0
+        guncellenen = (
+            db.query(models.Alarm)
+            .filter(
+                models.Alarm.okundu == False,  # noqa: E712
+                models.Alarm.kayit_id.isnot(None),
+                models.Alarm.alarm_tipi.in_(_OTOMATIK_OKUNDU_ALARM_TIPLERI),
+            )
+            .update({"okundu": True}, synchronize_session=False)
+        )
+        db.commit()
+        if guncellenen:
+            logger.info("Yeni geçiş: %d eski alarm otomatik okundu işaretlendi", guncellenen)
+        return guncellenen
+    except Exception as exc:
+        try:
+            db.rollback()
+        except Exception:
+            pass
+        logger.error("Alarmların otomatik okundu işaretlenmesi başarısız (geçiş kaydı etkilenmedi): %s", exc)
+        return 0
+
+
 def _kayit_olustur_ve_bildir(db: Session, plaka_no: str, kamera_id: str, yon: str,
                               guven_skoru: Optional[float], goruntu_yolu: Optional[str],
                               dogrulama_kare_sayisi: Optional[int] = None,
@@ -4255,6 +4321,11 @@ def _kayit_olustur_ve_bildir(db: Session, plaka_no: str, kamera_id: str, yon: st
     db.add(kayit)
     db.commit()
     db.refresh(kayit)
+
+    # Bu geçişin KENDİ alarmı aşağıda eklenir; bu yüzden otomatik okundu
+    # işaretleme (yalnızca ÖNCEKİ geçişlerin alarmları) alarm eklenmeden önce
+    # çalıştırılır.
+    _gecis_alarmlarini_otomatik_okundu_isaretle(db)
 
     # SON KULLANILAN NOT ÖNBELLEĞİ (2026-09-17, devam): bkz. modülün üst
     # kısmındaki açıklama -- kalıcı kayda (yukarıdaki not_metni) HİÇ
@@ -7426,6 +7497,7 @@ def _ayar_klasor_yolu_dogrula(v) -> str:
 # eklemek gerekir.
 _AYAR_DOGRULAYICILAR = {
     "supheli_esik": lambda v: _ayar_int_dogrula(v, 0, 1000),
+    "alarm_otomatik_okundu": _ayar_bool_dogrula,
     "goruntu_saklama_gun": lambda v: _ayar_int_dogrula(v, 0, None),
     "tekrar_gecikme_sn": lambda v: _ayar_int_dogrula(v, 0, 3600),
     "capraz_kamera_tekrar_penceresi_sn": lambda v: _ayar_int_dogrula(v, None, None),

@@ -908,7 +908,29 @@ async function authFormGonder(e) {
       document.getElementById("authAciklama").textContent = "Yönetici hesabınız oluşturuldu. Giriş yapın.";
       document.getElementById("authButon").textContent = "Giriş yap";
       sonuc.className = "small mt-3 text-success"; sonuc.textContent = "Hesap hazır.";
-    } else { sessionStorage.setItem("pts_token", cevap.token); authBasarili(cevap.kullanici); }
+    } else {
+      sessionStorage.setItem("pts_token", cevap.token);
+      // 2026-10-05 KRİTİK HATA DÜZELTMESİ ("giriş yapınca F5 yapmadan yönetici
+      // ekranları gelmiyor"): POST /auth/giris yanıtındaki `kullanici`
+      // (backend'de eskiden boş `{}` dönüyordu) artık doğru dolduruluyor, ama
+      // sayfa yenilendiğindeki (F5) yolla BİREBİR aynı davranış için kullanıcı
+      // bilgisi HER ZAMAN /auth/me'den (tek doğruluk kaynağı) alınır; böylece
+      // giriş yanıtının biçimi bir daha rol/menü görünürlüğünü bozamaz. Eksik
+      // /geçersiz bir kullanıcı bilgisiyle arayüze GEÇİLMEZ (sessiz yarım
+      // yüklenme yerine açık bir hata gösterilir).
+      let kullanici;
+      try {
+        kullanici = await apiCagir("/auth/me");
+      } catch (meHata) {
+        sessionStorage.removeItem("pts_token");
+        throw new Error("Giriş yapıldı ancak kullanıcı bilgisi alınamadı: " + meHata.message);
+      }
+      if (!kullanici || !kullanici.kullanici_adi || !kullanici.rol) {
+        sessionStorage.removeItem("pts_token");
+        throw new Error("Giriş yapıldı ancak kullanıcı bilgisi eksik döndü; lütfen tekrar deneyin.");
+      }
+      authBasarili(kullanici);
+    }
   } catch (err) { sonuc.className = "small mt-3 text-danger"; sonuc.textContent = err.message; }
 }
 
@@ -5035,6 +5057,10 @@ async function sistemAyarlariYukle() {
         AYRI (ve çelişkili yönde) kayıt oluşturabilir -- bu pencere içinde farklı bir kameradan gelen
         aynı plaka, yeni bir kayıt olarak SAYILMAZ.</p>
       <div class="form-check mb-2">
+        <input type="checkbox" class="form-check-input" id="ayar_alarm_otomatik_okundu" ${ayarlar.alarm_otomatik_okundu !== false ? "checked" : ""}>
+        <label class="form-check-label small" for="ayar_alarm_otomatik_okundu">Yeni araç geçtiğinde önceki "yetkisiz/süresi dolmuş" alarmlarını otomatik okundu işaretle (kara liste ve şüpheli araç alarmları hariç)</label>
+      </div>
+      <div class="form-check mb-2">
         <input type="checkbox" class="form-check-input" id="ayar_bilinen_plaka_duzeltme_aktif" ${ayarlar.bilinen_plaka_duzeltme_aktif ? "checked" : ""}>
         <label class="form-check-label small" for="ayar_bilinen_plaka_duzeltme_aktif">Bilinen plakaya göre OCR düzeltmesi (tek karakter hataları)</label>
       </div>
@@ -5067,6 +5093,7 @@ async function sistemAyarlariYukle() {
       const guncel = {};
       satirlar.forEach(s => { guncel[s.key] = Number(document.getElementById(`ayar_${s.key}`).value); });
       guncel.bilinen_plaka_duzeltme_aktif = document.getElementById("ayar_bilinen_plaka_duzeltme_aktif").checked;
+      guncel.alarm_otomatik_okundu = document.getElementById("ayar_alarm_otomatik_okundu").checked;
       guncel.otomatik_yedek_aktif = document.getElementById("ayar_otomatik_yedek_aktif").checked;
       guncel.otomatik_yedek_klasoru = document.getElementById("ayar_otomatik_yedek_klasoru").value;
       guncel.disk_izleme_aktif = document.getElementById("ayar_disk_izleme_aktif").checked;
