@@ -2983,21 +2983,19 @@ async function kisileriYukle() {
     // rozet, listede kaç ek plakası olduğunu tek bakışta gösterir (önceden
     // hiçbir gösterge yoktu); tam sıralı listeye tıklanınca (kisiDuzenleAc)
     // Düzenle penceresindeki #duzenleEkPlakalarListe'den ulaşılır.
-    // 2026-10-05 (Kişi Kartı): ilk 2 ek araç plaka olarak doğrudan listede
-    // görünür (pasif olanlar soluk/üstü çizili), kalanlar "+N" rozetinde;
-    // rozete tıklayınca Kişi Kartı'ndaki Araç Listesi açılır.
-    const ekler = k.ek_plakalar || [];
-    const ekSayisi = ekler.length;
-    const ekChipleri = ekler.slice(0, 2).map(p =>
-      ` <button type="button" class="plate-link ek-plaka-chip${p.aktif ? "" : " ek-plaka-pasif"}" data-plaka-analiz="${escapeHtml(p.plaka_no)}" title="${escapeHtml(p.aciklama || "Ek araç")}${p.aktif ? "" : " (PASİF -- yetkili sayılmaz)"}">${escapeHtml(p.plaka_no)}</button>`
-    ).join("");
-    const kalanEk = ekSayisi - 2;
-    const ekRozeti = ekChipleri + (kalanEk > 0
-      ? ` <button type="button" class="badge ek-plaka-rozeti border-0" onclick="kisiDuzenleAc(${k.id})" title="${kalanEk} araç daha var -- tümünü görmek için tıklayın">+${kalanEk}</button>`
-      : "");
+    // 2026-10-05 (Kişi Kartı, kullanıcı isteği: "birden fazla plaka olanlar
+    // olacağı için plakanın altında gözükmesin, diğer plakalar kişiye
+    // tıklanınca görülsün"): listede YALNIZCA ana plaka gösterilir; ek araçlar
+    // satırı uzatmaz. Ek araç varsa plakanın yanında tek satırlık küçük "+N"
+    // rozeti çıkar; ad soyada veya rozete tıklayınca Kişi Kartı'ndaki Araç
+    // Listesi açılır.
+    const ekSayisi = (k.ek_plakalar || []).length;
+    const ekRozeti = ekSayisi > 0
+      ? ` <button type="button" class="badge ek-plaka-rozeti border-0" onclick="kisiDuzenleAc(${k.id})" title="${ekSayisi} ek araç daha var -- görmek için tıklayın">+${ekSayisi}</button>`
+      : "";
     return `
     <tr>
-      <td>${escapeHtml(k.ad_soyad)}</td>
+      <td><button type="button" class="kisi-ad-link" onclick="kisiDuzenleAc(${k.id})" title="Kişi Kartını aç (tüm araçlar, bilgiler)">${escapeHtml(k.ad_soyad)}</button></td>
       <td class="fw-bold kisi-plaka-hucre"><button class="plate-link${plakaKirmizi ? " plate-link-yetkisiz" : ""}" data-plaka-analiz="${escapeHtml(k.plaka_no)}" title="${plakaKirmizi ? "Son geçişi YETKİSİZ olarak işaretlendi -- " : ""}Geçiş geçmişini ve görsellerini gör">${escapeHtml(k.plaka_no)}</button>${ekRozeti}</td>
       <td>${tipRozeti(k.tip)}</td>
       <td>${escapeHtml(k.telefon) || "-"}</td>

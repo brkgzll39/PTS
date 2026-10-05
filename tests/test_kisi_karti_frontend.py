@@ -67,3 +67,13 @@ def test_backend_yeni_uclar_ve_cakisma_kontrolu():
     assert '@app.put("/kisiler/{kisi_id}/plakalar/{plaka_id}"' in _MAIN
     assert '@app.post("/kisiler/{kisi_id}/plakalar/{plaka_id}/ana-yap"' in _MAIN
     assert "_plaka_cakisma_kontrol(db, istek.plaka_no, kisi_id)" in _MAIN
+
+
+def test_kisi_listesinde_ek_plakalar_plakanin_altinda_listelenmez():
+    # Kullanıcı isteği (2026-10-05): ek araçlar listede satırı uzatmasın; yalnızca
+    # küçük "+N" rozeti olsun, tüm araçlar Kişi Kartı'nda görünsün.
+    govde = re.search(r"async function kisileriYukle\(\).*?\n}\n", _JS, re.S).group(0)
+    assert "ek-plaka-chip" not in govde
+    assert "slice(0, 2)" not in govde
+    assert "ek-plaka-rozeti" in govde
+    assert 'class="kisi-ad-link" onclick="kisiDuzenleAc(' in govde

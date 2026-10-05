@@ -618,10 +618,9 @@ table td, table th {
 .kart-arac-pasif .kart-arac-plaka { text-decoration: line-through; }
 .kart-arac-duzenleniyor { background: #fffbea; }
 .kart-arac-ekle { background: #f6f8fb; border: 1px dashed #cbd5e1; border-radius: .5rem; padding: .6rem .75rem; }
-.kisi-plaka-hucre { min-width: 7.5rem; }
-.kisi-plaka-hucre .plate-link, .kisi-plaka-hucre .ek-plaka-rozeti { white-space: nowrap; }
-.ek-plaka-chip { font-size: .85em; font-weight: 600; background: #eef3fb; border-radius: .35rem; padding: .05rem .4rem; }
-.ek-plaka-chip.ek-plaka-pasif { opacity: .55; text-decoration: line-through; }
+.kisi-plaka-hucre { white-space: nowrap; }
+.kisi-ad-link { border: 0; background: transparent; padding: 0; color: inherit; text-align: left; cursor: pointer; }
+.kisi-ad-link:hover { color: #2F6FED; text-decoration: underline; }
 
 @media (max-width: 768px) {
   .pts-sidebar { width: 62px; flex-basis: 62px; padding-left: .4rem; padding-right: .4rem; }
