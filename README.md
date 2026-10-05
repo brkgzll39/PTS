@@ -4496,3 +4496,27 @@ kodundan değil testlerin kendisinden ve test ortamından geliyordu:
   loguna gönderilen ham değer (parola dahil) yazılmaz; `PATCH
   /bariyer/ayarlar/{id}` boş `{}` yanıtı yerine güncel bariyeri döner.
 
+## Kişiler: Toplu İşlemler, İçe Aktarma Modu, Eski Kayıtları Yeniden Bağlama (2026-10-05)
+
+- **Toplu işlemler:** Kişiler listesinde her satırın solundaki kutuyla (veya
+  başlıktaki "hepsini seç" kutusuyla, yalnızca listelenen/aramaya uyan kişiler)
+  seçim yapılır; çıkan çubuktan **aktif yap / pasif yap / tipini değiştir /
+  seçilenleri sil** uygulanır (`POST /kisiler/toplu-islem`). İşlem tek
+  transaction'dır (hata olursa hiçbir kişi değişmez), onay penceresi sorar ve
+  denetim kaydına yazılır. Silme yalnızca **yönetici** yapabilir; geçiş kayıtları
+  silinmez (yalnızca kişi bağlantısı kopar). Arama değişince/sekmeden çıkınca
+  görünmeyen kişiler seçimden çıkarılır.
+- **Excel içe aktarma modu:** araç çubuğundaki seçim kutusu. **Mevcut plakaları
+  atla** (varsayılan): sistemde zaten kayıtlı bir plaka tekrar eklenmez (önceden
+  aynı dosyayı iki kez yüklemek herkesi ikiye katlıyordu; aynı dosyadaki
+  tekrarlar da atlanır). **Mevcut kişileri güncelle:** yalnızca Excel'de DOLU
+  olan alanlar güncellenir (boş hücre veriyi silmez), yeni plakalar ek araç
+  olarak eklenir; plakalar farklı kişilere aitse satır atlanıp hata olarak
+  bildirilir.
+- **Geçmişi Yeniden Bağla (yönetici):** kişileri silip yeniden yükledikten sonra
+  eski geçişler kişisiz kalır. Bu düğme önce kaç kaydın etkileneceğini gösterir,
+  onaydan sonra plakası eşleşen eski yetkili/süresi dolmuş/ziyaretçi onaylı
+  kayıtları **etiketlerini değiştirmeden** kişilere bağlar; eski "yetkisiz"
+  kayıtlar kişinin şimdiki izinlerine göre yeniden değerlendirilir. Kara liste ve
+  başka kişiye bağlı kayıtlara dokunulmaz; ikinci çalıştırma bir şey değiştirmez.
+

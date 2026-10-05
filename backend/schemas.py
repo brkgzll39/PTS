@@ -238,6 +238,23 @@ class KisiPlakaOlustur(BaseModel):
         return plaka_normalize(v)
 
 
+class KisiTopluIslem(BaseModel):
+    """POST /kisiler/toplu-islem -- Kişiler ekranında işaretlenen birden çok
+    kişiye tek adımda uygulanan işlem (2026-10-05).
+    islem: "aktif" | "pasif" | "tip" (yeni `tip` gerekir) | "sil"."""
+    ids: List[int] = Field(..., min_length=1, max_length=5000)
+    islem: str
+    tip: Optional[str] = None
+
+    @field_validator("islem")
+    @classmethod
+    def islem_gecerli(cls, v):
+        v = (v or "").strip().lower()
+        if v not in ("aktif", "pasif", "tip", "sil"):
+            raise ValueError("islem 'aktif', 'pasif', 'tip' veya 'sil' olmalıdır")
+        return v
+
+
 class KisiPlakaGuncelle(BaseModel):
     """PUT /kisiler/{id}/plakalar/{plaka_id} -- Kişi Kartı'ndaki "Araç Listesi"
     sekmesinden (2026-10-05) bir ek aracın plakası/açıklaması/aktifliği

@@ -6799,3 +6799,64 @@ def test_sistem_saglik_mssql_kipinde_yedek_durumu_msdb_den_gelir(client, yetkili
         lambda engine: {"basarili": False, "son_yedek_zamani": None, "gecikmis": None},
     )
     assert m._son_yedek_bilgisini_al()["izleniyor"] is False
+
+
+# ---------------------- Kişiler toplu işlemler / yeniden bağlama (2026-10-05) ----------------------
+# İşlev mantığı tests/test_kisi_toplu_islemler.py'de izole bellek veritabanıyla
+# test edilir; burada yalnızca yol/yetki/doğrulama HTTP üzerinden (ve paylaşımlı
+# veritabanını DEĞİŞTİRMEDEN) denenir.
+
+def test_kisi_toplu_islem_izleyici_403_doner(client, izleyici_header):
+    r = client.post("/kisiler/toplu-islem", json={"ids": [1], "islem": "pasif"}, headers=izleyici_header)
+    assert r.status_code == 403, r.text
+
+
+def test_kisi_toplu_islem_gecersiz_islem_422_doner(client, yetkili_header):
+    r = client.post("/kisiler/toplu-islem", json={"ids": [1], "islem": "yoket"}, headers=yetkili_header)
+    assert r.status_code == 422, r.text
+    r2 = client.post("/kisiler/toplu-islem", json={"ids": [], "islem": "pasif"}, headers=yetkili_header)
+    assert r2.status_code == 422, r2.text
+
+
+def test_kisi_toplu_islem_olmayan_kisiler_404_doner(client, yetkili_header):
+    r = client.post("/kisiler/toplu-islem", json={"ids": [987654, 987655], "islem": "pasif"}, headers=yetkili_header)
+    assert r.status_code == 404, r.text
+
+
+def test_kisi_toplu_islem_operator_silemez_403_doner(client, operator_header):
+    r = client.post("/kisiler/toplu-islem", json={"ids": [987654], "islem": "sil"}, headers=operator_header)
+    assert r.status_code == 403, r.text
+
+
+def test_kisi_toplu_islem_pasif_yapar_ve_aktif_geri_alir(client, yetkili_header):
+    a = client.post("/kisiler", json={"ad_soyad": "Toplu A", "plaka_no": "34 TPA 001", "tip": "abone"}, headers=yetkili_header).json()
+    b = client.post("/kisiler", json={"ad_soyad": "Toplu B", "plaka_no": "34 TPB 002", "tip": "abone"}, headers=yetkili_header).json()
+    r = client.post("/kisiler/toplu-islem", json={"ids": [a["id"], b["id"]], "islem": "pasif"}, headers=yetkili_header)
+    assert r.status_code == 200, r.text
+    assert r.json()["islenen"] == 2
+    assert client.get(f"/kisiler/{a['id']}", headers=yetkili_header).json()["aktif"] is False
+    r2 = client.post("/kisiler/toplu-islem", json={"ids": [a["id"], b["id"]], "islem": "aktif"}, headers=yetkili_header)
+    assert r2.status_code == 200, r2.text
+    assert client.get(f"/kisiler/{b['id']}", headers=yetkili_header).json()["aktif"] is True
+
+
+def test_gecmis_yeniden_bagla_operator_403_doner(client, operator_header):
+    assert client.post("/kisiler/gecmis-kayitlari-yeniden-bagla", headers=operator_header).status_code == 403
+
+
+def test_gecmis_yeniden_bagla_onizleme_sayilari_doner_ve_yazmaz(client, yetkili_header):
+    r = client.post("/kisiler/gecmis-kayitlari-yeniden-bagla", headers=yetkili_header)
+    assert r.status_code == 200, r.text
+    v = r.json()
+    assert v["uygulandi"] is False and v["yetkisiz_duzeltilen"] == 0
+    for alan in ("baglanan_kayit", "etkilenen_kisi", "yetkisiz_aday", "eslesmeyen_yetkili"):
+        assert isinstance(v[alan], int), alan
+
+
+def test_toplu_import_gecersiz_mod_400_doner(client, yetkili_header):
+    r = client.post(
+        "/kisiler/toplu-import?mod=sil",
+        files={"dosya": ("k.xlsx", b"x", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")},
+        headers=yetkili_header,
+    )
+    assert r.status_code == 400, r.text

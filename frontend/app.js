@@ -2982,11 +2982,134 @@ document.getElementById("kisiArama")?.addEventListener("input", () => {
 document.addEventListener("hidden.bs.tab", (e) => {
   if (e.target?.dataset?.bsTarget !== "#kisiler-sekme") return;
   const kutu = document.getElementById("kisiArama");
-  if (!kutu || !kutu.value) return;
-  kutu.value = "";
+  const aramaVardi = !!(kutu && kutu.value);
+  // Toplu işlem seçimi de sekmeden çıkınca bırakılır: geri dönüldüğünde
+  // unutulmuş işaretli kişiler yüzünden yanlışlıkla toplu işlem yapılmasın.
+  const secimVardi = _kisiSecimi.size > 0;
+  if (!aramaVardi && !secimVardi) return;
+  if (aramaVardi) kutu.value = "";
+  _kisiSecimi.clear();
   clearTimeout(_kisiAramaZamanlayici);
   kisileriYukle();
 });
+
+// ------------------------------------------------------------------
+// Kişiler: satır seçimi ve toplu işlemler (2026-10-05, kullanıcı isteği)
+// ------------------------------------------------------------------
+// Seçim YALNIZCA şu an listelenen (arama/tip filtresine uyan) kişilerle
+// sınırlıdır: liste her yenilendiğinde ekranda artık görünmeyen kişiler
+// seçimden çıkarılır -- görünmeyen birine toplu işlem uygulanamaz.
+const _kisiSecimi = new Set();
+let _kisiListeIdleri = [];
+
+function _kisiTopluCubuguGuncelle() {
+  const n = _kisiSecimi.size;
+  document.getElementById("kisiTopluCubuk")?.classList.toggle("d-none", n === 0 || !rolYeterli("operatör"));
+  const sayi = document.getElementById("kisiSeciliSayisi");
+  if (sayi) sayi.textContent = String(n);
+  const tumu = document.getElementById("kisiTumunuSec");
+  if (tumu) {
+    const toplam = _kisiListeIdleri.length;
+    tumu.checked = toplam > 0 && n === toplam;
+    tumu.indeterminate = n > 0 && n < toplam;
+  }
+}
+
+function kisiSecimDegistir(id, secili) {
+  if (secili) _kisiSecimi.add(id); else _kisiSecimi.delete(id);
+  document.querySelector(`#kisilerTablo tr[data-kisi-id="${Number(id)}"]`)?.classList.toggle("table-active", !!secili);
+  _kisiTopluCubuguGuncelle();
+}
+
+function kisiTumunuSecDegistir(secili) {
+  _kisiListeIdleri.forEach(id => { if (secili) _kisiSecimi.add(id); else _kisiSecimi.delete(id); });
+  document.querySelectorAll("#kisilerTablo .kisi-sec").forEach(cb => {
+    cb.checked = !!secili;
+    cb.closest("tr")?.classList.toggle("table-active", !!secili);
+  });
+  _kisiTopluCubuguGuncelle();
+}
+
+function kisiSecimiTemizleVeYenile() {
+  _kisiSecimi.clear();
+  kisileriYukle();
+}
+
+function kisiTopluTipSecildi(secim) {
+  const tip = secim.value;
+  secim.value = "";
+  if (tip) kisiTopluIslem("tip", tip);
+}
+
+async function kisiTopluIslem(islem, tip) {
+  const idler = [..._kisiSecimi];
+  if (!idler.length) return;
+  const tipEtiketi = { abone: "Abone", personel: "Personel", ziyaretci: "Ziyaretçi" };
+  let mesaj = `${idler.length} kişi `;
+  mesaj += {
+    aktif: "AKTİF yapılacak.",
+    pasif: "PASİF yapılacak. Pasif kişilerin araçları artık yetkili sayılmaz.",
+    tip: `"${tipEtiketi[tip] || tip}" tipine çevrilecek.`,
+    sil: "KALICI OLARAK SİLİNECEK.\n\nGeçiş kayıtları silinmez (yalnızca kişi bağlantısı kopar); ek araçlar kişiyle birlikte silinir. Bu işlem geri alınamaz.",
+  }[islem];
+  const onay = await onayAl(mesaj, {
+    baslik: islem === "sil" ? "Seçilenleri sil" : "Toplu işlem",
+    onayMetni: "Evet, uygula",
+    guvenli: islem === "aktif" || islem === "tip",
+  });
+  if (!onay) return;
+  try {
+    const govde = { ids: idler, islem };
+    if (islem === "tip") govde.tip = tip;
+    const r = await apiCagir("/kisiler/toplu-islem", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(govde),
+    });
+    const fiil = { aktif: "aktif yapıldı", pasif: "pasif yapıldı", tip: "tipi değiştirildi", sil: "silindi" }[islem];
+    let m = `${r.islenen} kişi ${fiil}.`;
+    if (r.bulunamayan) m += ` (${r.bulunamayan} kişi zaten yoktu.)`;
+    toastGoster(m, "basari");
+    _kisiSecimi.clear();
+    kisileriYukle();
+    panelYenile();
+  } catch (e) {
+    toastGoster(e.message, "hata");
+  }
+}
+
+// Kişileri silip yeniden yükledikten sonra eski geçiş kayıtlarının kişisiz
+// kalması sorununa çözüm (bkz. backend/main.py::_gecmis_kayitlari_yeniden_bagla).
+// Önce önizleme (hiçbir şey yazılmaz), onaydan sonra uygulanır.
+async function gecmisKayitlariYenidenBagla() {
+  try {
+    const on = await apiCagir("/kisiler/gecmis-kayitlari-yeniden-bagla", { method: "POST" });
+    if (!on.baglanan_kayit && !on.yetkisiz_aday) {
+      let m = "Yeniden bağlanacak eski kayıt bulunamadı (hepsi zaten bağlı ya da plakası hiçbir kişiyle eşleşmiyor).";
+      if (on.eslesmeyen_yetkili) m += ` Hiçbir kişiyle eşleşmeyen ${on.eslesmeyen_yetkili} eski yetkili kayıt var.`;
+      toastGoster(m, "bilgi");
+      return;
+    }
+    const satirlar = [];
+    if (on.baglanan_kayit) satirlar.push(`• ${on.baglanan_kayit} eski kayıt ${on.etkilenen_kisi} kişiye bağlanacak (yetki etiketleri DEĞİŞMEZ).`);
+    if (on.yetkisiz_aday) satirlar.push(`• ${on.yetkisiz_aday} eski "yetkisiz" kayıt, kişinin şimdiki izinlerine göre yeniden değerlendirilecek.`);
+    if (on.eslesmeyen_yetkili) satirlar.push(`• ${on.eslesmeyen_yetkili} eski yetkili kayıt hiçbir kişiyle eşleşmiyor, olduğu gibi kalacak.`);
+    const onay = await onayAl(satirlar.join("\n"), {
+      baslik: "Eski geçiş kayıtlarını yeniden bağla",
+      onayMetni: "Evet, bağla",
+      guvenli: true,
+    });
+    if (!onay) return;
+    const r = await apiCagir("/kisiler/gecmis-kayitlari-yeniden-bagla?uygula=true", { method: "POST" });
+    let m = `${r.baglanan_kayit} eski kayıt ${r.etkilenen_kisi} kişiye bağlandı.`;
+    if (r.yetkisiz_duzeltilen) m += ` ${r.yetkisiz_duzeltilen} yetkisiz kayıt düzeltildi.`;
+    toastGoster(m, "basari");
+    kisileriYukle();
+    panelYenile();
+  } catch (e) {
+    toastGoster(e.message, "hata");
+  }
+}
 
 async function kisileriYukle() {
   const params = new URLSearchParams();
@@ -3011,7 +3134,13 @@ async function kisileriYukle() {
   // son_yetki_durumu backend/main.py::_kisilerin_gecis_ozetini_ekle
   // tarafından hesaplanıp GET /kisiler yanıtına eklendi -- burada sadece
   // gösteriliyor, ayrı bir istek YAPILMIYOR.
+  const operatorMu = rolYeterli("operatör");
+  document.getElementById("kisiSecimBasligi")?.classList.toggle("d-none", !operatorMu);
+  _kisiListeIdleri = kisiler.map(k => k.id);
+  const gorunenler = new Set(_kisiListeIdleri);
+  [..._kisiSecimi].forEach(id => { if (!gorunenler.has(id)) _kisiSecimi.delete(id); });
   tbody.innerHTML = kisiler.map(k => {
+    const secili = _kisiSecimi.has(k.id);
     const plakaKirmizi = k.son_yetki_durumu === "yetkisiz";
     const sonNot = k.son_not_metni
       ? `${escapeHtml(k.son_not_metni)}${k.son_not_ekleyen ? ` <span class="text-muted small">(${escapeHtml(k.son_not_ekleyen)})</span>` : ""}`
@@ -3032,7 +3161,8 @@ async function kisileriYukle() {
       ? ` <button type="button" class="badge ek-plaka-rozeti border-0" onclick="kisiDuzenleAc(${k.id})" title="${ekSayisi} ek araç daha var -- görmek için tıklayın">+${ekSayisi}</button>`
       : "";
     return `
-    <tr>
+    <tr data-kisi-id="${k.id}"${secili ? ' class="table-active"' : ""}>
+      ${operatorMu ? `<td class="kisi-sec-hucre"><input type="checkbox" class="form-check-input kisi-sec" ${secili ? "checked" : ""} onchange="kisiSecimDegistir(${k.id}, this.checked)" aria-label="${escapeHtml(k.ad_soyad)} kişisini seç"></td>` : ""}
       <td><button type="button" class="kisi-ad-link" onclick="kisiDuzenleAc(${k.id})" title="Kişi Kartını aç (tüm araçlar, bilgiler)">${escapeHtml(k.ad_soyad)}</button></td>
       <td class="fw-bold kisi-plaka-hucre"><button class="plate-link${plakaKirmizi ? " plate-link-yetkisiz" : ""}" data-plaka-analiz="${escapeHtml(k.plaka_no)}" title="${plakaKirmizi ? "Son geçişi YETKİSİZ olarak işaretlendi -- " : ""}Geçiş geçmişini ve görsellerini gör">${escapeHtml(k.plaka_no)}</button>${ekRozeti}</td>
       <td>${tipRozeti(k.tip)}</td>
@@ -3052,7 +3182,8 @@ async function kisileriYukle() {
       </td>
     </tr>
   `;
-  }).join("") || `<tr><td colspan="10" class="text-center text-muted py-3">${aramaMetni ? `"${escapeHtml(aramaMetni)}" için kişi bulunamadı` : "Kişi bulunamadı"}</td></tr>`;
+  }).join("") || `<tr><td colspan="11" class="text-center text-muted py-3">${aramaMetni ? `"${escapeHtml(aramaMetni)}" için kişi bulunamadı` : "Kişi bulunamadı"}</td></tr>`;
+  _kisiTopluCubuguGuncelle();
 }
 
 document.getElementById("kisiForm").addEventListener("submit", async (e) => {
@@ -5579,7 +5710,8 @@ async function topluImport(input) {
   try {
     toastGoster("İçe aktarma başladı…", "bilgi");
     const token = sessionStorage.getItem("pts_token");
-    const cevap = await fetch("/kisiler/toplu-import", {
+    const mod = document.getElementById("topluImportMod")?.value || "atla";
+    const cevap = await fetch(`/kisiler/toplu-import?mod=${encodeURIComponent(mod)}`, {
       method: "POST",
       headers: token ? { Authorization: `Bearer ${token}` } : {},
       body: formData,
@@ -5590,9 +5722,19 @@ async function topluImport(input) {
     }
     const sonuc = await cevap.json();
     input.value = "";
-    let mesaj = `${sonuc.eklendi} kişi eklendi.`;
+    // 2026-10-05: mevcut plakalar artık sessizce ikinci kez eklenmez -- sonuç
+    // mesajı eklenen / güncellenen / atlanan sayılarını ayrı ayrı gösterir.
+    const parcalar = [`${sonuc.eklendi} kişi eklendi`];
+    if (sonuc.guncellendi) parcalar.push(`${sonuc.guncellendi} kişi güncellendi`);
+    if (sonuc.degismeyen) parcalar.push(`${sonuc.degismeyen} kişide değişiklik yoktu`);
+    if (sonuc.atlandi) parcalar.push(`${sonuc.atlandi} satır atlandı (plaka zaten kayıtlı)`);
+    let mesaj = parcalar.join(", ") + ".";
     if (sonuc.hatalar?.length) mesaj += ` ${sonuc.hatalar.length} satırda hata.`;
-    toastGoster(mesaj, sonuc.eklendi > 0 ? "basari" : "uyari");
+    toastGoster(mesaj, (sonuc.eklendi + (sonuc.guncellendi || 0)) > 0 ? "basari" : "uyari");
+    if (sonuc.atlanan?.length) {
+      console.info("Atlanan satırlar:", sonuc.atlanan);
+      toastGoster("Atlananlar: " + sonuc.atlanan.slice(0, 3).join(" | ") + (sonuc.atlandi > 3 ? " ..." : ""), "bilgi");
+    }
     if (sonuc.hatalar?.length) {
       console.warn("İçe aktarma hataları:", sonuc.hatalar);
       // DÜZELTME (2026-09-25): alert() burada da aynı sorunu taşıyordu --

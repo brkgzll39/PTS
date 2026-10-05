@@ -535,7 +535,7 @@
 <div class="modal fade" id="onayModal" tabindex="-1" aria-hidden="true">
   <div class="modal-dialog modal-dialog-centered"><div class="modal-content">
     <div class="modal-header"><h5 class="modal-title" id="onayModalBaslik">Emin misiniz?</h5><button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Kapat"></button></div>
-    <div class="modal-body" id="onayModalMetin"></div>
+    <div class="modal-body" id="onayModalMetin" style="white-space: pre-line"></div>
     <div class="modal-footer">
       <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">İptal</button>
       <button type="button" class="btn btn-danger" id="onayModalOnayBtn">Evet, Onayla</button>
@@ -1148,7 +1148,12 @@
                 <input type="search" class="form-control" id="kisiArama" placeholder="Ad, plaka, telefon ara…" title="Ad soyad, plaka (ek araçlar dahil), telefon, daire/departman" autocomplete="off" aria-label="Kişi ara">
               </div>
               <button class="btn btn-sm btn-success" onclick="kisilerExcelIndir()"><i class="bi bi-file-earmark-excel"></i> Excel İndir</button>
+              <button class="btn btn-sm btn-outline-secondary" onclick="gecmisKayitlariYenidenBagla()" title="Kişileri silip yeniden yüklediyseniz: plakası eşleşen ESKİ geçiş kayıtlarını (etiketlerini değiştirmeden) kişilere yeniden bağlar. Önce kaç kaydın etkileneceği gösterilir." data-rol-min="yonetici" data-rol-davranis="gizle"><i class="bi bi-link-45deg"></i> Geçmişi Yeniden Bağla</button>
               <div class="d-flex gap-2 ms-auto">
+                <select class="form-select form-select-sm w-auto" id="topluImportMod" title="Excel'deki plaka sistemde ZATEN kayıtlıysa ne yapılsın?" aria-label="Mevcut plakalar için içe aktarma modu" data-rol-min="operatör" data-rol-davranis="gizle">
+                  <option value="atla">Mevcut plakaları atla</option>
+                  <option value="guncelle">Mevcut kişileri güncelle</option>
+                </select>
                 <button class="btn btn-sm btn-outline-secondary" onclick="kisiIceAktarmaSablonuIndir()" title="Toplu içe aktarma için doldurulacak boş Excel şablonunu indir" data-rol-min="operatör" data-rol-davranis="gizle"><i class="bi bi-file-earmark-arrow-down"></i> Şablon İndir</button>
                 <label class="btn btn-sm btn-outline-primary mb-0" title="Excel'den toplu kişi içe aktar (sütunlar için önce 'Şablon İndir'i kullanın)" data-rol-min="operatör" data-rol-davranis="gizle">
                   <i class="bi bi-upload"></i> Excel İçe Aktar
@@ -1156,11 +1161,26 @@
                 </label>
               </div>
             </div>
+            <div id="kisiTopluCubuk" class="d-none kisi-toplu-cubuk border-bottom px-3 py-2" role="region" aria-label="Seçili kişiler için toplu işlemler">
+              <div class="d-flex align-items-center flex-wrap gap-2">
+                <span class="fw-semibold"><span id="kisiSeciliSayisi">0</span> kişi seçili</span>
+                <button type="button" class="btn btn-sm btn-outline-success" onclick="kisiTopluIslem('aktif')"><i class="bi bi-toggle2-on"></i> Aktif yap</button>
+                <button type="button" class="btn btn-sm btn-outline-secondary" onclick="kisiTopluIslem('pasif')"><i class="bi bi-toggle2-off"></i> Pasif yap</button>
+                <select class="form-select form-select-sm w-auto" id="kisiTopluTip" onchange="kisiTopluTipSecildi(this)" aria-label="Seçili kişilerin tipini değiştir">
+                  <option value="">Tipini değiştir…</option>
+                  <option value="abone">Abone</option>
+                  <option value="personel">Personel</option>
+                  <option value="ziyaretci">Ziyaretçi</option>
+                </select>
+                <button type="button" class="btn btn-sm btn-outline-danger" onclick="kisiTopluIslem('sil')" data-rol-min="yonetici" data-rol-davranis="gizle"><i class="bi bi-trash"></i> Seçilenleri sil</button>
+                <button type="button" class="btn btn-sm btn-link ms-auto" onclick="kisiSecimiTemizleVeYenile()">Seçimi temizle</button>
+              </div>
+            </div>
             <div class="card-body p-0">
               <div class="table-responsive">
                 <table class="table table-hover mb-0 align-middle">
                   <thead class="table-light">
-                    <tr><th>Ad Soyad</th><th>Plaka</th><th>Tip</th><th>Telefon</th><th>Daire/Departman</th><th>Durum</th><th>İlk Geçiş</th><th>Son Geçiş</th><th>Son Not</th><th></th></tr>
+                    <tr><th id="kisiSecimBasligi" class="kisi-sec-hucre"><input type="checkbox" class="form-check-input" id="kisiTumunuSec" onchange="kisiTumunuSecDegistir(this.checked)" title="Listelenen herkesi seç / bırak" aria-label="Listelenen tüm kişileri seç"></th><th>Ad Soyad</th><th>Plaka</th><th>Tip</th><th>Telefon</th><th>Daire/Departman</th><th>Durum</th><th>İlk Geçiş</th><th>Son Geçiş</th><th>Son Not</th><th></th></tr>
                   </thead>
                   <tbody id="kisilerTablo"></tbody>
                 </table>

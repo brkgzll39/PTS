@@ -643,3 +643,8 @@ table td, table th {
      çok küçülüp okunaksız hale gelmesin diye (bkz. app.js::_gecisKartiOlustur). */
   .gecis-grid { grid-template-columns: 1fr; }
 }
+
+/* Kişiler: toplu işlem (2026-10-05) */
+.kisi-toplu-cubuk { background: var(--bs-primary-bg-subtle, #e7f1ff); }
+.kisi-sec-hucre { width: 2.25rem; text-align: center; }
+

@@ -4019,6 +4019,193 @@ def kisi_gecmis_kayitlarini_guncelle(
     return {"guncellenen_kayit_sayisi": guncellenen}
 
 
+_KISI_TIPLERI = ("abone", "personel", "ziyaretci")
+# SQL Server tek sorguda en fazla ~2100 parametre kabul eder; uzun `IN (...)`
+# listeleri bu boyutta parçalara bölünür.
+_IN_PARCA_BOYUTU = 500
+
+
+def _parcala(liste: list, boyut: Optional[int] = None):
+    boyut = boyut or _IN_PARCA_BOYUTU
+    for i in range(0, len(liste), boyut):
+        yield liste[i:i + boyut]
+
+
+@app.post("/kisiler/toplu-islem")
+def kisiler_toplu_islem(
+    istek: schemas.KisiTopluIslem,
+    db: Session = Depends(get_db),
+    kullanici: models.Kullanici = Depends(_personel_girisi_gerekli),
+):
+    """Kişiler ekranında işaretlenen birden çok kişiye tek adımda aktif / pasif
+    / tip değiştirme / silme uygular (2026-10-05, kullanıcı isteği: toplu
+    işlemler). Tüm işlem TEK işlemde (transaction) yapılır: ortada bir hata
+    olursa hiçbir kişi değişmez.
+
+    Silme, `kisi_sil` ile AYNI sonucu verir (geçiş kayıtları silinmez, yalnızca
+    kişi bağlantısı kopar; bağlı sakin hesabının kisi_id'si temizlenir; ek
+    plakalar kişiyle birlikte silinir) ama yalnızca YÖNETİCİ yapabilir -- tek tek
+    silme operatöre de açıktır, ama toplu silme yanlışlıkla tüm listeyi
+    götürebileceği için daha dar tutuldu. Hesapların açıklamalı özeti denetim
+    kaydına yazılır."""
+    _rol_dogrula(kullanici, ROL_YONETICI, ROL_OPERATOR)
+    islem = istek.islem
+    if islem == "sil":
+        _rol_dogrula(kullanici, ROL_YONETICI)
+    yeni_tip = None
+    if islem == "tip":
+        yeni_tip = (istek.tip or "").strip().lower()
+        if yeni_tip not in _KISI_TIPLERI:
+            raise HTTPException(400, f"tip şunlardan biri olmalı: {', '.join(_KISI_TIPLERI)}")
+
+    ids = sorted(set(istek.ids))
+    bulunan = []
+    for parca in _parcala(ids):
+        bulunan += db.query(models.Kisi.id, models.Kisi.ad_soyad).filter(models.Kisi.id.in_(parca)).all()
+    bulunan_idler = [b[0] for b in bulunan]
+    if not bulunan_idler:
+        raise HTTPException(404, "Seçilen kişiler bulunamadı (zaten silinmiş olabilirler)")
+
+    try:
+        for parca in _parcala(bulunan_idler):
+            if islem == "sil":
+                db.query(models.Kayit).filter(models.Kayit.kisi_id.in_(parca)).update(
+                    {"kisi_id": None}, synchronize_session=False)
+                db.query(models.Kullanici).filter(models.Kullanici.kisi_id.in_(parca)).update(
+                    {"kisi_id": None}, synchronize_session=False)
+                db.query(models.KisiPlaka).filter(models.KisiPlaka.kisi_id.in_(parca)).delete(
+                    synchronize_session=False)
+                db.query(models.Kisi).filter(models.Kisi.id.in_(parca)).delete(synchronize_session=False)
+            elif islem == "tip":
+                db.query(models.Kisi).filter(models.Kisi.id.in_(parca)).update(
+                    {"tip": yeni_tip}, synchronize_session=False)
+            else:
+                db.query(models.Kisi).filter(models.Kisi.id.in_(parca)).update(
+                    {"aktif": islem == "aktif"}, synchronize_session=False)
+        db.commit()
+    except Exception:
+        db.rollback()
+        logger.exception("Toplu kişi işlemi başarısız oldu (islem=%s, adet=%d)", islem, len(bulunan_idler))
+        raise HTTPException(500, "Toplu işlem tamamlanamadı; hiçbir kişi değiştirilmedi.")
+
+    ornek_adlar = ", ".join(ad for _, ad in bulunan[:15]) + (" ..." if len(bulunan) > 15 else "")
+    _denetim_kaydet(
+        db, kullanici.kullanici_adi, "kisi_toplu_islem",
+        f"{islem}{f' -> {yeni_tip}' if yeni_tip else ''}: {len(bulunan_idler)} kişi ({ornek_adlar})",
+    )
+    return {"islem": islem, "islenen": len(bulunan_idler), "bulunamayan": len(ids) - len(bulunan_idler)}
+
+
+# Kişiye BAĞLANMAMIŞ (kisi_id boş) ama kişiyle ilgili olduğu bilinen geçiş
+# durumları: bunların etiketi korunur, yalnızca kişi bağlantısı kurulur.
+_YENIDEN_BAGLANACAK_DURUMLAR = ("yetkili", "suresi_dolmus", "ziyaretci_onayli")
+
+
+def _plaka_sahipleri_haritasi(db: Session) -> dict:
+    """normalize edilmiş plaka -> Kisi. Ana plakalar ek plakalardan ÖNCE
+    kaydedilir (çakışırsa ana plaka kazanır); pasif kişi/araçlar da dahildir --
+    geçmiş kayıt, şu an pasif olsa bile gerçek sahibine ait olmalıdır."""
+    kisiler = {k.id: k for k in db.query(models.Kisi).all()}
+    harita: dict = {}
+    for k in kisiler.values():
+        harita.setdefault(_plaka_normalize(k.plaka_no), k)
+    for ek in db.query(models.KisiPlaka).all():
+        k = kisiler.get(ek.kisi_id)
+        if k:
+            harita.setdefault(_plaka_normalize(ek.plaka_no), k)
+    return harita
+
+
+def _gecmis_kayitlari_yeniden_bagla(db: Session, uygula: bool, kullanici_adi: str) -> dict:
+    """KİŞİLERİ SİLİP YENİDEN YÜKLEDİKTEN SONRA eski geçiş kayıtlarını yeniden
+    kişilere bağlar (2026-10-05, kullanıcı isteği).
+
+    SORUN: kişiler silinince `Kayit.kisi_id` boşaltılır (geçişler korunur) ve
+    aynı plakalar yeniden eklenince bile eski kayıtlar kişisiz kalır --
+    `_gecmis_kayitlari_kisiye_bagla` yalnızca "yetkisiz" etiketli satırlara
+    dokunduğu için, eskiden "yetkili" olan geçişler (kişi sayfasında ilk/son
+    geçiş, geçiş sayısı) bağlanmıyordu.
+
+    KURALLAR:
+    - `kisi_id` boş + etiket yetkili/süresi dolmuş/ziyaretçi onaylı -> yalnızca
+      kişi bağlanır, ETİKET ve düzenleyen alanları DEĞİŞMEZ (o geçiş o anda
+      gerçekten öyleydi); `kisi_tip_anlik` boşsa doldurulur, doluysa korunur.
+    - `kisi_id` boş + "yetkisiz" -> kişi başına `_gecmis_kayitlari_kisiye_bagla`
+      ile (saat/gün kısıtı gibi kurallara göre) yeniden değerlendirilir.
+    - Kara liste ve başka kişiye bağlı satırlara dokunulmaz.
+    `uygula=False`: hiçbir şey yazmadan, ne kadarının bağlanacağını sayar."""
+    harita = _plaka_sahipleri_haritasi(db)
+    durumlar = _YENIDEN_BAGLANACAK_DURUMLAR + ("yetkisiz",)
+    gruplar = (
+        db.query(models.Kayit.plaka_no, models.Kayit.yetki_durumu, func.count(models.Kayit.id))
+        .filter(models.Kayit.kisi_id.is_(None), models.Kayit.yetki_durumu.in_(durumlar))
+        .group_by(models.Kayit.plaka_no, models.Kayit.yetki_durumu)
+        .all()
+    )
+    baglanan = 0
+    eslesmeyen_yetkili = 0
+    yetkisiz_aday = 0
+    etkilenen_kisiler: dict = {}
+    yetkisiz_kisiler: dict = {}
+    for plaka_no, durum, adet in gruplar:
+        kisi = harita.get(_plaka_normalize(plaka_no))
+        if durum == "yetkisiz":
+            if kisi:
+                yetkisiz_aday += adet
+                yetkisiz_kisiler[kisi.id] = kisi
+            continue
+        if not kisi:
+            eslesmeyen_yetkili += adet
+            continue
+        baglanan += adet
+        etkilenen_kisiler[kisi.id] = kisi
+        if uygula:
+            db.query(models.Kayit).filter(
+                models.Kayit.plaka_no == plaka_no,
+                models.Kayit.kisi_id.is_(None),
+                models.Kayit.yetki_durumu.in_(_YENIDEN_BAGLANACAK_DURUMLAR),
+            ).update(
+                {"kisi_id": kisi.id, "kisi_tip_anlik": func.coalesce(models.Kayit.kisi_tip_anlik, kisi.tip)},
+                synchronize_session=False,
+            )
+    if uygula:
+        db.commit()
+
+    yetkisiz_duzeltilen = 0
+    if uygula:
+        for kisi in yetkisiz_kisiler.values():
+            try:
+                yetkisiz_duzeltilen += _gecmis_kayitlari_kisiye_bagla(db, kisi, kullanici_adi)
+            except Exception:
+                db.rollback()
+                logger.exception("Yeniden bağlama sırasında yetkisiz kayıtlar değerlendirilemedi (kişi id=%s)", kisi.id)
+        _denetim_kaydet(
+            db, kullanici_adi, "gecmis_yeniden_bagla",
+            f"{baglanan} kayıt {len(etkilenen_kisiler)} kişiye bağlandı, {yetkisiz_duzeltilen} yetkisiz kayıt düzeltildi",
+        )
+    return {
+        "uygulandi": uygula,
+        "baglanan_kayit": baglanan,
+        "etkilenen_kisi": len(etkilenen_kisiler),
+        "yetkisiz_aday": yetkisiz_aday,
+        "yetkisiz_duzeltilen": yetkisiz_duzeltilen,
+        "eslesmeyen_yetkili": eslesmeyen_yetkili,
+    }
+
+
+@app.post("/kisiler/gecmis-kayitlari-yeniden-bagla")
+def gecmis_kayitlari_yeniden_bagla(
+    uygula: bool = False,
+    db: Session = Depends(get_db),
+    kullanici: models.Kullanici = Depends(_personel_girisi_gerekli),
+):
+    """Bkz. `_gecmis_kayitlari_yeniden_bagla`. `uygula=false` (varsayılan):
+    yalnızca önizleme (sayım) -- panel önce bunu gösterip onay ister. Yalnızca
+    YÖNETİCİ (binlerce geçiş kaydını toplu etkileyebilir)."""
+    _rol_dogrula(kullanici, ROL_YONETICI)
+    return _gecmis_kayitlari_yeniden_bagla(db, uygula, kullanici.kullanici_adi)
+
+
 # ==================================================================
 # KARA LİSTESİ
 # ==================================================================
@@ -7576,6 +7763,7 @@ def kisi_ice_aktarma_sablonu_indir(
 @app.post("/kisiler/toplu-import")
 async def toplu_kisi_import(
     dosya: UploadFile = File(...),
+    mod: str = Query("atla"),
     db: Session = Depends(get_db),
     kullanici: models.Kullanici = Depends(_personel_girisi_gerekli),
 ):
@@ -7593,8 +7781,23 @@ async def toplu_kisi_import(
     ana plaka_no'su, kalanlar models.KisiPlaka (ek_plakalar) olarak eklenir
     -- panelden Kişiler ekranında "+ Plaka Ekle" ile tek tek eklemekle
     birebir aynı veri modeli, tek farkı hepsinin tek adımda yapılabilmesi.
+
+    MEVCUT PLAKALAR (2026-10-05, kullanıcı isteği: "içe aktarmada güncelleme
+    modu"): satırdaki bir plaka sistemde ZATEN kayıtlıysa (ana ya da ek plaka,
+    aynı dosyadaki önceki bir satır dahil) önceden HİÇBİR kontrol yoktu ve
+    aynı araç ikinci bir kişi olarak tekrar ekleniyordu (aynı dosyayı iki kez
+    yüklemek herkesi ikiye katlıyordu). Şimdi `mod` ile seçilir:
+    - "atla" (varsayılan, güvenli): o satır eklenmez, `atlanan` listesinde
+      hangi kişide kayıtlı olduğu belirtilir.
+    - "guncelle": mevcut kişi güncellenir -- yalnızca Excel'de DOLU olan alanlar
+      (boş hücre mevcut veriyi SİLMEZ), hücredeki yeni plakalar ek araç olarak
+      eklenir. Plakalar birden çok farklı kişiye aitse satır atlanır ve hata
+      olarak bildirilir.
     """
     _rol_dogrula(kullanici, ROL_YONETICI, ROL_OPERATOR)
+    mod = (mod or "").strip().lower()
+    if mod not in ("atla", "guncelle"):
+        raise HTTPException(400, "mod 'atla' veya 'guncelle' olmalıdır")
     if not dosya.filename.endswith((".xlsx", ".xls")):
         raise HTTPException(400, "Sadece .xlsx veya .xls dosyası kabul edilir")
 
@@ -7620,15 +7823,21 @@ async def toplu_kisi_import(
         raise HTTPException(400, "Excel başlıklarında 'ad_soyad', 'plaka_no', 'tip' sütunları bulunamadı")
 
     eklendi = 0
+    guncellendi = 0
+    degismeyen = 0
     eklenen_ek_plaka = 0
     hatalar = []
-    olusturulan_kisiler = []
-    GECERLI_TIPLER = ("abone", "personel", "ziyaretci")
+    atlanan = []
+    # Yeni eklenen VEYA yeni plaka alan kişiler: geçmiş "yetkisiz" kayıtları
+    # sonradan yeniden değerlendirilir.
+    bagla_kisiler: dict = {}
+    sahipler = _plaka_sahipleri_haritasi(db)
 
     for satir_no, satir in enumerate(satirlar[1:], start=2):
         try:
             ad_soyad = str(satir[alan_indeksi["ad_soyad"]] or "").strip()
-            tip = str(satir[alan_indeksi["tip"]] or "").strip().lower()
+            tip_ham = str(satir[alan_indeksi["tip"]] or "").strip().lower()
+            tip = tip_ham if tip_ham in _KISI_TIPLERI else "abone"
 
             # 'plaka_no' hücresi artık virgül/noktalı virgülle ayrılmış
             # BİRDEN FAZLA plaka içerebilir (bkz. yukarıdaki fonksiyon notu
@@ -7640,47 +7849,102 @@ async def toplu_kisi_import(
             if not ad_soyad or not plakalar:
                 hatalar.append(f"Satır {satir_no}: ad_soyad veya plaka_no boş")
                 continue
-            if tip not in GECERLI_TIPLER:
-                tip = "abone"
 
             telefon = str(satir[alan_indeksi["telefon"]] or "").strip() if "telefon" in alan_indeksi else None
             daire = str(satir[alan_indeksi["daire_departman"]] or "").strip() if "daire_departman" in alan_indeksi else None
 
-            yeni = models.Kisi(
-                ad_soyad=ad_soyad[:100],
-                plaka_no=plakalar[0][:15],
-                tip=tip,
-                telefon=telefon[:20] if telefon else None,
-                daire_departman=daire[:50] if daire else None,
-            )
-            db.add(yeni)
-            db.flush()  # yeni.id'yi almak için -- aşağıdaki KisiPlaka satırları FK olarak buna ihtiyaç duyar
-            for ek_plaka in plakalar[1:]:
-                db.add(models.KisiPlaka(kisi_id=yeni.id, plaka_no=ek_plaka[:15]))
+            mevcut_sahipler = {}
+            for plaka in plakalar:
+                sahip = sahipler.get(_plaka_normalize(plaka))
+                if sahip:
+                    mevcut_sahipler[sahip.id] = sahip
+
+            if not mevcut_sahipler:
+                yeni = models.Kisi(
+                    ad_soyad=ad_soyad[:100],
+                    plaka_no=plakalar[0][:15],
+                    tip=tip,
+                    telefon=telefon[:20] if telefon else None,
+                    daire_departman=daire[:50] if daire else None,
+                )
+                db.add(yeni)
+                db.flush()  # yeni.id'yi almak için -- aşağıdaki KisiPlaka satırları FK olarak buna ihtiyaç duyar
+                sahipler[_plaka_normalize(plakalar[0])] = yeni
+                for ek_plaka in plakalar[1:]:
+                    db.add(models.KisiPlaka(kisi_id=yeni.id, plaka_no=ek_plaka[:15]))
+                    sahipler[_plaka_normalize(ek_plaka)] = yeni
+                    eklenen_ek_plaka += 1
+                bagla_kisiler[yeni.id] = yeni
+                eklendi += 1
+                continue
+
+            if mod == "atla":
+                adlar = ", ".join(sorted({k.ad_soyad for k in mevcut_sahipler.values()}))
+                atlanan.append(f"Satır {satir_no}: {', '.join(plakalar)} zaten kayıtlı ('{adlar}')")
+                continue
+
+            # --- mod == "guncelle" ---
+            if len(mevcut_sahipler) > 1:
+                adlar = ", ".join(sorted({k.ad_soyad for k in mevcut_sahipler.values()}))
+                hatalar.append(f"Satır {satir_no}: plakalar farklı kişilere ait ({adlar}) -- atlandı")
+                continue
+            hedef = next(iter(mevcut_sahipler.values()))
+            degisti = False
+            if ad_soyad[:100] != hedef.ad_soyad:
+                hedef.ad_soyad = ad_soyad[:100]
+                degisti = True
+            if tip_ham in _KISI_TIPLERI and tip_ham != hedef.tip:
+                hedef.tip = tip_ham
+                degisti = True
+            if telefon and telefon[:20] != (hedef.telefon or ""):
+                hedef.telefon = telefon[:20]
+                degisti = True
+            if daire and daire[:50] != (hedef.daire_departman or ""):
+                hedef.daire_departman = daire[:50]
+                degisti = True
+            yeni_plaka_eklendi = False
+            for plaka in plakalar:
+                if _plaka_normalize(plaka) in sahipler:
+                    continue
+                db.add(models.KisiPlaka(kisi_id=hedef.id, plaka_no=plaka[:15]))
+                sahipler[_plaka_normalize(plaka)] = hedef
                 eklenen_ek_plaka += 1
-            olusturulan_kisiler.append(yeni)
-            eklendi += 1
+                yeni_plaka_eklendi = True
+                degisti = True
+            if yeni_plaka_eklendi:
+                bagla_kisiler[hedef.id] = hedef
+            if degisti:
+                guncellendi += 1
+            else:
+                degismeyen += 1
         except Exception as exc:
             hatalar.append(f"Satır {satir_no}: {exc}")
 
     guncellenen_gecmis_kayit = 0
-    if eklendi:
+    if eklendi or guncellendi:
         db.commit()
-        logger.info("Toplu import: %d kişi eklendi (kullanıcı: %s)", eklendi, kullanici.kullanici_adi)
+        logger.info(
+            "Toplu import (%s): %d kişi eklendi, %d güncellendi, %d atlandı (kullanıcı: %s)",
+            mod, eklendi, guncellendi, len(atlanan), kullanici.kullanici_adi,
+        )
         # 2026-09-18: her içe aktarılan kişi için de -- panelden tek tek
         # eklerken olduğu gibi -- geçmiş "yetkisiz" tespitler otomatik
         # düzeltilir (bkz. kisi_ekle'deki aynı çağrının notu).
-        for yeni_kisi in olusturulan_kisiler:
+        for kisi in bagla_kisiler.values():
             try:
-                guncellenen_gecmis_kayit += _gecmis_kayitlari_kisiye_bagla(db, yeni_kisi, kullanici.kullanici_adi)
+                guncellenen_gecmis_kayit += _gecmis_kayitlari_kisiye_bagla(db, kisi, kullanici.kullanici_adi)
             except Exception:
                 logger.exception(
-                    "Toplu import sonrası geçmiş kayıtları bağlama başarısız oldu (kişi id=%s)", yeni_kisi.id
+                    "Toplu import sonrası geçmiş kayıtları bağlama başarısız oldu (kişi id=%s)", kisi.id
                 )
+    else:
+        db.rollback()
 
     return {
-        "eklendi": eklendi, "eklenen_ek_plaka": eklenen_ek_plaka, "hatalar": hatalar[:20],
-        "guncellenen_gecmis_kayit": guncellenen_gecmis_kayit,
+        "eklendi": eklendi, "guncellendi": guncellendi, "degismeyen": degismeyen,
+        "atlandi": len(atlanan), "atlanan": atlanan[:20],
+        "eklenen_ek_plaka": eklenen_ek_plaka, "hatalar": hatalar[:20],
+        "guncellenen_gecmis_kayit": guncellenen_gecmis_kayit, "mod": mod,
     }
 
 
