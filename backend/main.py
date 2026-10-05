@@ -1443,6 +1443,67 @@ app.mount("/static", _OnbellegiHicDogrulamadanKullanma(directory=FRONTEND_KLASOR
 # tanımlanıyor (bkz. o fonksiyonun docstring'i).
 
 
+# `Kayit.kamera_id`, kameranın "ad"ıyla damgalanır (bkz. _pipeline_baslat). Eskiden
+# bu değer YALNIZCA ASCII karakterlere indirgeniyordu (`[^A-Za-z0-9 _.\-]`
+# silinirdi) -- Türkçe harfli bir kamera adı ("Giriş Kamerası") kayda
+# "Giri Kameras" olarak yazılıyor, böylece (1) kamera adı değiştirilince eski
+# kayıtlar bulunamıyor, (2) kamera bazlı erişim kısıtlaması ad eşleşmediği için
+# o kameranın kayıtlarını SESSİZCE göstermiyordu (2026-10-05, kullanıcının tam
+# test koşusunda ortaya çıktı). Artık Unicode harf/rakam (\w), boşluk, `_ . - ( )`
+# korunur; geri kalan her şey (HTML/kontrol karakterleri vb.) yine silinir.
+_KAMERA_ADI_YASAK_KARAKTER = re.compile(r"[^\w .\-()]")
+
+
+def _kamera_adini_kayit_icin_temizle(kamera_adi) -> str:
+    return _KAMERA_ADI_YASAK_KARAKTER.sub("", str(kamera_adi)).strip()[:50] or "KAMERA-1"
+
+
+def _eski_ascii_kamera_adi(kamera_adi) -> str:
+    """Eski (hatalı) ASCII-only temizlemenin sonucu -- yalnızca eski kayıtları onarmak için."""
+    return re.sub(r"[^A-Za-z0-9 _.\-]", "", str(kamera_adi)).strip()[:50]
+
+
+def _kayit_kamera_adlarini_onar(db: Session, kameralar: list) -> int:
+    """Eski sürümde ASCII'ye indirgenmiş `Kayit.kamera_id` değerlerini ("Giri
+    Kameras") gerçek kamera adına ("Giriş Kamerası") geri çevirir. YALNIZCA
+    belirsizlik yoksa uygular: eski biçim, başka bir kameranın gerçek adıyla
+    çakışıyorsa ya da iki farklı kameranın adı aynı eski biçime indirgeniyorsa
+    o kamera atlanır. Döner: güncellenen kayıt sayısı."""
+    adlar = [k.get("ad") for k in kameralar if k.get("ad")]
+    gecerli_adlar = {_kamera_adini_kayit_icin_temizle(a) for a in adlar}
+    esleme: dict = {}
+    for ad in adlar:
+        yeni = _kamera_adini_kayit_icin_temizle(ad)
+        eski = _eski_ascii_kamera_adi(ad)
+        if eski and eski != yeni and eski != "KAMERA-1":
+            esleme.setdefault(eski, set()).add(yeni)
+    toplam = 0
+    for eski, yeniler in esleme.items():
+        if len(yeniler) != 1 or eski in gecerli_adlar:
+            logger.warning("Kayıt kamera adı onarımı atlandı (belirsiz eşleşme): %r", eski)
+            continue
+        toplam += db.query(models.Kayit).filter(models.Kayit.kamera_id == eski).update(
+            {"kamera_id": next(iter(yeniler))}, synchronize_session=False
+        )
+    db.commit()
+    return toplam
+
+
+@app.on_event("startup")
+async def _kayit_kamera_adlarini_onar_baslangicta():
+    """Açılışta, eski ASCII-indirgeme hatasıyla bozulmuş kayıt kamera adlarını onarır (idempotent)."""
+    db = SessionLocal()
+    try:
+        adet = _kayit_kamera_adlarini_onar(db, _kameralari_oku())
+        if adet:
+            logger.info("Kayıtlardaki %d bozuk kamera adı (Türkçe karakter eksik) onarıldı", adet)
+    except Exception:
+        db.rollback()
+        logger.exception("Kayıt kamera adı onarımı başarısız oldu (uygulama etkilenmedi)")
+    finally:
+        db.close()
+
+
 @app.on_event("startup")
 async def _kameralari_otomatik_baslat():
     """Uygulama açılışında cameras.json'daki aktif kameralar için pipeline başlatır."""
@@ -2053,7 +2114,8 @@ def _kullanicinin_izinli_kamera_adlari(kullanici: models.Kullanici) -> Optional[
     if izinli_idler is None:
         return None
     id_den_ada = _kamera_id_den_ad_haritasi()
-    return {id_den_ada[kid] for kid in izinli_idler if kid in id_den_ada}
+    # Kayıtlara damgalanan değer temizlenmiş ad olduğu için karşılaştırma da onunla yapılır.
+    return {_kamera_adini_kayit_icin_temizle(id_den_ada[kid]) for kid in izinli_idler if kid in id_den_ada}
 
 
 def _vardiya_adi_filtresi_uygula(sorgu, vardiya_adi: Optional[str], db: Session):
@@ -3042,7 +3104,9 @@ def kamera_ad_degistir(kamera_id: str, veri: schemas.KameraAdGuncelle, db: Sessi
         _kameralari_yaz(kameralar)
 
         try:
-            etkilenen_kayit = db.query(models.Kayit).filter(models.Kayit.kamera_id == eski_ad).update({"kamera_id": yeni_ad})
+            etkilenen_kayit = db.query(models.Kayit).filter(
+                models.Kayit.kamera_id == _kamera_adini_kayit_icin_temizle(eski_ad)
+            ).update({"kamera_id": _kamera_adini_kayit_icin_temizle(yeni_ad)})
             db.commit()
         except Exception:
             db.rollback()
@@ -4704,10 +4768,17 @@ def _kayit_olustur_ve_bildir(db: Session, plaka_no: str, kamera_id: str, yon: st
                               misafir_adi: Optional[str] = None,
                               harici_katkili: Optional[bool] = None):
     plaka_no = re.sub(r"[^A-Za-z0-9 ]", "", plaka_no).strip().upper() or "BILINMEYEN"
-    kamera_id = re.sub(r"[^A-Za-z0-9 _.\-]", "", str(kamera_id)).strip()[:50] or "KAMERA-1"
+    kamera_id = _kamera_adini_kayit_icin_temizle(kamera_id)
 
     ham_plaka_metni = None
-    if _sistem_ayarlari_oku().get("bilinen_plaka_duzeltme_aktif", True):
+    # OCR "yakın plaka" düzeltmesi kamera/harici ANPR okumalarına uygulanır (panelden
+    # güven skoru GÖNDERİLEREK girilen simüle okumalar da dahil). Görevlinin elle yazdığı
+    # (güven skorsuz) plaka bir OCR hatası DEĞİLDİR: 1 karakter farkla başka
+    # bir kayıtlı aracın plakasına sessizce çevrilirse ("34 DZL 02" -> kayıtlı
+    # "34 DZL 04") kayıt YANLIŞ araca/kişiye yetkili olarak yazılırdı (2026-10-05,
+    # kullanıcının tam test koşusunda bulundu).
+    elle_yazilmis = manuel_giris and guven_skoru is None
+    if not elle_yazilmis and _sistem_ayarlari_oku().get("bilinen_plaka_duzeltme_aktif", True):
         duzeltilmis, ham = _bilinen_plakaya_yakinlik_duzelt(db, plaka_no, guven_skoru)
         if ham is not None:
             logger.info("OCR düzeltmesi uygulandı: '%s' -> bilinen plaka '%s'", ham, duzeltilmis)
@@ -6680,7 +6751,7 @@ def led_durumu_getir(db: Session = Depends(get_db), _: models.Kullanici = Depend
     son başarısız gönderimi gösterebilmesi için döner."""
     son_mesajlar = (
         db.query(models.LedMesaj)
-        .order_by(models.LedMesaj.tarih_saat.desc())
+        .order_by(models.LedMesaj.tarih_saat.desc(), models.LedMesaj.id.desc())
         .limit(20)
         .all()
     )

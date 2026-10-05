@@ -3182,18 +3182,21 @@ def test_led_durum_son_gonderimleri_dondurur(client, operator_header):
     """DÜZELTME (2026-09-25): `LedMesaj` tablosu önceden yazma-yalnız
     (write-only) idi -- hiçbir uç nokta geri okumuyordu. Bu artık
     /led/durum ile mümkün."""
-    onceki_sayi = len(client.get("/led/durum", headers=operator_header).json()["son_mesajlar"])
-
     r = client.post("/led/test", params={"mesaj": "PTS DURUM TESTİ"}, headers=operator_header)
     assert r.status_code == 200, r.text
 
     r2 = client.get("/led/durum", headers=operator_header)
     assert r2.status_code == 200, r2.text
     veri = r2.json()
-    # /led/durum EN FAZLA 20 mesaj döner; test sırasına göre tablo zaten dolu olabilir.
-    assert len(veri["son_mesajlar"]) == min(onceki_sayi + 1, 20)
-    assert veri["son_mesajlar"][0]["mesaj"] == "PTS DURUM TESTİ"
-    assert veri["son_mesajlar"][0]["basarili"] is True
+    # /led/durum EN FAZLA 20 mesaj döner. Önceki testlerin kayıt bildirimleri
+    # arka plan iş parçacığında, ulaşılamayan panele gönderilirken geç bitip bu
+    # testin mesajından SONRA tabloya yazılabilir (toplu koşuda
+    # "YETKİSİZ ARAÇ: ..." en üstte görünüyordu) -- bu yüzden "en üstte" değil,
+    # "son mesajlar arasında ve başarılı" doğrulanır.
+    assert len(veri["son_mesajlar"]) <= 20
+    bizim = [m for m in veri["son_mesajlar"] if m["mesaj"] == "PTS DURUM TESTİ"]
+    assert bizim, "gönderilen test mesajı /led/durum'da görünmeli"
+    assert bizim[0]["basarili"] is True
 
 
 # ------------------------------------------------------------------
@@ -4254,6 +4257,34 @@ def test_gecmis_kayitlari_guncelle_olmayan_kisi_404_doner(client, yetkili_header
 # üretecek şekilde (ör. "00:00 -> 00:00" tam gün penceresi, ya da "-25 saat"
 # geri tarihleme) bilinçli olarak kurgulandı -- bkz. her testin kendi notu.
 
+@pytest.fixture
+def temiz_vardiya_oturumlari():
+    """Vardiya (güvenlik oturumu) testlerini birbirinden YALITIR.
+
+    Bu modüldeki testler aynı veritabanını paylaşır ve çoğu test bir güvenlik
+    hesabı oluşturup giriş yapar -- bu da `/auth/cikis` hiç çağrılmadığı için
+    AÇIK kalan bir VardiyaOturumu bırakır. Sonraki bir testin "oturumdan
+    ÖNCEKİ kayıt hiçbir vardiyaya etiketlenmemeli" ya da "yalnızca A vardiyası"
+    gibi iddiaları, önceki testlerin açık bıraktığı oturumlar yüzünden
+    ("A/B", "lojman-guvenlik-4; rbac-guvenlik-..." vb.) yanlış sonuç verirdi
+    (2026-10-05, kullanıcının tam test koşusunda ortaya çıktı: testler tek tek
+    geçiyor, toplu koşuda düşüyordu). Bu fixture testten ÖNCE tüm açık
+    oturumları kapatır; testin kendi oluşturduğu oturumlar bundan sonra açılır."""
+    from datetime import datetime as _dt
+    from backend.database import SessionLocal
+    from backend import models as _models
+
+    db = SessionLocal()
+    try:
+        db.query(_models.VardiyaOturumu).filter(_models.VardiyaOturumu.cikis_zamani.is_(None)).update(
+            {"cikis_zamani": _dt.now()}, synchronize_session=False
+        )
+        db.commit()
+    finally:
+        db.close()
+    yield
+
+
 def _rbac_guvenlik_kullanici_olustur(client, yetkili_header) -> tuple:
     """Yeni, benzersiz adlı bir 'güvenlik' rolünde kullanıcı oluşturur, giriş
     yapar ve (kullanici_id, header) döner. Fonksiyon-scope'lu bir fixture
@@ -4618,7 +4649,7 @@ def test_vardiya_oturumu_durumum_cikis_sonrasi_aktif_degil(client, yetkili_heade
     assert gövde["oturumlar"][0]["cikis_zamani"] is not None
 
 
-def test_rapor_vardiya_sutunu_acik_oturumdaki_kaydi_dogru_etiketler(client, yetkili_header):
+def test_rapor_vardiya_sutunu_acik_oturumdaki_kaydi_dogru_etiketler(client, yetkili_header, temiz_vardiya_oturumlari):
     """2026-09-20 kullanıcı talebi: "her vardiya için kendi geçiş raporları
     olsun ... raporda bir sütun tanımlansın" -- dışa aktarma (Excel/PDF)
     satırlarına main.py::_kayitlari_rapor_satirlari tarafından eklenen
@@ -4744,7 +4775,7 @@ def test_kullanici_guncelle_vardiya_adi_atanir_ve_kaldirilir(client, yetkili_hea
     assert r2.json()["vardiya_adi"] is None, "boş string (normalize sonrası) ataması KALDIRMALI"
 
 
-def test_vardiya_grubu_paylasimli_gorunurluk_farkli_hesaplar_arasinda(client, yetkili_header):
+def test_vardiya_grubu_paylasimli_gorunurluk_farkli_hesaplar_arasinda(client, yetkili_header, temiz_vardiya_oturumlari):
     """Ana özellik: AYNI vardiya adına ("A") atanmış, birbirinden BAĞIMSIZ
     iki güvenlik hesabı (ör. Ana Nizamiye + Lojman Nizamiye) birbirinin
     vardiya penceresindeki kayıtları görebilmeli -- kullanıcı talebi:
@@ -4772,7 +4803,7 @@ def test_vardiya_grubu_paylasimli_gorunurluk_farkli_hesaplar_arasinda(client, ye
     assert r_b.json() == [], "farklı vardiya grubundaki bir hesap bu kaydı GÖRMEMELİ"
 
 
-def test_kayitlar_vardiya_adi_filtresi_dogru_kayitlari_getirir(client, yetkili_header):
+def test_kayitlar_vardiya_adi_filtresi_dogru_kayitlari_getirir(client, yetkili_header, temiz_vardiya_oturumlari):
     """Kayıtlar ekranındaki "Vardiya" filtresi (rol ne olursa olsun
     çağrılabilir, bkz. main.py::_vardiya_adi_filtresi_uygula) -- "Tüm
     Güvenlik Personeli kayıtlar ekranından A B C D Vardiyalarında geçen
@@ -4802,7 +4833,7 @@ def test_kayitlar_vardiya_adi_filtresi_dogru_kayitlari_getirir(client, yetkili_h
     del a_header  # yalnızca hesabı oluşturmak için gerekliydi
 
 
-def test_kayitlar_vardiya_adi_filtresi_guvenlik_hesabi_kendi_disindaki_vardiyayi_da_bulur(client, yetkili_header):
+def test_kayitlar_vardiya_adi_filtresi_guvenlik_hesabi_kendi_disindaki_vardiyayi_da_bulur(client, yetkili_header, temiz_vardiya_oturumlari):
     """GERÇEK ÜRETİMDE BULUNAN HATA (2026-09-22, ekran görüntüleriyle
     bildirildi): yukarıdaki test (test_kayitlar_vardiya_adi_filtresi_dogru_
     kayitlari_getirir) bu filtreyi YALNIZCA kısıtlamasız bir `yetkili_header`
@@ -4860,7 +4891,7 @@ def test_kayitlar_vardiya_adi_filtresi_guvenlik_hesabi_kendi_disindaki_vardiyayi
     assert r_a.json() == []
 
 
-def test_disa_aktar_pdf_kayit_detay_vardiya_adi_filtresiyle_baska_vardiyadan_izin_verir(client, yetkili_header):
+def test_disa_aktar_pdf_kayit_detay_vardiya_adi_filtresiyle_baska_vardiyadan_izin_verir(client, yetkili_header, temiz_vardiya_oturumlari):
     """İkinci, ilişkili GERÇEK ÜRETİM hatası: yukarıdaki listede "D" filtresiyle
     görünür hale gelen bir kaydı, kullanıcı satırdaki "PDF indir" düğmesiyle
     indirmeye çalışınca (bkz. app.js::kayitPdfIndir, artık aynı filtre
@@ -4890,7 +4921,7 @@ def test_disa_aktar_pdf_kayit_detay_vardiya_adi_filtresiyle_baska_vardiyadan_izi
     assert r4.status_code == 200, r4.text
 
 
-def test_plaka_analizinde_vardiya_adi_alani_dolar(client, yetkili_header):
+def test_plaka_analizinde_vardiya_adi_alani_dolar(client, yetkili_header, temiz_vardiya_oturumlari):
     """"plaka arayınca karşısına kimin vardiyasında girip çıktığı
     gözükebilsin" talebi -- bkz. main.py::plaka_analiz, son_kayitlar[].
     vardiya_adi."""
