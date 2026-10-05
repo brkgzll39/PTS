@@ -5121,7 +5121,7 @@ async function bildirimAyarlariYukle() {
       hepsi: "Hepsi", yetkisiz: "Yetkisiz araç", kara_liste: "Kara liste",
       suresi_dolmus: "Süresi dolmuş", supheli_arac: "Şüpheli araç",
       bariyer_hatasi: "Bariyer hatası", kamera_arizasi: "Kamera arızası",
-      disk_hatasi: "Disk hatası", yedek_bozuk: "Otomatik yedek bozuk",
+      disk_hatasi: "Disk hatası", yedek_bozuk: "Otomatik yedek bozuk", yedek_hatasi: "Otomatik yedek alınamadı",
       disk_doluyor: "Disk doluluk erken uyarısı", gunluk_ozet: "Günlük özet (her sabah)",
     };
     el.innerHTML = ayarlar.map(a => `<tr>
@@ -5299,8 +5299,10 @@ async function sistemAyarlariYukle() {
         <input type="checkbox" class="form-check-input" id="ayar_otomatik_yedek_aktif" ${ayarlar.otomatik_yedek_aktif ? "checked" : ""}>
         <label class="form-check-label small" for="ayar_otomatik_yedek_aktif">Veritabanını günde bir kez otomatik yedekle</label>
       </div>
-      <div class="mb-2"><label class="form-label small" for="ayar_otomatik_yedek_klasoru">Otomatik yedek klasörü</label>
+      <div class="mb-2" id="sqliteYedekKlasoruAlani"><label class="form-label small" for="ayar_otomatik_yedek_klasoru">Otomatik yedek klasörü</label>
         <input type="text" class="form-control form-control-sm" id="ayar_otomatik_yedek_klasoru" value="${escapeHtml(String(ayarlar.otomatik_yedek_klasoru ?? ""))}"></div>
+      <div class="mb-2 d-none" id="mssqlYedekKlasoruAlani"><label class="form-label small" for="ayar_mssql_yedek_klasoru">SQL Server yedek klasörü <span class="text-muted">(SQL Server makinesindeki yol; boş = SQL Server'ın varsayılan yedek klasörü)</span></label>
+        <input type="text" class="form-control form-control-sm" id="ayar_mssql_yedek_klasoru" placeholder="Boş bırakın (önerilir)" value="${escapeHtml(String(ayarlar.mssql_yedek_klasoru ?? ""))}"></div>
       <p class="small text-muted mb-2">Canlı veritabanı çalışırken bile tutarlı bir kopya alınır (WAL
         modunda bekleyen son işlemler dahil, bkz. README) ve seçilen saklama süresinden eski otomatik
         yedekler otomatik silinir. Uzun süreli/afet kurtarma amaçlı saklama için bu klasörü ayrı bir
@@ -5326,6 +5328,7 @@ async function sistemAyarlariYukle() {
       guncel.alarm_otomatik_okundu = document.getElementById("ayar_alarm_otomatik_okundu").checked;
       guncel.otomatik_yedek_aktif = document.getElementById("ayar_otomatik_yedek_aktif").checked;
       guncel.otomatik_yedek_klasoru = document.getElementById("ayar_otomatik_yedek_klasoru").value;
+      guncel.mssql_yedek_klasoru = document.getElementById("ayar_mssql_yedek_klasoru").value;
       guncel.disk_izleme_aktif = document.getElementById("ayar_disk_izleme_aktif").checked;
       // DÜZELTME (2026-09-25): bu gönderim işleyicisinde try/catch YOKTU --
       // backend'in yeni ayar doğrulaması (Patch #100) geçersiz bir değeri
@@ -5366,6 +5369,13 @@ async function otomatikYedekDurumunuYukle() {
   if (!el) return;
   try {
     const veri = await apiCagir("/sistem/yedek/otomatik-liste");
+    // SQL Server kurulumu (2026-10-05, kullanıcı geri bildirimi: panel "ilk
+    // yedek en geç 6 saat içinde alınır" diyordu ama SQL Server'da hiç otomatik
+    // yedek alınmıyordu): ayrı, açıklayıcı bir görünüm -- bkz.
+    // _mssqlYedekDurumunuCiz.
+    document.getElementById("mssqlYedekKlasoruAlani")?.classList.toggle("d-none", veri.mod !== "mssql");
+    document.getElementById("sqliteYedekKlasoruAlani")?.classList.toggle("d-none", veri.mod === "mssql");
+    if (veri.mod === "mssql") { _mssqlYedekDurumunuCiz(el, veri); return; }
     if (!veri.yedekler.length) {
       el.className = "small mb-2 text-muted";
       el.textContent = `Henüz otomatik yedek alınmadı (klasör: ${veri.klasor}). İlk yedek en geç 6 saat içinde alınır.`;
@@ -5390,11 +5400,38 @@ async function otomatikYedekDurumunuYukle() {
   }
 }
 
+function _mssqlYedekDurumunuCiz(el, veri) {
+  const boyutMb = (b) => (b / (1024 * 1024)).toFixed(1);
+  const son = veri.yedekler[0];
+  const parcalar = [];
+  if (veri.hata) parcalar.push(`<div class="text-danger"><i class="bi bi-x-octagon-fill"></i> ${escapeHtml(veri.hata)}</div>`);
+  if (veri.uyari) parcalar.push(`<div class="text-danger fw-bold"><i class="bi bi-exclamation-triangle-fill"></i> ${escapeHtml(veri.uyari)}</div>`);
+  if (son) {
+    parcalar.push(`<div class="text-muted">SQL Server'daki son yedek: <strong>${new Date(son.tarih_saat).toLocaleString("tr-TR")}</strong> (${boyutMb(son.boyut_bayt)} MB) — <span class="text-break">${escapeHtml(son.yol)}</span></div>`);
+    const eski = veri.yedekler.slice(1, 4).map(y => `${new Date(y.tarih_saat).toLocaleDateString("tr-TR")} · ${escapeHtml(y.dosya_adi)}`);
+    if (eski.length) parcalar.push(`<div class="text-muted">Önceki yedekler: ${eski.join(" | ")}</div>`);
+  }
+  parcalar.push(`<div class="text-muted">Otomatik yedek: ${veri.aktif ? '<span class="badge bg-success">AÇIK</span>' : '<span class="badge bg-secondary">KAPALI</span>'} — yedek klasörü (SQL Server makinesinde): ${escapeHtml(veri.klasor || "belirlenemedi")}</div>`);
+  parcalar.push(`<div class="text-muted">Yedekler SQL Server'ın kendi kayıtlarından (elle SSMS'ten aldığınız <code>pts.bak</code> dahil) listelenir. Otomatik yedek, son yedek 20 saatten eskiyse günde en fazla bir kez alınır; en fazla 14 gün döngüsel saklanır.</div>`);
+  if (rolYeterli("yonetici")) {
+    parcalar.push(`<div class="mt-1">
+      <button type="button" class="btn btn-sm btn-outline-primary py-0" onclick="veritabaniIndir()" id="mssqlSimdiYedekBtn"><i class="bi bi-hdd-fill"></i> Şimdi Yedekle</button>
+      ${son ? `<button type="button" class="btn btn-sm btn-outline-secondary ms-1 py-0" onclick="otomatikYedekDogrula('${encodeURIComponent(son.dosya_adi)}')"><i class="bi bi-shield-check"></i> Son Yedeği Doğrula</button>` : ""}
+    </div>`);
+  }
+  el.className = "small mb-2";
+  el.innerHTML = parcalar.join("");
+}
+
 async function otomatikYedekDogrula(dosyaAdiKodlu) {
   const dosyaAdi = decodeURIComponent(dosyaAdiKodlu);
   try {
     const r = await apiCagir(`/sistem/yedek/otomatik-liste/${encodeURIComponent(dosyaAdi)}/dogrula`, { method: "POST" });
-    toastGoster(r.saglam ? "Yedek dosyası sağlam (bütünlük doğrulandı) ✓" : `Yedek dosyası BOZUK: ${r.hata}`, r.saglam ? "basari" : "hata");
+    if (r.saglam === null || r.saglam === undefined) {
+      toastGoster(`Yedek doğrulanamadı (bozuk olduğu anlamına gelmez): ${r.hata || "bilinmeyen neden"}`, "uyari");
+    } else {
+      toastGoster(r.saglam ? "Yedek dosyası sağlam (bütünlük doğrulandı) ✓" : `Yedek dosyası BOZUK: ${r.hata}`, r.saglam ? "basari" : "hata");
+    }
   } catch (e) {
     toastGoster(e.message, "hata");
   } finally {
@@ -5473,6 +5510,8 @@ async function veritabaniIndir() {
   // token'ı elle ekleyerek fetch ile indirip, gelen dosyayı blob olarak
   // tarayıcıya indirtmek.
   const token = sessionStorage.getItem("pts_token");
+  const simdiBtn = document.getElementById("mssqlSimdiYedekBtn");
+  if (simdiBtn) simdiBtn.disabled = true;
   try {
     const cevap = await fetch(API + "/sistem/yedek", {
       headers: token ? { Authorization: `Bearer ${token}` } : {},
@@ -5480,6 +5519,15 @@ async function veritabaniIndir() {
     if (!cevap.ok) {
       const hata = await cevap.json().catch(() => ({ detail: "Yedek alınamadı" }));
       throw new Error(hata.detail || "Yedek alınamadı");
+    }
+    // SQL Server kurulumunda sunucu dosya DEĞİL, yedeğin SQL Server makinesinde
+    // nereye yazıldığını anlatan JSON döner (bkz. main.py::veritabani_yedek).
+    if ((cevap.headers.get("Content-Type") || "").includes("application/json")) {
+      const r = await cevap.json();
+      const dogrulama = r.saglam === true ? "doğrulandı ✓" : r.saglam === false ? `DOĞRULAMA BAŞARISIZ: ${r.dogrulama_hatasi}` : "doğrulanamadı (yetki)";
+      toastGoster(`SQL Server yedeği alındı (${dogrulama}): ${r.yol}`, r.saglam === false ? "hata" : "basari");
+      otomatikYedekDurumunuYukle();
+      return;
     }
     const blob = await cevap.blob();
     let dosyaAdi = "pts_yedek.db";
@@ -5496,6 +5544,8 @@ async function veritabaniIndir() {
     URL.revokeObjectURL(url);
   } catch (e) {
     toastGoster(e.message || "Veritabanı yedeği indirilemedi", "hata");
+  } finally {
+    if (simdiBtn) simdiBtn.disabled = false;
   }
 }
 

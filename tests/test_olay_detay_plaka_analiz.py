@@ -90,4 +90,5 @@ def test_canli_izleme_panelindeki_satirlar_hala_olay_detay_ac_cagiriyor():
     # olarak eklendi, satırın kendi tıklama davranışı DEĞİŞMEDİ.
     js = _js_metni()
     assert js.count('onclick="olayDetayAc(${k.id})"') >= 1
-    assert js.count('onclick="olayDetayAc(${kayit.id})"') >= 1
+    # Geçiş kartları (alt şerit/not düğmesi) ve alarm satırları da aynı modalı açar.
+    assert js.count('onclick="olayDetayAc(${a.kayit_id})"') >= 1

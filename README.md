@@ -21,7 +21,7 @@ Localhost üzerinde çalışan, tarayıcıdan erişilen tam bir Plaka Tanıma Si
 - **Arvento sürücü kimliği entegrasyonu**: Webhook ile araç-sürücü eşleşmesi.
 - **Dahua kamera olay entegrasyonu**: Uyumlu kameraların kendi yerleşik ANPR'ından doğrudan olay alma.
 - **Denetim kayıtları (audit log)**: Kim, ne zaman, neyi değiştirdi -- kalıcı ve silinemez kayıt.
-- **Otomatik veritabanı yedekleme**: Bütünlük doğrulamalı otomatik yedekleme ve disk doluluğu için erken uyarı.
+- **Otomatik veritabanı yedekleme**: SQLite ve SQL Server için bütünlük doğrulamalı otomatik yedekleme (SQL Server: `.bak`, bkz. "SQL Server Yedekleme") ve disk doluluğu için erken uyarı.
 - **Lisans yönetimi**: Bilgisayara özel üretilmiş lisans anahtarı, süre takibi ve süresi dolmadan önce uyarı.
 - **LED panel entegrasyonu**: Simülasyon, Seri Port (RS232/USB) veya TCP/IP üzerinden mesaj gönderimi. Panel arayüzünden ayarlanabilir ve test edilebilir.
 - **Geçmişe dönük kayıt görüntüleme**: Plaka, tarih aralığı ve yetki durumuna göre filtreleme.
@@ -4448,3 +4448,30 @@ ayarının gerçekten tetiklendiği, `_gunluk_ozet_bir_kontrol`'ün günde bir
 kez gönderdiği VE sunucu geç açılsa bile o gün için yakaladığı, ve
 `/kayitlar/grafik`'in yeni `saatlik`/`en_sik_sorunlu_plakalar` alanlarını
 doğru hesapladığı test edildi.
+
+## SQL Server Yedekleme (2026-10-05)
+
+Önceden otomatik yedek ve "DB Yedek" düğmesi yalnızca SQLite içindi; SQL Server
+kurulumlarında panel "ilk yedek en geç 6 saat içinde alınır" diyerek yanıltıcı
+biçimde bekliyordu. Artık SQL Server için de çalışır (`backend/mssql_yedek.py`):
+
+- **Otomatik yedek:** günde en fazla bir kez `BACKUP DATABASE ... WITH CHECKSUM`
+  ile tam yedek alınır ve `RESTORE VERIFYONLY ... WITH CHECKSUM` ile doğrulanır.
+  Son yedek (elle SSMS'ten alınan `pts.bak` dahil) 20 saatten yeniyse yeni yedek
+  alınmaz. Dosyalar `pts_otomatik_yedek_<n>.bak` adıyla en fazla 14 gün döngüsel
+  tutulur (en eskinin üzerine yazılır; PTS hiçbir dosya silmez).
+- **DB Yedek düğmesi:** `.bak` dosyasını SQL Server makinesinde alır
+  (`pts_manuel_yedek_<tarih>.bak`) ve nereye yazıldığını gösterir; tarayıcıya
+  dosya indirilmez.
+- **Durum:** panel, yedek geçmişini SQL Server'ın `msdb` kayıtlarından listeler;
+  son yedek 48 saatten eskiyse kırmızı uyarı verir. Yedek alınamazsa
+  `yedek_hatasi`, doğrulanamazsa `yedek_bozuk` alarmı oluşur ve bildirim
+  kuralları (Telegram/webhook) tetiklenir.
+- **Gerekenler:** PTS'nin SQL kullanıcısı `db_backupoperator` rolünde olmalı ve
+  `msdb` okuyabilmelidir; yedek klasörü SQL Server SERVİS hesabının yazabildiği
+  bir klasör olmalıdır. Ayar boş bırakılırsa SQL Server'ın kendi varsayılan yedek
+  klasörü kullanılır (önerilir). Eksik izin varsa hata panelde okunur biçimde
+  gösterilir.
+- **Test notu:** komutlar sahte bir bağlantıyla birim testlerinden geçer
+  (`tests/test_mssql_yedek.py`); gerçek bir SQL Server'a karşı ilk kez
+  "Şimdi Yedekle" ile denenmelidir.

@@ -92,6 +92,7 @@ from backend.vardiya_eslestirme import kayitlari_oturumlarla_eslestir
 from backend import kucuk_gorsel
 from backend import telegram_bildirim
 from backend import expo_push
+from backend import mssql_yedek
 from backend.metin_araclari import levenshtein_mesafesi, en_yakin_bilinen_plakayi_bul, plaka_hucresini_ayir
 
 # ---------------------- KLASÖR AYARLARI ----------------------
@@ -320,6 +321,11 @@ _VARSAYILAN_AYARLAR = {
     # farklı bir diske/yola da ayarlanabilir.
     "otomatik_yedek_aktif": True,
     "otomatik_yedek_klasoru": os.path.join(PROJE_KOKU, "yedekler"),
+    # SQL Server kurulumları için (bkz. backend/mssql_yedek.py): .bak dosyasının
+    # yazılacağı klasör -- SQL Server MAKİNESİNDEKİ bir yol ve SQL Server servis
+    # hesabının yazabildiği bir klasör olmalı. Boş = SQL Server'ın kendi
+    # varsayılan yedek klasörü (otomatik algılanır).
+    "mssql_yedek_klasoru": "",
     "otomatik_yedek_saklama_gun": 30,
     # DİSKİN GERÇEKTEN DOLMASINA KARŞI ERKEN UYARI (2026-09-26, kullanıcı
     # isteği) -- bkz. _disk_izleme_dongu'nun docstring'i. Mevcut "disk_hatasi"
@@ -782,19 +788,98 @@ def _otomatik_yedek_uret_ve_dogrula(db_yolu: str, klasor: str) -> None:
         logger.error("Otomatik veritabanı yedeği alınamadı: %s", exc, exc_info=True)
 
 
+def _mssql_modu() -> bool:
+    """Bu kurulum SQL Server mı kullanıyor (bkz. database.py)."""
+    return SQLALCHEMY_DATABASE_URL.lower().startswith("mssql")
+
+
+def _mssql_yedek_al_ve_dogrula(ayarlar: dict, otomatik: bool) -> dict:
+    """SQL Server'da tam yedek alır ve doğrular (bkz. backend/mssql_yedek.py).
+    `otomatik=True`: döngüsel `pts_otomatik_yedek_<n>.bak` (en eskinin üzerine
+    yazar); False: zaman damgalı `pts_manuel_yedek_*.bak`. Döner: {yol,
+    saglam (True/False/None), dogrulama_hatasi}. Yedek alınamazsa
+    `mssql_yedek.YedekHatasi` fırlatır."""
+    klasor = mssql_yedek.etkin_yedek_klasoru(engine, ayarlar)
+    if otomatik:
+        try:
+            saklama = int(ayarlar.get("otomatik_yedek_saklama_gun", 14) or 0)
+        except (TypeError, ValueError):
+            saklama = 14
+        dosya_adi = mssql_yedek.dongusel_dosya_adi(saklama)
+    else:
+        dosya_adi = mssql_yedek.manuel_dosya_adi()
+    yol = mssql_yedek.yedek_al(engine, klasor, dosya_adi)
+    saglam, hata = mssql_yedek.yedegi_dogrula(engine, yol)
+    return {"yol": yol, "saglam": saglam, "dogrulama_hatasi": hata}
+
+
+def _mssql_yedek_alarmi_olustur(alarm_tipi: str, mesaj: str) -> None:
+    """Yedek sorununu panelde alarm olarak gösterir ve bildirim kurallarını
+    (Telegram/webhook) tetikler -- sessiz kalmaz."""
+    db = SessionLocal()
+    try:
+        mesaj = mesaj[:255]
+        db.add(models.Alarm(plaka_no="SISTEM", alarm_tipi=alarm_tipi, mesaj=mesaj))
+        db.commit()
+        _bildirim_tetikle(db, alarm_tipi, {"olay": alarm_tipi, "alarm_tipi": alarm_tipi, "mesaj": mesaj})
+    except Exception as exc2:
+        logger.error("Yedek alarmı kaydedilemedi: %s", exc2)
+    finally:
+        db.close()
+
+
+def _mssql_otomatik_yedek_bir_tur(ayarlar: dict) -> bool:
+    """Tek bir SQL Server otomatik yedek turu. Son yedek (kim aldıysa -- elle
+    SSMS'ten alınan `pts.bak` dahil) yeterince yeniyse HİÇBİR ŞEY yapmaz.
+    Döner: bir yedek DENENDİ mi (başarılı ya da değil)."""
+    try:
+        gecmis = mssql_yedek.yedek_gecmisi(engine, 1)
+    except Exception as exc:
+        # msdb okuma yetkisi yoksa yedek geçmişi bilinemez; yine de yedek almayı
+        # deneriz (günde en fazla bir kez, bkz. çağıran).
+        logger.warning("[mssql-yedek] yedek geçmişi okunamadı (msdb yetkisi?): %s", exc)
+        gecmis = []
+    if gecmis and not mssql_yedek.otomatik_yedek_gerekli_mi(gecmis):
+        return False
+    try:
+        sonuc = _mssql_yedek_al_ve_dogrula(ayarlar, otomatik=True)
+    except mssql_yedek.YedekHatasi as exc:
+        logger.error("[mssql-yedek] otomatik yedek ALINAMADI: %s", exc)
+        _mssql_yedek_alarmi_olustur("yedek_hatasi", f"SQL Server otomatik yedeği alınamadı: {exc}")
+        return True
+    except Exception as exc:
+        logger.error("[mssql-yedek] otomatik yedek beklenmeyen hata: %s", exc, exc_info=True)
+        _mssql_yedek_alarmi_olustur("yedek_hatasi", f"SQL Server otomatik yedeği alınamadı (beklenmeyen hata): {exc}")
+        return True
+    if sonuc["saglam"] is False:
+        logger.error("[mssql-yedek] yedek BOZUK doğrulandı: %s -- %s", sonuc["yol"], sonuc["dogrulama_hatasi"])
+        _mssql_yedek_alarmi_olustur("yedek_bozuk", f"SQL Server yedeği doğrulanamadı/bozuk: {sonuc['dogrulama_hatasi']}")
+    elif sonuc["saglam"] is None:
+        logger.warning("[mssql-yedek] yedek alındı ama doğrulanamadı: %s", sonuc["dogrulama_hatasi"])
+    else:
+        logger.info("SQL Server yedeği alındı ve doğrulandı: %s", sonuc["yol"])
+    return True
+
+
 async def _otomatik_yedek_dongu() -> None:
     """Sonsuz döngü: ayarlarda etkinse, günde bir kez veritabanının tutarlı
     bir kopyasını `otomatik_yedek_klasoru`'na yazar (bkz.
     _otomatik_yedek_uret_ve_dogrula) ve `otomatik_yedek_saklama_gun`'dan
-    eski otomatik yedekleri temizler. Yalnızca SQLite için çalışır (SQL
-    Server kurulumlarında kurumun kendi veritabanı yedekleme araçları
-    kullanılmalı, bkz. manuel /sistem/yedek uç noktasındaki aynı
-    kısıtlama)."""
+    eski otomatik yedekleri temizler. SQLite için dosya kopyalama, SQL Server
+    için `BACKUP DATABASE` (bkz. backend/mssql_yedek.py) kullanılır."""
     son_yedek_gunu = None
     while True:
         try:
             ayarlar = _sistem_ayarlari_oku()
-            if SQLALCHEMY_DATABASE_URL.startswith("sqlite") and ayarlar.get("otomatik_yedek_aktif", True):
+            if _mssql_modu() and ayarlar.get("otomatik_yedek_aktif", True):
+                # SQL Server (2026-10-05): bkz. backend/mssql_yedek.py. Günde en
+                # fazla bir kez denenir; engine/ODBC çağrıları bloklayıcı olduğu
+                # için olay döngüsünü kilitlememek üzere thread'de çalıştırılır.
+                bugun = datetime.now().date()
+                if son_yedek_gunu != bugun:
+                    await asyncio.to_thread(_mssql_otomatik_yedek_bir_tur, ayarlar)
+                    son_yedek_gunu = bugun
+            elif SQLALCHEMY_DATABASE_URL.startswith("sqlite") and ayarlar.get("otomatik_yedek_aktif", True):
                 bugun = datetime.now().date()
                 if son_yedek_gunu != bugun:
                     db_yolu = urlparse(SQLALCHEMY_DATABASE_URL).path.lstrip("/")
@@ -873,6 +958,19 @@ def _izlenen_disk_yollari(ayarlar: dict) -> dict:
     if SQLALCHEMY_DATABASE_URL.startswith("sqlite"):
         db_yolu = urlparse(SQLALCHEMY_DATABASE_URL).path.lstrip("/")
         yollar["Veritabanı"] = os.path.dirname(os.path.abspath(db_yolu)) or "."
+    elif _mssql_modu():
+        # SQL Server (2026-10-05): veri dosyasının ve .bak yedeklerinin diskleri
+        # de izlensin -- yalnızca PTS ile AYNI makinedeki (yerel) klasörler
+        # kontrol edilebilir; uzak bir SQL Server'ın yolu burada yoksa atlanır.
+        veri_klasoru = mssql_yedek.veri_dosyasi_klasoru(engine)
+        if veri_klasoru and os.path.isdir(veri_klasoru):
+            yollar["Veritabanı (SQL Server)"] = veri_klasoru
+        try:
+            yedek_klasoru = mssql_yedek.etkin_yedek_klasoru(engine, ayarlar)
+            if os.path.isdir(yedek_klasoru):
+                yollar["SQL Server yedekleri"] = yedek_klasoru
+        except mssql_yedek.YedekHatasi:
+            pass
     return yollar
 
 
@@ -6940,6 +7038,14 @@ def _son_yedek_bilgisini_al() -> dict:
     sinyali kullanarak "yedek gecikmiş" durumunu görünür kılabilir. Ayarlı
     değilse (varsayılan) hiçbir davranış değişmez, yalnızca `null` döner."""
     klasor = os.getenv("PTS_SQL_YEDEK_KLASORU", "").strip()
+    if _mssql_modu() and not klasor:
+        # SQL Server (2026-10-05): ortam değişkeni verilmediyse yedek durumu
+        # doğrudan SQL Server'ın msdb kayıtlarından okunur (PTS'nin kendi
+        # aldığı da, elle SSMS'ten alınan `pts.bak` da sayılır).
+        ozet = mssql_yedek.son_yedek_ozeti(engine)
+        if ozet["basarili"]:
+            return {"izleniyor": True, "son_yedek_zamani": ozet["son_yedek_zamani"], "yedek_gecikmis": ozet["gecikmis"]}
+        return {"izleniyor": False, "son_yedek_zamani": None, "yedek_gecikmis": None}
     if not klasor or not os.path.isdir(klasor):
         return {"izleniyor": False, "son_yedek_zamani": None, "yedek_gecikmis": None}
     try:
@@ -7598,6 +7704,14 @@ def _ayar_klasor_yolu_dogrula(v) -> str:
     return v
 
 
+def _ayar_klasor_yolu_veya_bos_dogrula(v) -> str:
+    """`_ayar_klasor_yolu_dogrula` gibi, ama BOŞ değere izin verir ("otomatik
+    algıla / varsayılan" anlamında)."""
+    if isinstance(v, str) and not v.strip():
+        return ""
+    return _ayar_klasor_yolu_dogrula(v)
+
+
 # DÜZELTME (2026-09-25, sistem taraması): PUT /sistem/ayarlar önceden
 # gönderilen değerin TİPİNİ/ARALIĞINI hiç doğrulamıyordu -- yalnızca
 # anahtarın _VARSAYILAN_AYARLAR'da var olup olmadığına bakılıyordu. Bu iki
@@ -7625,6 +7739,7 @@ _AYAR_DOGRULAYICILAR = {
     "otomatik_kayit_min_guven_skoru_bilinen_arac": lambda v: _ayar_float_dogrula(v, 0.0, 1.0),
     "otomatik_yedek_aktif": _ayar_bool_dogrula,
     "otomatik_yedek_klasoru": _ayar_klasor_yolu_dogrula,
+    "mssql_yedek_klasoru": _ayar_klasor_yolu_veya_bos_dogrula,
     "otomatik_yedek_saklama_gun": lambda v: _ayar_int_dogrula(v, 0, None),
     "disk_izleme_aktif": _ayar_bool_dogrula,
     "disk_uyari_esik_yuzde": lambda v: _ayar_int_dogrula(v, 50, 99),
@@ -7826,7 +7941,7 @@ def dusuk_guven_kayitlarini_temizle(
 
 
 @app.get("/sistem/yedek")
-def veritabani_yedek(kullanici: models.Kullanici = Depends(_personel_girisi_gerekli)):
+def veritabani_yedek(db: Session = Depends(get_db), kullanici: models.Kullanici = Depends(_personel_girisi_gerekli)):
     """DÜZELTME (2026-09-25): bu uç nokta önceden WAL modundaki veritabanı
     dosyasını doğrudan (checkpoint yapmadan) kopyalıyordu -- bkz.
     _sqlite_yedek_al'ın docstring'i: WAL modunda son işlemler bir süre
@@ -7835,8 +7950,19 @@ def veritabani_yedek(kullanici: models.Kullanici = Depends(_personel_girisi_gere
     (otomatik yedeklemeyle ORTAK) kullanarak DISA_AKTAR_KLASORU altında
     tutarlı bir geçici kopya üretip onu indiriyor."""
     _rol_dogrula(kullanici, ROL_YONETICI)
+    if _mssql_modu():
+        # SQL Server (2026-10-05): .bak dosyasını SQL Server servisi kendi
+        # makinesindeki klasöre yazar, tarayıcıya dosya indirilemez -- bu yüzden
+        # yedek ALINIR ve nereye yazıldığı JSON olarak döner (bkz. frontend
+        # veritabaniIndir). Önceden burada 400 hatası dönüyordu.
+        try:
+            sonuc = _mssql_yedek_al_ve_dogrula(_sistem_ayarlari_oku(), otomatik=False)
+        except mssql_yedek.YedekHatasi as exc:
+            raise HTTPException(500, f"SQL Server yedeği alınamadı: {exc}")
+        _denetim_kaydet(db, kullanici.kullanici_adi, "mssql_yedek_al", f"{sonuc['yol']} (doğrulama: {sonuc['saglam']})")
+        return {"mod": "mssql", **sonuc}
     if not SQLALCHEMY_DATABASE_URL.startswith("sqlite"):
-        raise HTTPException(400, "Otomatik yedek sadece SQLite için desteklenir. SQL Server için veritabanı yönetim araçlarını kullanın.")
+        raise HTTPException(400, "Desteklenmeyen veritabanı türü: yedek için veritabanı yönetim araçlarını kullanın.")
     db_yolu = urlparse(SQLALCHEMY_DATABASE_URL).path.lstrip("/")
     if not os.path.exists(db_yolu):
         raise HTTPException(404, "Veritabanı dosyası bulunamadı")
@@ -7865,6 +7991,36 @@ def veritabani_yedek(kullanici: models.Kullanici = Depends(_personel_girisi_gere
     return _indirip_sil(gecici_yol, dosya_adi, "application/octet-stream")
 
 
+def _mssql_yedek_durumu(ayarlar: dict) -> dict:
+    """GET /sistem/yedek/otomatik-liste'nin SQL Server dalı: yedek geçmişi
+    SQL Server'ın `msdb` kayıtlarından okunur (elle SSMS'ten alınan `pts.bak`
+    dahil). Hata varsa SESSİZCE boş liste dönmek yerine `hata` alanında
+    açıkça bildirilir -- panel bunu kırmızı gösterir."""
+    sonuc = {
+        "mod": "mssql",
+        "klasor": None,
+        "aktif": bool(ayarlar.get("otomatik_yedek_aktif", True)),
+        "yedekler": [],
+        "uyari": None,
+        "hata": None,
+    }
+    try:
+        sonuc["klasor"] = mssql_yedek.etkin_yedek_klasoru(engine, ayarlar)
+    except mssql_yedek.YedekHatasi as exc:
+        sonuc["hata"] = str(exc)
+    try:
+        gecmis = mssql_yedek.yedek_gecmisi(engine, 30)
+        sonuc["yedekler"] = [
+            {**y, "saglam": None} for y in gecmis
+        ]
+        sonuc["uyari"] = mssql_yedek.yedek_yasi_uyarisi(gecmis)
+    except Exception as exc:
+        sonuc["hata"] = (sonuc["hata"] + " | " if sonuc["hata"] else "") + (
+            "Yedek geçmişi SQL Server'dan okunamadı (msdb okuma yetkisi gerekir): " + mssql_yedek.hata_mesajini_sadelestir(exc)
+        )
+    return sonuc
+
+
 @app.get("/sistem/yedek/otomatik-liste")
 def otomatik_yedekleri_listele(kullanici: models.Kullanici = Depends(_personel_girisi_gerekli)):
     """DÜZELTME (2026-09-25): otomatik yedekleme arka planda sessizce
@@ -7882,6 +8038,8 @@ def otomatik_yedekleri_listele(kullanici: models.Kullanici = Depends(_personel_g
     otomatik_yedek_dogrula)."""
     _rol_dogrula(kullanici, ROL_YONETICI)
     ayarlar = _sistem_ayarlari_oku()
+    if _mssql_modu():
+        return _mssql_yedek_durumu(ayarlar)
     klasor = _otomatik_yedek_klasoru_al(ayarlar)
     yedekler = []
     if os.path.isdir(klasor):
@@ -7919,6 +8077,18 @@ def otomatik_yedek_dogrula(dosya_adi: str, kullanici: models.Kullanici = Depends
     yedekler hem de zaten doğrulanmış bir yedek bir yöneticinin isteğiyle
     her an yeniden kontrol edilebilsin diye (bkz. _yedek_dosyasi_saglam_mi)."""
     _rol_dogrula(kullanici, ROL_YONETICI)
+    if _mssql_modu():
+        # SQL Server: dosya adı, msdb'deki gerçek yedek geçmişinden eşleştirilir
+        # (kullanıcıdan gelen bir yol ASLA doğrudan RESTORE komutuna verilmez).
+        try:
+            gecmis = mssql_yedek.yedek_gecmisi(engine, 100)
+        except Exception as exc:
+            raise HTTPException(500, f"Yedek geçmişi okunamadı: {mssql_yedek.hata_mesajini_sadelestir(exc)}")
+        eslesen = next((y for y in gecmis if y["dosya_adi"] == dosya_adi), None)
+        if not eslesen:
+            raise HTTPException(404, "Yedek kaydı bulunamadı")
+        saglam, hata = mssql_yedek.yedegi_dogrula(engine, eslesen["yol"])
+        return {"dosya_adi": dosya_adi, "saglam": saglam, "hata": hata}
     # /goruntuler/{dosya_adi}'daki ile AYNI yol geçişi koruması (bkz. o uç
     # noktanın docstring'i): tek segment içinde kalan ama yine de ".." içeren
     # bir değer de reddedilir.

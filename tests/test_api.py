@@ -6617,3 +6617,121 @@ def test_kisi_arama_tip_filtresiyle_birlikte_calisir_ve_excel_indirir(client, ye
     assert kisi_id in {k["id"] for k in liste}
     rx = client.get("/disa-aktar/excel/kisiler", params={"arama": "zxq"}, headers=yetkili_header)
     assert rx.status_code == 200, rx.text
+
+
+# ---------------------- SQL Server yedekleme (2026-10-05) ----------------------
+# Gerçek bir SQL Server olmadan: mssql kipi ve backend.mssql_yedek çağrıları
+# monkeypatch ile taklit edilir (modülün kendi mantığı tests/test_mssql_yedek.py'de).
+
+
+def test_sistem_ayarlari_mssql_yedek_klasoru_bos_ve_yol_kabul_eder(client, yetkili_header, tmp_path):
+    onceki = client.get("/sistem/ayarlar", headers=yetkili_header).json()["mssql_yedek_klasoru"]
+    try:
+        r = client.put("/sistem/ayarlar", json={"mssql_yedek_klasoru": ""}, headers=yetkili_header)
+        assert r.status_code == 200, r.text
+        r = client.put("/sistem/ayarlar", json={"mssql_yedek_klasoru": r"D:\SQLYedek"}, headers=yetkili_header)
+        assert r.status_code == 200, r.text
+        assert client.get("/sistem/ayarlar", headers=yetkili_header).json()["mssql_yedek_klasoru"] == r"D:\SQLYedek"
+    finally:
+        client.put("/sistem/ayarlar", json={"mssql_yedek_klasoru": onceki}, headers=yetkili_header)
+
+
+def test_sistem_yedek_mssql_kipinde_yedek_alir_ve_json_doner(client, yetkili_header, monkeypatch):
+    import backend.main as m
+
+    monkeypatch.setattr(m, "_mssql_modu", lambda: True)
+    monkeypatch.setattr(
+        m, "_mssql_yedek_al_ve_dogrula",
+        lambda ayarlar, otomatik: {"yol": r"C:\Yedek\pts_manuel_yedek_x.bak", "saglam": True, "dogrulama_hatasi": None},
+    )
+    r = client.get("/sistem/yedek", headers=yetkili_header)
+    assert r.status_code == 200, r.text
+    v = r.json()
+    assert v["mod"] == "mssql" and v["saglam"] is True and v["yol"].endswith(".bak")
+
+
+def test_sistem_yedek_mssql_kipinde_hata_500_ve_anlasilir_mesaj(client, yetkili_header, monkeypatch):
+    import backend.main as m
+
+    def patlat(ayarlar, otomatik):
+        raise m.mssql_yedek.YedekHatasi("servis hesabı yazamıyor")
+
+    monkeypatch.setattr(m, "_mssql_modu", lambda: True)
+    monkeypatch.setattr(m, "_mssql_yedek_al_ve_dogrula", patlat)
+    r = client.get("/sistem/yedek", headers=yetkili_header)
+    assert r.status_code == 500
+    assert "servis hesabı yazamıyor" in r.text
+
+
+def test_sistem_yedek_mssql_operator_yetkisiz_403_doner(client, operator_header, monkeypatch):
+    import backend.main as m
+
+    monkeypatch.setattr(m, "_mssql_modu", lambda: True)
+    assert client.get("/sistem/yedek", headers=operator_header).status_code == 403
+
+
+def test_otomatik_yedek_liste_mssql_kipinde_msdb_gecmisini_gosterir(client, yetkili_header, monkeypatch):
+    import backend.main as m
+
+    monkeypatch.setattr(m, "_mssql_modu", lambda: True)
+    monkeypatch.setattr(m.mssql_yedek, "etkin_yedek_klasoru", lambda engine, ayarlar: r"C:\Yedek")
+    monkeypatch.setattr(
+        m.mssql_yedek, "yedek_gecmisi",
+        lambda engine, adet=30: [{"dosya_adi": "pts.bak", "yol": r"C:\pts.bak", "boyut_bayt": 10,
+                                  "tarih_saat": "2026-01-01T10:00:00", "sadece_kopya": False}],
+    )
+    r = client.get("/sistem/yedek/otomatik-liste", headers=yetkili_header)
+    assert r.status_code == 200, r.text
+    v = r.json()
+    assert v["mod"] == "mssql" and v["klasor"] == r"C:\Yedek"
+    assert v["yedekler"][0]["dosya_adi"] == "pts.bak"
+    assert v["uyari"]  # 2026 başındaki yedek bugüne göre eski
+
+
+def test_otomatik_yedek_liste_mssql_msdb_hatasi_sessiz_degil(client, yetkili_header, monkeypatch):
+    import backend.main as m
+
+    def patlat(engine, adet=30):
+        raise RuntimeError("SELECT permission was denied on the object 'backupset'")
+
+    monkeypatch.setattr(m, "_mssql_modu", lambda: True)
+    monkeypatch.setattr(m.mssql_yedek, "etkin_yedek_klasoru", lambda engine, ayarlar: r"C:\Yedek")
+    monkeypatch.setattr(m.mssql_yedek, "yedek_gecmisi", patlat)
+    v = client.get("/sistem/yedek/otomatik-liste", headers=yetkili_header).json()
+    assert v["hata"] and "msdb" in v["hata"]
+
+
+def test_otomatik_yedek_dogrula_mssql_yalnizca_gecmisteki_dosyayi_dogrular(client, yetkili_header, monkeypatch):
+    import backend.main as m
+
+    dogrulananlar = []
+    monkeypatch.setattr(m, "_mssql_modu", lambda: True)
+    monkeypatch.setattr(
+        m.mssql_yedek, "yedek_gecmisi",
+        lambda engine, adet=30: [{"dosya_adi": "pts.bak", "yol": r"C:\pts.bak", "boyut_bayt": 1,
+                                  "tarih_saat": "2026-01-01T10:00:00", "sadece_kopya": False}],
+    )
+    monkeypatch.setattr(m.mssql_yedek, "yedegi_dogrula", lambda engine, yol: dogrulananlar.append(yol) or (True, None))
+    r = client.post("/sistem/yedek/otomatik-liste/pts.bak/dogrula", headers=yetkili_header)
+    assert r.status_code == 200 and r.json()["saglam"] is True
+    assert dogrulananlar == [r"C:\pts.bak"]
+    r2 = client.post("/sistem/yedek/otomatik-liste/baska.bak/dogrula", headers=yetkili_header)
+    assert r2.status_code == 404
+    assert dogrulananlar == [r"C:\pts.bak"]  # kullanıcı girdisi RESTORE'a gitmedi
+
+
+def test_sistem_saglik_mssql_kipinde_yedek_durumu_msdb_den_gelir(client, yetkili_header, monkeypatch):
+    import backend.main as m
+
+    monkeypatch.delenv("PTS_SQL_YEDEK_KLASORU", raising=False)
+    monkeypatch.setattr(m, "_mssql_modu", lambda: True)
+    monkeypatch.setattr(
+        m.mssql_yedek, "son_yedek_ozeti",
+        lambda engine: {"basarili": True, "son_yedek_zamani": "2026-01-01T10:00:00", "gecikmis": True},
+    )
+    assert m._son_yedek_bilgisini_al() == {"izleniyor": True, "son_yedek_zamani": "2026-01-01T10:00:00", "yedek_gecikmis": True}
+    monkeypatch.setattr(
+        m.mssql_yedek, "son_yedek_ozeti",
+        lambda engine: {"basarili": False, "son_yedek_zamani": None, "gecikmis": None},
+    )
+    assert m._son_yedek_bilgisini_al()["izleniyor"] is False

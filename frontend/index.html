@@ -1755,6 +1755,7 @@
                     <option value="disk_hatasi">Sadece disk/görsel yazma hatası</option>
                     <option value="disk_doluyor">Sadece disk doluluk erken uyarısı</option>
                     <option value="yedek_bozuk">Sadece otomatik yedek bozuk üretildi</option>
+                    <option value="yedek_hatasi">Sadece otomatik yedek ALINAMADI (SQL Server)</option>
                     <option value="gunluk_ozet">Sadece günlük özet (her sabah)</option>
                   </select>
                 </div>
@@ -1829,7 +1830,7 @@
                 </div>
                 <button class="btn btn-sm btn-outline-warning" onclick="goruntuleriTemizle()" data-rol-min="operatör"><i class="bi bi-trash"></i> Temizle</button>
                 <button class="btn btn-sm btn-outline-danger" onclick="dusukGuvenliKayitlariTemizle()" data-rol-min="yonetici" title="Sistem Ayarları'ndaki güven eşiğinin altında kalan, elle girilmemiş eski kayıtları siler"><i class="bi bi-shield-x"></i> Düşük Güvenli Kayıtları Temizle</button>
-                <button class="btn btn-sm btn-outline-primary" onclick="veritabaniIndir()" data-rol-min="yonetici"><i class="bi bi-download"></i> DB Yedek</button>
+                <button class="btn btn-sm btn-outline-primary" onclick="veritabaniIndir()" data-rol-min="yonetici" title="SQLite: yedek dosyasını indirir. SQL Server: SQL Server makinesinde .bak yedeği alır."><i class="bi bi-download"></i> DB Yedek</button>
               </div>
             </div>
           </div>
