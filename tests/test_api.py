@@ -18,6 +18,19 @@ from backend import main as pts_main
 from backend.main import app
 
 
+@pytest.fixture(autouse=True)
+def _hiz_sinirlayicilari_sifirla():
+    """Test paketi aynı IP'den ("testclient") yüzlerce giriş/kayıt isteği yapar;
+    IP başına hız sınırı (dakikada 20 giriş / 120 otomatik kayıt) testler
+    arasında birikip rastgele testlere 429 döndürüyordu (2026-10-05 ilk tam
+    koşu). Her testten ÖNCE sayaçlar sıfırlanır; sınırın kendisini ölçen testler
+    kendi içinde yine tam sınırı kullanabilir."""
+    for sinirlayici in (pts_main._hiz_sinir_giris, pts_main._hiz_sinir_otomatik_kayit,
+                        pts_main._hiz_sinir_arvento_webhook):
+        sinirlayici.sifirla()
+    yield
+
+
 @pytest.fixture(scope="module")
 def client():
     with TestClient(app) as c:
@@ -34,9 +47,18 @@ def admin_token(client):
     return r2.json()["token"]
 
 
-@pytest.fixture
-def yetkili_header(admin_token):
+@pytest.fixture(scope="module")
+def admin_header(admin_token):
+    """`yetkili_header`in modül kapsamlı (module-scope) eşi: module-scope
+    fixture'lar fonksiyon kapsamlı `yetkili_header`e bağımlı OLAMAZ (pytest
+    "ScopeMismatch" verir -- 2026-10-05 ilk tam koşuda 56 test bu yüzden
+    hata aldı)."""
     return {"Authorization": f"Bearer {admin_token}"}
+
+
+@pytest.fixture
+def yetkili_header(admin_header):
+    return admin_header
 
 
 def _rol_ile_kullanici_olustur_ve_giris_yap(client, yetkili_header, kullanici_adi: str, rol: str, kisi_id: int = None) -> dict:
@@ -55,13 +77,13 @@ def _rol_ile_kullanici_olustur_ve_giris_yap(client, yetkili_header, kullanici_ad
 
 
 @pytest.fixture(scope="module")
-def sakin_kisi_id(client, yetkili_header):
+def sakin_kisi_id(client, admin_header):
     """'sakin' (site sakini öz-hizmet portalı) RBAC/işlevsellik testlerinde
     kullanılacak, sakin hesabına bağlanacak Kişi kaydı."""
     r = client.post("/kisiler", json={
         "ad_soyad": "Sakin Test Kişi", "plaka_no": "34 SKN 01", "tip": "abone",
         "daire_departman": "A Blok Daire 5",
-    }, headers=yetkili_header)
+    }, headers=admin_header)
     assert r.status_code == 200, r.text
     return r.json()["id"]
 
@@ -262,13 +284,17 @@ def test_saat_disi_erisim_yetkisiz_sayilir(client, yetkili_header):
 # Kamera: giriş doğrulama + lisans/limit kontrolü
 # ------------------------------------------------------------------
 
-def test_kamera_gecersiz_adres_semasi_reddedilir(client, yetkili_header):
+def test_kamera_gecersiz_adres_semasi_reddedilir(client, yetkili_header, monkeypatch):
+    # Lisans kontrolü doğrulamadan ÖNCE yapıldığı için, lisans durumuna (ve test
+    # sırasına) bağlı kalmamak üzere lisans "aktif" taklit edilir.
+    monkeypatch.setattr(pts_main, "_lisans_aktif_mi", lambda: True)
     r = client.post("/kameralar", json={"ad": "Test Kamera", "rtsp_url": "file:///etc/passwd", "yon": "giris"},
                      headers=yetkili_header)
     assert r.status_code == 400
 
 
-def test_kamera_gecersiz_yon_reddedilir(client, yetkili_header):
+def test_kamera_gecersiz_yon_reddedilir(client, yetkili_header, monkeypatch):
+    monkeypatch.setattr(pts_main, "_lisans_aktif_mi", lambda: True)
     r = client.post("/kameralar", json={"ad": "Test Kamera", "rtsp_url": "rtsp://127.0.0.1/test", "yon": "yukari"},
                      headers=yetkili_header)
     assert r.status_code == 400
@@ -1094,6 +1120,16 @@ def test_gecersiz_istek_govdesi_tutarli_422_doner(client, yetkili_header):
     assert "detail" in govde
     assert "hatalar" in govde
     assert isinstance(govde["hatalar"], list)
+    # Gönderilen ham değer (ör. bir giriş isteğindeki parola) yanıta/loga yazılmaz.
+    assert all("input" not in h for h in govde["hatalar"])
+
+
+def test_dogrulama_hatasi_gonderilen_degeri_loga_yazmaz(client, caplog):
+    """Geçersiz bir giriş isteğindeki parola, doğrulama hatası loguna sızmamalı."""
+    with caplog.at_level("INFO", logger="pts"):
+        r = client.post("/auth/giris", json={"kullanici_adi": "x", "parola": 12345})
+    assert r.status_code == 422, r.text
+    assert "12345" not in caplog.text
 
 
 # ------------------------------------------------------------------
@@ -1386,7 +1422,11 @@ def test_beklenmeyen_hata_loglanir_ve_tutarli_500_doner(client, caplog, izleyici
     with caplog.at_level("ERROR", logger="pts"):
         with pytest.MonkeyPatch.context() as mp:
             mp.setattr(pts_main, "_son_yedek_bilgisini_al", _patlayan_fonksiyon)
-            r = client.get("/sistem/saglik", headers=izleyici_header)
+            # TestClient varsayılan olarak sunucu hatasını testin İÇİNE yeniden
+            # fırlatır (raise_server_exceptions=True); gerçek istemcinin gördüğü
+            # 500 yanıtını incelemek için kapatılır.
+            with TestClient(app, raise_server_exceptions=False) as hatasiz_istemci:
+                r = hatasiz_istemci.get("/sistem/saglik", headers=izleyici_header)
 
     assert r.status_code == 500, r.text
     govde = r.json()
@@ -1478,7 +1518,7 @@ def test_dogruluk_testi_operator_calistirabilir_ve_sonucu_doner(client, operator
 
     cagrilar = []
 
-    def _sahte_test(klasor, min_guven_skoru, kontrast_iyilestir):
+    def _sahte_test(klasor, min_guven_skoru, kontrast_iyilestir, **diger):
         cagrilar.append((klasor, min_guven_skoru, kontrast_iyilestir))
         return {
             "toplam": 2, "dogru": 1, "yanlis": 0, "esik_altinda": 0,
@@ -1502,7 +1542,7 @@ def test_dogruluk_testi_operator_calistirabilir_ve_sonucu_doner(client, operator
 def test_dogruluk_testi_klasor_bulunamazsa_400_doner(client, operator_header, monkeypatch):
     monkeypatch.setattr(pts_main, "_CAM_LIBS", True)
 
-    def _hata_firlat(klasor, min_guven_skoru, kontrast_iyilestir):
+    def _hata_firlat(klasor, min_guven_skoru, kontrast_iyilestir, **diger):
         raise ValueError(f"Klasör bulunamadı: {klasor}")
 
     from backend import camera_reader as cr
@@ -1617,18 +1657,29 @@ def test_manuel_giris_null_olan_eski_kayit_500_patlamiyor(client, operator_heade
     hata yalnızca ham SQL/ALTER TABLE seviyesinde ortaya çıkıyor."""
     from backend.database import engine
     from sqlalchemy import text as sqltext
+    # NOT: `tarih_saat` ham SQL'de de verilmeli -- varsayılanı (datetime.now) yalnızca
+    # ORM tarafında uygulandığı için eksik bırakılırsa satır tarih_saat=NULL ile
+    # girer; bu hem bu testi (ResponseValidationError) hem de veritabanındaki TÜM
+    # kayıtları okuyan sonraki testleri (dışa aktarma: 'NoneType'.strftime)
+    # bozuyordu (2026-10-05 ilk tam koşuda ortaya çıktı).
     with engine.connect() as conn:
         conn.execute(sqltext(
-            "INSERT INTO plaka_kayitlari (plaka_no, kamera_id, yon, yetki_durumu, manuel_giris) "
-            "VALUES ('34 NULLTEST 09', 'TEST', 'giris', 'bilinmiyor', NULL)"
-        ))
+            "INSERT INTO plaka_kayitlari (plaka_no, tarih_saat, kamera_id, yon, yetki_durumu, manuel_giris) "
+            "VALUES ('34 NULLTEST 09', :simdi, 'TEST', 'giris', 'bilinmiyor', NULL)"
+        ), {"simdi": datetime.now()})
         conn.commit()
 
-    r = client.get("/kayitlar", params={"plaka": "NULLTEST"}, headers=operator_header)
-    assert r.status_code == 200, r.text
-    kayitlar = r.json()
-    assert len(kayitlar) == 1
-    assert kayitlar[0]["manuel_giris"] is False
+    try:
+        r = client.get("/kayitlar", params={"plaka": "NULLTEST"}, headers=operator_header)
+        assert r.status_code == 200, r.text
+        kayitlar = r.json()
+        assert len(kayitlar) == 1
+        assert kayitlar[0]["manuel_giris"] is False
+    finally:
+        # Diğer testlerin kayıt sayımlarını/dışa aktarmalarını etkilemesin.
+        with engine.connect() as conn:
+            conn.execute(sqltext("DELETE FROM plaka_kayitlari WHERE plaka_no = '34 NULLTEST 09'"))
+            conn.commit()
 
 
 def test_plaka_analiz_yeni_alanlari_dondurur(client, operator_header):
@@ -1801,18 +1852,18 @@ def test_son_not_onerisi_gun_degisince_sifirlanir(client, yetkili_header, operat
 # tespitleri oy birikimine hiç sokmayan PATCH /kameralar/{id}/roi eklendi.
 
 @pytest.fixture(scope="module")
-def roi_test_kamera_id(client, yetkili_header):
+def roi_test_kamera_id(client, admin_header):
     """Bu modüldeki lisans limiti daha önceki testlerde (bkz.
     test_lisans_aktivasyonu_ve_kamera_limiti) 1 olarak aktifleştirilip o tek
     hak da kullanılmış durumda -- bu yüzden burada limiti yükselten YENİ bir
     lisans aktive edip kendi test kameramızı ekliyoruz."""
     anahtar = lisans.uret("ROI Test Site", kamera_limiti=10, gun=30)
-    r = client.post("/lisans/aktive-et", json={"anahtar": anahtar}, headers=yetkili_header)
+    r = client.post("/lisans/aktive-et", json={"anahtar": anahtar}, headers=admin_header)
     assert r.status_code == 200, r.text
 
     r2 = client.post("/kameralar", json={
         "ad": "ROI Test Kamerası", "rtsp_url": "rtsp://127.0.0.1/roitest", "yon": "giris",
-    }, headers=yetkili_header)
+    }, headers=admin_header)
     assert r2.status_code == 200, r2.text
     return r2.json()["id"]
 
@@ -2136,9 +2187,10 @@ def test_kullanici_guncelle_rol_degisikligi_loglanir(client, caplog, yetkili_hea
     assert "parola sıfırlandı" in caplog.text
     assert "YeniGucluParola456!" not in caplog.text  # parolanın kendisi ASLA loglanmamalı
 
-    r3 = client.get("/denetim-kayitlari", params={"kullanici_adi": "denetim-log-testi"}, headers=yetkili_header)
+    # `kullanici_adi` filtresi İŞLEMİ YAPANA göredir; hedef hesabın adı açıklamada geçer.
+    r3 = client.get("/denetim-kayitlari", params={"eylem": "kullanici_guncelle"}, headers=yetkili_header)
     assert r3.status_code == 200, r3.text
-    kayit = next(k for k in r3.json() if k["eylem"] == "kullanici_guncelle")
+    kayit = next(k for k in r3.json() if "denetim-log-testi" in k["aciklama"])
     assert "rol: izleyici -> operatör" in kayit["aciklama"]
     assert "YeniGucluParola456!" not in kayit["aciklama"]
 
@@ -2151,6 +2203,9 @@ def test_kullanici_guncelle_degisiklik_yoksa_loglanmiyor(client, caplog, yetkili
     }, headers=yetkili_header)
     kid = r.json()["id"]
     with caplog.at_level("INFO", logger="pts"):
+        # Hesabı OLUŞTURMA işleminin kendi logu (aynı kullanıcı adını içerir) yakalanmış
+        # olabilir; yalnızca boş PUT'un log üretmediğini ölçmek için temizlenir.
+        caplog.clear()
         r2 = client.put(f"/kullanicilar/{kid}", json={}, headers=yetkili_header)
     assert r2.status_code == 200, r2.text
     assert "degisiklik-yok-testi" not in caplog.text
@@ -2429,7 +2484,7 @@ def test_token_coz_eski_bicim_jtisiz_token_500_yerine_401_doner(client):
 # ------------------------------------------------------------------
 
 @pytest.fixture(scope="module")
-def kamera_erisim_test_kameralari(client, yetkili_header):
+def kamera_erisim_test_kameralari(client, admin_header):
     """Bu testler için İKİ ayrı GERÇEK kamera (bkz. roi_test_kamera_id'deki
     AYNI lisans-yükseltme deseni -- bu modüldeki lisans limiti önceki
     testlerde tüketilmiş olabilir).
@@ -2443,17 +2498,17 @@ def kamera_erisim_test_kameralari(client, yetkili_header):
     verisiyle bulunan id/ad karışıklığı hatasını YENİDEN gözden
     kaçırmasın."""
     anahtar = lisans.uret("Kamera Erisim Test Site", kamera_limiti=10, gun=30)
-    r = client.post("/lisans/aktive-et", json={"anahtar": anahtar}, headers=yetkili_header)
+    r = client.post("/lisans/aktive-et", json={"anahtar": anahtar}, headers=admin_header)
     assert r.status_code == 200, r.text
     ana_ad = "Ana Nizamiye Kamerası"
     lojman_ad = "Lojman Nizamiye Kamerası"
     r1 = client.post("/kameralar", json={
         "ad": ana_ad, "rtsp_url": "rtsp://127.0.0.1/ana-nizamiye", "yon": "giris",
-    }, headers=yetkili_header)
+    }, headers=admin_header)
     assert r1.status_code == 200, r1.text
     r2 = client.post("/kameralar", json={
         "ad": lojman_ad, "rtsp_url": "rtsp://127.0.0.1/lojman-nizamiye", "yon": "giris",
-    }, headers=yetkili_header)
+    }, headers=admin_header)
     assert r2.status_code == 200, r2.text
     assert r1.json()["id"] != ana_ad and r2.json()["id"] != lojman_ad, (
         "id, UUID olduğu için 'ad' ile ASLA aynı olmamalı -- aksi halde bu fixture "
@@ -3135,7 +3190,8 @@ def test_led_durum_son_gonderimleri_dondurur(client, operator_header):
     r2 = client.get("/led/durum", headers=operator_header)
     assert r2.status_code == 200, r2.text
     veri = r2.json()
-    assert len(veri["son_mesajlar"]) == onceki_sayi + 1
+    # /led/durum EN FAZLA 20 mesaj döner; test sırasına göre tablo zaten dolu olabilir.
+    assert len(veri["son_mesajlar"]) == min(onceki_sayi + 1, 20)
     assert veri["son_mesajlar"][0]["mesaj"] == "PTS DURUM TESTİ"
     assert veri["son_mesajlar"][0]["basarili"] is True
 
@@ -3499,17 +3555,21 @@ def test_kullanici_olusturma_da_denetim_kaydi_birakir(client, yetkili_header):
 
 
 def test_denetim_kayitlari_kullanici_adina_gore_filtreler(client, yetkili_header):
+    """`kullanici_adi` filtresi İŞLEMİ YAPAN kullanıcıya göre çalışır (denetim
+    kaydının "kim yaptı" sütunu) -- işlemin HEDEFİ olan hesaba göre değil. Bu
+    yüzden iki ayrı yönetici hesabı iki ayrı hedef kullanıcı oluşturur."""
+    yonetici_a = _rol_ile_kullanici_olustur_ve_giris_yap(client, yetkili_header, "filtre-yapan-a", "yonetici")
     client.post("/kullanicilar", json={
-        "kullanici_adi": "filtre-testi-a", "parola": "GucluParola123!", "rol": "izleyici",
-    }, headers=yetkili_header)
+        "kullanici_adi": "filtre-hedef-a", "parola": "GucluParola123!", "rol": "izleyici",
+    }, headers=yonetici_a)
     client.post("/kullanicilar", json={
-        "kullanici_adi": "filtre-testi-b", "parola": "GucluParola123!", "rol": "izleyici",
+        "kullanici_adi": "filtre-hedef-b", "parola": "GucluParola123!", "rol": "izleyici",
     }, headers=yetkili_header)
-    r = client.get("/denetim-kayitlari", params={"kullanici_adi": "filtre-testi-a"}, headers=yetkili_header)
+    r = client.get("/denetim-kayitlari", params={"kullanici_adi": "filtre-yapan-a"}, headers=yetkili_header)
     assert r.status_code == 200, r.text
     aciklamalar = [k["aciklama"] for k in r.json()]
-    assert any("filtre-testi-a" in a for a in aciklamalar)
-    assert not any("filtre-testi-b" in a for a in aciklamalar)
+    assert any("filtre-hedef-a" in a for a in aciklamalar)
+    assert not any("filtre-hedef-b" in a for a in aciklamalar)
 
 
 def test_denetim_kayitlari_negatif_limit_422_doner(client, yetkili_header):
@@ -3875,9 +3935,11 @@ _RAPOR_TEST_PLAKA_TANIMSIZ = "12TANIMSIZ99"
 _RAPOR_TEST_PLAKA_KARALISTE = "34KARALISTE01"
 
 
-@pytest.fixture
-def rapor_test_kurulumu(client, yetkili_header):
-    """Site + Nokta'yı doğrudan DB'ye yazar, ama Nokta.kamera_id ve
+@pytest.fixture(scope="module")
+def rapor_test_kurulumu(client, admin_header):
+    """(Modül kapsamlı: Site/Kişi/Kayıt tek sefer kurulur -- önceden her testte
+    yeniden kurulup `siteler.ad` UNIQUE hatası veriyordu.)
+    Site + Nokta'yı doğrudan DB'ye yazar, ama Nokta.kamera_id ve
     Kayit.kamera_id için GERÇEK bir kamera üzerinden GERÇEK "id"/"ad"
     çiftini kullanır (bkz. kamera_erisim_test_kameralari'nin docstring'i,
     2026-09-21 "id vs ad" hata sınıfı): Nokta.kamera_id kamera "id"si
@@ -3891,12 +3953,12 @@ def rapor_test_kurulumu(client, yetkili_header):
     from backend import models
 
     anahtar = lisans.uret("Rapor Test Site", kamera_limiti=10, gun=30)
-    r = client.post("/lisans/aktive-et", json={"anahtar": anahtar}, headers=yetkili_header)
+    r = client.post("/lisans/aktive-et", json={"anahtar": anahtar}, headers=admin_header)
     assert r.status_code == 200, r.text
     kamera_ad = "RAPTEST KAMERA"
     r = client.post("/kameralar", json={
         "ad": kamera_ad, "rtsp_url": "rtsp://127.0.0.1/raptest", "yon": "giris",
-    }, headers=yetkili_header)
+    }, headers=admin_header)
     assert r.status_code == 200, r.text
     kamera_id = r.json()["id"]
     assert kamera_id != kamera_ad, (
@@ -3919,18 +3981,18 @@ def rapor_test_kurulumu(client, yetkili_header):
     r = client.post("/kisiler", json={
         "ad_soyad": "Ahmet Yılmaz", "plaka_no": _RAPOR_TEST_PLAKA_PERSONEL, "tip": "personel",
         "daire_departman": "GÜVENLİK ŞEFLİĞİ",
-    }, headers=yetkili_header)
+    }, headers=admin_header)
     assert r.status_code == 200, r.text
 
     r = client.post("/kisiler", json={
         "ad_soyad": "Mehmet Demir", "plaka_no": _RAPOR_TEST_PLAKA_ABONE, "tip": "abone",
         "daire_departman": "A BLOK NO 5",
-    }, headers=yetkili_header)
+    }, headers=admin_header)
     assert r.status_code == 200, r.text
 
     r = client.post("/kara-listesi", json={
         "plaka_no": _RAPOR_TEST_PLAKA_KARALISTE, "sebep": "test",
-    }, headers=yetkili_header)
+    }, headers=admin_header)
     assert r.status_code == 200, r.text
 
     for plaka in (
@@ -3941,7 +4003,7 @@ def rapor_test_kurulumu(client, yetkili_header):
         # burada da kamera_id "ad" değeri olarak gönderiliyor, id DEĞİL.
         r = client.post("/kayitlar", json={
             "plaka_no": plaka, "kamera_id": kamera_ad, "yon": "giris",
-        }, headers=yetkili_header)
+        }, headers=admin_header)
         assert r.status_code == 200, r.text
 
 
@@ -5624,7 +5686,9 @@ def test_plaka_analiz_toplam_gecis_50_sinirina_takilmaz(client, operator_header)
         assert r.status_code == 200, r.text
     v = client.get("/kayitlar/analiz/34 ELL 053", headers=operator_header).json()
     assert v["toplam_gecis"] == 53
-    assert len(v["son_kayitlar"]) == 50
+    # Yanıttaki `son_kayitlar` listesi 15 satırla sınırlıdır (bkz. main.py::plaka_analiz
+    # `kayitlar[:15]`); önceden test 50 bekliyordu (bayat).
+    assert len(v["son_kayitlar"]) == 15
 
 
 # ------------------------------------------------------------------

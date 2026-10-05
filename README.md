@@ -4475,3 +4475,24 @@ biçimde bekliyordu. Artık SQL Server için de çalışır (`backend/mssql_yede
 - **Test notu:** komutlar sahte bir bağlantıyla birim testlerinden geçer
   (`tests/test_mssql_yedek.py`); gerçek bir SQL Server'a karşı ilk kez
   "Şimdi Yedekle" ile denenmelidir.
+
+## Test Paketi Hermetik Hale Getirildi (2026-10-05)
+
+İlk tam `pytest` koşusunda (63 başarısız, 56 hata) hataların çoğu uygulama
+kodundan değil testlerin kendisinden ve test ortamından geliyordu:
+
+- **Ortam sızıntısı:** `kurulum.bat`'ın ürettiği `.env` (özellikle
+  `PTS_KAMERA_ANAHTARI`) testlere sızıyor, kamera isteklerinin hepsi 401
+  alıyordu. `tests/conftest.py` artık tüm `PTS_*` değişkenlerini siler,
+  `.env` yüklemesini kapatır (`PTS_ENV_DOSYASINI_ATLA=1`) ve veritabanını her
+  zaman geçici bir SQLite dosyasına yönlendirir -- testler gerçek kurulumun
+  veritabanına ASLA dokunmaz.
+- **Fixture kapsamı:** module-scope fixture'lar fonksiyon-scope
+  `yetkili_header`'a bağlıydı (`ScopeMismatch`); modül kapsamlı `admin_header`
+  eklendi, rapor kurulumu tek sefer kurulacak şekilde değiştirildi.
+- **Hız sınırı:** testler arası IP sayaçları sıfırlanır.
+- **Gerçek hatalar düzeltildi:** geçersiz istek gövdesi artık 500 yerine 422
+  döner (`ctx` içindeki `ValueError` JSON'a çevrilemiyordu) ve doğrulama hatası
+  loguna gönderilen ham değer (parola dahil) yazılmaz; `PATCH
+  /bariyer/ayarlar/{id}` boş `{}` yanıtı yerine güncel bariyeri döner.
+

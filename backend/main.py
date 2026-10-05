@@ -1257,14 +1257,35 @@ async def _guvenlik_basliklarini_ekle(request: Request, call_next):
 # bilgi sızdırmayan bir JSON döner. `HTTPException` (kendi bilerek
 # fırlattığımız 4xx/403/404/429 vb.) bu handler'dan ETKİLENMEZ — FastAPI onu
 # zaten kendi özel handler'ıyla, daha spesifik bir eşleşme olarak önce yakalar.
+def _dogrulama_hatalarini_temizle(hatalar) -> list:
+    """Pydantic v2 hata listesini JSON'a güvenle çevrilebilir ve SIR İÇERMEYEN
+    hale getirir. İKİ KÖK NEDEN (2026-10-05, ilk tam test koşusu):
+    1) `ctx` içinde gerçek bir `ValueError` NESNESİ bulunabiliyor (özel bir
+       `field_validator` hata fırlattığında) -- doğrudan `JSONResponse`a verilince
+       "Object of type ValueError is not JSON serializable" ile 422 yerine 500
+       dönüyordu (ör. geçersiz plaka içeren kara liste isteği).
+    2) `input` alanı gönderilen ham değeri içerir -- bu, geçersiz bir giriş
+       isteğindeki PAROLAYI log dosyasına yazardı; bu yüzden atılır."""
+    temiz = []
+    for hata in hatalar or []:
+        kayit = {k: v for k, v in dict(hata).items() if k not in ("input", "url")}
+        if isinstance(kayit.get("ctx"), dict):
+            kayit["ctx"] = {k: str(v) for k, v in kayit["ctx"].items()}
+        if "loc" in kayit:
+            kayit["loc"] = [x if isinstance(x, (int, str)) else str(x) for x in kayit["loc"]]
+        temiz.append(kayit)
+    return temiz
+
+
 @app.exception_handler(RequestValidationError)
 async def _dogrulama_hatasi_yakalayici(request: Request, exc: RequestValidationError) -> JSONResponse:
     """Pydantic/istek gövdesi doğrulama hatalarını (422) da aynı tutarlı
     gövdeyle döner ve düşük seviyede loglar (bunlar genelde istemci hatasıdır,
     sunucu tarafında alarm gerektirmez, bu yüzden `logger.exception` değil
     `logger.info` kullanılır)."""
-    logger.info("İstek doğrulama hatası: %s %s -> %s", request.method, request.url.path, exc.errors())
-    return JSONResponse(status_code=422, content={"detail": "Gönderilen veri geçersiz.", "hatalar": exc.errors()})
+    hatalar = _dogrulama_hatalarini_temizle(exc.errors())
+    logger.info("İstek doğrulama hatası: %s %s -> %s", request.method, request.url.path, hatalar)
+    return JSONResponse(status_code=422, content={"detail": "Gönderilen veri geçersiz.", "hatalar": hatalar})
 
 
 @app.exception_handler(Exception)
@@ -1301,6 +1322,13 @@ def _hiz_siniri_olustur(limit: int, pencere_sn: float):
                 raise HTTPException(429, "Çok fazla istek gönderildi, lütfen biraz sonra tekrar deneyin.")
             kuyruk.append(simdi)
 
+    def sifirla() -> None:
+        """Sayaçları temizler -- YALNIZCA testler için (aynı IP'den peş peşe
+        çok sayıda giriş/kayıt yapan test paketi, testler arası 429'a takılıyordu)."""
+        with kilit:
+            kayitlar.clear()
+
+    bagimlilik.sifirla = sifirla
     return bagimlilik
 
 
@@ -6940,6 +6968,10 @@ def bariyer_guncelle(bariyer_id: int, veri: schemas.BariyerAyarlariGuncelle, db:
         db, kullanici.kullanici_adi, "bariyer_ayarlari_guncelle",
         f"bariyer_id={bariyer_id}, ad={bariyer.ad!r}, degisen_alanlar={sorted(guncellemeler.keys())}",
     )
+    # _denetim_kaydet kendi commit'i ile `bariyer`i tekrar "expire" eder; response_model
+    # olmadığından FastAPI boş bir `{}` serileştirirdi (giriş_yap'taki AYNI kök neden,
+    # 2026-10-05 ilk tam test koşusunda ortaya çıktı) -- yanıttan önce tazele.
+    db.refresh(bariyer)
     return bariyer
 
 

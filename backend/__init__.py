@@ -56,6 +56,13 @@ import sys
 
 
 def _env_dosyasini_yukle() -> None:
+    # Test suiti (tests/conftest.py) .env'yi YÜKLETMEMEK için bunu ayarlar:
+    # kurulum.bat'ın ürettiği gerçek .env (PTS_KAMERA_ANAHTARI vb.) testlere
+    # sızıp -- kameradan gelen test istekleri 401 alırdı -- sonuçları üretim
+    # kurulumuna bağımlı hale getiriyordu (2026-10-05, kullanıcının ilk tam
+    # test koşusunda ortaya çıktı).
+    if os.environ.get("PTS_ENV_DOSYASINI_ATLA", "").strip().lower() in ("1", "true", "evet"):
+        return
     proje_koku = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     env_yolu = os.path.join(proje_koku, ".env")
     if not os.path.isfile(env_yolu):

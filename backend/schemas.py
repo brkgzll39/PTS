@@ -575,6 +575,7 @@ class BariyerAyarlariCevap(BaseModel):
     http_metot: str
     http_govde: Optional[str] = None
     gpio_pin: Optional[int] = None
+    auto_ac: bool = False
     aktif: bool
 
     model_config = ConfigDict(from_attributes=True)
