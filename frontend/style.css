@@ -607,6 +607,9 @@ table td, table th {
 }
 .ek-plaka-metin { font-weight: 600; }
 
+/* 2026-10-05 Kişiler ekranı araç çubuğu: arama kutusu esner, içe/dışa aktarma sağda. */
+.kisi-arac-cubugu .kisi-arama-grubu { flex: 1 1 220px; max-width: 360px; min-width: 160px; }
+
 /* 2026-10-05 Kişi Kartı (bkz. index.html #kisiDuzenleModal, app.js::kisiDuzenleAc) */
 .kart-bolum-baslik { font-size: .8rem; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; color: #64748b; margin-bottom: .5rem; }
 .kart-sekmeler .nav-link { font-size: .9rem; }

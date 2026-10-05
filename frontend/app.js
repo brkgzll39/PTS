@@ -2955,16 +2955,38 @@ function kisiTipFiltrele(tip, btn) {
   kisileriYukle();
 }
 
+// 2026-10-05 (Kişiler ekranı arama kutusu): aranan metin sunucuya `arama`
+// olarak gider (ad, ana+ek plakalar, telefon, daire; Türkçe harf/boşluk
+// duyarsız). Hızlı yazarken her tuşta istek atmamak için 300 ms bekletilir;
+// yavaş dönen eski bir cevap yeni aramanın sonucunu ezmesin diye istek sıra
+// numarası kullanılır (bkz. sonGecislerYukle'deki aynı desen).
+let _kisiAramaZamanlayici = null;
+let _kisiListeIstekNo = 0;
+
+function _kisiAramaMetni() {
+  return (document.getElementById("kisiArama")?.value || "").trim();
+}
+
+document.getElementById("kisiArama")?.addEventListener("input", () => {
+  clearTimeout(_kisiAramaZamanlayici);
+  _kisiAramaZamanlayici = setTimeout(kisileriYukle, 300);
+});
+
 async function kisileriYukle() {
   const params = new URLSearchParams();
   if (aktifTipFiltre) params.set("tip", aktifTipFiltre);
+  const aramaMetni = _kisiAramaMetni();
+  if (aramaMetni) params.set("arama", aramaMetni);
+  const istekNo = ++_kisiListeIstekNo;
   let kisiler;
   try {
     kisiler = await apiCagir(`/kisiler?${params.toString()}`);
   } catch (e) {
+    if (istekNo !== _kisiListeIstekNo) return;
     _yuklemeHatasi("Kişi listesi", e);
     return;
   }
+  if (istekNo !== _kisiListeIstekNo) return;
   const tbody = document.getElementById("kisilerTablo");
   // 2026-09-22 kullanıcı isteği: "aracın sisteme kayıtlara ilk giriş tarihi
   // eklensin. son güncel geçiş tarihi ve saati eklensin. Not ekleyen
@@ -3014,7 +3036,7 @@ async function kisileriYukle() {
       </td>
     </tr>
   `;
-  }).join("") || `<tr><td colspan="10" class="text-center text-muted py-3">Kişi bulunamadı</td></tr>`;
+  }).join("") || `<tr><td colspan="10" class="text-center text-muted py-3">${aramaMetni ? `"${escapeHtml(aramaMetni)}" için kişi bulunamadı` : "Kişi bulunamadı"}</td></tr>`;
 }
 
 document.getElementById("kisiForm").addEventListener("submit", async (e) => {
@@ -3112,6 +3134,7 @@ async function kisiGecmisKayitlariGuncelle(id) {
 function kisilerExcelIndir() {
   const params = new URLSearchParams();
   if (aktifTipFiltre) params.set("tip", aktifTipFiltre);
+  if (_kisiAramaMetni()) params.set("arama", _kisiAramaMetni());
   window.open(indirmeUrlOlustur("/disa-aktar/excel/kisiler", params), "_blank");
 }
 

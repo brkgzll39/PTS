@@ -6575,3 +6575,45 @@ def test_kisi_karti_operator_olmayan_plaka_guncelleyemez(client, yetkili_header,
     pid = client.post(f"/kisiler/{kisi}/plakalar", json={"plaka_no": "34 KRT 902"}, headers=yetkili_header).json()["id"]
     assert client.put(f"/kisiler/{kisi}/plakalar/{pid}", json={"aktif": False}, headers=izleyici_header).status_code == 403
     assert client.post(f"/kisiler/{kisi}/plakalar/{pid}/ana-yap", headers=izleyici_header).status_code == 403
+
+
+# ------------------------------------------------------------------
+# 2026-10-05 Kişiler ekranı arama kutusu: GET /kisiler?arama=
+# ------------------------------------------------------------------
+
+def test_kisi_arama_ek_plaka_telefon_ve_turkce_harf_duyarsiz(client, yetkili_header):
+    r = client.post("/kisiler", json={
+        "ad_soyad": "Gökhan Çiflikli", "plaka_no": "06 ARM 111", "tip": "abone",
+        "telefon": "0555 987 65 43", "daire_departman": "Blok Zeta-9",
+    }, headers=yetkili_header)
+    assert r.status_code == 200, r.text
+    kisi_id = r.json()["id"]
+    assert client.post(f"/kisiler/{kisi_id}/plakalar", json={"plaka_no": "34 ARM 222"}, headers=yetkili_header).status_code == 200
+
+    def ara(metin):
+        r = client.get("/kisiler", params={"arama": metin}, headers=yetkili_header)
+        assert r.status_code == 200, r.text
+        return {k["id"] for k in r.json()}
+
+    assert kisi_id in ara("Gökhan Çiflikli")
+    assert kisi_id in ara("gokhan ciflikli"), "Türkçe harf (ö/ç/ş/ı/İ) duyarsız aranmalı"
+    assert kisi_id in ara("GÖKHAN")
+    assert kisi_id in ara("06arm111"), "ana plaka boşluksuz da bulunmalı"
+    assert kisi_id in ara("34 ARM 222"), "EK plakayla da bulunmalı"
+    assert kisi_id in ara("34arm"), "ek plakanın boşluksuz parçasıyla da bulunmalı"
+    assert kisi_id in ara("987 65"), "telefonla bulunmalı"
+    assert kisi_id in ara("zeta"), "daire/departmanla bulunmalı"
+    assert kisi_id not in ara("hiçbirkişidebuyok123")
+    # Boş / sadece boşluk arama = filtre yok
+    assert kisi_id in ara("   ")
+
+
+def test_kisi_arama_tip_filtresiyle_birlikte_calisir_ve_excel_indirir(client, yetkili_header):
+    r = client.post("/kisiler", json={"ad_soyad": "Arama Personel Zxq", "plaka_no": "06 ZXQ 001", "tip": "personel"}, headers=yetkili_header)
+    kisi_id = r.json()["id"]
+    liste = client.get("/kisiler", params={"arama": "zxq", "tip": "abone"}, headers=yetkili_header).json()
+    assert kisi_id not in {k["id"] for k in liste}
+    liste = client.get("/kisiler", params={"arama": "zxq", "tip": "personel"}, headers=yetkili_header).json()
+    assert kisi_id in {k["id"] for k in liste}
+    rx = client.get("/disa-aktar/excel/kisiler", params={"arama": "zxq"}, headers=yetkili_header)
+    assert rx.status_code == 200, rx.text

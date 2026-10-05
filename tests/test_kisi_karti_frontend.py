@@ -77,3 +77,24 @@ def test_kisi_listesinde_ek_plakalar_plakanin_altinda_listelenmez():
     assert "slice(0, 2)" not in govde
     assert "ek-plaka-rozeti" in govde
     assert 'class="kisi-ad-link" onclick="kisiDuzenleAc(' in govde
+
+
+def test_kisiler_arac_cubugunda_arama_kutusu_ve_yan_yana_butonlar():
+    arama = _SOUP.find(id="kisiArama")
+    assert arama is not None and arama.get("type") == "search"
+    cubuk = arama.find_parent(class_="kisi-arac-cubugu")
+    assert cubuk is not None
+    sablon = cubuk.find("button", onclick=re.compile("kisiIceAktarmaSablonuIndir"))
+    ice_aktar = cubuk.find("input", id="topluImportDosya")
+    assert sablon is not None and ice_aktar is not None
+    # Şablon İndir ve Excel İçe Aktar AYNI sarmalayıcıda (yan yana) olmalı.
+    assert sablon.parent is ice_aktar.find_parent("label").parent
+
+
+def test_kisi_arama_js_debounce_ve_eski_istek_korumasi():
+    assert 'getElementById("kisiArama")' in _JS
+    assert "setTimeout(kisileriYukle, 300)" in _JS
+    govde = re.search(r"async function kisileriYukle\(\).*?\n}\n", _JS, re.S).group(0)
+    assert 'params.set("arama"' in govde
+    assert "istekNo !== _kisiListeIstekNo" in govde
+    assert 'params.set("arama"' in re.search(r"function kisilerExcelIndir\(\).*?\n}\n", _JS, re.S).group(0)

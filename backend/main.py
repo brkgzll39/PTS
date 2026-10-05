@@ -77,7 +77,7 @@ from fastapi.responses import FileResponse, JSONResponse, Response, StreamingRes
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import text
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 from sqlalchemy import desc, func, or_, and_, false, select
 
 from backend import models
@@ -3647,6 +3647,21 @@ def _kisilerin_gecis_ozetini_ekle(db: Session, kisiler: List[models.Kisi]) -> No
             k.son_not_ekleyen = son_kayit.duzenleyen
 
 
+_ARAMA_HARF_HARITASI = str.maketrans({
+    "İ": "i", "I": "i", "ı": "i", "Ş": "s", "ş": "s", "Ğ": "g", "ğ": "g",
+    "Ü": "u", "ü": "u", "Ö": "o", "ö": "o", "Ç": "c", "ç": "c",
+})
+
+
+def _arama_normalize(metin: Optional[str]) -> str:
+    """Kişi aramasında karşılaştırma için: küçük harfe çevirir, Türkçe harfleri
+    (İ/I/ı, Ş, Ğ, Ü, Ö, Ç) ASCII karşılıklarına indirger ve boşlukları siler --
+    böylece "gokhan" -> "Gökhan", "34abc" -> "34 ABC 123" eşleşir. (SQLite'ın
+    ilike'ı yalnızca ASCII harflerde büyük/küçük harf duyarsızdır; İ/ı gibi
+    harflerde SESSİZCE eşleşmezdi.)"""
+    return (metin or "").translate(_ARAMA_HARF_HARITASI).lower().replace(" ", "")
+
+
 @app.get("/kisiler", response_model=List[schemas.KisiCevap])
 def kisileri_listele(
     tip: Optional[str] = None,
@@ -3655,18 +3670,23 @@ def kisileri_listele(
     db: Session = Depends(get_db),
     _: models.Kullanici = Depends(_personel_girisi_gerekli),
 ):
-    sorgu = db.query(models.Kisi)
+    sorgu = db.query(models.Kisi).options(selectinload(models.Kisi.ek_plakalar))
     if tip:
         sorgu = sorgu.filter(models.Kisi.tip == tip)
     if aktif is not None:
         sorgu = sorgu.filter(models.Kisi.aktif == aktif)
-    if arama:
-        arama_terimi = f"%{arama}%"
-        sorgu = sorgu.filter(
-            (models.Kisi.ad_soyad.ilike(arama_terimi))
-            | (models.Kisi.plaka_no.ilike(arama_terimi))
-        )
     kisiler = sorgu.order_by(desc(models.Kisi.olusturma_tarihi)).all()
+    # 2026-10-05 (Kişiler ekranı arama kutusu): ad soyad, ana plaka, EK
+    # plakalar, telefon, daire/departman ve açıklamada Türkçe-harf ve boşluk
+    # duyarsız arama. Önceden yalnızca ad ve ANA plaka aranıyordu (ek
+    # araçlar bulunamıyordu).
+    terim = _arama_normalize(arama)
+    if terim:
+        def _eslesir(k: models.Kisi) -> bool:
+            alanlar = [k.ad_soyad, k.plaka_no, k.telefon, k.daire_departman, k.aciklama]
+            alanlar += [p.plaka_no for p in (k.ek_plakalar or [])]
+            return any(terim in _arama_normalize(a) for a in alanlar)
+        kisiler = [k for k in kisiler if _eslesir(k)]
     _kisilerin_gecis_ozetini_ekle(db, kisiler)
     return kisiler
 
@@ -6267,10 +6287,12 @@ def kayit_detay_pdf_indir(
 
 @app.get("/disa-aktar/excel/kisiler")
 def kisileri_excel_indir(
-    tip: Optional[str] = None, db: Session = Depends(get_db),
+    tip: Optional[str] = None, arama: Optional[str] = None, db: Session = Depends(get_db),
     _: models.Kullanici = Depends(_personel_girisi_gerekli),
 ):
-    kisiler = kisileri_listele(tip=tip, aktif=None, arama=None, db=db)
+    # `arama`: Kişiler ekranındaki arama kutusu doluyken "Excel İndir" de
+    # yalnızca ekranda görünen (filtrelenmiş) kişileri indirir.
+    kisiler = kisileri_listele(tip=tip, aktif=None, arama=arama, db=db)
     dosya_yolu = _gecici_rapor_yolu("pts_kisiler", "xlsx")
     excel_export.kisiler_excel_olustur(kisiler, dosya_yolu)
     return _indirip_sil(dosya_yolu, "pts_kisiler.xlsx", _XLSX_MEDIA)
