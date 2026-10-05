@@ -90,13 +90,16 @@ def test_toplu_sil_kayitlari_korur_baglantiyi_koparir_ek_plakalari_siler(db):
     db.add(sakin)
     db.commit()
 
-    sonuc = pts_main.kisiler_toplu_islem(schemas.KisiTopluIslem(ids=[a.id, 99999], islem="sil"), db, _kullanici())
+    # Kimlikler ÖNCEDEN alınır: silinen kişinin nesnesinde `.id`'ye silmeden sonra erişmek
+    # (expire edilmiş + satırı yok) ObjectDeletedError verir -- bu bir test hatasıydı.
+    a_id, b_id, kayit_id = a.id, b.id, kayit.id
+    sonuc = pts_main.kisiler_toplu_islem(schemas.KisiTopluIslem(ids=[a_id, 99999], islem="sil"), db, _kullanici())
     assert sonuc == {"islem": "sil", "islenen": 1, "bulunamayan": 1}
     db.expire_all()
-    assert db.get(models.Kisi, a.id) is None
-    assert db.get(models.Kisi, b.id) is not None
+    assert db.get(models.Kisi, a_id) is None
+    assert db.get(models.Kisi, b_id) is not None
     assert db.query(models.KisiPlaka).count() == 0
-    assert db.get(models.Kayit, kayit.id).kisi_id is None  # geçiş kaydı SİLİNMEZ
+    assert db.get(models.Kayit, kayit_id).kisi_id is None  # geçiş kaydı SİLİNMEZ
     assert db.query(models.Kullanici).filter_by(kullanici_adi="sakin-a").one().kisi_id is None
     assert db.query(models.DenetimKaydi).filter_by(eylem="kisi_toplu_islem").count() == 1
 
@@ -274,6 +277,13 @@ def test_import_guncelle_modu_yalnizca_dolu_alanlari_gunceller_ve_ek_plaka_ekler
     assert (ali.ad_soyad, ali.tip, ali.telefon, ali.daire_departman) == ("Ali Yılmaz", "personel", "111", "B2")  # boş telefon silmez
     assert [e.plaka_no for e in ali.ek_plakalar] == ["34 ALI 009"]
     assert db.query(models.Kisi).count() == 1
+
+
+def test_import_yeni_kisinin_telefon_ve_daire_sutunlari_kaydedilir(db):
+    """Telefon/Daire sütunları önceden hiç okunmuyordu (hata ilk sürümden beri vardı)."""
+    _ice_aktar(db, [("Veli", "34 VEL 001", "abone", "5551112233", "C3")])
+    veli = db.query(models.Kisi).one()
+    assert (veli.telefon, veli.daire_departman) == ("5551112233", "C3")
 
 
 def test_import_guncelle_modu_degisiklik_yoksa_degismeyen_sayar(db):

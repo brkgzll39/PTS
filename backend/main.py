@@ -7920,7 +7920,13 @@ async def toplu_kisi_import(
 
     # Başlık satırını normalize et
     basliklar = [str(b).strip().lower().replace(" ", "_") if b else "" for b in satirlar[0]]
-    alan_indeksi = {alan: basliklar.index(alan) for alan in ("ad_soyad", "plaka_no", "tip") if alan in basliklar}
+    # İsteğe bağlı 'telefon' ve 'daire_departman' sütunları da okunur (önceden yalnızca
+    # zorunlu üç alan indekslendiği için bu iki sütun HİÇ içe aktarılmıyordu --
+    # 2026-10-05, güncelleme modu testinde ortaya çıktı).
+    alan_indeksi = {
+        alan: basliklar.index(alan)
+        for alan in ("ad_soyad", "plaka_no", "tip", "telefon", "daire_departman") if alan in basliklar
+    }
 
     if not all(alan in alan_indeksi for alan in ("ad_soyad", "plaka_no", "tip")):
         raise HTTPException(400, "Excel başlıklarında 'ad_soyad', 'plaka_no', 'tip' sütunları bulunamadı")
