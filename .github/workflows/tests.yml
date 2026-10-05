@@ -32,6 +32,11 @@ jobs:
         run: |
           python -m py_compile backend/*.py
 
+      - name: Ön yüz JavaScript söz dizimini kontrol et
+        # frontend/app.js tek bir büyük dosya: tek bir eksik parantez bütün
+        # paneli sessizce bozar (2026-10-05 eklendi).
+        run: node --check frontend/app.js
+
       - name: Testleri çalıştır
         run: pytest -v
 
