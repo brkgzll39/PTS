@@ -153,66 +153,111 @@
   </div></div>
 </div>
 
+<!-- KİŞİ KARTI (2026-10-05, kullanıcı isteği: "kişiler kısmını [abonelik
+     yönetim ekranındaki] gibi ama benim arayüzüme uygun düzenle, birden fazla
+     aracı olanlar için kolay müdahale ekranı olsun"). Eski basit "Kişiyi
+     Düzenle" penceresi, sol tarafta kişi bilgileri + sağ tarafta sekmeler
+     (Araç Listesi / Saat-Gün Kısıtlaması) olan geniş bir karta çevrildi.
+     Araç Listesi'nde ana + ek tüm araçlar tek tabloda görünür; ek araçlar için
+     açıklama/plaka düzenleme, aktif-pasif, "ana yap", silme ve hızlı (çoklu)
+     ekleme tek yerden yapılır -- bkz. app.js::kisiDuzenleAc ve _kartAraclariCiz.
+     Eski alan kimlikleri (duzenleId, duzenlePlaka ...) korunmuştur. -->
 <div class="modal fade" id="kisiDuzenleModal" tabindex="-1" aria-hidden="true">
-  <div class="modal-dialog modal-dialog-centered"><div class="modal-content">
-    <div class="modal-header"><h5 class="modal-title">Kişiyi Düzenle</h5><button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Kapat"></button></div>
+  <div class="modal-dialog modal-xl modal-dialog-centered modal-dialog-scrollable"><div class="modal-content">
+    <div class="modal-header">
+      <h5 class="modal-title"><i class="bi bi-person-vcard me-2"></i>Kişi Kartı <span id="kartBaslikAd" class="text-muted fw-normal ms-1"></span></h5>
+      <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Kapat"></button>
+    </div>
     <form id="kisiDuzenleForm" data-rol-min="operatör">
       <div class="modal-body">
         <input type="hidden" id="duzenleId">
-        <div class="mb-2">
-          <label class="form-label small" for="duzenleTip">Tip</label>
-          <select class="form-select" id="duzenleTip" required onchange="duzenleZiyaretciAlanGoster()">
-            <option value="abone">Abone (Site Sakini)</option>
-            <option value="personel">Personel</option>
-            <option value="ziyaretci">Ziyaretçi</option>
-          </select>
-        </div>
-        <div class="mb-2">
-          <label class="form-label small" for="duzenleAdSoyad">Ad Soyad</label>
-          <input type="text" class="form-control" id="duzenleAdSoyad" required>
-        </div>
-        <div class="mb-2">
-          <label class="form-label small" for="duzenlePlaka">Plaka No (Ana)</label>
-          <input type="text" class="form-control" id="duzenlePlaka" required>
-        </div>
-        <!-- 2026-09-23 kullanıcı isteği: "birden fazla aracı olanların
-             araçlarını kişiye tıklayınca sıralı bir şekilde görecek şekilde
-             düzenle" -- toplu içe aktarmadan (bkz. main.py::toplu_kisi_import,
-             2026-09-23 "çoklu plaka" patch'i) ya da tek tek "+ Ekle" ile
-             gelen ek plakaların (models.KisiPlaka) panelden GÖRÜLEBİLECEĞİ
-             hiçbir yer yoktu -- backend zaten destekliyordu (GET/POST/DELETE
-             /kisiler/{id}/plakalar) ama admin panelinde hiç kullanılmıyordu.
-             Bu liste, kisiDuzenleAc() tarafından numaralı/sıralı olarak
-             doldurulur (bkz. app.js::_duzenleEkPlakalarGoster). -->
-        <div class="mb-2">
-          <label class="form-label small">Ek Plakalar (Birden Fazla Aracı Varsa)</label>
-          <ol id="duzenleEkPlakalarListe" class="ek-plaka-listesi"></ol>
-          <div class="input-group input-group-sm">
-            <input type="text" class="form-control" id="duzenleYeniEkPlaka" placeholder="Örn. 34 DEF 456">
-            <button type="button" class="btn btn-outline-primary" onclick="kisiEkPlakaEkle()"><i class="bi bi-plus-circle"></i> Ekle</button>
+        <div class="row g-3">
+          <div class="col-lg-5">
+            <div class="kart-bolum-baslik">Kişi Bilgileri</div>
+            <div class="mb-2">
+              <label class="form-label small" for="duzenleTip">Tip</label>
+              <select class="form-select" id="duzenleTip" required onchange="duzenleZiyaretciAlanGoster()">
+                <option value="abone">Abone (Site Sakini)</option>
+                <option value="personel">Personel</option>
+                <option value="ziyaretci">Ziyaretçi</option>
+              </select>
+            </div>
+            <div class="mb-2">
+              <label class="form-label small" for="duzenleAdSoyad">Ad Soyad</label>
+              <input type="text" class="form-control" id="duzenleAdSoyad" required>
+            </div>
+            <div class="mb-2">
+              <label class="form-label small" for="duzenlePlaka">Ana Plaka</label>
+              <input type="text" class="form-control" id="duzenlePlaka" required oninput="_kartAnaPlakaYansit()">
+            </div>
+            <div class="row g-2 mb-2">
+              <div class="col-6">
+                <label class="form-label small" for="duzenleTelefon">Telefon</label>
+                <input type="text" class="form-control" id="duzenleTelefon">
+              </div>
+              <div class="col-6">
+                <label class="form-label small" id="duzenleDaireEtiket" for="duzenleDaire">Daire No</label>
+                <input type="text" class="form-control" id="duzenleDaire">
+              </div>
+            </div>
+            <div class="mb-2 d-none" id="duzenleZiyaretciBitisAlani">
+              <label class="form-label small" for="duzenleBitisTarihi">Ziyaret Bitiş Tarihi/Saati</label>
+              <input type="datetime-local" class="form-control" id="duzenleBitisTarihi">
+            </div>
+            <div class="mb-2">
+              <label class="form-label small" for="duzenleAciklama">Açıklama</label>
+              <textarea class="form-control" id="duzenleAciklama" rows="2"></textarea>
+            </div>
+            <div id="kartIstatistik" class="small text-muted"></div>
           </div>
-          <div id="duzenleEkPlakaSonuc" class="small mt-1"></div>
+          <div class="col-lg-7">
+            <ul class="nav nav-tabs kart-sekmeler" role="tablist">
+              <li class="nav-item" role="presentation"><a class="nav-link active" href="#kartAraclarPane" data-bs-toggle="tab" data-bs-target="#kartAraclarPane" role="tab"><i class="bi bi-car-front me-1"></i>Araç Listesi <span class="badge bg-primary ms-1" id="kartAracSayisi">0</span></a></li>
+              <li class="nav-item" role="presentation"><a class="nav-link" href="#kartKisitPane" data-bs-toggle="tab" data-bs-target="#kartKisitPane" role="tab"><i class="bi bi-clock me-1"></i>Saat / Gün Kısıtlaması</a></li>
+            </ul>
+            <div class="tab-content border border-top-0 rounded-bottom p-3">
+              <div class="tab-pane fade show active" id="kartAraclarPane" role="tabpanel">
+                <div class="table-responsive">
+                  <table class="table table-sm align-middle kart-arac-tablo mb-2">
+                    <thead class="table-light"><tr><th style="width:2rem">#</th><th>Plaka</th><th>Açıklama (marka, renk vb.)</th><th class="text-center">Durum</th><th class="text-end">İşlem</th></tr></thead>
+                    <tbody id="kartAracTablosu"></tbody>
+                  </table>
+                </div>
+                <div class="kart-arac-ekle" data-rol-min="operatör" data-rol-davranis="gizle">
+                  <label class="form-label small mb-1" for="duzenleYeniEkPlaka"><i class="bi bi-plus-circle me-1"></i>Araç Ekle <span class="text-muted">(birden fazla plakayı virgül/satır ile ayırarak aynı anda ekleyebilirsiniz)</span></label>
+                  <div class="row g-2">
+                    <div class="col-sm-5"><input type="text" class="form-control form-control-sm" id="duzenleYeniEkPlaka" placeholder="Örn. 34 DEF 456, 06 XYZ 12" autocomplete="off"></div>
+                    <div class="col-sm-5"><input type="text" class="form-control form-control-sm" id="duzenleYeniEkAciklama" placeholder="Açıklama (opsiyonel)" maxlength="100" autocomplete="off"></div>
+                    <div class="col-sm-2 d-grid"><button type="button" class="btn btn-sm btn-primary" id="duzenleEkPlakaEkleBtn" onclick="kisiEkPlakaEkle()"><i class="bi bi-plus-lg"></i> Ekle</button></div>
+                  </div>
+                  <div id="duzenleEkPlakaSonuc" class="small mt-1"></div>
+                </div>
+                <p class="small text-muted mt-2 mb-0">Pasif yapılan araç artık <strong>yetkili sayılmaz</strong> (kişi aktif olsa bile). "Ana yap" ile seçilen araç ana plaka olur, mevcut ana plaka listeye düşer. Araç değişiklikleri anında kaydedilir; kişi bilgileri için alttaki <em>Kaydet</em> düğmesini kullanın.</p>
+              </div>
+              <div class="tab-pane fade" id="kartKisitPane" role="tabpanel">
+                <p class="small text-muted">Boş bırakılırsa kişi her saat ve her gün giriş yapabilir (tüm araçları için geçerlidir).</p>
+                <div class="row g-2">
+                  <div class="col-6"><label class="form-label small" for="duzenleSaatBaslangic">Giriş Başlangıç</label><input type="time" class="form-control form-control-sm" id="duzenleSaatBaslangic"></div>
+                  <div class="col-6"><label class="form-label small" for="duzenleSaatBitis">Giriş Bitiş</label><input type="time" class="form-control form-control-sm" id="duzenleSaatBitis"></div>
+                </div>
+                <label class="form-label small mt-3">İzin Verilen Günler</label>
+                <div class="d-flex flex-wrap gap-1" id="duzenleGunler">
+                  <label class="badge bg-light text-dark border" style="cursor:pointer"><input type="checkbox" value="0" class="me-1">Pzt</label>
+                  <label class="badge bg-light text-dark border" style="cursor:pointer"><input type="checkbox" value="1" class="me-1">Sal</label>
+                  <label class="badge bg-light text-dark border" style="cursor:pointer"><input type="checkbox" value="2" class="me-1">Çrş</label>
+                  <label class="badge bg-light text-dark border" style="cursor:pointer"><input type="checkbox" value="3" class="me-1">Per</label>
+                  <label class="badge bg-light text-dark border" style="cursor:pointer"><input type="checkbox" value="4" class="me-1">Cum</label>
+                  <label class="badge bg-light text-dark border" style="cursor:pointer"><input type="checkbox" value="5" class="me-1">Cmt</label>
+                  <label class="badge bg-light text-dark border" style="cursor:pointer"><input type="checkbox" value="6" class="me-1">Paz</label>
+                </div>
+              </div>
+            </div>
+          </div>
         </div>
-        <div class="mb-2">
-          <label class="form-label small" for="duzenleTelefon">Telefon</label>
-          <input type="text" class="form-control" id="duzenleTelefon">
-        </div>
-        <div class="mb-2">
-          <label class="form-label small" id="duzenleDaireEtiket" for="duzenleDaire">Daire No</label>
-          <input type="text" class="form-control" id="duzenleDaire">
-        </div>
-        <div class="mb-2 d-none" id="duzenleZiyaretciBitisAlani">
-          <label class="form-label small" for="duzenleBitisTarihi">Ziyaret Bitiş Tarihi/Saati</label>
-          <input type="datetime-local" class="form-control" id="duzenleBitisTarihi">
-        </div>
-        <div class="mb-2">
-          <label class="form-label small" for="duzenleAciklama">Açıklama</label>
-          <textarea class="form-control" id="duzenleAciklama" rows="2"></textarea>
-        </div>
-        <div id="duzenleSonuc" class="small"></div>
+        <div id="duzenleSonuc" class="small mt-2"></div>
       </div>
       <div class="modal-footer">
-        <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Vazgeç</button>
+        <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Kapat</button>
         <button type="submit" class="btn btn-primary"><i class="bi bi-check-circle"></i> Kaydet</button>
       </div>
     </form>
@@ -1040,6 +1085,10 @@
                 <div class="mb-2">
                   <label class="form-label small" for="kisiPlaka">Plaka No</label>
                   <input type="text" class="form-control" id="kisiPlaka" placeholder="34 ABC 123" required>
+                </div>
+                <div class="mb-2">
+                  <label class="form-label small" for="kisiEkPlakalar">Ek Araçlar <span class="text-muted">(opsiyonel, virgülle ayırın)</span></label>
+                  <input type="text" class="form-control" id="kisiEkPlakalar" placeholder="06 XYZ 12, 34 DEF 456" autocomplete="off">
                 </div>
                 <div class="mb-2">
                   <label class="form-label small" for="kisiTelefon">Telefon</label>

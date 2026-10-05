@@ -2983,14 +2983,22 @@ async function kisileriYukle() {
     // rozet, listede kaç ek plakası olduğunu tek bakışta gösterir (önceden
     // hiçbir gösterge yoktu); tam sıralı listeye tıklanınca (kisiDuzenleAc)
     // Düzenle penceresindeki #duzenleEkPlakalarListe'den ulaşılır.
-    const ekSayisi = (k.ek_plakalar || []).length;
-    const ekRozeti = ekSayisi > 0
-      ? ` <button type="button" class="badge ek-plaka-rozeti border-0" onclick="kisiDuzenleAc(${k.id})" title="${ekSayisi} ek aracı daha var -- tümünü sıralı görmek için tıklayın">+${ekSayisi}</button>`
-      : "";
+    // 2026-10-05 (Kişi Kartı): ilk 2 ek araç plaka olarak doğrudan listede
+    // görünür (pasif olanlar soluk/üstü çizili), kalanlar "+N" rozetinde;
+    // rozete tıklayınca Kişi Kartı'ndaki Araç Listesi açılır.
+    const ekler = k.ek_plakalar || [];
+    const ekSayisi = ekler.length;
+    const ekChipleri = ekler.slice(0, 2).map(p =>
+      ` <button type="button" class="plate-link ek-plaka-chip${p.aktif ? "" : " ek-plaka-pasif"}" data-plaka-analiz="${escapeHtml(p.plaka_no)}" title="${escapeHtml(p.aciklama || "Ek araç")}${p.aktif ? "" : " (PASİF -- yetkili sayılmaz)"}">${escapeHtml(p.plaka_no)}</button>`
+    ).join("");
+    const kalanEk = ekSayisi - 2;
+    const ekRozeti = ekChipleri + (kalanEk > 0
+      ? ` <button type="button" class="badge ek-plaka-rozeti border-0" onclick="kisiDuzenleAc(${k.id})" title="${kalanEk} araç daha var -- tümünü görmek için tıklayın">+${kalanEk}</button>`
+      : "");
     return `
     <tr>
       <td>${escapeHtml(k.ad_soyad)}</td>
-      <td class="fw-bold"><button class="plate-link${plakaKirmizi ? " plate-link-yetkisiz" : ""}" data-plaka-analiz="${escapeHtml(k.plaka_no)}" title="${plakaKirmizi ? "Son geçişi YETKİSİZ olarak işaretlendi -- " : ""}Geçiş geçmişini ve görsellerini gör">${escapeHtml(k.plaka_no)}</button>${ekRozeti}</td>
+      <td class="fw-bold kisi-plaka-hucre"><button class="plate-link${plakaKirmizi ? " plate-link-yetkisiz" : ""}" data-plaka-analiz="${escapeHtml(k.plaka_no)}" title="${plakaKirmizi ? "Son geçişi YETKİSİZ olarak işaretlendi -- " : ""}Geçiş geçmişini ve görsellerini gör">${escapeHtml(k.plaka_no)}</button>${ekRozeti}</td>
       <td>${tipRozeti(k.tip)}</td>
       <td>${escapeHtml(k.telefon) || "-"}</td>
       <td>${escapeHtml(k.daire_departman) || "-"}</td>
@@ -3029,11 +3037,27 @@ document.getElementById("kisiForm").addEventListener("submit", async (e) => {
   const btn = e.target.querySelector('button[type="submit"]');
   if (btn) btn.disabled = true;
   try {
-    await apiCagir("/kisiler", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(gövde) });
+    const yeniKisi = await apiCagir("/kisiler", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(gövde) });
+    // 2026-10-05: "Ek Araçlar" alanı -- kişi oluşturulduktan sonra her ek plaka
+    // ayrı eklenir; biri reddedilirse (ör. başka kişide kayıtlı) kişi YİNE DE
+    // kaydedilmiş olur ve hata açıkça gösterilir (sessizce yutulmaz).
+    const ekHatalar = [];
+    let ekEklenen = 0;
+    for (const plaka of _kartPlakalariAyir(document.getElementById("kisiEkPlakalar").value)) {
+      try {
+        await apiCagir(`/kisiler/${yeniKisi.id}/plakalar`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ plaka_no: plaka }) });
+        ekEklenen++;
+      } catch (ekHata) {
+        ekHatalar.push(`${plaka}: ${ekHata.message}`);
+      }
+    }
     document.getElementById("kisiForm").reset();
     ziyaretciAlanGoster();
     kisileriYukle(); panelYenile();
-    toastGoster("Kişi kaydedildi.", "basari");
+    toastGoster(ekEklenen ? `Kişi ve ${ekEklenen} ek araç kaydedildi.` : "Kişi kaydedildi.", "basari");
+    if (ekHatalar.length) {
+      toastGoster("Kişi kaydedildi ama şu ek araçlar eklenemedi (Kişi Kartı'ndan tekrar ekleyebilirsiniz): " + ekHatalar.join("; "), "hata");
+    }
   } catch (err) {
     toastGoster(err.message, "hata");
   } finally {
@@ -3103,6 +3127,24 @@ function duzenleZiyaretciAlanGoster() {
   document.getElementById("duzenleDaireEtiket").textContent = tip === "personel" ? "Departman" : "Daire No";
 }
 
+// ================================================================
+// KİŞİ KARTI (2026-10-05, kullanıcı isteği: "kişiler kısmını [abonelik
+// yönetim ekranındaki] gibi ama benim arayüzüme uygun düzenle, birden fazla
+// aracı olanlar için kolay müdahale ekranı olsun")
+// ================================================================
+// Eski küçük "Kişiyi Düzenle" penceresi yerine geniş bir kart: solda kişi
+// bilgileri, sağda "Araç Listesi" (ana + ek TÜM araçlar tek tabloda; açıklama/
+// plaka düzenleme, aktif-pasif, ana yap, silme, çoklu ekleme) ve "Saat/Gün
+// Kısıtlaması" sekmeleri. Araç işlemleri ANINDA sunucuya kaydedilir (modalı
+// kapatmadan, kişi formunu Kaydet'e basmadan); kişi bilgileri ve kısıtlama
+// alttaki Kaydet ile gönderilir.
+let _kartKisi = { id: null, plaka_no: "", ek_plakalar: [], duzenlenenPlakaId: null };
+
+function _kartAnaPlakaYansit() {
+  const hucre = document.getElementById("kartAnaPlakaHucre");
+  if (hucre) hucre.textContent = document.getElementById("duzenlePlaka").value.trim() || "—";
+}
+
 async function kisiDuzenleAc(id) {
   let kisi;
   try {
@@ -3119,63 +3161,209 @@ async function kisiDuzenleAc(id) {
   document.getElementById("duzenleDaire").value = kisi.daire_departman || "";
   document.getElementById("duzenleAciklama").value = kisi.aciklama || "";
   document.getElementById("duzenleBitisTarihi").value = kisi.bitis_tarihi ? kisi.bitis_tarihi.slice(0, 16) : "";
+  document.getElementById("duzenleSaatBaslangic").value = kisi.giris_saati_baslangic || "";
+  document.getElementById("duzenleSaatBitis").value = kisi.giris_saati_bitis || "";
+  const izinliGunler = (kisi.izin_verilen_gunler || "").split(",").map(g => g.trim()).filter(Boolean);
+  document.querySelectorAll("#duzenleGunler input").forEach(c => { c.checked = izinliGunler.includes(c.value); });
   document.getElementById("duzenleSonuc").textContent = "";
   document.getElementById("duzenleYeniEkPlaka").value = "";
+  document.getElementById("duzenleYeniEkAciklama").value = "";
   document.getElementById("duzenleEkPlakaSonuc").textContent = "";
-  _duzenleEkPlakalarGoster(kisi.id, kisi.ek_plakalar);
+  document.getElementById("kartBaslikAd").textContent = "· " + kisi.ad_soyad;
+  const ist = [];
+  if (kisi.ilk_gecis) ist.push(`İlk geçiş: ${tarihFormatla(kisi.ilk_gecis)}`);
+  if (kisi.son_gecis) ist.push(`Son geçiş: ${tarihFormatla(kisi.son_gecis)}`);
+  document.getElementById("kartIstatistik").textContent = ist.join(" · ");
+  _kartKisi = { id: kisi.id, plaka_no: kisi.plaka_no, ek_plakalar: kisi.ek_plakalar || [], duzenlenenPlakaId: null };
+  _kartAraclariCiz();
   duzenleZiyaretciAlanGoster();
+  // Her açılışta ilk sekme (Araç Listesi) açık olsun.
+  const ilkSekme = document.querySelector('#kisiDuzenleModal .kart-sekmeler .nav-link');
+  if (ilkSekme && window.bootstrap) bootstrap.Tab.getOrCreateInstance(ilkSekme).show();
   bootstrap.Modal.getOrCreateInstance(document.getElementById("kisiDuzenleModal")).show();
 }
 
-// 2026-09-23 kullanıcı isteği: "birden fazla aracı olanların araçlarını
-// kişiye tıklayınca sıralı bir şekilde görecek şekilde düzenle" -- bkz.
-// index.html'deki #duzenleEkPlakalarListe'nin üstündeki not. `ek_plakalar`
-// GET /kisiler/{id} yanıtında ZATEN geliyordu (schemas.KisiCevap.ek_plakalar)
-// -- burada ekstra bir istek YAPILMIYOR, sadece gösteriliyor. Liste <ol>
-// (sıralı/numaralı liste) olduğu için tarayıcı otomatik 1., 2., 3. ...
-// numaralandırır -- kullanıcının istediği "sıralı görünüm" budur.
-function _duzenleEkPlakalarGoster(kisiId, ekPlakalar) {
-  const liste = document.getElementById("duzenleEkPlakalarListe");
-  liste.innerHTML = (ekPlakalar && ekPlakalar.length)
-    ? ekPlakalar.map(p => `
-      <li>
-        <span class="ek-plaka-satiri-ic">
-          <span class="ek-plaka-metin">${escapeHtml(p.plaka_no)}</span>
-          <button type="button" class="btn btn-sm btn-outline-danger" onclick="kisiEkPlakaSil(${kisiId}, ${p.id})" title="Bu ek plakayı kaldır"><i class="bi bi-x-lg"></i></button>
-        </span>
-      </li>`).join("")
-    : `<li class="text-muted small" style="list-style: none;">Bu kişiye ait ek plaka yok</li>`;
+function _kartAraclariCiz() {
+  const tbody = document.getElementById("kartAracTablosu");
+  if (!tbody) return;
+  const yazabilir = rolYeterli("operatör");
+  const ekler = _kartKisi.ek_plakalar || [];
+  document.getElementById("kartAracSayisi").textContent = String(1 + ekler.length);
+  const anaPlaka = document.getElementById("duzenlePlaka").value.trim() || _kartKisi.plaka_no;
+  let html = `<tr class="table-light">
+      <td>1</td>
+      <td class="fw-bold" id="kartAnaPlakaHucre">${escapeHtml(anaPlaka)}</td>
+      <td class="text-muted small">Ana araç</td>
+      <td class="text-center"><span class="badge bg-success">Ana</span></td>
+      <td class="text-end text-nowrap"><span class="text-muted small" title="Ana plakayı soldaki \"Ana Plaka\" alanından değiştirebilirsiniz">soldan düzenle</span></td>
+    </tr>`;
+  html += ekler.map((p, i) => {
+    const sira = i + 2;
+    if (yazabilir && _kartKisi.duzenlenenPlakaId === p.id) {
+      return `<tr class="kart-arac-duzenleniyor">
+        <td>${sira}</td>
+        <td><input type="text" class="form-control form-control-sm" id="kartPlakaDuzenlePlaka" value="${escapeHtml(p.plaka_no)}" maxlength="15" autocomplete="off" onkeydown="if(event.key==='Enter'){event.preventDefault();kartPlakaKaydet(${p.id})}else if(event.key==='Escape'){event.preventDefault();kartPlakaDuzenleIptal()}"></td>
+        <td><input type="text" class="form-control form-control-sm" id="kartPlakaDuzenleAciklama" value="${escapeHtml(p.aciklama || "")}" maxlength="100" autocomplete="off" onkeydown="if(event.key==='Enter'){event.preventDefault();kartPlakaKaydet(${p.id})}else if(event.key==='Escape'){event.preventDefault();kartPlakaDuzenleIptal()}"></td>
+        <td></td>
+        <td class="text-end text-nowrap">
+          <button type="button" class="btn btn-sm btn-success" title="Kaydet" aria-label="Kaydet" onclick="kartPlakaKaydet(${p.id})"><i class="bi bi-check-lg"></i></button>
+          <button type="button" class="btn btn-sm btn-outline-secondary" title="Vazgeç" aria-label="Vazgeç" onclick="kartPlakaDuzenleIptal()"><i class="bi bi-x-lg"></i></button>
+        </td></tr>`;
+    }
+    const durum = yazabilir
+      ? `<div class="form-check form-switch d-inline-block mb-0"><input class="form-check-input" type="checkbox" role="switch" ${p.aktif ? "checked" : ""} aria-label="Araç aktif" onchange="kartPlakaAktifDegistir(${p.id}, this.checked)"></div><span class="small ms-1 ${p.aktif ? "text-success" : "text-muted"}">${p.aktif ? "Aktif" : "Pasif"}</span>`
+      : (p.aktif ? '<span class="badge bg-success">Aktif</span>' : '<span class="badge bg-secondary">Pasif</span>');
+    const islem = yazabilir ? `
+        <button type="button" class="btn btn-sm btn-outline-primary" title="Plakayı / açıklamayı düzenle" aria-label="Düzenle" onclick="kartPlakaDuzenle(${p.id})"><i class="bi bi-pencil"></i></button>
+        <button type="button" class="btn btn-sm btn-outline-success" title="Bu aracı ANA araç yap" aria-label="Ana yap" onclick="kartPlakaAnaYap(${p.id})"><i class="bi bi-star"></i></button>
+        <button type="button" class="btn btn-sm btn-outline-danger" title="Bu aracı kaldır" aria-label="Kaldır" onclick="kisiEkPlakaSil(${_kartKisi.id}, ${p.id})"><i class="bi bi-trash"></i></button>`
+      : "";
+    return `<tr class="${p.aktif ? "" : "kart-arac-pasif"}">
+      <td>${sira}</td>
+      <td class="fw-bold kart-arac-plaka">${escapeHtml(p.plaka_no)}</td>
+      <td>${p.aciklama ? escapeHtml(p.aciklama) : '<span class="text-muted">-</span>'}</td>
+      <td class="text-center text-nowrap">${durum}</td>
+      <td class="text-end text-nowrap">${islem}</td>
+    </tr>`;
+  }).join("");
+  if (!ekler.length) {
+    html += `<tr><td colspan="5" class="text-center text-muted small py-2">Bu kişinin yalnızca ana aracı var. Aşağıdan ek araç ekleyebilirsiniz.</td></tr>`;
+  }
+  tbody.innerHTML = html;
+}
+
+// Sunucudaki güncel kişiyi çekip araç tablosunu ve listeyi tazeler; kişi
+// formundaki (henüz kaydedilmemiş) alanlara DOKUNMAZ (ana plaka yalnızca
+// `anaPlakayiFormaYaz` true ise -- "ana yap" sonrası -- güncellenir).
+async function _kartKisiyiYenile(anaPlakayiFormaYaz = false) {
+  const guncel = await apiCagir(`/kisiler/${_kartKisi.id}`);
+  _kartKisi.plaka_no = guncel.plaka_no;
+  _kartKisi.ek_plakalar = guncel.ek_plakalar || [];
+  if (anaPlakayiFormaYaz) document.getElementById("duzenlePlaka").value = guncel.plaka_no;
+  _kartAraclariCiz();
+  kisileriYukle();
+}
+
+function _kartPlakalariAyir(metin) {
+  // "34 ABC 1, 06 XYZ 2\n35 DEF 3" -> ["34 ABC 1", "06 XYZ 2", "35 DEF 3"]
+  return String(metin || "").split(/[,;\n]+/).map(x => x.trim()).filter(Boolean);
 }
 
 async function kisiEkPlakaEkle() {
   const kisiId = document.getElementById("duzenleId").value;
   const girdi = document.getElementById("duzenleYeniEkPlaka");
+  const aciklamaGirdi = document.getElementById("duzenleYeniEkAciklama");
   const sonuc = document.getElementById("duzenleEkPlakaSonuc");
-  const plaka = girdi.value.trim();
-  if (!plaka) return;
+  const btn = document.getElementById("duzenleEkPlakaEkleBtn");
+  const plakalar = _kartPlakalariAyir(girdi.value);
+  if (!plakalar.length) return;
+  // Açıklama yalnızca TEK plaka eklenirken anlamlıdır (aynı açıklamayı
+  // toplu eklenen birçok araca yazmak yanıltıcı olurdu).
+  const aciklama = plakalar.length === 1 ? (aciklamaGirdi.value.trim() || null) : null;
+  if (btn) btn.disabled = true;
+  const eklenen = [], hatalar = [];
+  for (const plaka of plakalar) {
+    try {
+      await apiCagir(`/kisiler/${kisiId}/plakalar`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ plaka_no: plaka, aciklama }),
+      });
+      eklenen.push(plaka);
+    } catch (err) {
+      hatalar.push(`${plaka}: ${err.message}`);
+    }
+  }
   try {
-    await apiCagir(`/kisiler/${kisiId}/plakalar`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ plaka_no: plaka }),
-    });
-    girdi.value = "";
-    sonuc.className = "small text-success mt-1"; sonuc.textContent = "Ek plaka eklendi.";
-    const guncelKisi = await apiCagir(`/kisiler/${kisiId}`);
-    _duzenleEkPlakalarGoster(kisiId, guncelKisi.ek_plakalar);
-    kisileriYukle();
+    if (eklenen.length) await _kartKisiyiYenile();
   } catch (err) {
-    sonuc.className = "small text-danger mt-1"; sonuc.textContent = err.message;
+    hatalar.push("Liste yenilenemedi: " + err.message);
+  }
+  // Hatalı plakalar kutuda KALIR (kullanıcı düzeltip tekrar deneyebilsin),
+  // başarıyla eklenenler kutudan çıkarılır.
+  girdi.value = plakalar.filter(p => !eklenen.includes(p)).join(", ");
+  if (!hatalar.length) aciklamaGirdi.value = "";
+  const parcalar = [];
+  if (eklenen.length) parcalar.push(`<span class="text-success">${eklenen.length} araç eklendi.</span>`);
+  hatalar.forEach(h => parcalar.push(`<span class="text-danger">${escapeHtml(h)}</span>`));
+  sonuc.className = "small mt-1";
+  sonuc.innerHTML = parcalar.join("<br>");
+  if (btn) btn.disabled = false;
+}
+
+document.getElementById("duzenleYeniEkPlaka")?.addEventListener("keydown", (e) => {
+  if (e.key === "Enter") { e.preventDefault(); kisiEkPlakaEkle(); }
+});
+document.getElementById("duzenleYeniEkAciklama")?.addEventListener("keydown", (e) => {
+  if (e.key === "Enter") { e.preventDefault(); kisiEkPlakaEkle(); }
+});
+
+async function kisiEkPlakaSil(kisiId, plakaId) {
+  if (!(await onayAl("Bu aracı (plakayı) kaldırmak istediğinize emin misiniz?"))) return;
+  try {
+    await apiCagir(`/kisiler/${kisiId}/plakalar/${plakaId}`, { method: "DELETE" });
+    await _kartKisiyiYenile();
+  } catch (err) {
+    toastGoster(err.message, "hata");
   }
 }
 
-async function kisiEkPlakaSil(kisiId, plakaId) {
-  if (!(await onayAl("Bu ek plakayı kaldırmak istediğinize emin misiniz?"))) return;
+function kartPlakaDuzenle(plakaId) {
+  _kartKisi.duzenlenenPlakaId = plakaId;
+  _kartAraclariCiz();
+  document.getElementById("kartPlakaDuzenlePlaka")?.focus();
+}
+
+function kartPlakaDuzenleIptal() {
+  _kartKisi.duzenlenenPlakaId = null;
+  _kartAraclariCiz();
+}
+
+async function kartPlakaKaydet(plakaId) {
+  const plaka = document.getElementById("kartPlakaDuzenlePlaka").value.trim();
+  const aciklama = document.getElementById("kartPlakaDuzenleAciklama").value.trim();
+  if (!plaka) { toastGoster("Plaka boş olamaz.", "hata"); return; }
   try {
-    await apiCagir(`/kisiler/${kisiId}/plakalar/${plakaId}`, { method: "DELETE" });
-    const guncelKisi = await apiCagir(`/kisiler/${kisiId}`);
-    _duzenleEkPlakalarGoster(kisiId, guncelKisi.ek_plakalar);
-    kisileriYukle();
+    await apiCagir(`/kisiler/${_kartKisi.id}/plakalar/${plakaId}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      // Açıklama boşaltılırsa null gider (alan temizlenir).
+      body: JSON.stringify({ plaka_no: plaka, aciklama: aciklama || null }),
+    });
+    _kartKisi.duzenlenenPlakaId = null;
+    await _kartKisiyiYenile();
+  } catch (err) {
+    toastGoster(err.message, "hata");
+  }
+}
+
+async function kartPlakaAktifDegistir(plakaId, aktif) {
+  try {
+    await apiCagir(`/kisiler/${_kartKisi.id}/plakalar/${plakaId}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ aktif }),
+    });
+    await _kartKisiyiYenile();
+  } catch (err) {
+    toastGoster(err.message, "hata");
+    // Başarısızsa anahtar yanlış konumda kalmasın.
+    try { await _kartKisiyiYenile(); } catch (_) { _kartAraclariCiz(); }
+  }
+}
+
+async function kartPlakaAnaYap(plakaId) {
+  const p = (_kartKisi.ek_plakalar || []).find(x => x.id === plakaId);
+  if (!p) return;
+  const eskiAna = _kartKisi.plaka_no;
+  const aciklamaUyarisi = p.aciklama
+    ? ` ("${p.aciklama}" açıklaması, ana plakanın açıklaması tutulmadığı için silinecek.)`
+    : "";
+  if (!(await onayAl(`${p.plaka_no} ana araç olsun, ${eskiAna} ek araç listesine geçsin mi?${aciklamaUyarisi}`))) return;
+  try {
+    await apiCagir(`/kisiler/${_kartKisi.id}/plakalar/${plakaId}/ana-yap`, { method: "POST" });
+    await _kartKisiyiYenile(true);
+    toastGoster(`Ana araç: ${p.plaka_no}`, "basari");
   } catch (err) {
     toastGoster(err.message, "hata");
   }
@@ -3185,6 +3373,7 @@ document.getElementById("kisiDuzenleForm").addEventListener("submit", async (e) 
   e.preventDefault();
   const id = document.getElementById("duzenleId").value;
   const sonuc = document.getElementById("duzenleSonuc");
+  const secilenGunler = [...document.querySelectorAll("#duzenleGunler input:checked")].map(c => c.value);
   const gövde = {
     ad_soyad: document.getElementById("duzenleAdSoyad").value,
     plaka_no: document.getElementById("duzenlePlaka").value,
@@ -3193,6 +3382,9 @@ document.getElementById("kisiDuzenleForm").addEventListener("submit", async (e) 
     daire_departman: document.getElementById("duzenleDaire").value || null,
     aciklama: document.getElementById("duzenleAciklama").value || null,
     bitis_tarihi: document.getElementById("duzenleBitisTarihi").value || null,
+    giris_saati_baslangic: document.getElementById("duzenleSaatBaslangic").value || null,
+    giris_saati_bitis: document.getElementById("duzenleSaatBitis").value || null,
+    izin_verilen_gunler: secilenGunler.length ? secilenGunler.join(",") : null,
   };
   const btn = e.target.querySelector('button[type="submit"]');
   if (btn) btn.disabled = true;
@@ -3205,6 +3397,7 @@ document.getElementById("kisiDuzenleForm").addEventListener("submit", async (e) 
     bootstrap.Modal.getInstance(document.getElementById("kisiDuzenleModal")).hide();
     kisileriYukle();
     panelYenile();
+    toastGoster("Kişi güncellendi.", "basari");
   } catch (err) {
     sonuc.className = "small text-danger"; sonuc.textContent = err.message;
   } finally {

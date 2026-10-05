@@ -238,6 +238,20 @@ class KisiPlakaOlustur(BaseModel):
         return plaka_normalize(v)
 
 
+class KisiPlakaGuncelle(BaseModel):
+    """PUT /kisiler/{id}/plakalar/{plaka_id} -- Kişi Kartı'ndaki "Araç Listesi"
+    sekmesinden (2026-10-05) bir ek aracın plakası/açıklaması/aktifliği
+    değiştirilir. Gönderilmeyen alan değişmez (exclude_unset)."""
+    plaka_no: Optional[str] = Field(None, min_length=1, max_length=15)
+    aciklama: Optional[str] = Field(None, max_length=100)
+    aktif: Optional[bool] = None
+
+    @field_validator("plaka_no")
+    @classmethod
+    def plaka_buyuk_harf(cls, v):
+        return plaka_normalize(v) if v is not None else v
+
+
 class KisiPlakaCevap(BaseModel):
     id: int
     kisi_id: int

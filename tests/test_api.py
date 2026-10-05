@@ -6478,3 +6478,100 @@ def test_alarm_otomatik_okundu_ayari_kapaliyken_alarmlar_acik_kalir(client, yetk
         assert eski and eski[0]["okundu"] is False
     finally:
         client.put("/sistem/ayarlar", json={"alarm_otomatik_okundu": onceki_ayar}, headers=yetkili_header)
+
+
+# ------------------------------------------------------------------
+# 2026-10-05 Kişi Kartı (çoklu araç yönetimi): PUT /kisiler/{id}/plakalar/{pid},
+# POST /kisiler/{id}/plakalar/{pid}/ana-yap, plaka çakışması (409)
+# ------------------------------------------------------------------
+
+def _kart_kisi_olustur(client, yetkili_header, ad, plaka):
+    r = client.post("/kisiler", json={"ad_soyad": ad, "plaka_no": plaka, "tip": "abone"}, headers=yetkili_header)
+    assert r.status_code == 200, r.text
+    return r.json()["id"]
+
+
+def test_kisi_karti_ek_plaka_cakisma_409_doner(client, yetkili_header):
+    a = _kart_kisi_olustur(client, yetkili_header, "Kart Cakisma A", "34 KRT 101")
+    b = _kart_kisi_olustur(client, yetkili_header, "Kart Cakisma B", "34 KRT 201")
+    # Kendi ana plakası
+    r = client.post(f"/kisiler/{a}/plakalar", json={"plaka_no": "34KRT101"}, headers=yetkili_header)
+    assert r.status_code == 409, r.text
+    # Başka kişinin ana plakası
+    r = client.post(f"/kisiler/{a}/plakalar", json={"plaka_no": "34 KRT 201"}, headers=yetkili_header)
+    assert r.status_code == 409, r.text
+    assert "Kart Cakisma B" in r.json()["detail"]
+    # Normal ekleme çalışır; aynısını tekrar eklemek 409
+    assert client.post(f"/kisiler/{a}/plakalar", json={"plaka_no": "34 KRT 102"}, headers=yetkili_header).status_code == 200
+    assert client.post(f"/kisiler/{a}/plakalar", json={"plaka_no": "34 KRT 102"}, headers=yetkili_header).status_code == 409
+    # Başka kişinin ek plakası da çakışır
+    assert client.post(f"/kisiler/{b}/plakalar", json={"plaka_no": "34 KRT 102"}, headers=yetkili_header).status_code == 409
+
+
+def test_kisi_karti_ek_plaka_guncelle_aciklama_ve_pasif_yap(client, yetkili_header):
+    kisi = _kart_kisi_olustur(client, yetkili_header, "Kart Guncelle", "34 KRT 301")
+    pid = client.post(f"/kisiler/{kisi}/plakalar", json={"plaka_no": "34 KRT 302"}, headers=yetkili_header).json()["id"]
+
+    r = client.put(f"/kisiler/{kisi}/plakalar/{pid}", json={"aciklama": "Beyaz Fiat"}, headers=yetkili_header)
+    assert r.status_code == 200, r.text
+    assert r.json()["aciklama"] == "Beyaz Fiat" and r.json()["aktif"] is True and r.json()["plaka_no"] == "34 KRT 302"
+
+    # Aktifken yetkili
+    k1 = client.post("/kayitlar", json={"plaka_no": "34 KRT 302", "kamera_id": "TEST", "yon": "giris"}, headers=yetkili_header)
+    assert k1.json()["yetki_durumu"] == "yetkili"
+
+    # Pasif yapılınca artık yetkili DEĞİL (kişi aktif kalsa bile)
+    r = client.put(f"/kisiler/{kisi}/plakalar/{pid}", json={"aktif": False}, headers=yetkili_header)
+    assert r.status_code == 200 and r.json()["aktif"] is False
+    k2 = client.post("/kayitlar", json={"plaka_no": "34 KRT 302", "kamera_id": "TEST", "yon": "giris"}, headers=yetkili_header)
+    assert k2.json()["yetki_durumu"] == "yetkisiz"
+    # Ana plaka hâlâ yetkili
+    k3 = client.post("/kayitlar", json={"plaka_no": "34 KRT 301", "kamera_id": "TEST", "yon": "giris"}, headers=yetkili_header)
+    assert k3.json()["yetki_durumu"] == "yetkili"
+
+    # Plaka değiştirme + çakışma
+    assert client.put(f"/kisiler/{kisi}/plakalar/{pid}", json={"plaka_no": "34 KRT 303"}, headers=yetkili_header).json()["plaka_no"] == "34 KRT 303"
+    assert client.put(f"/kisiler/{kisi}/plakalar/{pid}", json={"plaka_no": "34 KRT 301"}, headers=yetkili_header).status_code == 409
+    # Olmayan plaka id'si
+    assert client.put(f"/kisiler/{kisi}/plakalar/999999", json={"aktif": True}, headers=yetkili_header).status_code == 404
+
+
+def test_kisi_karti_ek_plaka_guncelle_baska_kisinin_plakasina_404(client, yetkili_header):
+    a = _kart_kisi_olustur(client, yetkili_header, "Kart IDOR A", "34 KRT 401")
+    b = _kart_kisi_olustur(client, yetkili_header, "Kart IDOR B", "34 KRT 501")
+    pid_b = client.post(f"/kisiler/{b}/plakalar", json={"plaka_no": "34 KRT 502"}, headers=yetkili_header).json()["id"]
+    assert client.put(f"/kisiler/{a}/plakalar/{pid_b}", json={"aktif": False}, headers=yetkili_header).status_code == 404
+    assert client.post(f"/kisiler/{a}/plakalar/{pid_b}/ana-yap", headers=yetkili_header).status_code == 404
+
+
+def test_kisi_karti_ana_yap_plakalari_degistirir(client, yetkili_header):
+    kisi = _kart_kisi_olustur(client, yetkili_header, "Kart Ana Yap", "34 KRT 601")
+    pid = client.post(f"/kisiler/{kisi}/plakalar", json={"plaka_no": "34 KRT 602", "aciklama": "Eski araç"}, headers=yetkili_header).json()["id"]
+
+    r = client.post(f"/kisiler/{kisi}/plakalar/{pid}/ana-yap", headers=yetkili_header)
+    assert r.status_code == 200, r.text
+    assert r.json()["plaka_no"] == "34 KRT 602"
+    ekler = r.json()["ek_plakalar"]
+    assert [e["plaka_no"] for e in ekler] == ["34 KRT 601"]
+    assert ekler[0]["aktif"] is True and ekler[0]["aciklama"] is None
+    # İki plaka da hâlâ yetkili
+    for plaka in ("34 KRT 601", "34 KRT 602"):
+        k = client.post("/kayitlar", json={"plaka_no": plaka, "kamera_id": "TEST", "yon": "giris"}, headers=yetkili_header)
+        assert k.json()["yetki_durumu"] == "yetkili", plaka
+
+
+def test_kisi_karti_ana_plaka_degistirme_cakismada_409(client, yetkili_header):
+    a = _kart_kisi_olustur(client, yetkili_header, "Kart Ana Cakisma A", "34 KRT 701")
+    _kart_kisi_olustur(client, yetkili_header, "Kart Ana Cakisma B", "34 KRT 801")
+    r = client.put(f"/kisiler/{a}", json={"plaka_no": "34 KRT 801"}, headers=yetkili_header)
+    assert r.status_code == 409, r.text
+    # Aynı plakayı (boşluksuz yazımla) yeniden göndermek çakışma SAYILMAZ
+    r = client.put(f"/kisiler/{a}", json={"plaka_no": "34KRT701", "telefon": "555"}, headers=yetkili_header)
+    assert r.status_code == 200, r.text
+
+
+def test_kisi_karti_operator_olmayan_plaka_guncelleyemez(client, yetkili_header, izleyici_header):
+    kisi = _kart_kisi_olustur(client, yetkili_header, "Kart Rol", "34 KRT 901")
+    pid = client.post(f"/kisiler/{kisi}/plakalar", json={"plaka_no": "34 KRT 902"}, headers=yetkili_header).json()["id"]
+    assert client.put(f"/kisiler/{kisi}/plakalar/{pid}", json={"aktif": False}, headers=izleyici_header).status_code == 403
+    assert client.post(f"/kisiler/{kisi}/plakalar/{pid}/ana-yap", headers=izleyici_header).status_code == 403

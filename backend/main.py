@@ -3686,7 +3686,12 @@ def kisi_guncelle(kisi_id: int, degisiklik: schemas.KisiGuncelle, db: Session = 
     kisi = db.query(models.Kisi).filter(models.Kisi.id == kisi_id).first()
     if not kisi:
         raise HTTPException(404, "Kişi bulunamadı")
-    for alan, deger in degisiklik.model_dump(exclude_unset=True).items():
+    alanlar = degisiklik.model_dump(exclude_unset=True)
+    # Ana plaka gerçekten DEĞİŞTİRİLİYORSA (2026-10-05, Kişi Kartı): başka bir
+    # kişide/araç satırında zaten kayıtlıysa 409 (bkz. _plaka_cakisma_kontrol).
+    if alanlar.get("plaka_no") and _plaka_normalize(alanlar["plaka_no"]) != _plaka_normalize(kisi.plaka_no):
+        _plaka_cakisma_kontrol(db, alanlar["plaka_no"], kisi_id)
+    for alan, deger in alanlar.items():
         setattr(kisi, alan, deger)
     db.commit()
     db.refresh(kisi)
@@ -3732,6 +3737,7 @@ def kisi_plaka_ekle(kisi_id: int, istek: schemas.KisiPlakaOlustur, db: Session =
     _rol_dogrula(kullanici, ROL_YONETICI, ROL_OPERATOR)
     if not db.query(models.Kisi).filter(models.Kisi.id == kisi_id).first():
         raise HTTPException(404, "Kişi bulunamadı")
+    _plaka_cakisma_kontrol(db, istek.plaka_no, kisi_id)
     yeni = models.KisiPlaka(kisi_id=kisi_id, plaka_no=istek.plaka_no, aciklama=istek.aciklama)
     db.add(yeni)
     db.commit()
@@ -3745,6 +3751,94 @@ def kisi_plaka_ekle(kisi_id: int, istek: schemas.KisiPlakaOlustur, db: Session =
     except Exception:
         logger.exception("Ek plaka eklendikten sonra geçmiş kayıtları bağlama başarısız oldu (kişi id=%s)", kisi_id)
     return yeni
+
+
+def _plaka_cakisma_kontrol(db: Session, plaka_no: str, kisi_id: int, haric_plaka_id: Optional[int] = None) -> None:
+    """Bir plakanın (boşluk/büyük-küçük harf farkından bağımsız) ZATEN başka
+    bir araç satırında kayıtlı olması durumunda 409 fırlatır.
+
+    2026-10-05 (Kişi Kartı): önceden hiçbir uç nokta bunu denetlemiyordu --
+    aynı plaka iki farklı kişiye (ya da aynı kişiye iki kez) eklenebiliyor;
+    _plaka_yetki_kontrol bunlardan YALNIZCA İLKİNİ eşleştirdiğinden, ikinci
+    kişi/araç için tanımlanan izin (ör. saat kısıtlaması) SESSİZCE hiç
+    uygulanmıyordu. `haric_plaka_id`: güncellenen ek plakanın KENDİ satırı."""
+    hedef = _plaka_normalize(plaka_no)
+    for k in db.query(models.Kisi).all():
+        if _plaka_normalize(k.plaka_no) == hedef:
+            if k.id == kisi_id:
+                raise HTTPException(409, f"{plaka_no} zaten bu kişinin ana plakası")
+            raise HTTPException(409, f"{plaka_no} plakası zaten '{k.ad_soyad}' kişisine kayıtlı")
+    for ek in db.query(models.KisiPlaka).all():
+        if haric_plaka_id is not None and ek.id == haric_plaka_id:
+            continue
+        if _plaka_normalize(ek.plaka_no) == hedef:
+            if ek.kisi_id == kisi_id:
+                raise HTTPException(409, f"{plaka_no} zaten bu kişinin araç listesinde var")
+            sahip = db.query(models.Kisi).filter(models.Kisi.id == ek.kisi_id).first()
+            raise HTTPException(409, f"{plaka_no} plakası zaten '{sahip.ad_soyad if sahip else 'başka bir kişi'}' kişisine kayıtlı")
+
+
+@app.put("/kisiler/{kisi_id}/plakalar/{plaka_id}", response_model=schemas.KisiPlakaCevap)
+def kisi_plaka_guncelle(kisi_id: int, plaka_id: int, degisiklik: schemas.KisiPlakaGuncelle, db: Session = Depends(get_db), kullanici: models.Kullanici = Depends(_personel_girisi_gerekli)):
+    """Kişi Kartı > Araç Listesi: ek aracın plakasını, açıklamasını veya
+    aktif/pasif durumunu değiştirir (pasif araç artık "yetkili" sayılmaz, bkz.
+    _plaka_yetki_kontrol -- KisiPlaka.aktif filtresi)."""
+    _rol_dogrula(kullanici, ROL_YONETICI, ROL_OPERATOR)
+    ek = db.query(models.KisiPlaka).filter(models.KisiPlaka.id == plaka_id, models.KisiPlaka.kisi_id == kisi_id).first()
+    if not ek:
+        raise HTTPException(404, "Plaka kaydı bulunamadı")
+    alanlar = degisiklik.model_dump(exclude_unset=True)
+    if alanlar.get("plaka_no") is not None:
+        if _plaka_normalize(alanlar["plaka_no"]) != _plaka_normalize(ek.plaka_no):
+            _plaka_cakisma_kontrol(db, alanlar["plaka_no"], kisi_id, haric_plaka_id=plaka_id)
+    else:
+        alanlar.pop("plaka_no", None)
+    if alanlar.get("aktif") is None:
+        alanlar.pop("aktif", None)
+    for alan, deger in alanlar.items():
+        setattr(ek, alan, deger)
+    db.commit()
+    db.refresh(ek)
+    # Plaka değişmiş ya da araç yeniden aktif edilmiş olabilir: geçmiş
+    # "yetkisiz" tespitler yeniden değerlendirilir (bkz. kisi_plaka_ekle).
+    try:
+        kisi = db.query(models.Kisi).filter(models.Kisi.id == kisi_id).first()
+        if kisi:
+            _gecmis_kayitlari_kisiye_bagla(db, kisi, kullanici.kullanici_adi)
+    except Exception:
+        logger.exception("Ek plaka güncellendikten sonra geçmiş kayıtları bağlama başarısız oldu (kişi id=%s)", kisi_id)
+    return ek
+
+
+@app.post("/kisiler/{kisi_id}/plakalar/{plaka_id}/ana-yap", response_model=schemas.KisiCevap)
+def kisi_plakayi_ana_yap(kisi_id: int, plaka_id: int, db: Session = Depends(get_db), kullanici: models.Kullanici = Depends(_personel_girisi_gerekli)):
+    """Kişi Kartı > Araç Listesi: seçilen ek aracı ANA araç yapar; mevcut ana
+    plaka aynı anda o satırın yerine ek araç olur (iki plaka tek işlemde,
+    atomik olarak yer değiştirir -- araç hiçbir an listeden kaybolmaz/çift
+    kaydedilmez). Ek aracın açıklaması, ana plakanın açıklaması olmadığı
+    (Kişi.aciklama kişinin kendisine aittir) için eski ana plakanın yeni ek
+    satırına TAŞINMAZ; arayüz bu durumda önceden onay ister."""
+    _rol_dogrula(kullanici, ROL_YONETICI, ROL_OPERATOR)
+    kisi = db.query(models.Kisi).filter(models.Kisi.id == kisi_id).first()
+    if not kisi:
+        raise HTTPException(404, "Kişi bulunamadı")
+    ek = db.query(models.KisiPlaka).filter(models.KisiPlaka.id == plaka_id, models.KisiPlaka.kisi_id == kisi_id).first()
+    if not ek:
+        raise HTTPException(404, "Plaka kaydı bulunamadı")
+    eski_ana = kisi.plaka_no
+    kisi.plaka_no = ek.plaka_no
+    ek.plaka_no = eski_ana
+    ek.aciklama = None
+    ek.aktif = True
+    db.commit()
+    db.refresh(kisi)
+    _denetim_kaydet(db, kullanici.kullanici_adi, "ana_plaka_degistir", f"{kisi.ad_soyad}: {eski_ana} -> {kisi.plaka_no}")
+    try:
+        _gecmis_kayitlari_kisiye_bagla(db, kisi, kullanici.kullanici_adi)
+    except Exception:
+        logger.exception("Ana plaka değiştirildikten sonra geçmiş kayıtları bağlama başarısız oldu (kişi id=%s)", kisi_id)
+    _kisilerin_gecis_ozetini_ekle(db, [kisi])
+    return kisi
 
 
 @app.delete("/kisiler/{kisi_id}/plakalar/{plaka_id}")
