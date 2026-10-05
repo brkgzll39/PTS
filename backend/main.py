@@ -4670,6 +4670,32 @@ def _gecis_alarmlarini_otomatik_okundu_isaretle(db: Session) -> int:
         return 0
 
 
+def _ayni_gun_onceki_not(db: Session, plaka_no: str, simdi: Optional[datetime] = None) -> Optional[str]:
+    """Aynı plakanın BUGÜNKÜ en son geçişinin notunu döner (yoksa None).
+
+    2026-10-05 kullanıcı isteği: "bir plakanın giriş ya da çıkışında not
+    yazıldıysa ve değiştirilmediyse, aynı gün içindeki diğer geçişlerde de aynı
+    not sistemde gözüksün". Karar, bugünün EN SON kaydına göre verilir (en son
+    NOTLU kayda değil): görevli sonraki bir geçişte notu değiştirdiyse yeni not,
+    notu bilerek sildiyse (boş bıraktıysa) taşıma DURUR -- yani "değiştirilmedi"
+    koşulu, zincirin son halkasındaki not üzerinden doğal olarak sağlanır.
+    Yalnızca takvim günü içinde geçerlidir; ertesi güne taşınmaz."""
+    simdi = simdi or datetime.now()
+    gun_basi = simdi.replace(hour=0, minute=0, second=0, microsecond=0)
+    son = (
+        db.query(models.Kayit.not_metni)
+        .filter(
+            models.Kayit.tarih_saat >= gun_basi,
+            _plaka_normalize_sql(models.Kayit.plaka_no) == _plaka_normalize(plaka_no),
+        )
+        .order_by(models.Kayit.tarih_saat.desc(), models.Kayit.id.desc())
+        .first()
+    )
+    if not son:
+        return None
+    return (son[0] or "").strip() or None
+
+
 def _kayit_olustur_ve_bildir(db: Session, plaka_no: str, kamera_id: str, yon: str,
                               guven_skoru: Optional[float], goruntu_yolu: Optional[str],
                               dogrulama_kare_sayisi: Optional[int] = None,
@@ -4719,6 +4745,12 @@ def _kayit_olustur_ve_bildir(db: Session, plaka_no: str, kamera_id: str, yon: st
     yetki, kisi_id, kisi_tip = _plaka_yetki_kontrol(db, plaka_no)
 
     not_metni_temiz = (not_metni or "").strip() or None
+    # Kamera tespitlerinde (manuel olmayan) not boşsa, aynı plakanın bugünkü son
+    # geçişindeki not otomatik taşınır (bkz. _ayni_gun_onceki_not). Panelden elle
+    # eklenen kayıtlarda taşıma YAPILMAZ: orada not kutusu zaten son nottan
+    # önerilerek dolar ve görevli bilerek boş bırakmış olabilir.
+    if not_metni_temiz is None and not manuel_giris:
+        not_metni_temiz = _ayni_gun_onceki_not(db, plaka_no)
     misafir_adi_temiz = (misafir_adi or "").strip() or None
     # Arvento entegrasyonu (2026-09-23): "o araç plaka tanıma sisteminden
     # geçiş yaptığında direkt olarak aracı kullanan personel ismi ona göre

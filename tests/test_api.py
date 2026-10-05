@@ -6860,3 +6860,52 @@ def test_toplu_import_gecersiz_mod_400_doner(client, yetkili_header):
         headers=yetkili_header,
     )
     assert r.status_code == 400, r.text
+
+
+# ---------------------- Aynı gün notu otomatik taşıma (2026-10-05) ----------------------
+
+def test_kamera_gecisi_ayni_gunku_onceki_notu_devralir(client, yetkili_header):
+    plaka, kamera = "34 NTA 701", "NOT-TASI-KAM"
+    # İlk geçiş (aynı kamera: çapraz-kamera tekrar filtresine takılmasın) not ile kaydedilir.
+    r = client.post("/kayitlar", json={"plaka_no": plaka, "kamera_id": kamera, "yon": "cikis", "not_metni": "HAMITABAT"},
+                    headers=yetkili_header)
+    assert r.status_code == 200, r.text
+    sonraki = _otomatik_kayit(client, plaka, kamera, kare=5, yon="giris")
+    assert sonraki["not_metni"] == "HAMITABAT"
+    uc = _otomatik_kayit(client, plaka, kamera, kare=5, yon="cikis")
+    assert uc["not_metni"] == "HAMITABAT"  # zincir devam eder
+    # Başka bir plaka etkilenmez.
+    diger = _otomatik_kayit(client, "34 NTB 702", kamera, kare=5)
+    assert diger["not_metni"] is None
+
+
+def test_kamera_gecisi_degistirilen_notu_son_hali_ile_devralir_silineni_tasimaz(client, yetkili_header):
+    plaka, kamera = "34 NTC 703", "NOT-DEGIS-KAM"
+    client.post("/kayitlar", json={"plaka_no": plaka, "kamera_id": kamera, "yon": "giris", "not_metni": "ESKİ NOT"},
+                headers=yetkili_header)
+    ikinci = _otomatik_kayit(client, plaka, kamera, kare=5)
+    assert ikinci["not_metni"] == "ESKİ NOT"
+    # Görevli en son geçişin notunu değiştirir -> sonraki geçiş YENİ notu alır.
+    r = client.patch(f"/kayitlar/{ikinci['id']}", json={"not_metni": "YENİ NOT"}, headers=yetkili_header)
+    assert r.status_code == 200, r.text
+    assert _otomatik_kayit(client, plaka, kamera, kare=5)["not_metni"] == "YENİ NOT"
+    # Bu kez notu bilerek siler -> taşıma durur.
+    uc = _otomatik_kayit(client, plaka, kamera, kare=5)
+    r2 = client.patch(f"/kayitlar/{uc['id']}", json={"not_metni": ""}, headers=yetkili_header)
+    assert r2.status_code == 200, r2.text
+    assert _otomatik_kayit(client, plaka, kamera, kare=5)["not_metni"] is None
+
+
+def test_kamera_gecisi_dunun_notunu_devralmaz(client):
+    from backend.database import SessionLocal
+    from backend import models
+
+    plaka, kamera = "34 NTD 704", "NOT-DUN-KAM"
+    db = SessionLocal()
+    try:
+        db.add(models.Kayit(plaka_no=plaka, kamera_id=kamera, yon="giris", yetki_durumu="yetkili",
+                            not_metni="DÜNKÜ NOT", tarih_saat=datetime.now() - timedelta(days=1)))
+        db.commit()
+    finally:
+        db.close()
+    assert _otomatik_kayit(client, plaka, kamera, kare=5)["not_metni"] is None

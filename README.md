@@ -4520,3 +4520,14 @@ kodundan değil testlerin kendisinden ve test ortamından geliyordu:
   kayıtlar kişinin şimdiki izinlerine göre yeniden değerlendirilir. Kara liste ve
   başka kişiye bağlı kayıtlara dokunulmaz; ikinci çalıştırma bir şey değiştirmez.
 
+## Aynı Gün İçinde Notun Otomatik Taşınması (2026-10-05)
+
+Bir plakanın giriş ya da çıkışında not yazıldıysa, aynı plakanın **aynı gün**
+içindeki sonraki kamera geçişlerine de aynı not otomatik yazılır (Kayıtlar'daki
+"Not" sütununda görünür). Kural, bugünün **en son** geçişine göre işler: görevli
+sonraki bir geçişte notu değiştirirse yeni not taşınır; notu bilerek silerse
+taşıma durur. Ertesi güne taşınmaz; başka plakaların notlarına karışmaz; panelden
+elle eklenen kayıtlarda uygulanmaz (orada not kutusu zaten son nottan önerilir).
+Özellik yalnızca YENİ geçişlerde çalışır -- daha önce oluşmuş kayıtlara geriye
+dönük not yazılmaz.
+
