@@ -98,3 +98,12 @@ def test_kisi_arama_js_debounce_ve_eski_istek_korumasi():
     assert 'params.set("arama"' in govde
     assert "istekNo !== _kisiListeIstekNo" in govde
     assert 'params.set("arama"' in re.search(r"function kisilerExcelIndir\(\).*?\n}\n", _JS, re.S).group(0)
+
+
+def test_kisiler_sekmesinden_cikinca_arama_sifirlanir():
+    m = re.search(r'document\.addEventListener\("hidden\.bs\.tab".*?\n}\);', _JS, re.S)
+    assert m, "hidden.bs.tab dinleyicisi yok"
+    govde = m.group(0)
+    assert '"#kisiler-sekme"' in govde
+    assert 'kutu.value = ""' in govde
+    assert "kisileriYukle()" in govde

@@ -2972,6 +2972,22 @@ document.getElementById("kisiArama")?.addEventListener("input", () => {
   _kisiAramaZamanlayici = setTimeout(kisileriYukle, 300);
 });
 
+// 2026-10-05 kullanıcı isteği: "kişiler sayfasından çıktığımda son aramış
+// olduğum kişi arama sütununda duruyor, otomatik sıfırlasın" -- Kişiler
+// sekmesinden başka bir sekmeye geçilince arama kutusu temizlenir ve liste
+// tam haline döner (böylece sekmeye geri dönüldüğünde eski bir filtre
+// yüzünden "kişiler kayıp" izlenimi oluşmaz). `hidden.bs.tab`, ayrılınan
+// sekmenin düğmesinde tetiklenir (üst sekme çubuğu ve kenar çubuğu aynı
+// Bootstrap sekme mekanizmasını kullandığı için ikisi de kapsanır).
+document.addEventListener("hidden.bs.tab", (e) => {
+  if (e.target?.dataset?.bsTarget !== "#kisiler-sekme") return;
+  const kutu = document.getElementById("kisiArama");
+  if (!kutu || !kutu.value) return;
+  kutu.value = "";
+  clearTimeout(_kisiAramaZamanlayici);
+  kisileriYukle();
+});
+
 async function kisileriYukle() {
   const params = new URLSearchParams();
   if (aktifTipFiltre) params.set("tip", aktifTipFiltre);
