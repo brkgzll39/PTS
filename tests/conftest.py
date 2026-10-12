@@ -37,6 +37,9 @@ os.environ["PTS_SISTEM_AYARLARI_FILE"] = os.path.join(_TEST_DB_DIZINI, "sistem_a
 # modunu "simulate"e çeviriyordu ve araç kaydı testleri, config.json hangi
 # paneli gösteriyorsa (ör. kapıdaki gerçek panel) ona mesaj gönderiyordu.
 os.environ["PTS_LED_CONFIG_FILE"] = os.path.join(_TEST_DB_DIZINI, "led_config.json")
+# Otomatik yedek klasörü de: uygulama açılışındaki günlük yedek görevi (TestClient
+# her açılışta tetikler) gerçek kurulumun yedekler/ klasörüne test yedeği yazıyordu.
+os.environ["PTS_YEDEK_KLASORU"] = os.path.join(_TEST_DB_DIZINI, "yedekler")
 
 
 def pytest_collection_modifyitems(config, items):

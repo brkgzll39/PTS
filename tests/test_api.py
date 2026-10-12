@@ -3319,13 +3319,26 @@ def test_otomatik_yedek_liste_operator_yetkisiz_403_doner(client, operator_heade
 # olabilir -- önceden bu hiç kontrol edilmiyordu, sorun ancak GERÇEK bir
 # geri yükleme ihtiyacında (felaket anında) fark edilirdi.
 
+@pytest.mark.parametrize("url, beklenen", [
+    ("sqlite:////home/pts/veritabani/pts.db", "/home/pts/veritabani/pts.db"),  # Linux mutlak yol
+    ("sqlite:///C:\\pts_sistemi\\veritabani\\pts.db", "C:\\pts_sistemi\\veritabani\\pts.db"),  # Windows
+    ("sqlite:///C:/pts_sistemi/veritabani/pts.db", "C:/pts_sistemi/veritabani/pts.db"),
+    ("sqlite:///veritabani/pts.db", "veritabani/pts.db"),  # göreli
+])
+def test_sqlite_dosya_yolu_linux_ve_windowsta_dogru(url, beklenen):
+    """Önceden urlparse(...).path.lstrip("/") Linux'ta mutlak yolun baştaki
+    "/"sını silip göreli yapıyordu (yedek indirme 404, otomatik yedek alınmıyordu)."""
+    from backend.database import sqlite_dosya_yolu
+    assert sqlite_dosya_yolu(url) == beklenen
+
+
 def test_yedek_dosyasi_saglam_mi_gecerli_yedek_icin_true_doner(client, yetkili_header, tmp_path):
     """Gerçek (test) veritabanının kendisinden GERÇEK şemayla bir yedek
     alınırsa sağlam kabul edilmeli."""
     from backend.main import _sqlite_yedek_al, _yedek_dosyasi_saglam_mi, SQLALCHEMY_DATABASE_URL
-    from urllib.parse import urlparse
+    from backend.database import sqlite_dosya_yolu
 
-    db_yolu = urlparse(SQLALCHEMY_DATABASE_URL).path.lstrip("/")
+    db_yolu = sqlite_dosya_yolu(SQLALCHEMY_DATABASE_URL)
     hedef = str(tmp_path / "gecerli_yedek.db")
     _sqlite_yedek_al(db_yolu, hedef)
     saglam, hata = _yedek_dosyasi_saglam_mi(hedef)
@@ -3375,7 +3388,7 @@ def test_otomatik_yedek_dogrula_gecerli_yedegi_isaretler(client, yetkili_header,
     yedek için `.verified` işaretçisi bırakır, liste uç noktası artık
     `saglam: true` göstermeli."""
     from backend.main import _sqlite_yedek_al, OTOMATIK_YEDEK_DOSYA_ONEKI, SQLALCHEMY_DATABASE_URL
-    from urllib.parse import urlparse
+    from backend.database import sqlite_dosya_yolu
 
     onceki = client.get("/sistem/ayarlar", headers=yetkili_header).json()["otomatik_yedek_klasoru"]
     yeni_klasor = str(tmp_path / "yedekler_dogrula_test")
@@ -3384,7 +3397,7 @@ def test_otomatik_yedek_dogrula_gecerli_yedegi_isaretler(client, yetkili_header,
         r0 = client.put("/sistem/ayarlar", json={"otomatik_yedek_klasoru": yeni_klasor}, headers=yetkili_header)
         assert r0.status_code == 200, r0.text
 
-        db_yolu = urlparse(SQLALCHEMY_DATABASE_URL).path.lstrip("/")
+        db_yolu = sqlite_dosya_yolu(SQLALCHEMY_DATABASE_URL)
         dosya_adi = f"{OTOMATIK_YEDEK_DOSYA_ONEKI}20260101_010101.db"
         _sqlite_yedek_al(db_yolu, os.path.join(yeni_klasor, dosya_adi))
 
@@ -3488,8 +3501,8 @@ def test_otomatik_yedek_uret_ve_dogrula_bozuk_ciktiginda_alarm_ve_bildirim_ureti
     ayar_id = _bildirim_ayari_olustur(client, yetkili_header, tetikleyici="yedek_bozuk")
     try:
         from backend.main import SQLALCHEMY_DATABASE_URL
-        from urllib.parse import urlparse
-        db_yolu = urlparse(SQLALCHEMY_DATABASE_URL).path.lstrip("/")
+        from backend.database import sqlite_dosya_yolu
+        db_yolu = sqlite_dosya_yolu(SQLALCHEMY_DATABASE_URL)
 
         pts_main._otomatik_yedek_uret_ve_dogrula(db_yolu, klasor)
 
@@ -4821,13 +4834,19 @@ def test_vardiya_grubu_paylasimli_gorunurluk_farkli_hesaplar_arasinda(client, ye
     GÖREMEMELİ."""
     _, ana_a_header = _rbac_guvenlik_kullanici_olustur_vardiyali(client, yetkili_header, "A")
     _, lojman_a_header = _rbac_guvenlik_kullanici_olustur_vardiyali(client, yetkili_header, "A")
-    _, b_header = _rbac_guvenlik_kullanici_olustur_vardiyali(client, yetkili_header, "B")
 
     # "lojman-A" hesabının oturumu AÇIKKEN oluşan bir kayıt.
     r = client.post("/kayitlar/otomatik", data={
         "plaka_no": "34 VG 01", "kamera_id": "LOJMAN-KAM", "yon": "giris", "guven_skoru": 0.99,
     })
     assert r.status_code == 200, r.text
+
+    # "B" grubu kayıttan SONRA nöbete gelir. DÜZELTME (2026-10-12): önceden B de
+    # kayıttan ÖNCE giriş yapıyordu; o zaman kayıt anında B de nöbette olur ve
+    # tasarım gereği (aynı anda birden çok vardiya açık olabilir, kayıt hepsinin
+    # penceresine düşer -- bkz. main.py::_kayitlarin_vardiya_adlarini_ekle) kaydı
+    # görür; test ilk commit'ten beri bu yüzden kırmızıydı.
+    _, b_header = _rbac_guvenlik_kullanici_olustur_vardiyali(client, yetkili_header, "B")
 
     # AYNI ("A") gruptaki diğer hesap (farklı fiziksel nokta) bu kaydı görmeli.
     r_ana = client.get("/kayitlar", params={"plaka": "34 VG 01"}, headers=ana_a_header)
@@ -4889,13 +4908,16 @@ def test_kayitlar_vardiya_adi_filtresi_guvenlik_hesabi_kendi_disindaki_vardiyayi
     filtresiyle bulabilmeli; kendi ("A") vardiyasını filtrelerken ise o
     kaydı GÖRMEMELİ (çapraz filtre sınırsız bir görünürlük açığına
     dönüşmemeli, yalnızca SEÇİLEN vardiyayı göstermeli)."""
-    _, a_header = _rbac_guvenlik_kullanici_olustur_vardiyali(client, yetkili_header, "A")
     _rbac_guvenlik_kullanici_olustur_vardiyali(client, yetkili_header, "D")  # "D" oturumunu açar
 
     r1 = client.post("/kayitlar/otomatik", data={
         "plaka_no": "34 XVD 01", "kamera_id": "KAM-1", "yon": "giris", "guven_skoru": 0.99,
     })
     assert r1.status_code == 200, r1.text
+    # "A" kayıttan SONRA nöbete gelir (kayıt yalnızca "D" penceresinde). DÜZELTME
+    # (2026-10-12): önceden A kayıttan ÖNCE giriş yapıyordu; kayıt o zaman tasarım
+    # gereği "A/D" etiketi alıp A'nın kendi penceresine de düşüyordu.
+    _, a_header = _rbac_guvenlik_kullanici_olustur_vardiyali(client, yetkili_header, "A")
 
     # "A" hesabı, "D" filtresiyle (plakasız) bu kaydı bulabilmeli.
     r_d_plakasiz = client.get("/kayitlar", params={"vardiya_adi": "D"}, headers=a_header)
@@ -4939,13 +4961,16 @@ def test_disa_aktar_pdf_kayit_detay_vardiya_adi_filtresiyle_baska_vardiyadan_izi
     varsayılan (parametre olmadan) davranışının BOZULMADIĞINI zaten
     doğruluyor; bu test yeni `vardiya_adi` parametresinin gerçekten izin
     verdiğini doğrular."""
-    _, a_header = _rbac_guvenlik_kullanici_olustur_vardiyali(client, yetkili_header, "A")
-    _rbac_guvenlik_kullanici_olustur_vardiyali(client, yetkili_header, "D")
+    _rbac_guvenlik_kullanici_olustur_vardiyali(client, yetkili_header, "D")  # "D" oturumunu açar
 
     r1 = client.post("/kayitlar/otomatik", data={
         "plaka_no": "34 XVD 02", "kamera_id": "KAM-1", "yon": "giris", "guven_skoru": 0.99,
     })
     assert r1.status_code == 200, r1.text
+    # "A" kayıttan SONRA nöbete gelir (kayıt yalnızca "D" penceresinde). DÜZELTME
+    # (2026-10-12): önceden A kayıttan ÖNCE giriş yapıyordu; kayıt o zaman tasarım
+    # gereği "A/D" etiketi alıp A'nın kendi penceresine de düşüyordu.
+    _, a_header = _rbac_guvenlik_kullanici_olustur_vardiyali(client, yetkili_header, "A")
     r2 = client.get("/kayitlar", params={"plaka": "34 XVD 02", "vardiya_adi": "D"}, headers=a_header)
     kayit_id = r2.json()[0]["id"]
 

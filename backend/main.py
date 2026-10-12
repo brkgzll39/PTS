@@ -31,7 +31,7 @@ import uuid
 import base64
 import asyncio
 from collections import deque
-from urllib.parse import urlsplit, urlunsplit, urlparse
+from urllib.parse import urlsplit, urlunsplit
 from datetime import datetime, timedelta
 from typing import Optional, List
 
@@ -83,7 +83,7 @@ from sqlalchemy import desc, func, or_, and_, false, select
 from backend import models
 from backend import schemas
 from backend.database import engine, get_db, Base, SessionLocal
-from backend.database import SQLALCHEMY_DATABASE_URL
+from backend.database import SQLALCHEMY_DATABASE_URL, sqlite_dosya_yolu
 from backend import excel_export
 from backend import pdf_export
 from backend import led_panel
@@ -320,7 +320,10 @@ _VARSAYILAN_AYARLAR = {
     # veritabanını hem TÜM yedekleri birden götürmesi engellenir); panelden
     # farklı bir diske/yola da ayarlanabilir.
     "otomatik_yedek_aktif": True,
-    "otomatik_yedek_klasoru": os.path.join(PROJE_KOKU, "yedekler"),
+    # PTS_YEDEK_KLASORU: normalde ayarlamanıza gerek yok; test paketi, testlerin
+    # açılışta aldığı otomatik yedekler gerçek yedek klasörüne düşmesin diye
+    # bunu geçici bir dizine yönlendirir.
+    "otomatik_yedek_klasoru": os.getenv("PTS_YEDEK_KLASORU") or os.path.join(PROJE_KOKU, "yedekler"),
     # SQL Server kurulumları için (bkz. backend/mssql_yedek.py): .bak dosyasının
     # yazılacağı klasör -- SQL Server MAKİNESİNDEKİ bir yol ve SQL Server servis
     # hesabının yazabildiği bir klasör olmalı. Boş = SQL Server'ın kendi
@@ -609,7 +612,7 @@ async def _goruntu_temizlik_dongu() -> None:
 # sessizce çalışan bakım görevi" deseni (bkz. yukarısı).
 YEDEK_KONTROL_ARALIK_SN = 6 * 3600  # her 6 saatte bir kontrol et (gerçek yedek günde 1 kez alınır)
 OTOMATIK_YEDEK_DOSYA_ONEKI = "pts_otomatik_yedek_"
-_VARSAYILAN_YEDEK_KLASORU = os.path.join(PROJE_KOKU, "yedekler")
+_VARSAYILAN_YEDEK_KLASORU = os.getenv("PTS_YEDEK_KLASORU") or os.path.join(PROJE_KOKU, "yedekler")
 
 
 def _sqlite_yedek_al(kaynak_yolu: str, hedef_yolu: str) -> None:
@@ -882,7 +885,7 @@ async def _otomatik_yedek_dongu() -> None:
             elif SQLALCHEMY_DATABASE_URL.startswith("sqlite") and ayarlar.get("otomatik_yedek_aktif", True):
                 bugun = datetime.now().date()
                 if son_yedek_gunu != bugun:
-                    db_yolu = urlparse(SQLALCHEMY_DATABASE_URL).path.lstrip("/")
+                    db_yolu = sqlite_dosya_yolu()
                     klasor = _otomatik_yedek_klasoru_al(ayarlar)
                     if os.path.exists(db_yolu):
                         _otomatik_yedek_uret_ve_dogrula(db_yolu, klasor)
@@ -956,7 +959,7 @@ def _izlenen_disk_yollari(ayarlar: dict) -> dict:
     veritabanının bulunduğu disk dolabilir ya da tam tersi)."""
     yollar = {"Araç görselleri": GORUNTU_KLASORU, "Otomatik yedekler": _otomatik_yedek_klasoru_al(ayarlar)}
     if SQLALCHEMY_DATABASE_URL.startswith("sqlite"):
-        db_yolu = urlparse(SQLALCHEMY_DATABASE_URL).path.lstrip("/")
+        db_yolu = sqlite_dosya_yolu()
         yollar["Veritabanı"] = os.path.dirname(os.path.abspath(db_yolu)) or "."
     elif _mssql_modu():
         # SQL Server (2026-10-05): veri dosyasının ve .bak yedeklerinin diskleri
@@ -6754,9 +6757,18 @@ def led_ayarlarini_guncelle(ayarlar: dict, kullanici: models.Kullanici = Depends
 
 
 @app.post("/led/test")
-def led_test_mesaji(mesaj: str = Query("PTS SİSTEMİ TEST MESAJI"), kullanici: models.Kullanici = Depends(_personel_girisi_gerekli)):
+def led_test_mesaji(
+    mesaj: str = Query("PTS SİSTEMİ TEST MESAJI"),
+    db: Session = Depends(get_db),
+    kullanici: models.Kullanici = Depends(_personel_girisi_gerekli),
+):
     _rol_dogrula(kullanici, ROL_YONETICI, ROL_OPERATOR)
     basarili = led_panel.led_mesaj_gonder(mesaj)
+    # DÜZELTME (2026-10-12): test mesajı önceden LedMesaj'a hiç yazılmıyordu --
+    # /led/durum'un "her gönderimde (kayıt bildirimi veya /led/test)" açıklamasına
+    # rağmen; LED Ayarları ekranında son test gönderiminin sonucu görünmüyordu.
+    db.add(models.LedMesaj(mesaj=mesaj, basarili=basarili))
+    db.commit()
     return {"basarili": basarili, "mesaj": mesaj}
 
 
@@ -8389,7 +8401,7 @@ def veritabani_yedek(db: Session = Depends(get_db), kullanici: models.Kullanici 
         return {"mod": "mssql", **sonuc}
     if not SQLALCHEMY_DATABASE_URL.startswith("sqlite"):
         raise HTTPException(400, "Desteklenmeyen veritabanı türü: yedek için veritabanı yönetim araçlarını kullanın.")
-    db_yolu = urlparse(SQLALCHEMY_DATABASE_URL).path.lstrip("/")
+    db_yolu = sqlite_dosya_yolu()
     if not os.path.exists(db_yolu):
         raise HTTPException(404, "Veritabanı dosyası bulunamadı")
     zaman_damgasi = datetime.now().strftime("%Y%m%d_%H%M%S")

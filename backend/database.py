@@ -28,6 +28,19 @@ def _veritabani_urlini_oku() -> str:
     return f"sqlite:///{DB_YOLU}"
 
 SQLALCHEMY_DATABASE_URL = _veritabani_urlini_oku()
+
+
+def sqlite_dosya_yolu(url: str = None) -> str:
+    """SQLite URL'sindeki veritabanı dosyasının yolu.
+
+    DÜZELTME (2026-10-12): önceden `urlparse(url).path.lstrip("/")` kullanılıyordu;
+    Windows'ta (sqlite:///C:\\...) doğru çalışır ama Linux'ta mutlak yolun
+    (sqlite:////home/.../pts.db) baştaki "/"sını da silip göreli yapıyordu --
+    elle yedek indirme 404 dönüyor, otomatik günlük yedek sessizce hiç
+    alınmıyor, disk izleme yanlış diski izliyordu (CI ubuntu'da 5 test kırmızıydı).
+    SQLAlchemy'nin kendi ayrıştırıcısı iki biçimde de doğru yolu verir."""
+    from sqlalchemy.engine import make_url
+    return make_url(url or SQLALCHEMY_DATABASE_URL).database or ""
 engine_kwargs = {}
 if SQLALCHEMY_DATABASE_URL.startswith("sqlite"):
     engine_kwargs["connect_args"] = {"check_same_thread": False}
