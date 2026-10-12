@@ -222,7 +222,14 @@ def metin_bitmap(satirlar: Sequence[str], genislik: int = VARSAYILAN_GORUNUR_GEN
 _sira_kilidi = threading.Lock()
 _sira = 0
 # Aynı karta iki gönderim iç içe geçmesin (kayıt bildirimi + /led/test gibi).
-_gonderim_kilidi = threading.Lock()
+# Kart başına ayrı kilit: ulaşılamayan bir panel (zaman aşımı) diğerini bekletmesin.
+_gonderim_kilitleri: dict = {}
+_kilitler_kilidi = threading.Lock()
+
+
+def _gonderim_kilidi(host: str, port: int) -> threading.Lock:
+    with _kilitler_kilidi:
+        return _gonderim_kilitleri.setdefault((host, int(port)), threading.Lock())
 
 
 def _siradaki() -> int:
@@ -345,12 +352,12 @@ def bekleme_yazisi_gonder(
 
 def _bitmapleri_gonder(host: str, port: int, bitmapler: dict, etiket: str, zaman_asimi: float) -> None:
     baslangic = time.monotonic()
-    with _gonderim_kilidi:
+    with _gonderim_kilidi(host, port):
         bekleme = time.monotonic() - baslangic
         for bolge, bitmap in bitmapler.items():
             bolge_gonder(host, port, bolge, bitmap, zaman_asimi)
     # Gecikme teşhisi: kilit beklemesi (önceki gönderim sürüyordu) ve karta yazma süresi.
     logger.info(
-        "Huidu panele yazıldı: %s (kilit bekleme %.2f sn, karta yazma %.2f sn)",
-        etiket, bekleme, time.monotonic() - baslangic - bekleme,
+        "Huidu panele yazıldı (%s): %s (kilit bekleme %.2f sn, karta yazma %.2f sn)",
+        host, etiket, bekleme, time.monotonic() - baslangic - bekleme,
     )

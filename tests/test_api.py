@@ -264,11 +264,26 @@ def test_led_panel_ust_satiri_personel_ziyaretci(client, yetkili_header, monkeyp
         assert client.post("/kisiler", json=veri, headers=yetkili_header).status_code == 200
     gonderilen = []
     monkeypatch.setattr(pts_main.led_panel, "led_mesaj_gonder",
-                        lambda mesaj, satirlar=None: gonderilen.append(satirlar) or True)
+                        lambda mesaj, satirlar=None, **_: gonderilen.append(satirlar) or True)
     r = client.post("/kayitlar", json={"plaka_no": plaka, "kamera_id": "TEST", "yon": "giris"},
                     headers=yetkili_header)
     assert r.status_code == 200, r.text
     assert gonderilen == [(beklenen, plaka.upper())]
+
+
+def test_led_panele_kameranin_idsi_iletilir(client, yetkili_header, monkeypatch):
+    """Kayıtta kamera ADI tutulur; LED paneli eşleşmesi (hangi panel hangi
+    kameranın aracını gösterir) cameras.json id'siyle yapılır."""
+    monkeypatch.setattr(pts_main, "_kameralari_oku", lambda: [
+        {"id": "kam-niz-giris", "ad": "NİZAMİYE GİRİŞ"}, {"id": "kam-loj-giris", "ad": "LOJMAN GİRİŞ"},
+    ])
+    gelen = []
+    monkeypatch.setattr(pts_main.led_panel, "led_mesaj_gonder",
+                        lambda mesaj, satirlar=None, kamera_idleri=None: gelen.append(kamera_idleri) or True)
+    r = client.post("/kayitlar", json={"plaka_no": "34 LED 09", "kamera_id": "LOJMAN GİRİŞ", "yon": "giris"},
+                    headers=yetkili_header)
+    assert r.status_code == 200, r.text
+    assert gelen == [["kam-loj-giris"]]
 
 
 def test_saat_disi_erisim_yetkisiz_sayilir(client, yetkili_header):

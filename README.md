@@ -2608,7 +2608,11 @@ birbirinden farklı davranan iki kopya mantık oluşmaz.
 - **simulate**: Donanım yok, mesajlar konsola/veritabanına yazılır (varsayılan, test için).
 - **serial**: RS232/USB seri port. `pip install pyserial` gerektirir. Panelin COM portu ve baud rate bilgisini panel arayüzünden (LED Panel sekmesi) girin.
 - **tcp**: Ethernet/WiFi üzerinden IP ile konuşan panel. IP adresi ve port bilgisini girin.
-- **huidu**: Huidu HD-E62 kontrol kartı (kartın IP'si, port 6101). Metin Pillow ile
+- **huidu**: Huidu HD-E62 kontrol kartı (kartın IP'si, port 6101). Birden çok panel
+  tanımlanabilir ("Paneller" listesi): her panel yalnızca seçili kameralardan gelen
+  araçları gösterir (ör. NİZAMİYE paneli 172.17.1.224 nizamiye giriş/çıkış, LOJMAN
+  paneli 172.17.1.242 lojman giriş/çıkış kameraları); kamera seçilmeyen panel tüm
+  kameraları gösterir. Test mesajı ve bekleme yazısı tüm panellere gider. Metin Pillow ile
   128x16 bitmap olarak çizilip gönderilir; üst satırda durum (yetkili araçta PERSONEL, yetkisizde ZİYARETÇİ, KARA LİSTE…),
   alt satırda plaka. "Panel genişliği", panelin gösterdiği sütun sayısıdır (NİZAMİYE
   paneli 64x32: varsayılan 64); yazı bu genişliğe sığdırılır. Panel 32 px yüksekse

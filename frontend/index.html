@@ -1229,13 +1229,11 @@
                   </div>
                 </div>
                 <div id="ledHuiduAlani" class="d-none">
-                  <div class="mb-2">
-                    <label class="form-label small" for="ledHuiduHost">Kart IP Adresi</label>
-                    <input type="text" class="form-control" id="ledHuiduHost" placeholder="172.17.1.224">
-                  </div>
-                  <div class="mb-2">
-                    <label class="form-label small" for="ledHuiduPort">Port</label>
-                    <input type="number" class="form-control" id="ledHuiduPort" value="6101">
+                  <div class="mb-3">
+                    <label class="form-label small mb-1">Paneller</label>
+                    <div class="form-text mt-0 mb-2">Her panel yalnızca seçili kameralardan gelen araçları gösterir (hiç kamera seçilmezse tüm kameralar). Test mesajı ve bekleme yazısı tüm panellere gider.</div>
+                    <div id="ledHuiduPanelListesi"></div>
+                    <button type="button" class="btn btn-sm btn-outline-secondary" onclick="ledHuiduPanelEkle()"><i class="bi bi-plus-lg"></i> Panel ekle</button>
                   </div>
                   <div class="mb-2">
                     <label class="form-label small" for="ledHuiduGenislik">Panel genişliği (piksel)</label>

@@ -20,7 +20,7 @@ import os
 import socket
 import threading
 from datetime import datetime
-from typing import Optional, Sequence
+from typing import Iterable, Optional, Sequence
 
 from backend import huidu
 
@@ -60,6 +60,12 @@ VARSAYILAN_AYARLAR = {
     "huidu_bekleme_yazisi": "T.P.A.O.",
     "huidu_bekleme_yazisi_2": "TRAKYA",  # alt satır (iki bölgede alt yarıda, biraz küçük); boş olabilir
     "huidu_mesaj_suresi": 10,
+    # Birden çok Huidu paneli: [{"ad", "host", "port", "kameralar": [kamera id, ...]}].
+    # Araç mesajı yalnızca o aracın kamerası listede olan panellere gider; boş
+    # kamera listesi = tüm kameralar. Liste boşsa huidu_host/huidu_port tek panel
+    # olarak kullanılır (eski kurulumlar). Ör. NİZAMİYE paneli yalnızca nizamiye
+    # giriş/çıkış kameralarını, LOJMAN paneli yalnızca lojman kameralarını gösterir.
+    "huidu_paneller": [],
 }
 
 
@@ -80,13 +86,18 @@ def ayarlari_kaydet(ayarlar: dict) -> None:
         json.dump(ayarlar, f, ensure_ascii=False, indent=2)
 
 
-def led_mesaj_gonder(mesaj: str, satirlar: Optional[Sequence[str]] = None) -> bool:
+def led_mesaj_gonder(
+    mesaj: str,
+    satirlar: Optional[Sequence[str]] = None,
+    kamera_idleri: Optional[Iterable[str]] = None,
+) -> bool:
     """Ayarlarda seçili moda göre LED panele mesaj gönderir. Başarılıysa True döner.
 
-    `satirlar` verilirse (ör. ("HOŞ GELDİNİZ", "34ABC123")) satır tabanlı
+    `satirlar` verilirse (ör. ("PERSONEL", "34ABC123")) satır tabanlı
     paneller (huidu) metni bu şekilde böler; diğer modlar yalnızca `mesaj`ı kullanır.
+    `kamera_idleri`: aracı gören kameranın cameras.json id'leri; huidu modunda
+    mesaj yalnızca bu kameraya bağlı panellere gider. None (ör. /led/test): tüm paneller.
     """
-    global _huidu_nesil
     ayarlar = ayarlari_oku()
     mod = ayarlar.get("led_mod", "simulate")
 
@@ -115,11 +126,7 @@ def led_mesaj_gonder(mesaj: str, satirlar: Optional[Sequence[str]] = None) -> bo
             return True
 
         elif mod == "huidu":
-            with _huidu_kilidi:
-                _huidu_nesil += 1
-                _huidu_gonder(ayarlar, satirlar or [mesaj], bool(ayarlar["huidu_iki_bolge"]))
-                _bekleme_yazisini_zamanla(ayarlar, _huidu_nesil)
-            return True
+            return _huidu_mesaj_gonder(ayarlar, satirlar or [mesaj], kamera_idleri)
 
         else:
             logger.error("LED mesajı gönderilemedi: bilinmeyen LED modu '%s'", mod)
@@ -131,65 +138,130 @@ def led_mesaj_gonder(mesaj: str, satirlar: Optional[Sequence[str]] = None) -> bo
 
 
 # ------------------------------------------------------------------
-# Huidu: boştaki yazı (T.P.A.O.)
+# Huidu: paneller, kamera eşleşmesi ve boştaki yazı (T.P.A.O.)
 # ------------------------------------------------------------------
-# Her araç mesajı "nesil"i artırır; zamanlayıcı tetiklendiğinde bu arada yeni bir
-# mesaj geldiyse (nesil değiştiyse) bekleme yazısını GÖNDERMEZ. Kilit, "kontrol et
-# + gönder"in yeni bir mesajla iç içe geçip onu ezmesini önler.
-_huidu_kilidi = threading.Lock()
-_huidu_nesil = 0
-_huidu_zamanlayici: Optional[threading.Timer] = None
+
+def huidu_panelleri(ayarlar: dict) -> list:
+    """Ayarlardaki Huidu panellerini normalize eder (bkz. VARSAYILAN_AYARLAR['huidu_paneller'])."""
+    paneller = []
+    for p in ayarlar.get("huidu_paneller") or []:
+        host = str(p.get("host") or "").strip()
+        if not host:
+            continue
+        paneller.append({
+            "ad": str(p.get("ad") or "").strip() or host,
+            "host": host,
+            "port": int(p.get("port") or huidu.VARSAYILAN_PORT),
+            "kameralar": [str(k) for k in (p.get("kameralar") or [])],
+        })
+    if not paneller:
+        paneller.append({
+            "ad": ayarlar["huidu_host"], "host": ayarlar["huidu_host"],
+            "port": int(ayarlar["huidu_port"]), "kameralar": [],
+        })
+    return paneller
 
 
-def _huidu_gonder(ayarlar: dict, satirlar: Sequence[str], iki_bolge: bool) -> None:
-    huidu.gonder(
-        ayarlar["huidu_host"],
-        int(ayarlar["huidu_port"]),
-        satirlar=satirlar,
-        iki_bolge=iki_bolge,
-        genislik=int(ayarlar["huidu_genislik"]),
-    )
+def _panel_kameraya_ait_mi(panel: dict, kamera_idleri: Optional[Iterable[str]]) -> bool:
+    if not panel["kameralar"] or kamera_idleri is None:
+        return True
+    return bool(set(panel["kameralar"]) & set(kamera_idleri))
 
 
-def _bekleme_yazisini_zamanla(ayarlar: dict, nesil: int) -> None:
-    global _huidu_zamanlayici
-    if _huidu_zamanlayici is not None:
-        _huidu_zamanlayici.cancel()
-        _huidu_zamanlayici = None
+class _PanelDurumu:
+    """Panel başına: araç mesajı "nesil"i ve bekleme yazısı zamanlayıcısı.
+
+    Her araç mesajı nesli artırır; zamanlayıcı tetiklendiğinde bu arada o panele
+    yeni bir mesaj geldiyse (nesil değiştiyse) bekleme yazısını GÖNDERMEZ. Kilit,
+    "kontrol et + gönder"in yeni bir mesajla iç içe geçip onu ezmesini önler."""
+
+    def __init__(self):
+        self.kilit = threading.Lock()
+        self.nesil = 0
+        self.zamanlayici: Optional[threading.Timer] = None
+
+
+_panel_durumlari: dict = {}
+_durumlar_kilidi = threading.Lock()
+
+
+def _durum(panel: dict) -> _PanelDurumu:
+    with _durumlar_kilidi:
+        return _panel_durumlari.setdefault((panel["host"], panel["port"]), _PanelDurumu())
+
+
+def _huidu_mesaj_gonder(ayarlar: dict, satirlar: Sequence[str], kamera_idleri: Optional[Iterable[str]]) -> bool:
+    if kamera_idleri is not None:
+        kamera_idleri = list(kamera_idleri)
+    hedefler = [p for p in huidu_panelleri(ayarlar) if _panel_kameraya_ait_mi(p, kamera_idleri)]
+    if not hedefler:
+        logger.info("LED: bu kameraya bağlı Huidu paneli yok (kamera id=%s), panele yazılmadı", kamera_idleri)
+        return True
+    basarili = True
+    for panel in hedefler:
+        durum = _durum(panel)
+        try:
+            with durum.kilit:
+                durum.nesil += 1
+                huidu.gonder(
+                    panel["host"], panel["port"], satirlar=satirlar,
+                    iki_bolge=bool(ayarlar["huidu_iki_bolge"]),
+                    genislik=int(ayarlar["huidu_genislik"]),
+                )
+                _bekleme_yazisini_zamanla(ayarlar, panel, durum)
+        except Exception as e:  # bir panel hatası diğerlerini engellemesin
+            logger.error("LED mesajı gönderilemedi (mod=huidu, panel=%s): %s", panel["ad"], e)
+            basarili = False
+    return basarili
+
+
+def _bekleme_yazisini_zamanla(ayarlar: dict, panel: dict, durum: _PanelDurumu) -> None:
+    """durum.kilit tutulurken çağrılır."""
+    if durum.zamanlayici is not None:
+        durum.zamanlayici.cancel()
+        durum.zamanlayici = None
     sure = float(ayarlar.get("huidu_mesaj_suresi") or 0)
     if sure <= 0 or not str(ayarlar.get("huidu_bekleme_yazisi") or "").strip():
         return
-    _huidu_zamanlayici = threading.Timer(sure, _bekleme_yazisina_don, args=(nesil,))
-    _huidu_zamanlayici.daemon = True
-    _huidu_zamanlayici.start()
+    durum.zamanlayici = threading.Timer(sure, _bekleme_yazisina_don, args=(panel, durum.nesil))
+    durum.zamanlayici.daemon = True
+    durum.zamanlayici.start()
 
 
-def _bekleme_yazisina_don(nesil: Optional[int] = None) -> bool:
-    """Bekleme yazısını panele yazar. `nesil` verilmişse yalnızca o mesajdan sonra
-    yeni mesaj gelmediyse yazar. Huidu modunda değilse ya da yazı boşsa hiçbir şey yapmaz."""
-    with _huidu_kilidi:
-        if nesil is not None and nesil != _huidu_nesil:
-            return False
-        ayarlar = ayarlari_oku()
-        yazi = str(ayarlar.get("huidu_bekleme_yazisi") or "").strip()
-        if ayarlar.get("led_mod") != "huidu" or not yazi:
-            return False
-        try:
-            huidu.bekleme_yazisi_gonder(
-                ayarlar["huidu_host"],
-                int(ayarlar["huidu_port"]),
-                ust=yazi,
-                alt=str(ayarlar.get("huidu_bekleme_yazisi_2") or ""),
-                iki_bolge=bool(ayarlar["huidu_iki_bolge"]),
-                genislik=int(ayarlar["huidu_genislik"]),
-            )
-            return True
-        except Exception as e:
-            logger.error("LED bekleme yazısı gönderilemedi (mod=huidu): %s", e)
-            return False
+def _bekleme_yazisina_don(panel: Optional[dict] = None, nesil: Optional[int] = None) -> bool:
+    """Bekleme yazısını panele (panel None ise tüm panellere) yazar. `nesil`
+    verilmişse yalnızca o mesajdan sonra o panele yeni mesaj gelmediyse yazar.
+    Huidu modunda değilse ya da yazı boşsa hiçbir şey yapmaz."""
+    ayarlar = ayarlari_oku()
+    yazi = str(ayarlar.get("huidu_bekleme_yazisi") or "").strip()
+    if ayarlar.get("led_mod") != "huidu" or not yazi:
+        return False
+    guncel = huidu_panelleri(ayarlar)
+    if panel is not None:
+        # Zamanlayıcı kurulduktan sonra panel ayarlardan çıkarıldıysa yazma.
+        guncel = [p for p in guncel if (p["host"], p["port"]) == (panel["host"], panel["port"])]
+    basarili = bool(guncel)
+    for p in guncel:
+        durum = _durum(p)
+        with durum.kilit:
+            if nesil is not None and nesil != durum.nesil:
+                basarili = False
+                continue
+            try:
+                huidu.bekleme_yazisi_gonder(
+                    p["host"], p["port"],
+                    ust=yazi,
+                    alt=str(ayarlar.get("huidu_bekleme_yazisi_2") or ""),
+                    iki_bolge=bool(ayarlar["huidu_iki_bolge"]),
+                    genislik=int(ayarlar["huidu_genislik"]),
+                )
+            except Exception as e:
+                logger.error("LED bekleme yazısı gönderilemedi (mod=huidu, panel=%s): %s", p["ad"], e)
+                basarili = False
+    return basarili
 
 
 def bekleme_yazisini_goster_arka_planda() -> None:
-    """PTS açılışında / LED ayarları kaydedilince bekleme yazısını panele yazar.
+    """PTS açılışında / LED ayarları kaydedilince bekleme yazısını panellere yazar.
     Panel ulaşılamazsa isteği/açılışı bekletmemek için ayrı iş parçacığında çalışır."""
     threading.Thread(target=_bekleme_yazisina_don, name="led-bekleme-yazisi", daemon=True).start()

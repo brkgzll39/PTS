@@ -3582,6 +3582,54 @@ function ledModDegisti() {
   document.getElementById("ledHuiduAlani").classList.toggle("d-none", mod !== "huidu");
 }
 
+// Huidu panelleri (2026-10-12): her panel kendi IP'si ve yalnızca seçili
+// kameralardan gelen araçlarla (ör. NİZAMİYE paneli: nizamiye giriş/çıkış).
+let _ledKameralari = [];
+
+function ledHuiduPanelEkle(panel = {}) {
+  const seciliKameralar = new Set(panel.kameralar || []);
+  const kart = document.createElement("div");
+  kart.className = "border rounded p-2 mb-2 led-huidu-panel";
+  const kameraKutulari = _ledKameralari.length
+    ? _ledKameralari.map(k => `
+        <div class="form-check form-check-inline">
+          <input class="form-check-input" type="checkbox" value="${escapeHtml(k.id)}" ${seciliKameralar.has(k.id) ? "checked" : ""}>
+          <label class="form-check-label small">${escapeHtml(k.ad)}</label>
+        </div>`).join("")
+    : '<span class="small text-muted">Tanımlı kamera yok (tüm kameralar)</span>';
+  kart.innerHTML = `
+    <div class="row g-2 mb-1">
+      <div class="col-4"><input type="text" class="form-control form-control-sm led-panel-ad" placeholder="Ad (ör. NİZAMİYE)"></div>
+      <div class="col-5"><input type="text" class="form-control form-control-sm led-panel-host" placeholder="IP (ör. 172.17.1.224)"></div>
+      <div class="col-2"><input type="number" class="form-control form-control-sm led-panel-port" placeholder="6101"></div>
+      <div class="col-1 text-end"><button type="button" class="btn btn-sm btn-outline-danger" title="Paneli kaldır"><i class="bi bi-trash"></i></button></div>
+    </div>
+    <div class="led-panel-kameralar">${kameraKutulari}</div>`;
+  kart.querySelector(".led-panel-ad").value = panel.ad || "";
+  kart.querySelector(".led-panel-host").value = panel.host || "";
+  kart.querySelector(".led-panel-port").value = panel.port || 6101;
+  kart.querySelector("button").addEventListener("click", () => kart.remove());
+  // Kayıtlı ama artık cameras.json'da olmayan kamera id'leri sessizce silinmesin.
+  kart.dataset.bilinmeyenKameralar = JSON.stringify(
+    [...seciliKameralar].filter(id => !_ledKameralari.some(k => k.id === id))
+  );
+  document.getElementById("ledHuiduPanelListesi").appendChild(kart);
+}
+
+function _ledHuiduPanelleriniTopla() {
+  return [...document.querySelectorAll("#ledHuiduPanelListesi .led-huidu-panel")]
+    .map(kart => ({
+      ad: kart.querySelector(".led-panel-ad").value.trim(),
+      host: kart.querySelector(".led-panel-host").value.trim(),
+      port: parseInt(kart.querySelector(".led-panel-port").value) || 6101,
+      kameralar: [
+        ...[...kart.querySelectorAll(".led-panel-kameralar input:checked")].map(i => i.value),
+        ...JSON.parse(kart.dataset.bilinmeyenKameralar || "[]"),
+      ],
+    }))
+    .filter(p => p.host);
+}
+
 async function ledAyarlariYukle() {
   let ayarlar;
   try {
@@ -3595,8 +3643,16 @@ async function ledAyarlariYukle() {
   document.getElementById("ledBaudrate").value = ayarlar.serial_baudrate;
   document.getElementById("ledTcpHost").value = ayarlar.tcp_host;
   document.getElementById("ledTcpPort").value = ayarlar.tcp_port;
-  document.getElementById("ledHuiduHost").value = ayarlar.huidu_host;
-  document.getElementById("ledHuiduPort").value = ayarlar.huidu_port;
+  try {
+    _ledKameralari = await apiCagir("/kameralar");
+  } catch (e) {
+    _ledKameralari = [];
+  }
+  const paneller = (ayarlar.huidu_paneller || []).length
+    ? ayarlar.huidu_paneller
+    : [{ ad: "", host: ayarlar.huidu_host, port: ayarlar.huidu_port, kameralar: [] }];
+  document.getElementById("ledHuiduPanelListesi").innerHTML = "";
+  paneller.forEach(ledHuiduPanelEkle);
   document.getElementById("ledHuiduIkiBolge").checked = !!ayarlar.huidu_iki_bolge;
   document.getElementById("ledHuiduGenislik").value = ayarlar.huidu_genislik;
   document.getElementById("ledHuiduBeklemeYazisi").value = ayarlar.huidu_bekleme_yazisi ?? "";
@@ -3613,14 +3669,18 @@ document.getElementById("ledForm").addEventListener("submit", async (e) => {
     serial_baudrate: parseInt(document.getElementById("ledBaudrate").value) || 9600,
     tcp_host: document.getElementById("ledTcpHost").value,
     tcp_port: parseInt(document.getElementById("ledTcpPort").value) || 5000,
-    huidu_host: document.getElementById("ledHuiduHost").value,
-    huidu_port: parseInt(document.getElementById("ledHuiduPort").value) || 6101,
+    huidu_paneller: _ledHuiduPanelleriniTopla(),
     huidu_iki_bolge: document.getElementById("ledHuiduIkiBolge").checked,
     huidu_genislik: parseInt(document.getElementById("ledHuiduGenislik").value) || 64,
     huidu_bekleme_yazisi: document.getElementById("ledHuiduBeklemeYazisi").value.trim(),
     huidu_bekleme_yazisi_2: document.getElementById("ledHuiduBeklemeYazisi2").value.trim(),
     huidu_mesaj_suresi: Math.max(0, parseInt(document.getElementById("ledHuiduMesajSuresi").value) || 0),
   };
+  // Eski tek-panel alanları ilk panelle aynı tutulur (panel listesi boşalırsa yedek).
+  if (gövde.huidu_paneller.length) {
+    gövde.huidu_host = gövde.huidu_paneller[0].host;
+    gövde.huidu_port = gövde.huidu_paneller[0].port;
+  }
   // DÜZELTME (2026-09-25, sistem taraması): bu form önceden hiç try/catch
   // içermiyordu -- PUT /led/ayarlar başarısız olursa (ör. geçersiz port),
   // gerçek hata mesajı hiçbir yere yazılmadan kayboluyordu; yalnızca

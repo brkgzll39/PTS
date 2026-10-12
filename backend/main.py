@@ -4886,7 +4886,12 @@ def _kayit_olustur_ve_bildir(db: Session, plaka_no: str, kamera_id: str, yon: st
         led_durum = "ZİYARETÇİ"
 
     # Satır tabanlı paneller (Huidu) üst satırda durumu, alt satırda plakayı gösterir.
-    basarili = led_panel.led_mesaj_gonder(mesaj, satirlar=(led_durum, plaka_no.upper()))
+    # Kayıtta kamera "ad"ıyla tutulur; panel-kamera eşleşmesi ise ad değişse de
+    # bozulmasın diye cameras.json "id"siyle yapılır (bkz. led_panel.huidu_panelleri).
+    kamera_idleri = [k.get("id") for k in _kameralari_oku() if k.get("ad") == kamera_id]
+    basarili = led_panel.led_mesaj_gonder(
+        mesaj, satirlar=(led_durum, plaka_no.upper()), kamera_idleri=kamera_idleri
+    )
     db.add(models.LedMesaj(mesaj=mesaj, basarili=basarili))
     if yetki != "yetkili":
         db.add(models.Alarm(

@@ -424,3 +424,78 @@ def test_tek_bolgede_iki_satir_bekleme_yazisi_ust_bolgede(kart, monkeypatch):
     ust, alt = _bitmapler(kart)
     assert ust == huidu.metin_bitmap(["T.P.A.O.", "TRAKYA"], genislik=64)
     assert alt == bytes(huidu.BITMAP_BOYUTU)
+
+
+# ------------------------------------------------------------------
+# Birden çok panel: her panel yalnızca kendi kameralarının araçlarını gösterir
+# (NİZAMİYE paneli 224: nizamiye giriş/çıkış; LOJMAN paneli 242: lojman giriş/çıkış)
+# ------------------------------------------------------------------
+
+@pytest.fixture
+def iki_kart():
+    nizamiye, lojman = SahteKart(), SahteKart()
+    yield nizamiye, lojman
+    nizamiye.kapat()
+    lojman.kapat()
+
+
+def _iki_panel_ayarlari(nizamiye, lojman, **ek):
+    return _huidu_ayarlari(0, huidu_paneller=[
+        {"ad": "NİZAMİYE", "host": "127.0.0.1", "port": nizamiye.port, "kameralar": ["niz-giris", "niz-cikis"]},
+        {"ad": "LOJMAN", "host": "127.0.0.1", "port": lojman.port, "kameralar": ["loj-giris", "loj-cikis"]},
+    ], **ek)
+
+
+@pytest.mark.parametrize("kamera, nizamiyeye, lojmana", [
+    ("niz-giris", 6, 0), ("niz-cikis", 6, 0), ("loj-giris", 0, 6), ("loj-cikis", 0, 6),
+])
+def test_arac_yalnizca_kendi_kamerasinin_paneline_yazilir(iki_kart, monkeypatch, kamera, nizamiyeye, lojmana):
+    nizamiye, lojman = iki_kart
+    monkeypatch.setattr(led_panel, "ayarlari_oku", lambda: _iki_panel_ayarlari(nizamiye, lojman))
+    assert led_panel.led_mesaj_gonder("x", satirlar=("PERSONEL", "34ABC123"), kamera_idleri=[kamera])
+    assert (len(nizamiye.cerceveler), len(lojman.cerceveler)) == (nizamiyeye, lojmana)
+
+
+def test_hicbir_panele_bagli_olmayan_kamera_yazilmaz(iki_kart, monkeypatch):
+    nizamiye, lojman = iki_kart
+    monkeypatch.setattr(led_panel, "ayarlari_oku", lambda: _iki_panel_ayarlari(nizamiye, lojman))
+    assert led_panel.led_mesaj_gonder("x", satirlar=("PERSONEL", "34ABC123"), kamera_idleri=[]) is True
+    assert not nizamiye.cerceveler and not lojman.cerceveler
+
+
+def test_test_mesaji_ve_bekleme_yazisi_tum_panellere(iki_kart, monkeypatch):
+    nizamiye, lojman = iki_kart
+    monkeypatch.setattr(led_panel, "ayarlari_oku", lambda: _iki_panel_ayarlari(nizamiye, lojman))
+    assert led_panel.led_mesaj_gonder("PTS TEST")  # kamera_idleri None: /led/test
+    assert len(nizamiye.cerceveler) == len(lojman.cerceveler) == 6
+    assert led_panel._bekleme_yazisina_don() is True
+    assert len(nizamiye.cerceveler) == len(lojman.cerceveler) == 12
+
+
+def test_ulasilamayan_panel_digerini_engellemez(iki_kart, monkeypatch):
+    nizamiye, lojman = iki_kart
+    nizamiye.kapat()  # NİZAMİYE kapalı/ulaşılamaz
+    ayarlar = _iki_panel_ayarlari(nizamiye, lojman)
+    for p in ayarlar["huidu_paneller"]:
+        p["kameralar"] = []  # ikisi de tüm kameralar
+    monkeypatch.setattr(led_panel, "ayarlari_oku", lambda: ayarlar)
+    assert led_panel.led_mesaj_gonder("x", satirlar=("PERSONEL", "34ABC123"), kamera_idleri=["niz-giris"]) is False
+    assert len(lojman.cerceveler) == 6, "LOJMAN yine de yazılmalı"
+
+
+def test_zamanlayici_yalnizca_kendi_panelini_geri_dondurur(iki_kart, monkeypatch):
+    nizamiye, lojman = iki_kart
+    monkeypatch.setattr(led_panel, "ayarlari_oku",
+                        lambda: _iki_panel_ayarlari(nizamiye, lojman, huidu_mesaj_suresi=0.2, huidu_iki_bolge=True))
+    led_panel.led_mesaj_gonder("x", satirlar=("PERSONEL", "34ABC123"), kamera_idleri=["loj-giris"])
+    assert _bekle(lambda: len(_bitmapler(lojman)) == 4)
+    assert _bitmapler(lojman)[2:] == [BEKLEME_UST, BEKLEME_ALT]
+    assert not nizamiye.cerceveler
+
+
+def test_panel_listesi_bossa_eski_tek_ip_ayari_kullanilir(kart, monkeypatch):
+    monkeypatch.setattr(led_panel, "ayarlari_oku", lambda: _huidu_ayarlari(kart.port))
+    assert led_panel.huidu_panelleri(_huidu_ayarlari(kart.port)) == [
+        {"ad": "127.0.0.1", "host": "127.0.0.1", "port": kart.port, "kameralar": []}]
+    assert led_panel.led_mesaj_gonder("x", satirlar=("PERSONEL", "34ABC123"), kamera_idleri=["herhangi"])
+    assert len(kart.cerceveler) == 6
