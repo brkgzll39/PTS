@@ -4870,9 +4870,11 @@ def _kayit_olustur_ve_bildir(db: Session, plaka_no: str, kamera_id: str, yon: st
     if not_metni_temiz:
         _son_not_kaydet(plaka_no, not_metni_temiz)
 
+    # LED panelin üst satırı (2026-10-12 kullanıcı isteği): "HOŞ GELDİNİZ" yerine
+    # yetkili araçta PERSONEL (ziyaretçi olarak tanımlıysa ZİYARETÇİ), yetkisizde ZİYARETÇİ.
     if yetki == "yetkili":
         mesaj = f"HOŞ GELDİNİZ {plaka_no.upper()}"
-        led_durum = "HOŞ GELDİNİZ"
+        led_durum = "ZİYARETÇİ" if kisi_tip == "ziyaretci" else "PERSONEL"
     elif yetki == "suresi_dolmus":
         mesaj = f"ZİYARETÇİ SÜRESİ DOLDU: {plaka_no.upper()}"
         led_durum = "SÜRESİ DOLDU"
@@ -4881,7 +4883,7 @@ def _kayit_olustur_ve_bildir(db: Session, plaka_no: str, kamera_id: str, yon: st
         led_durum = "KARA LİSTE"
     else:
         mesaj = f"YETKİSİZ ARAÇ: {plaka_no.upper()}"
-        led_durum = "YETKİSİZ ARAÇ"
+        led_durum = "ZİYARETÇİ"
 
     # Satır tabanlı paneller (Huidu) üst satırda durumu, alt satırda plakayı gösterir.
     basarili = led_panel.led_mesaj_gonder(mesaj, satirlar=(led_durum, plaka_no.upper()))

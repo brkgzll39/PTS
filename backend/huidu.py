@@ -200,23 +200,15 @@ def satirlari_duzenle(satirlar: Sequence[str], genislik: int = VARSAYILAN_GORUNU
     return temiz
 
 
-def tek_satir_font_boyutu(metin: str, genislik: int = VARSAYILAN_GORUNUR_GENISLIK) -> int:
-    """`metin` tek satır, tam yükseklikte çizilince kullanılacak font boyutu."""
-    font = _font_sec(metin, YUKSEKLIK, 20, 6, _genislik_dogrula(genislik))
-    return font.size if font else 6
-
-
-def metin_bitmap(
-    satirlar: Sequence[str], genislik: int = VARSAYILAN_GORUNUR_GENISLIK, en_buyuk: int = 20
-) -> bytes:
+def metin_bitmap(satirlar: Sequence[str], genislik: int = VARSAYILAN_GORUNUR_GENISLIK) -> bytes:
     """En fazla 2 satırı 128x16 bitmap'in soldaki `genislik` sütununa çizer:
-    1 satır tam yükseklikte (en fazla `en_buyuk` pt), 2 satır 8'er px."""
+    1 satır tam yükseklikte, 2 satır 8'er px."""
     img = Image.new("1", (GENISLIK, YUKSEKLIK), 0)
     ciz = ImageDraw.Draw(img)
     ciz.fontmode = "1"
     duzen = satirlari_duzenle(satirlar, genislik)
     if len(duzen) == 1:
-        _satir_ciz(ciz, duzen[0], 0, YUKSEKLIK, en_buyuk=en_buyuk, genislik=genislik)
+        _satir_ciz(ciz, duzen[0], 0, YUKSEKLIK, en_buyuk=20, genislik=genislik)
     elif len(duzen) == 2:
         _satir_ciz(ciz, duzen[0], 0, YUKSEKLIK // 2, en_buyuk=10, genislik=genislik)
         _satir_ciz(ciz, duzen[1], YUKSEKLIK // 2, YUKSEKLIK // 2, en_buyuk=10, genislik=genislik)
@@ -299,6 +291,38 @@ def gonder(
     _bitmapleri_gonder(host, port, bitmapler, " / ".join(s for s in satirlar if s), zaman_asimi)
 
 
+# Bekleme ekranı (ör. T.P.A.O. / TRAKYA) iki bölgeli panelde: iki satır 32 px'lik
+# ekranın TAMAMINA göre birlikte dikey ortalanır, yanlarda kenar boşluğu kalır.
+# İlk saha denemesinde (2026-10-12) bölge başına tam boyutta çizilen yazılar tüm
+# ekranı kaplıyordu; kullanıcı daha küçük ve ortalı istedi.
+BEKLEME_KENAR_PX = 4      # sağ/sol en az boşluk
+BEKLEME_MAKS_HARF_PX = 9  # üst satırın büyük harf yüksekliği en fazla
+BEKLEME_ALT_FARK_PT = 2   # alt satır üsttekinden bu kadar pt küçük
+BEKLEME_SATIR_ARASI_PX = 3
+
+
+def bekleme_bitmapleri(ust: str, alt: str = "", genislik: int = VARSAYILAN_GORUNUR_GENISLIK) -> tuple:
+    """Bekleme yazısını 128x32 olarak çizip (bölge 0, bölge 1) bitmap'lerine böler."""
+    alan = max(8, _genislik_dogrula(genislik) - 2 * BEKLEME_KENAR_PX)
+    yukseklik_siniri = BEKLEME_MAKS_HARF_PX + 2  # _font_sec 1'er px pay bırakır
+    satirlar = []
+    font = _font_sec(ust, yukseklik_siniri, 20, 6, alan) or _font(6)
+    satirlar.append((ust, font))
+    if alt:
+        kucuk = max(6, font.size - BEKLEME_ALT_FARK_PT)
+        satirlar.append((alt, _font_sec(alt, yukseklik_siniri, kucuk, 6, alan) or _font(6)))
+    harf = [_buyuk_harf_yuksekligi(f) for _, f in satirlar]
+    y = (2 * YUKSEKLIK - sum(harf) - BEKLEME_SATIR_ARASI_PX * (len(satirlar) - 1)) // 2
+    img = Image.new("1", (GENISLIK, 2 * YUKSEKLIK), 0)
+    ciz = ImageDraw.Draw(img)
+    ciz.fontmode = "1"
+    for (metin, f), h in zip(satirlar, harf):
+        ciz.text((genislik // 2, y + h), metin, font=f, fill=1, anchor="ms")
+        y += h + BEKLEME_SATIR_ARASI_PX
+    veri = img.tobytes()
+    return veri[:BITMAP_BOYUTU], veri[BITMAP_BOYUTU:]
+
+
 def bekleme_yazisi_gonder(
     host: str,
     port: int,
@@ -308,13 +332,12 @@ def bekleme_yazisi_gonder(
     zaman_asimi: float = 3.0,
     genislik: int = VARSAYILAN_GORUNUR_GENISLIK,
 ) -> None:
-    """Panelin boştaki yazısı (ör. T.P.A.O. / TRAKYA). Alt satır boşsa üst yazı
-    bölge 0'a, bölge 1 boş (Pts.exe gibi). iki_bolge=True ve alt satır varsa üst
-    yazı bölge 0'a, alt yazı bölge 1'e, üsttekinden 2 pt küçük çizilir."""
+    """Panelin boştaki yazısı (ör. T.P.A.O. / TRAKYA). iki_bolge=True (32 px
+    yüksek panel): satırlar tüm ekrana göre ortalanır, alt satır biraz küçük
+    (bkz. bekleme_bitmapleri). iki_bolge=False: hepsi bölge 0'a, bölge 1 boş."""
     ust, alt = ust.strip(), alt.strip()
-    if alt and iki_bolge:
-        kucuk = max(6, tek_satir_font_boyutu(ust, genislik) - 2)
-        bitmapler = {0: metin_bitmap([ust], genislik), 1: metin_bitmap([alt], genislik, en_buyuk=kucuk)}
+    if iki_bolge:
+        bitmapler = dict(enumerate(bekleme_bitmapleri(ust, alt, genislik)))
     else:
         bitmapler = {0: metin_bitmap([ust, alt], genislik), 1: bytes(BITMAP_BOYUTU)}
     _bitmapleri_gonder(host, port, bitmapler, " / ".join(s for s in (ust, alt) if s), zaman_asimi)

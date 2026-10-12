@@ -345,13 +345,9 @@ def _bekle(kosul, sure=3.0):
     return kosul()
 
 
-TPAO = huidu.metin_bitmap(["T.P.A.O."], genislik=64)
-TRAKYA = huidu.metin_bitmap(["TRAKYA"], genislik=64, en_buyuk=huidu.tek_satir_font_boyutu("T.P.A.O.", 64) - 2)
+# İki bölgeli panelde bekleme ekranı: T.P.A.O. üst, TRAKYA alt -- birlikte ortalı
+BEKLEME_UST, BEKLEME_ALT = huidu.bekleme_bitmapleri("T.P.A.O.", "TRAKYA", 64)
 
-
-def _harf_yuksekligi(bitmap):
-    satirlar = _yanik_satirlar(bitmap)
-    return max(satirlar) - min(satirlar) + 1
 
 
 def test_arac_mesajindan_sonra_bekleme_yazisina_doner(kart, monkeypatch):
@@ -359,9 +355,7 @@ def test_arac_mesajindan_sonra_bekleme_yazisina_doner(kart, monkeypatch):
                         lambda: _huidu_ayarlari(kart.port, huidu_mesaj_suresi=0.2, huidu_iki_bolge=True))
     assert led_panel.led_mesaj_gonder("x", satirlar=("YETKİSİZ ARAÇ", "34TD1234"))
     assert _bekle(lambda: len(_bitmapler(kart)) == 4)
-    ust, alt = _bitmapler(kart)[2:]
-    assert ust == TPAO, "T.P.A.O. üst yarıda"
-    assert alt == TRAKYA, "TRAKYA alt yarıda, biraz küçük"
+    assert _bitmapler(kart)[2:] == [BEKLEME_UST, BEKLEME_ALT]
 
 
 def test_sure_dolmadan_yeni_mesaj_gelirse_eski_zamanlayici_yazmaz(kart, monkeypatch):
@@ -374,7 +368,7 @@ def test_sure_dolmadan_yeni_mesaj_gelirse_eski_zamanlayici_yazmaz(kart, monkeypa
     time.sleep(0.5)
     bitmapler = _bitmapler(kart)
     assert len(bitmapler) == 6, "iki mesaj + yalnızca BİR kez bekleme yazısı"
-    assert bitmapler[4] == TPAO
+    assert bitmapler[4:] == [BEKLEME_UST, BEKLEME_ALT]
 
 
 def test_sure_sifirsa_bekleme_yazisina_donulmez(kart, monkeypatch):
@@ -388,7 +382,7 @@ def test_sure_sifirsa_bekleme_yazisina_donulmez(kart, monkeypatch):
 def test_bekleme_yazisi_dogrudan_gosterilir(kart, monkeypatch):
     monkeypatch.setattr(led_panel, "ayarlari_oku", lambda: _huidu_ayarlari(kart.port, huidu_iki_bolge=True))
     assert led_panel._bekleme_yazisina_don() is True
-    assert _bitmapler(kart) == [TPAO, TRAKYA]
+    assert _bitmapler(kart) == [BEKLEME_UST, BEKLEME_ALT]
 
 
 def test_huidu_modunda_degilse_bekleme_yazisi_gonderilmez(monkeypatch):
@@ -396,16 +390,32 @@ def test_huidu_modunda_degilse_bekleme_yazisi_gonderilmez(monkeypatch):
     assert led_panel._bekleme_yazisina_don() is False
 
 
-def test_trakya_tpaodan_kucuk_ve_sigar():
-    assert _harf_yuksekligi(TRAKYA) < _harf_yuksekligi(TPAO)
-    assert max(_yanik_sutunlar(TRAKYA)) < 64
+def _panel_satirlari(ust, alt):
+    """İki bölgeyi alt alta birleştirip 32 satırın yanık olanlarını döner."""
+    return [y for y in range(32) if any((ust + alt)[y * 16:(y + 1) * 16])]
 
 
-def test_alt_satir_bossa_alt_bolge_bos(kart, monkeypatch):
+def test_bekleme_ekrani_ortali_ve_kenar_bosluklu():
+    satirlar = _panel_satirlari(BEKLEME_UST, BEKLEME_ALT)
+    ust_bosluk, alt_bosluk = min(satirlar), 31 - max(satirlar)
+    assert abs(ust_bosluk - alt_bosluk) <= 1, "iki satır 32 px'e göre dikey ortalı"
+    assert ust_bosluk >= 4, "ekranın tamamını kaplamamalı"
+    sutunlar = _yanik_sutunlar(BEKLEME_UST) | _yanik_sutunlar(BEKLEME_ALT)
+    assert min(sutunlar) >= huidu.BEKLEME_KENAR_PX and max(sutunlar) < 64 - huidu.BEKLEME_KENAR_PX
+
+
+def test_trakya_tpaodan_kucuk():
+    tpao = huidu.bekleme_bitmapleri("T.P.A.O.", "", 64)
+    trakya_harf = [y for y in _panel_satirlari(BEKLEME_UST, BEKLEME_ALT) if y >= 16]
+    tpao_harf = _panel_satirlari(*tpao)
+    assert len(trakya_harf) < len(tpao_harf)
+
+
+def test_alt_satir_bossa_tek_satir_ortalanir(kart, monkeypatch):
     monkeypatch.setattr(led_panel, "ayarlari_oku", lambda: _huidu_ayarlari(
         kart.port, huidu_iki_bolge=True, huidu_bekleme_yazisi_2=""))
     assert led_panel._bekleme_yazisina_don() is True
-    assert _bitmapler(kart) == [TPAO, bytes(huidu.BITMAP_BOYUTU)]
+    assert _bitmapler(kart) == list(huidu.bekleme_bitmapleri("T.P.A.O.", "", 64)), "tek satır da ortalı"
 
 
 def test_tek_bolgede_iki_satir_bekleme_yazisi_ust_bolgede(kart, monkeypatch):

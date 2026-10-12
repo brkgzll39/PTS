@@ -249,6 +249,28 @@ def test_suresi_dolmus_ziyaretci_dogru_isaretlenir(client, yetkili_header):
     assert r2.json()["yetki_durumu"] == "suresi_dolmus"
 
 
+@pytest.mark.parametrize("kisi_tip, plaka, beklenen", [
+    ("personel", "34 LED 01", "PERSONEL"),
+    ("ziyaretci", "34 LED 02", "ZİYARETÇİ"),   # tanımlı (süresi geçerli) ziyaretçi
+    (None, "34 LED 03", "ZİYARETÇİ"),          # tanınmayan/yetkisiz araç
+])
+def test_led_panel_ust_satiri_personel_ziyaretci(client, yetkili_header, monkeypatch, kisi_tip, plaka, beklenen):
+    """2026-10-12 kullanıcı isteği: panelde "HOŞ GELDİNİZ" yerine yetkili araçta
+    PERSONEL, yetkisiz araçta ZİYARETÇİ; alt satırda plaka."""
+    if kisi_tip:
+        veri = {"ad_soyad": f"LED {kisi_tip}", "plaka_no": plaka, "tip": kisi_tip}
+        if kisi_tip == "ziyaretci":
+            veri["bitis_tarihi"] = (datetime.now() + timedelta(days=1)).isoformat()
+        assert client.post("/kisiler", json=veri, headers=yetkili_header).status_code == 200
+    gonderilen = []
+    monkeypatch.setattr(pts_main.led_panel, "led_mesaj_gonder",
+                        lambda mesaj, satirlar=None: gonderilen.append(satirlar) or True)
+    r = client.post("/kayitlar", json={"plaka_no": plaka, "kamera_id": "TEST", "yon": "giris"},
+                    headers=yetkili_header)
+    assert r.status_code == 200, r.text
+    assert gonderilen == [(beklenen, plaka.upper())]
+
+
 def test_saat_disi_erisim_yetkisiz_sayilir(client, yetkili_header):
     """Bu regresyon testi özellikle önemli: schemas.py'deki tekrar tanımlanmış
     (duplicate) sınıflar yüzünden bu alanlar API'den API'ye hiç ulaşmıyordu.
