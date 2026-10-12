@@ -636,6 +636,13 @@ def _sqlite_yedek_al(kaynak_yolu: str, hedef_yolu: str) -> None:
         hedef = sqlite3.connect(hedef_yolu)
         try:
             kaynak.backup(hedef)
+            # DÜZELTME (2026-10-12): backup() canlı veritabanının WAL modunu da
+            # kopyalar; yedek sonra salt okunur açılınca (doğrulama) SQLite
+            # yanına -shm/-wal dosyası oluşturur ama salt okunur bağlantı
+            # kapanırken bunları silemez -- yedek klasöründe birikiyorlardı.
+            # Yedeği tek dosyalık klasik moda çeviriyoruz; geri yüklenince
+            # database.py zaten her bağlantıda WAL'a geçirir.
+            hedef.execute("PRAGMA journal_mode=DELETE")
         finally:
             hedef.close()
     finally:
@@ -724,6 +731,24 @@ def _yedegi_dogrulandi_olarak_isaretle(tam_yol: str) -> None:
         logger.error("Yedek doğrulama işaretçisi yazılamadı '%s': %s", tam_yol, exc)
 
 
+_SQLITE_YAN_DOSYA_EKLERI = ("-wal", "-shm")
+
+
+def _yedek_yan_dosyalarini_temizle(yedek_yolu: str) -> None:
+    """Bir yedeğin yanındaki SQLite -wal/-shm dosyalarını siler (bkz.
+    _sqlite_yedek_al'daki journal_mode notu; bu sürümden önce alınan yedeklerde
+    birikmiş olabilirler). -wal BOŞ değilse dokunulmaz: içinde ana dosyaya
+    henüz yazılmamış veri olabilir."""
+    wal = yedek_yolu + "-wal"
+    try:
+        if os.path.exists(wal) and os.path.getsize(wal) > 0:
+            return
+    except OSError:
+        return
+    for ek in _SQLITE_YAN_DOSYA_EKLERI:
+        _dosyayi_sessizce_sil(yedek_yolu + ek)
+
+
 def _eski_otomatik_yedekleri_temizle(klasor: str, saklama_gun: int) -> int:
     if saklama_gun <= 0 or not os.path.isdir(klasor):
         return 0
@@ -742,8 +767,16 @@ def _eski_otomatik_yedekleri_temizle(klasor: str, saklama_gun: int) -> int:
                 # birikir.
                 _dosyayi_sessizce_sil(tam_yol + ".verified")
                 silinen += 1
+            # Silinen ya da kalan her yedeğin boş -wal/-shm yan dosyaları.
+            _yedek_yan_dosyalarini_temizle(tam_yol)
         except OSError as exc:
             logger.error("[otomatik-yedek] '%s' silinemedi: %s", tam_yol, exc)
+    # Yedeği daha önce (bu düzeltmeden önce) silinmiş, yetim kalmış yan dosyalar.
+    for ad in os.listdir(klasor):
+        if ad.startswith(OTOMATIK_YEDEK_DOSYA_ONEKI) and ad.endswith(_SQLITE_YAN_DOSYA_EKLERI):
+            yedek = os.path.join(klasor, ad[:-4])
+            if not os.path.exists(yedek):
+                _yedek_yan_dosyalarini_temizle(yedek)
     return silinen
 
 

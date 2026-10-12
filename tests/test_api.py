@@ -8,6 +8,7 @@ içinde ayarlanan geçici bir SQLite veritabanı ve sabit test secret'larıyla
 tamamen izole çalışacak şekilde tasarlandı.
 """
 import os
+import time
 from datetime import datetime, timedelta
 
 import pytest
@@ -3330,6 +3331,59 @@ def test_sqlite_dosya_yolu_linux_ve_windowsta_dogru(url, beklenen):
     "/"sını silip göreli yapıyordu (yedek indirme 404, otomatik yedek alınmıyordu)."""
     from backend.database import sqlite_dosya_yolu
     assert sqlite_dosya_yolu(url) == beklenen
+
+
+def test_yedek_dogrulandiktan_sonra_yaninda_wal_shm_kalmaz(tmp_path):
+    """Canlı veritabanı WAL modunda; backup() bu modu yedeğe de kopyalıyordu ve
+    doğrulamanın salt okunur açılışı yanında silinemeyen -wal/-shm bırakıyordu."""
+    import sqlite3
+    from backend.main import _sqlite_yedek_al, _yedek_dosyasi_saglam_mi
+    kaynak = tmp_path / "canli.db"
+    con = sqlite3.connect(kaynak)
+    con.execute("PRAGMA journal_mode=WAL")
+    for tablo in ("plaka_kayitlari", "kullanicilar", "kisiler"):
+        con.execute(f"CREATE TABLE {tablo} (id INTEGER)")
+    con.commit()
+    hedef = tmp_path / "yedekler" / "pts_otomatik_yedek_1.db"
+    try:
+        _sqlite_yedek_al(str(kaynak), str(hedef))
+    finally:
+        con.close()
+    _yedek_dosyasi_saglam_mi(str(hedef))
+    assert sorted(p.name for p in hedef.parent.iterdir()) == ["pts_otomatik_yedek_1.db"]
+
+
+def test_eski_yedek_temizligi_yan_dosyalari_da_siler(tmp_path):
+    from backend.main import _eski_otomatik_yedekleri_temizle
+    eski_zaman = time.time() - 40 * 86400
+
+    def dosya(ad, icerik=b"", eski=False):
+        yol = tmp_path / ad
+        yol.write_bytes(icerik)
+        if eski:
+            os.utime(yol, (eski_zaman, eski_zaman))
+
+    # 40 günlük yedek: kendisi ve tüm yan dosyaları gider
+    for ad in ("pts_otomatik_yedek_eski.db", "pts_otomatik_yedek_eski.db.verified",
+               "pts_otomatik_yedek_eski.db-shm", "pts_otomatik_yedek_eski.db-wal"):
+        dosya(ad, eski=True)
+    # yeni yedek kalır, eski sürümden kalmış boş -wal/-shm'i temizlenir
+    dosya("pts_otomatik_yedek_yeni.db"); dosya("pts_otomatik_yedek_yeni.db.verified")
+    dosya("pts_otomatik_yedek_yeni.db-shm", b"x" * 10); dosya("pts_otomatik_yedek_yeni.db-wal")
+    # yedeği çoktan silinmiş yetim yan dosyalar
+    dosya("pts_otomatik_yedek_yetim.db-shm"); dosya("pts_otomatik_yedek_yetim.db-wal")
+    # içi DOLU -wal: veri olabilir, dokunulmaz
+    dosya("pts_otomatik_yedek_dolu.db"); dosya("pts_otomatik_yedek_dolu.db-wal", b"veri")
+    dosya("pts_otomatik_yedek_dolu.db-shm")
+    # yedek olmayan dosyalara dokunulmaz
+    dosya("baska.db-wal")
+
+    assert _eski_otomatik_yedekleri_temizle(str(tmp_path), 30) == 1
+    assert sorted(p.name for p in tmp_path.iterdir()) == [
+        "baska.db-wal",
+        "pts_otomatik_yedek_dolu.db", "pts_otomatik_yedek_dolu.db-shm", "pts_otomatik_yedek_dolu.db-wal",
+        "pts_otomatik_yedek_yeni.db", "pts_otomatik_yedek_yeni.db.verified",
+    ]
 
 
 def test_yedek_dosyasi_saglam_mi_gecerli_yedek_icin_true_doner(client, yetkili_header, tmp_path):
