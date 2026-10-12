@@ -33,6 +33,7 @@ import asyncio
 from collections import deque
 from urllib.parse import urlsplit, urlunsplit
 from calendar import monthrange
+from concurrent.futures import ThreadPoolExecutor
 from datetime import date, datetime, timedelta
 from typing import Optional, List
 
@@ -4875,6 +4876,43 @@ def _arvento_surucu_bul(db: Session, plaka_no: str) -> Optional[str]:
 _OTOMATIK_OKUNDU_ALARM_TIPLERI = ("yetkisiz_arac", "suresi_dolmus")
 
 
+# ================================================================
+# LED gönderimi arka planda (2026-10-12, kullanıcı: "sistem çok ağır çalışıyor")
+# ================================================================
+# Araç kaydı akışı (_kayit_olustur_ve_bildir) async /kayitlar/otomatik'ten
+# senkron çağrılıyor; içindeki LED gönderimi (Huidu: kart başına ~0.85 sn, panel
+# yenilenirken ya da ulaşılamazken 3 sn'ye kadar) olay döngüsünü kilitliyor,
+# ölçümde arayüz istekleri 5 ms yerine 1.7 sn bekliyordu. Tek işçili kuyruk:
+# mesajlar geliş sırasıyla gönderilir, sonuç LedMesaj'a işçide yazılır.
+_led_yurutucu = ThreadPoolExecutor(max_workers=1, thread_name_prefix="led-gonderim")
+
+
+def _led_gonder_ve_kaydet(mesaj: str, satirlar: tuple, kamera_idleri: list) -> None:
+    try:
+        basarili = led_panel.led_mesaj_gonder(mesaj, satirlar=satirlar, kamera_idleri=kamera_idleri)
+    except Exception:
+        logger.exception("LED mesajı gönderilemedi: %s", mesaj)
+        basarili = False
+    db = SessionLocal()
+    try:
+        db.add(models.LedMesaj(mesaj=mesaj, basarili=basarili))
+        db.commit()
+    except Exception:
+        db.rollback()
+        logger.exception("LED mesaj kaydı yazılamadı: %s", mesaj)
+    finally:
+        db.close()
+
+
+def _led_arka_planda_gonder(mesaj: str, satirlar: tuple, kamera_idleri: list) -> None:
+    _led_yurutucu.submit(_led_gonder_ve_kaydet, mesaj, satirlar, kamera_idleri)
+
+
+def _led_kuyrugunu_bekle(zaman_asimi: float = 10.0) -> None:
+    """Kuyruktaki LED gönderimleri bitene kadar bekler (testler için)."""
+    _led_yurutucu.submit(lambda: None).result(timeout=zaman_asimi)
+
+
 def _gecis_alarmlarini_otomatik_okundu_isaretle(db: Session) -> int:
     """2026-10-05 kullanıcı isteği ("son geçişler alarm okuma dediğimiz yer,
     her araç geçtiğinde otomatik alarmlar okunsun"): yeni bir araç geçişi
@@ -5059,10 +5097,10 @@ def _kayit_olustur_ve_bildir(db: Session, plaka_no: str, kamera_id: str, yon: st
     # Kayıtta kamera "ad"ıyla tutulur; panel-kamera eşleşmesi ise ad değişse de
     # bozulmasın diye cameras.json "id"siyle yapılır (bkz. led_panel.huidu_panelleri).
     kamera_idleri = [k.get("id") for k in _kameralari_oku() if k.get("ad") == kamera_id]
-    basarili = led_panel.led_mesaj_gonder(
-        mesaj, satirlar=(led_durum, plaka_no.upper()), kamera_idleri=kamera_idleri
-    )
-    db.add(models.LedMesaj(mesaj=mesaj, basarili=basarili))
+    # Arka planda (2026-10-12): Huidu paneline yazmak ~1 sn sürüyor ve bu akış
+    # async uç noktadan çağrıldığı için o süre boyunca TÜM sunucu (arayüz, diğer
+    # kameralar) bekliyordu; otomatik bariyer de LED'i bekliyordu.
+    _led_arka_planda_gonder(mesaj, (led_durum, plaka_no.upper()), kamera_idleri)
     if yetki != "yetkili":
         db.add(models.Alarm(
             kayit_id=kayit.id,

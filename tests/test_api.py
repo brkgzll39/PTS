@@ -269,6 +269,7 @@ def test_led_panel_ust_satiri_personel_ziyaretci(client, yetkili_header, monkeyp
     r = client.post("/kayitlar", json={"plaka_no": plaka, "kamera_id": "TEST", "yon": "giris"},
                     headers=yetkili_header)
     assert r.status_code == 200, r.text
+    pts_main._led_kuyrugunu_bekle()  # LED arka planda gönderiliyor
     assert gonderilen == [(beklenen, plaka.upper())]
 
 
@@ -284,6 +285,7 @@ def test_led_panele_kameranin_idsi_iletilir(client, yetkili_header, monkeypatch)
     r = client.post("/kayitlar", json={"plaka_no": "34 LED 09", "kamera_id": "LOJMAN GİRİŞ", "yon": "giris"},
                     headers=yetkili_header)
     assert r.status_code == 200, r.text
+    pts_main._led_kuyrugunu_bekle()
     assert gelen == [["kam-loj-giris"]]
 
 
@@ -7311,3 +7313,31 @@ def test_cizelge_ay_listesi_girilir_ve_sonraki_aylar_ondan_devam_eder(client, ye
     assert ekim[11]["sabah"] == "C"
     kasim = client.get("/vardiya-cizelgesi", params={"yil": 2026, "ay": 11}, headers=yetkili_header).json()["gunler"]
     assert len(kasim) == 30 and (kasim[0]["sabah"], kasim[0]["aksam"], kasim[0]["gece"]) == ("C", "D", "A")
+
+
+
+def test_arac_kaydi_led_gonderimini_beklemez(client, yetkili_header, monkeypatch):
+    """2026-10-12 ("sistem çok ağır çalışıyor"): Huidu'ya yazmak ~1 sn sürüyor;
+    kayıt akışı onu beklediği için async uç noktada tüm sunucu donuyordu."""
+    import threading
+    import time as _time
+    birak = threading.Event()
+    gonderilen = []
+
+    def yavas_led(mesaj, satirlar=None, **_):
+        birak.wait(5)
+        gonderilen.append(satirlar)
+        return True
+
+    monkeypatch.setattr(pts_main.led_panel, "led_mesaj_gonder", yavas_led)
+    t = _time.perf_counter()
+    r = client.post("/kayitlar", json={"plaka_no": "34 LED 77", "kamera_id": "TEST", "yon": "giris"},
+                    headers=yetkili_header)
+    assert r.status_code == 200, r.text
+    assert _time.perf_counter() - t < 2, "kayıt LED gönderimini beklememeli"
+    assert gonderilen == []
+    birak.set()
+    pts_main._led_kuyrugunu_bekle()
+    assert gonderilen and gonderilen[0][1] == "34 LED 77"
+    durum = client.get("/led/durum", headers=yetkili_header).json()
+    assert any("34 LED 77" in m["mesaj"] and m["basarili"] for m in durum["son_mesajlar"])
