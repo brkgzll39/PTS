@@ -19,6 +19,7 @@ import logging
 import os
 import socket
 import threading
+import time
 from datetime import datetime
 from typing import Iterable, Optional, Sequence
 
@@ -60,6 +61,13 @@ VARSAYILAN_AYARLAR = {
     "huidu_bekleme_yazisi": "T.P.A.O.",
     "huidu_bekleme_yazisi_2": "TRAKYA",  # alt satır (iki bölgede alt yarıda, biraz küçük); boş olabilir
     "huidu_mesaj_suresi": 10,
+    # Kart, PC'den gelen yazıyı bir süre sonra bırakıp boş ekrana ya da kendi
+    # kayıtlı programına dönüyor (2026-10-12 saha: araç geçişinden 15-30 sn sonra,
+    # yani T.P.A.O. yazıldıktan ~5-20 sn sonra ekran tamamen boşalıyor). Pts.exe
+    # çerçevelerindeki sabit 0x15 (=21) büyük olasılıkla bu gösterim süresi
+    # (doğrulanmadı). Araç mesajı yokken bekleme yazısı bu kadar saniyede bir
+    # yeniden yazılır (süreden kısa olmalı); 0 = kapalı.
+    "huidu_yenileme_sn": 10,
     # Birden çok Huidu paneli: [{"ad", "host", "port", "kameralar": [kamera id, ...]}].
     # Araç mesajı yalnızca o aracın kamerası listede olan panellere gider; boş
     # kamera listesi = tüm kameralar. Liste boşsa huidu_host/huidu_port tek panel
@@ -179,6 +187,8 @@ class _PanelDurumu:
         self.kilit = threading.Lock()
         self.nesil = 0
         self.zamanlayici: Optional[threading.Timer] = None
+        self.son_mesaj: Optional[float] = None   # son araç mesajı (time.monotonic)
+        self.son_yazim: Optional[float] = None   # panele son başarılı yazım (bekleme ya da mesaj)
 
 
 _panel_durumlari: dict = {}
@@ -203,12 +213,18 @@ def _huidu_mesaj_gonder(ayarlar: dict, satirlar: Sequence[str], kamera_idleri: O
         try:
             with durum.kilit:
                 durum.nesil += 1
-                huidu.gonder(
-                    panel["host"], panel["port"], satirlar=satirlar,
-                    iki_bolge=bool(ayarlar["huidu_iki_bolge"]),
-                    genislik=int(ayarlar["huidu_genislik"]),
-                )
-                _bekleme_yazisini_zamanla(ayarlar, panel, durum)
+                durum.son_mesaj = time.monotonic()
+                try:
+                    huidu.gonder(
+                        panel["host"], panel["port"], satirlar=satirlar,
+                        iki_bolge=bool(ayarlar["huidu_iki_bolge"]),
+                        genislik=int(ayarlar["huidu_genislik"]),
+                    )
+                    durum.son_yazim = time.monotonic()
+                finally:
+                    # Gönderim yarıda kalsa da (ör. kart o an meşgul) panel bekleme
+                    # yazısına dönsün; önceden yarım mesajla kalabiliyordu.
+                    _bekleme_yazisini_zamanla(ayarlar, panel, durum)
         except Exception as e:  # bir panel hatası diğerlerini engellemesin
             logger.error("LED mesajı gönderilemedi (mod=huidu, panel=%s): %s", panel["ad"], e)
             basarili = False
@@ -255,6 +271,7 @@ def _bekleme_yazisina_don(panel: Optional[dict] = None, nesil: Optional[int] = N
                     iki_bolge=bool(ayarlar["huidu_iki_bolge"]),
                     genislik=int(ayarlar["huidu_genislik"]),
                 )
+                durum.son_yazim = time.monotonic()
             except Exception as e:
                 logger.error("LED bekleme yazısı gönderilemedi (mod=huidu, panel=%s): %s", p["ad"], e)
                 basarili = False
@@ -265,3 +282,60 @@ def bekleme_yazisini_goster_arka_planda() -> None:
     """PTS açılışında / LED ayarları kaydedilince bekleme yazısını panellere yazar.
     Panel ulaşılamazsa isteği/açılışı bekletmemek için ayrı iş parçacığında çalışır."""
     threading.Thread(target=_bekleme_yazisina_don, name="led-bekleme-yazisi", daemon=True).start()
+
+
+# ------------------------------------------------------------------
+# Huidu: bekleme yazısını düzenli yenileme (2026-10-12)
+# ------------------------------------------------------------------
+
+def _panel_bosta_mi(durum: _PanelDurumu, ayarlar: dict, simdi: float) -> bool:
+    """Araç mesajı gösterilmiyorsa True. Mesaj süresi 0 ise (mesaj kalıcı) son
+    mesajdan sonra panel boşta sayılmaz -- mesajın üzerine yazılmasın."""
+    if durum.son_mesaj is None:
+        return True
+    sure = float(ayarlar.get("huidu_mesaj_suresi") or 0)
+    return sure > 0 and simdi - durum.son_mesaj >= sure
+
+
+def bekleme_yazisini_yenile_tik(simdi: Optional[float] = None) -> int:
+    """Boştaki ve son yazımı `huidu_yenileme_sn`den eski panellere bekleme
+    yazısını yeniden yazar; yazılan panel sayısını döner. Arka plan döngüsü
+    (bkz. bekleme_yenileyicisini_baslat) bunu birkaç saniyede bir çağırır."""
+    ayarlar = ayarlari_oku()
+    aralik = float(ayarlar.get("huidu_yenileme_sn") or 0)
+    if ayarlar.get("led_mod") != "huidu" or aralik <= 0:
+        return 0
+    simdi = time.monotonic() if simdi is None else simdi
+    yazilan = 0
+    for panel in huidu_panelleri(ayarlar):
+        durum = _durum(panel)
+        if not _panel_bosta_mi(durum, ayarlar, simdi):
+            continue
+        if durum.son_yazim is not None and simdi - durum.son_yazim < aralik:
+            continue
+        if _bekleme_yazisina_don(panel, durum.nesil):  # arada mesaj gelirse nesil değişir, yazmaz
+            yazilan += 1
+        # Başarısızsa da: ulaşılamayan panel her turda (5 sn) denenmesin, aralıkta bir denensin.
+        durum.son_yazim = simdi
+    return yazilan
+
+
+_yenileyici_baslatildi = False
+
+
+def bekleme_yenileyicisini_baslat(tur_sn: float = 5.0) -> None:
+    """Uygulama açılışında bir kez çağrılır (main.py startup)."""
+    global _yenileyici_baslatildi
+    if _yenileyici_baslatildi:
+        return
+    _yenileyici_baslatildi = True
+
+    def _dongu():
+        while True:
+            time.sleep(tur_sn)
+            try:
+                bekleme_yazisini_yenile_tik()
+            except Exception:
+                logger.exception("LED bekleme yazısı yenileme turunda hata")
+
+    threading.Thread(target=_dongu, name="led-bekleme-yenileyici", daemon=True).start()

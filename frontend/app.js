@@ -4053,6 +4053,7 @@ async function ledAyarlariYukle() {
   document.getElementById("ledHuiduBeklemeYazisi").value = ayarlar.huidu_bekleme_yazisi ?? "";
   document.getElementById("ledHuiduBeklemeYazisi2").value = ayarlar.huidu_bekleme_yazisi_2 ?? "";
   document.getElementById("ledHuiduMesajSuresi").value = ayarlar.huidu_mesaj_suresi;
+  document.getElementById("ledHuiduYenileme").value = ayarlar.huidu_yenileme_sn ?? 10;
   ledModDegisti();
 }
 
@@ -4070,6 +4071,7 @@ document.getElementById("ledForm").addEventListener("submit", async (e) => {
     huidu_bekleme_yazisi: document.getElementById("ledHuiduBeklemeYazisi").value.trim(),
     huidu_bekleme_yazisi_2: document.getElementById("ledHuiduBeklemeYazisi2").value.trim(),
     huidu_mesaj_suresi: Math.max(0, parseInt(document.getElementById("ledHuiduMesajSuresi").value) || 0),
+    huidu_yenileme_sn: Math.max(0, parseInt(document.getElementById("ledHuiduYenileme").value) || 0),
   };
   // Eski tek-panel alanları ilk panelle aynı tutulur (panel listesi boşalırsa yedek).
   if (gövde.huidu_paneller.length) {

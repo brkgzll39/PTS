@@ -2620,7 +2620,12 @@ birbirinden farklı davranan iki kopya mantık oluşmaz.
   Boştayken panelde "Bekleme yazısı" (varsayılan T.P.A.O.; "İki bölge" açıksa altında
   biraz küçük "alt satır", varsayılan TRAKYA; ikisi ekranın ortasında, kenar boşluklu) durur: PTS açılışında ve
   LED ayarları kaydedilince yazılır; araç mesajı "Araç mesajı süresi" (varsayılan 10 sn)
-  kadar görünür, sonra bekleme yazısına dönülür (0 sn ya da boş yazı: dönülmez). Protokol ayrıntıları
+  kadar görünür, sonra bekleme yazısına dönülür (0 sn ya da boş yazı: dönülmez).
+  Kart PC'den gelen yazıyı bir süre sonra bırakıp boş ekrana ya da kendi kayıtlı
+  programına döndüğü için, araç mesajı yokken bekleme yazısı "yeniden yazma
+  aralığı"nda (varsayılan 10 sn, 0 = kapalı) yeniden yazılır (sahada yazı ~5-20 sn
+  sonra kayboluyordu). Araç mesajı karta
+  yazılırken hata alsa da panel bekleme yazısına döner. Protokol ayrıntıları
   `backend/huidu.py` başındaki açıklamada. Aynı karta başka bir yazılım (eski Pts.exe,
   HD2018) içerik gönderiyorsa birbirinin üstüne yazar; o yazılımlar kapatılmalıdır.
 

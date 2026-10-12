@@ -258,9 +258,10 @@ def test_kart_ulasilamazsa_hata():
 # ------------------------------------------------------------------
 
 def _huidu_ayarlari(port, **ek):
-    # mesaj süresi 0: test bittikten sonra tetiklenecek zamanlayıcı bırakılmasın
+    # mesaj süresi 0: test bittikten sonra tetiklenecek zamanlayıcı bırakılmasın;
+    # yenileme 0: uygulamanın arka plan yenileyicisi sahte karta beklenmedik yazmasın
     return {**led_panel.VARSAYILAN_AYARLAR, "led_mod": "huidu", "huidu_host": "127.0.0.1",
-            "huidu_port": port, "huidu_mesaj_suresi": 0, **ek}
+            "huidu_port": port, "huidu_mesaj_suresi": 0, "huidu_yenileme_sn": 0, **ek}
 
 
 def test_led_panel_huidu_modu_satirlari_iletir(kart, monkeypatch):
@@ -499,3 +500,74 @@ def test_panel_listesi_bossa_eski_tek_ip_ayari_kullanilir(kart, monkeypatch):
         {"ad": "127.0.0.1", "host": "127.0.0.1", "port": kart.port, "kameralar": []}]
     assert led_panel.led_mesaj_gonder("x", satirlar=("PERSONEL", "34ABC123"), kamera_idleri=["herhangi"])
     assert len(kart.cerceveler) == 6
+
+
+# ------------------------------------------------------------------
+# Bekleme yazısını düzenli yenileme (2026-10-12): kart yazıyı bir süre sonra
+# bırakıp boş ekrana / kendi programına dönüyordu.
+# ------------------------------------------------------------------
+
+@pytest.fixture
+def temiz_panel_durumu():
+    led_panel._panel_durumlari.clear()
+    yield
+    led_panel._panel_durumlari.clear()
+
+
+def test_bostaki_panel_duzenli_yeniden_yazilir(kart, monkeypatch, temiz_panel_durumu):
+    monkeypatch.setattr(led_panel, "ayarlari_oku",
+                        lambda: _huidu_ayarlari(kart.port, huidu_yenileme_sn=60, huidu_iki_bolge=True))
+    t0 = 1000.0
+    assert led_panel.bekleme_yazisini_yenile_tik(t0) == 1          # hiç yazılmamış: hemen
+    assert _bitmapler(kart) == [BEKLEME_UST, BEKLEME_ALT]
+    assert led_panel.bekleme_yazisini_yenile_tik(t0 + 30) == 0     # aralık dolmadı
+    durum = led_panel._durum({"host": "127.0.0.1", "port": kart.port})
+    durum.son_yazim = t0
+    assert led_panel.bekleme_yazisini_yenile_tik(t0 + 61) == 1     # 60 sn sonra yeniden
+    assert len(_bitmapler(kart)) == 4
+
+
+def test_arac_mesaji_gosterilirken_yenileme_yapilmaz(kart, monkeypatch, temiz_panel_durumu):
+    monkeypatch.setattr(led_panel, "ayarlari_oku",
+                        lambda: _huidu_ayarlari(kart.port, huidu_yenileme_sn=60, huidu_mesaj_suresi=10))
+    durum = led_panel._durum({"host": "127.0.0.1", "port": kart.port})
+    durum.son_mesaj = durum.son_yazim = 1000.0
+    assert led_panel.bekleme_yazisini_yenile_tik(1005.0) == 0      # mesaj hâlâ ekranda
+    assert led_panel.bekleme_yazisini_yenile_tik(1061.0) == 1      # mesaj süresi ve aralık geçti
+
+
+def test_mesaj_suresi_sifirsa_mesajin_uzerine_yazilmaz(kart, monkeypatch, temiz_panel_durumu):
+    monkeypatch.setattr(led_panel, "ayarlari_oku", lambda: _huidu_ayarlari(kart.port, huidu_yenileme_sn=60))
+    durum = led_panel._durum({"host": "127.0.0.1", "port": kart.port})
+    durum.son_mesaj = durum.son_yazim = 1000.0
+    assert led_panel.bekleme_yazisini_yenile_tik(5000.0) == 0
+
+
+def test_yenileme_kapaliyken_ve_huidu_disinda_yazilmaz(kart, monkeypatch, temiz_panel_durumu):
+    monkeypatch.setattr(led_panel, "ayarlari_oku", lambda: _huidu_ayarlari(kart.port))  # yenileme 0
+    assert led_panel.bekleme_yazisini_yenile_tik(1000.0) == 0
+    monkeypatch.setattr(led_panel, "ayarlari_oku", lambda: {**led_panel.VARSAYILAN_AYARLAR, "huidu_yenileme_sn": 60})
+    assert led_panel.bekleme_yazisini_yenile_tik(1000.0) == 0
+    assert not kart.cerceveler
+
+
+def test_mesaj_gonderilemese_de_bekleme_yazisina_donus_kurulur(monkeypatch, temiz_panel_durumu):
+    k = SahteKart(onayla=False)  # kart cevap vermiyor: mesaj yarıda kalır
+    try:
+        monkeypatch.setattr(led_panel, "ayarlari_oku", lambda: _huidu_ayarlari(k.port, huidu_mesaj_suresi=30))
+        monkeypatch.setattr(huidu, "gonder", lambda *a, **kw: (_ for _ in ()).throw(huidu.HuiduHatasi("meşgul")))
+        assert led_panel.led_mesaj_gonder("x", satirlar=("PERSONEL", "34ABC123")) is False
+        durum = led_panel._durum({"host": "127.0.0.1", "port": k.port})
+        assert durum.zamanlayici is not None, "önceden hata olunca geri dönüş hiç kurulmuyordu"
+        durum.zamanlayici.cancel()
+    finally:
+        k.kapat()
+
+
+def test_ulasilamayan_panel_her_turda_denenmez(monkeypatch, temiz_panel_durumu):
+    k = SahteKart()
+    k.kapat()
+    monkeypatch.setattr(led_panel, "ayarlari_oku", lambda: _huidu_ayarlari(k.port, huidu_yenileme_sn=60))
+    assert led_panel.bekleme_yazisini_yenile_tik(1000.0) == 0
+    durum = led_panel._durum({"host": "127.0.0.1", "port": k.port})
+    assert durum.son_yazim == 1000.0  # bir sonraki deneme 60 sn sonra

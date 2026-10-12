@@ -1604,6 +1604,8 @@ async def _led_bekleme_yazisini_goster():
     """Huidu modunda panelin boştaki yazısını (varsayılan T.P.A.O.) açılışta
     yazar; panel ulaşılamazsa açılışı bekletmez (arka plan iş parçacığı)."""
     led_panel.bekleme_yazisini_goster_arka_planda()
+    # Kart yazıyı bir süre sonra bırakıyor: araç yokken düzenli yeniden yaz (2026-10-12).
+    led_panel.bekleme_yenileyicisini_baslat()
 
 
 @app.on_event("startup")
