@@ -235,11 +235,15 @@ def bolge_gonder(host: str, port: int, bolge: int, bitmap: bytes, zaman_asimi: f
         (KOMUT_BITMAP, bitmap_govdesi(bolge, bitmap)),
         (KOMUT_BITIR, b""),
     ]
+    # Bir bölgenin 3 çerçevesi AYNI sayaç değerini taşımalı (yakalamada bölge 0
+    # için hep F6B8, bölge 1 için hep F82F). Her çerçevede yeni sayaç alınınca
+    # kart 0x18'i kabul edip 0x19/0x1A'yı 05 ile reddediyordu (2026-10-12 saha).
+    sayac = _sayac()
     try:
         with socket.create_connection((host, port), timeout=zaman_asimi) as s:
             for komut, govde in adimlar:
                 sira = _siradaki()
-                s.sendall(cerceve(komut, sira, _sayac(), govde))
+                s.sendall(cerceve(komut, sira, sayac, govde))
                 onay_dogrula(_tam_oku(s, ONAY_BOYUTU), komut, sira)
     except HuiduHatasi:
         raise

@@ -180,6 +180,7 @@ class SahteKart:
             except OSError:
                 return
             with baglanti:
+                acik_sayac = None
                 while True:
                     bas = self._oku(baglanti, 6)
                     if bas is None:
@@ -191,7 +192,11 @@ class SahteKart:
                     assert huidu.checksum(c[:-3]) == int.from_bytes(c[-3:-1], "big")
                     self.cerceveler.append(c)
                     if self.onayla:
-                        baglanti.sendall(_onay(c[6], c[26]))
+                        # Gerçek kart gibi: 0x19/0x1A, 0x18'in sayacını taşımıyorsa 05 ile reddedilir.
+                        if c[6] == huidu.KOMUT_BASLA:
+                            acik_sayac = c[28:30]
+                        durum = bytes(6) if c[28:30] == acik_sayac else b"\x05" + bytes(5)
+                        baglanti.sendall(_onay(c[6], c[26], durum))
 
     def kapat(self):
         self.sunucu.close()
@@ -211,6 +216,17 @@ def test_gonder_iki_bolgeyi_sirayla_yazar(kart):
     bitmap0, bitmap1 = (c[53:309] for c in kart.cerceveler if c[6] == 0x19)
     assert any(bitmap0)
     assert bitmap1 == bytes(huidu.BITMAP_BOYUTU), "tek bölge modunda bölge 1 boşaltılır"
+
+
+def test_bolgenin_uc_cercevesi_ayni_sayaci_tasir(kart, monkeypatch):
+    """Yakalamada bir bölgenin 0x18/0x19/0x1A çerçeveleri aynı sayacı taşıyor;
+    farklı sayaçla kart 0x19'u 05 ile reddediyordu (2026-10-12 saha)."""
+    sayaclar = iter(range(0x1000, 0x2000, 7))
+    monkeypatch.setattr(huidu, "_sayac", lambda: next(sayaclar))
+    huidu.gonder("127.0.0.1", kart.port, ["34ABC123"], zaman_asimi=2)
+    for bolge in range(2):
+        uc = kart.cerceveler[bolge * 3:(bolge + 1) * 3]
+        assert len({c[28:30] for c in uc}) == 1
 
 
 def test_gonder_iki_bolge_modunda_satirlari_ayirir(kart):
