@@ -759,11 +759,17 @@ class KameraPipeline:
     def durum_bilgisi(self) -> dict:
         """Sağlık kontrolü / arayüz için tek çağrıda tüm pipeline durumu."""
         yas = self.son_kare_yasi_sn()
-        donmus = self.calisiyor and (yas is None or yas > self.donma_esigi_sn)
         calisma_suresi = (time.monotonic() - self._baslangic_zamani) if self._baslangic_zamani else 0.0
+        # 2026-10-12 (kullanıcı ekran görüntüsü: açılışta 4 kameranın 3'ü "Görüntü
+        # Donmuş"): henüz HİÇ kare gelmemişken ilk bağlantı süresi içinde kamera
+        # donmuş değil "bağlanıyor" sayılır; önceden açılışta RTSP bağlantısı
+        # kurulurken bile donmuş gösteriliyordu. Bu süre geçip hâlâ kare yoksa donmuş.
+        baglaniyor = self.calisiyor and yas is None and calisma_suresi < self.baglanti_zaman_asimi_sn + self.donma_esigi_sn
+        donmus = self.calisiyor and not baglaniyor and (yas is None or yas > self.donma_esigi_sn)
         return {
             "calisiyor": self.calisiyor,
             "son_kare_yasi_sn": round(yas, 1) if yas is not None else None,
+            "baglaniyor": baglaniyor,
             "donmus": donmus,
             "yeniden_baglanma_sayisi": self._yeniden_baglanma_sayisi,
             "calisma_suresi_sn": round(calisma_suresi, 0),

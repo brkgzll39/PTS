@@ -1625,6 +1625,8 @@ async function kameralariYukle() {
         ? `<span class="badge bg-warning text-dark" title="fast-alpr + opencv kurulu değil">Kütüphane Yok</span>`
         : !k.pipeline_calisiyor
           ? `<span class="badge bg-danger">Durdu</span>`
+          : k.baglaniyor
+            ? `<span class="badge bg-secondary" title="Kamera bağlantısı kuruluyor, ilk kare bekleniyor"><i class="bi bi-hourglass-split"></i> Bağlanıyor</span>`
           : k.donmus
             ? `<span class="badge bg-warning text-dark" title="${k.son_kare_yasi_sn != null ? k.son_kare_yasi_sn + ' sn önceki kare' : ''}"><i class="bi bi-exclamation-triangle-fill"></i> Görüntü Donmuş</span>`
             : `<span class="badge bg-success">Çalışıyor</span>`;
@@ -2333,9 +2335,26 @@ function _canliAkislariBaslat(canliKameralar) {
 // sekme arka planda kalırken bir kamera eklenip/silinmiş olsa bile, sekme
 // öne geldiğinde zaten bir sonraki `kameralariYukle()` çağrısı listeyi
 // tazeleyecektir (ör. Kamera Yönetimi'nde bir işlem yapılınca).
+// 2026-10-12 (kullanıcı: Kameralar sekmesinde sağlık/okuma kalitesi ekranları
+// çok geç geliyor): 4 kamera akışı + SSE, tarayıcının sunucu başına ~6 bağlantı
+// sınırının 5'ini SÜREKLİ tutuyordu -- Canlı sekmesinden başka bir PTS sekmesine
+// geçildiğinde de (yukarıdaki önlem yalnızca TARAYICI sekmesi arka plana
+// alınınca devreye giriyordu). Diğer tüm istekler kalan tek bağlantıda sıraya
+// giriyordu. Akışlar artık yalnızca Canlı sekmesi ekrandayken açık.
+function _canliAkisAcilabilirMi() {
+  return !document.hidden && !!document.getElementById("canli-sekme")?.classList.contains("active");
+}
+
 document.addEventListener("visibilitychange", () => {
-  _canliAkislariBaslat(document.hidden ? [] : _sonCanliKameralar);
+  _canliAkislariBaslat(_canliAkisAcilabilirMi() ? _sonCanliKameralar : []);
 });
+
+(function () {
+  const dugme = document.querySelector('[data-bs-target="#canli-sekme"]');
+  if (!dugme) return;
+  dugme.addEventListener("shown.bs.tab", () => _canliAkislariBaslat(_canliAkisAcilabilirMi() ? _sonCanliKameralar : []));
+  dugme.addEventListener("hidden.bs.tab", () => _canliAkislariBaslat([]));
+})();
 
 function kameraDuvariniGuncelle(kameralar) {
   const duvar = document.getElementById("kameraDuvari");
@@ -2352,7 +2371,7 @@ function kameraDuvariniGuncelle(kameralar) {
     const statusClass = !k.pipeline_calisiyor ? "camera-simulated" : (k.donmus ? "camera-frozen" : "camera-live");
     const statusText = !k.pipeline_calisiyor
       ? (k.kutuphaneler_mevcut ? "Bağlanmıyor" : "Simülasyon")
-      : (k.donmus ? "Görüntü Donmuş" : "Canlı");
+      : (k.baglaniyor ? "Bağlanıyor…" : k.donmus ? "Görüntü Donmuş" : "Canlı");
     const donmusUyarisi = (k.pipeline_calisiyor && k.donmus)
       ? `<div class="camera-frozen-banner"><i class="bi bi-exclamation-triangle-fill"></i> Görüntü ${k.son_kare_yasi_sn != null ? Math.round(k.son_kare_yasi_sn) + " sn" : ""} önceden beri güncellenmiyor — sistem otomatik yeniden bağlanmayı deniyor</div>`
       : "";
@@ -2370,7 +2389,7 @@ function kameraDuvariniGuncelle(kameralar) {
   // visibilitychange dinleyicisi).
   const canliKameralar = kameralar.filter(k => k.pipeline_calisiyor);
   _sonCanliKameralar = canliKameralar;
-  _canliAkislariBaslat(document.hidden ? [] : canliKameralar);
+  _canliAkislariBaslat(_canliAkisAcilabilirMi() ? canliKameralar : []);
 }
 
 document.getElementById("kameraForm").addEventListener("submit", async (e) => {

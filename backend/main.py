@@ -3151,7 +3151,7 @@ def kameralari_getir(kullanici: models.Kullanici = Depends(_personel_girisi_gere
                 # yönetici/operatör) gösterilir; bu sık çağrılan listede değil.
                 gorunum["dahua"] = {k3: v3 for k3, v3 in gorunum["dahua"].items() if k3 != "ham_ornekler"}
         else:
-            gorunum.update({"son_kare_yasi_sn": None, "donmus": False,
+            gorunum.update({"son_kare_yasi_sn": None, "donmus": False, "baglaniyor": False,
                              "yeniden_baglanma_sayisi": 0, "calisma_suresi_sn": 0})
         sonuclar.append(gorunum)
     return sonuclar

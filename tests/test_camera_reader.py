@@ -1545,3 +1545,23 @@ def test_canli_onizleme_karesi_anpr_cikarimindan_once_hazir(sahte_engine, monkey
     finally:
         birak.set()
         isci.join(5)
+
+
+def test_ilk_kare_gelene_kadar_donmus_degil_baglaniyor(sahte_engine):
+    """2026-10-12 (kullanıcı ekran görüntüsü): açılışta RTSP bağlantısı kurulurken
+    henüz hiç kare gelmemiş kameralar "Görüntü Donmuş" gösteriliyordu."""
+    import time as _time
+    p = camera_reader.KameraPipeline(video_kaynagi="kullanilmiyor", kamera_id="TEST-BAGLANIYOR",
+                                     baglanti_zaman_asimi_sn=8, donma_esigi_sn=10)
+    p.calisiyor = True
+    p._baslangic_zamani = _time.monotonic()
+    d = p.durum_bilgisi()
+    assert (d["baglaniyor"], d["donmus"]) == (True, False)
+    p._baslangic_zamani = _time.monotonic() - 30  # 18 sn'yi geçti, hâlâ kare yok
+    d = p.durum_bilgisi()
+    assert (d["baglaniyor"], d["donmus"]) == (False, True)
+    p._son_kare_zamani = _time.monotonic()  # kare geldi
+    d = p.durum_bilgisi()
+    assert (d["baglaniyor"], d["donmus"]) == (False, False)
+    p._son_kare_zamani = _time.monotonic() - 15  # 15 sn kare yok: donmuş
+    assert p.durum_bilgisi()["donmus"] is True
