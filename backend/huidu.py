@@ -56,10 +56,6 @@ _BASLIK_BOYUTU = 30
 # Anlamı çözülmemiş, yakalamada sabit görülen değerler.
 _KOMUT_ALT_KODU = {KOMUT_BASLA: 0x2F, KOMUT_BITMAP: 0x05, KOMUT_BITIR: 0x03}
 _BITMAP_BOLGE_KODU = {0: 0x1E, 1: 0x19}
-# Onaydaki durum baytı (21). 0x18 onayında 00 (yakalama + saha); 0x19 onayında
-# NİZAMİYE kartı her seferinde 05 döndürüyor (2026-10-12 saha logu, 0x18 onayları
-# aynı anda 00) -- komut alt kodu 0x05 ile aynı, hata değil. 0x1A henüz görülmedi.
-_ONAY_DURUM_KODLARI = {KOMUT_BITMAP: {0x00, 0x05}}
 BOLGELER = tuple(sorted(_BITMAP_BOLGE_KODU))
 
 FONT_YOLU = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fonts", "DejaVuSans-Bold.ttf")
@@ -120,8 +116,8 @@ def onay_dogrula(onay: bytes, komut: int, sira: int) -> None:
         raise HuiduHatasi(
             f"beklenmeyen onay (komut=0x{komut:02X}, sıra=0x{sira & 0xFF:02X}): {onay.hex()}"
         )
-    if onay[21] not in _ONAY_DURUM_KODLARI.get(komut, {0x00}) or any(onay[22:27]):
-        # Beklenmeyen değer büyük olasılıkla hata kodu.
+    if any(onay[21:27]):
+        # Yakalamada bu alan hep sıfırdı; sıfır dışı değer büyük olasılıkla hata kodu.
         raise HuiduHatasi(
             f"kart hata kodu döndü (komut=0x{komut:02X}, sıra=0x{sira & 0xFF:02X}): "
             f"{onay[21:27].hex()} -- onay: {onay.hex()}"
