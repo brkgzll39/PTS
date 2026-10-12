@@ -1205,6 +1205,7 @@
                     <option value="simulate">Simülasyon (donanım yok, sadece test)</option>
                     <option value="serial">Seri Port (RS232/USB)</option>
                     <option value="tcp">Ağ (TCP/IP)</option>
+                    <option value="huidu">Huidu HD-E62 (Ağ)</option>
                   </select>
                 </div>
                 <div id="ledSerialAlani" class="d-none">
@@ -1225,6 +1226,22 @@
                   <div class="mb-2">
                     <label class="form-label small" for="ledTcpPort">Port</label>
                     <input type="number" class="form-control" id="ledTcpPort" value="5000">
+                  </div>
+                </div>
+                <div id="ledHuiduAlani" class="d-none">
+                  <div class="mb-2">
+                    <label class="form-label small" for="ledHuiduHost">Kart IP Adresi</label>
+                    <input type="text" class="form-control" id="ledHuiduHost" placeholder="172.17.1.224">
+                  </div>
+                  <div class="mb-2">
+                    <label class="form-label small" for="ledHuiduPort">Port</label>
+                    <input type="number" class="form-control" id="ledHuiduPort" value="6101">
+                  </div>
+                  <div class="form-check mb-2">
+                    <input class="form-check-input" type="checkbox" id="ledHuiduIkiBolge">
+                    <label class="form-check-label small" for="ledHuiduIkiBolge">
+                      İki bölge (128x32 panel: durum üst, plaka alt satırda)
+                    </label>
                   </div>
                 </div>
                 <button type="submit" class="btn btn-primary"><i class="bi bi-save"></i> Ayarları Kaydet</button>

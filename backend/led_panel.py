@@ -5,6 +5,8 @@ Desteklenen modlar:
   - simulate : Gerçek donanım yok, mesaj sadece konsola / veritabanına yazılır (varsayılan).
   - serial   : RS232/USB seri port üzerinden bağlı LED panel (pyserial gerektirir).
   - tcp      : Ağ (Ethernet/WiFi) üzerinden IP adresiyle konuşan LED panel.
+  - huidu    : Huidu HD-E62 kontrol kartı (TCP 6101, metin bitmap olarak gönderilir;
+               protokol ayrıntıları backend/huidu.py'de).
 
 Ayarlar backend/config.json dosyasında tutulur, panelden (LED Ayarları sekmesi) değiştirilebilir.
 
@@ -17,6 +19,9 @@ import logging
 import os
 import socket
 from datetime import datetime
+from typing import Optional, Sequence
+
+from backend import huidu
 
 # DÜZELTME (2026-09-25, sistem taraması): bu modül önceden TÜM durum/hata
 # mesajlarını `print()` ile yazıyordu -- bir servis/arka plan sürecinin
@@ -37,11 +42,14 @@ BACKEND_DIR = os.path.dirname(os.path.abspath(__file__))
 CONFIG_YOLU = os.path.join(BACKEND_DIR, "config.json")
 
 VARSAYILAN_AYARLAR = {
-    "led_mod": "simulate",       # simulate | serial | tcp
+    "led_mod": "simulate",       # simulate | serial | tcp | huidu
     "serial_port": "COM3",
     "serial_baudrate": 9600,
     "tcp_host": "192.168.1.50",
     "tcp_port": 5000,
+    "huidu_host": "172.17.1.224",
+    "huidu_port": huidu.VARSAYILAN_PORT,
+    "huidu_iki_bolge": False,    # panel 128x32 ise True: 1. satır üst, 2. satır alt bölgeye
 }
 
 
@@ -62,8 +70,12 @@ def ayarlari_kaydet(ayarlar: dict) -> None:
         json.dump(ayarlar, f, ensure_ascii=False, indent=2)
 
 
-def led_mesaj_gonder(mesaj: str) -> bool:
-    """Ayarlarda seçili moda göre LED panele mesaj gönderir. Başarılıysa True döner."""
+def led_mesaj_gonder(mesaj: str, satirlar: Optional[Sequence[str]] = None) -> bool:
+    """Ayarlarda seçili moda göre LED panele mesaj gönderir. Başarılıysa True döner.
+
+    `satirlar` verilirse (ör. ("HOŞ GELDİNİZ", "34ABC123")) satır tabanlı
+    paneller (huidu) metni bu şekilde böler; diğer modlar yalnızca `mesaj`ı kullanır.
+    """
     ayarlar = ayarlari_oku()
     mod = ayarlar.get("led_mod", "simulate")
 
@@ -89,6 +101,15 @@ def led_mesaj_gonder(mesaj: str) -> bool:
                 (ayarlar["tcp_host"], ayarlar["tcp_port"]), timeout=3
             ) as s:
                 s.sendall((mesaj + "\r\n").encode("utf-8"))
+            return True
+
+        elif mod == "huidu":
+            huidu.gonder(
+                ayarlar["huidu_host"],
+                int(ayarlar["huidu_port"]),
+                satirlar=satirlar or [mesaj],
+                iki_bolge=bool(ayarlar["huidu_iki_bolge"]),
+            )
             return True
 
         else:

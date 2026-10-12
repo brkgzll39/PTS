@@ -42,6 +42,7 @@ pts_sistemi/
 │   ├── excel_export.py      # Excel (.xlsx) üretimi
 │   ├── pdf_export.py        # PDF üretimi (görsel dahil)
 │   ├── led_panel.py         # LED panel gönderim modülü
+│   ├── huidu.py             # Huidu HD-E62 LED kartı ağ protokolü
 │   ├── camera_reader.py     # Opsiyonel gerçek ANPR/RTSP pipeline
 │   ├── ornek_veri.py        # Demo verisi ekleme scripti
 │   ├── requirements.txt
@@ -2603,10 +2604,15 @@ birbirinden farklı davranan iki kopya mantık oluşmaz.
 
 ## LED Panel Bağlama
 
-`backend/led_panel.py` üç mod destekler:
+`backend/led_panel.py` dört mod destekler:
 - **simulate**: Donanım yok, mesajlar konsola/veritabanına yazılır (varsayılan, test için).
 - **serial**: RS232/USB seri port. `pip install pyserial` gerektirir. Panelin COM portu ve baud rate bilgisini panel arayüzünden (LED Panel sekmesi) girin.
 - **tcp**: Ethernet/WiFi üzerinden IP ile konuşan panel. IP adresi ve port bilgisini girin.
+- **huidu**: Huidu HD-E62 kontrol kartı (kartın IP'si, port 6101). Metin Pillow ile
+  128x16 bitmap olarak çizilip gönderilir; üst satırda durum (HOŞ GELDİNİZ, KARA LİSTE…),
+  alt satırda plaka. Panel 128x32 ise "İki bölge" seçeneğini açın. Protokol ayrıntıları
+  `backend/huidu.py` başındaki açıklamada. Aynı karta başka bir yazılım (eski Pts.exe,
+  HD2018) içerik gönderiyorsa birbirinin üstüne yazar; o yazılımlar kapatılmalıdır.
 
 Kullandığınız LED panelin kendine özgü bir metin protokolü varsa (örn. başına/sonuna
 özel komut baytları eklemek gerekiyorsa), `led_mesaj_gonder()` fonksiyonunu panelinizin

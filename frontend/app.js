@@ -3579,6 +3579,7 @@ function ledModDegisti() {
   const mod = document.getElementById("ledMod").value;
   document.getElementById("ledSerialAlani").classList.toggle("d-none", mod !== "serial");
   document.getElementById("ledTcpAlani").classList.toggle("d-none", mod !== "tcp");
+  document.getElementById("ledHuiduAlani").classList.toggle("d-none", mod !== "huidu");
 }
 
 async function ledAyarlariYukle() {
@@ -3594,6 +3595,9 @@ async function ledAyarlariYukle() {
   document.getElementById("ledBaudrate").value = ayarlar.serial_baudrate;
   document.getElementById("ledTcpHost").value = ayarlar.tcp_host;
   document.getElementById("ledTcpPort").value = ayarlar.tcp_port;
+  document.getElementById("ledHuiduHost").value = ayarlar.huidu_host;
+  document.getElementById("ledHuiduPort").value = ayarlar.huidu_port;
+  document.getElementById("ledHuiduIkiBolge").checked = !!ayarlar.huidu_iki_bolge;
   ledModDegisti();
 }
 
@@ -3605,6 +3609,9 @@ document.getElementById("ledForm").addEventListener("submit", async (e) => {
     serial_baudrate: parseInt(document.getElementById("ledBaudrate").value) || 9600,
     tcp_host: document.getElementById("ledTcpHost").value,
     tcp_port: parseInt(document.getElementById("ledTcpPort").value) || 5000,
+    huidu_host: document.getElementById("ledHuiduHost").value,
+    huidu_port: parseInt(document.getElementById("ledHuiduPort").value) || 6101,
+    huidu_iki_bolge: document.getElementById("ledHuiduIkiBolge").checked,
   };
   // DÜZELTME (2026-09-25, sistem taraması): bu form önceden hiç try/catch
   // içermiyordu -- PUT /led/ayarlar başarısız olursa (ör. geçersiz port),

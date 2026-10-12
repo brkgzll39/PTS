@@ -4865,14 +4865,19 @@ def _kayit_olustur_ve_bildir(db: Session, plaka_no: str, kamera_id: str, yon: st
 
     if yetki == "yetkili":
         mesaj = f"HOŞ GELDİNİZ {plaka_no.upper()}"
+        led_durum = "HOŞ GELDİNİZ"
     elif yetki == "suresi_dolmus":
         mesaj = f"ZİYARETÇİ SÜRESİ DOLDU: {plaka_no.upper()}"
+        led_durum = "SÜRESİ DOLDU"
     elif yetki == "kara_liste":
         mesaj = f"KARA LİSTE: {plaka_no.upper()} GEÇİŞ ENGELLENDİ"
+        led_durum = "KARA LİSTE"
     else:
         mesaj = f"YETKİSİZ ARAÇ: {plaka_no.upper()}"
+        led_durum = "YETKİSİZ ARAÇ"
 
-    basarili = led_panel.led_mesaj_gonder(mesaj)
+    # Satır tabanlı paneller (Huidu) üst satırda durumu, alt satırda plakayı gösterir.
+    basarili = led_panel.led_mesaj_gonder(mesaj, satirlar=(led_durum, plaka_no.upper()))
     db.add(models.LedMesaj(mesaj=mesaj, basarili=basarili))
     if yetki != "yetkili":
         db.add(models.Alarm(
