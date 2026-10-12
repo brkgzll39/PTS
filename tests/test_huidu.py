@@ -40,6 +40,11 @@ YAKALANAN_BITMAP_1_BASLIK = bytes.fromhex(
 )
 YAKALANAN_BITMAP_1_SON = bytes.fromhex("0351AA")
 YAKALANAN_ONAY = bytes.fromhex("4852A7FF607C66A090C1F45F27020B869458001C180000000000003508D5AA")
+# NİZAMİYE kartının PTS'ye verdiği gerçek 0x19 (bitmap) onayları (2026-10-12 log)
+SAHA_BITMAP_ONAYLARI = [
+    (bytes.fromhex("4852a7ff607c66a090c1f45f27020b869458001c190500000000000208a8aa"), 0x02),
+    (bytes.fromhex("4852a7ff607c66a090c1f45f27020b869458001c190500000000000408aaaa"), 0x04),
+]
 
 
 def _onay(komut, sira, durum=bytes(6)):
@@ -100,12 +105,19 @@ def test_yakalanan_onay_gecerli():
     huidu.onay_dogrula(YAKALANAN_ONAY, 0x18, 0x35)
 
 
+@pytest.mark.parametrize("onay, sira", SAHA_BITMAP_ONAYLARI)
+def test_sahadaki_bitmap_onayi_gecerli(onay, sira):
+    huidu.onay_dogrula(onay, 0x19, sira)
+
+
 @pytest.mark.parametrize("onay, komut, sira", [
     (YAKALANAN_ONAY, 0x19, 0x35),                        # yanlış komut
     (YAKALANAN_ONAY, 0x18, 0x36),                        # yanlış sıra no
     (YAKALANAN_ONAY[:-3] + b"\x00\x00\xaa", 0x18, 0x35),  # bozuk checksum
     (YAKALANAN_ONAY[:20], 0x18, 0x35),                   # eksik
     (_onay(0x18, 0x35, durum=b"\x00\x00\x00\x00\x00\x01"), 0x18, 0x35),  # hata kodu
+    (_onay(0x18, 0x35, durum=b"\x05\x00\x00\x00\x00\x00"), 0x18, 0x35),  # 05 yalnız 0x19'da normal
+    (_onay(0x19, 0x35, durum=b"\x07\x00\x00\x00\x00\x00"), 0x19, 0x35),  # 0x19'da bilinmeyen kod
 ])
 def test_gecersiz_onay_reddedilir(onay, komut, sira):
     with pytest.raises(huidu.HuiduHatasi):
