@@ -39,7 +39,10 @@ from backend import huidu
 logger = logging.getLogger("pts.led")
 
 BACKEND_DIR = os.path.dirname(os.path.abspath(__file__))
-CONFIG_YOLU = os.path.join(BACKEND_DIR, "config.json")
+# PTS_LED_CONFIG_FILE: normalde ayarlamanıza gerek yok. Test paketi, canlı
+# kurulumun LED ayarlarını ezmemek (ve testlerin gönderdiği mesajların gerçek
+# panele gitmemesi) için bunu geçici bir dizine yönlendirir.
+CONFIG_YOLU = os.getenv("PTS_LED_CONFIG_FILE") or os.path.join(BACKEND_DIR, "config.json")
 
 VARSAYILAN_AYARLAR = {
     "led_mod": "simulate",       # simulate | serial | tcp | huidu

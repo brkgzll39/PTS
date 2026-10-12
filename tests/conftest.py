@@ -33,6 +33,10 @@ os.environ["PTS_AUTH_SECRET"] = "test-suiti-icin-sabit-auth-secret-0123456789"
 os.environ["PTS_LICENSE_FILE"] = os.path.join(_TEST_DB_DIZINI, "license.json")
 os.environ["PTS_CAMERAS_FILE"] = os.path.join(_TEST_DB_DIZINI, "cameras.json")
 os.environ["PTS_SISTEM_AYARLARI_FILE"] = os.path.join(_TEST_DB_DIZINI, "sistem_ayarlari.json")
+# LED ayarları (backend/config.json) da: önceden testler canlı kurulumun LED
+# modunu "simulate"e çeviriyordu ve araç kaydı testleri, config.json hangi
+# paneli gösteriyorsa (ör. kapıdaki gerçek panel) ona mesaj gönderiyordu.
+os.environ["PTS_LED_CONFIG_FILE"] = os.path.join(_TEST_DB_DIZINI, "led_config.json")
 
 
 def pytest_collection_modifyitems(config, items):

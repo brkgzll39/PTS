@@ -1,6 +1,7 @@
 """backend/huidu.py testleri. Beklenen baytlar, NİZAMİYE kartı (HD-E62,
 172.17.1.224) ile eski Pts.exe arasındaki gerçek trafiğin pktmon
 yakalamasından (2026-10-10) alındı."""
+import os
 import socket
 import threading
 
@@ -255,3 +256,10 @@ def test_led_panel_huidu_hatasinda_false_doner(monkeypatch):
     k.kapat()
     monkeypatch.setattr(led_panel, "ayarlari_oku", lambda: _huidu_ayarlari(k.port))
     assert led_panel.led_mesaj_gonder("TEST") is False
+
+
+def test_testler_canli_led_ayarlarina_dokunmaz():
+    """conftest LED ayar dosyasını geçici dizine yönlendirir; testler gerçek
+    backend/config.json'ı ezmemeli ve oradaki panele mesaj göndermemeli."""
+    gercek = os.path.join(led_panel.BACKEND_DIR, "config.json")
+    assert os.path.abspath(led_panel.CONFIG_YOLU) != os.path.abspath(gercek)
