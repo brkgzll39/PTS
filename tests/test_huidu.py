@@ -346,6 +346,12 @@ def _bekle(kosul, sure=3.0):
 
 
 TPAO = huidu.metin_bitmap(["T.P.A.O."], genislik=64)
+TRAKYA = huidu.metin_bitmap(["TRAKYA"], genislik=64, en_buyuk=huidu.tek_satir_font_boyutu("T.P.A.O.", 64) - 2)
+
+
+def _harf_yuksekligi(bitmap):
+    satirlar = _yanik_satirlar(bitmap)
+    return max(satirlar) - min(satirlar) + 1
 
 
 def test_arac_mesajindan_sonra_bekleme_yazisina_doner(kart, monkeypatch):
@@ -354,13 +360,13 @@ def test_arac_mesajindan_sonra_bekleme_yazisina_doner(kart, monkeypatch):
     assert led_panel.led_mesaj_gonder("x", satirlar=("YETKİSİZ ARAÇ", "34TD1234"))
     assert _bekle(lambda: len(_bitmapler(kart)) == 4)
     ust, alt = _bitmapler(kart)[2:]
-    assert ust == TPAO, "bekleme yazısı üst bölgede, Pts.exe gibi"
-    assert alt == bytes(huidu.BITMAP_BOYUTU)
+    assert ust == TPAO, "T.P.A.O. üst yarıda"
+    assert alt == TRAKYA, "TRAKYA alt yarıda, biraz küçük"
 
 
 def test_sure_dolmadan_yeni_mesaj_gelirse_eski_zamanlayici_yazmaz(kart, monkeypatch):
     monkeypatch.setattr(led_panel, "ayarlari_oku",
-                        lambda: _huidu_ayarlari(kart.port, huidu_mesaj_suresi=0.3))
+                        lambda: _huidu_ayarlari(kart.port, huidu_mesaj_suresi=0.3, huidu_iki_bolge=True))
     led_panel.led_mesaj_gonder("x", satirlar=("HOŞ GELDİNİZ", "34ABC123"))
     led_panel.led_mesaj_gonder("y", satirlar=("KARA LİSTE", "06XYZ99"))
     assert _bekle(lambda: len(_bitmapler(kart)) >= 6)
@@ -380,11 +386,31 @@ def test_sure_sifirsa_bekleme_yazisina_donulmez(kart, monkeypatch):
 
 
 def test_bekleme_yazisi_dogrudan_gosterilir(kart, monkeypatch):
-    monkeypatch.setattr(led_panel, "ayarlari_oku", lambda: _huidu_ayarlari(kart.port))
+    monkeypatch.setattr(led_panel, "ayarlari_oku", lambda: _huidu_ayarlari(kart.port, huidu_iki_bolge=True))
     assert led_panel._bekleme_yazisina_don() is True
-    assert _bitmapler(kart)[0] == TPAO
+    assert _bitmapler(kart) == [TPAO, TRAKYA]
 
 
 def test_huidu_modunda_degilse_bekleme_yazisi_gonderilmez(monkeypatch):
     monkeypatch.setattr(led_panel, "ayarlari_oku", lambda: dict(led_panel.VARSAYILAN_AYARLAR))
     assert led_panel._bekleme_yazisina_don() is False
+
+
+def test_trakya_tpaodan_kucuk_ve_sigar():
+    assert _harf_yuksekligi(TRAKYA) < _harf_yuksekligi(TPAO)
+    assert max(_yanik_sutunlar(TRAKYA)) < 64
+
+
+def test_alt_satir_bossa_alt_bolge_bos(kart, monkeypatch):
+    monkeypatch.setattr(led_panel, "ayarlari_oku", lambda: _huidu_ayarlari(
+        kart.port, huidu_iki_bolge=True, huidu_bekleme_yazisi_2=""))
+    assert led_panel._bekleme_yazisina_don() is True
+    assert _bitmapler(kart) == [TPAO, bytes(huidu.BITMAP_BOYUTU)]
+
+
+def test_tek_bolgede_iki_satir_bekleme_yazisi_ust_bolgede(kart, monkeypatch):
+    monkeypatch.setattr(led_panel, "ayarlari_oku", lambda: _huidu_ayarlari(kart.port, huidu_iki_bolge=False))
+    assert led_panel._bekleme_yazisina_don() is True
+    ust, alt = _bitmapler(kart)
+    assert ust == huidu.metin_bitmap(["T.P.A.O.", "TRAKYA"], genislik=64)
+    assert alt == bytes(huidu.BITMAP_BOYUTU)

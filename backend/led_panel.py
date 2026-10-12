@@ -58,6 +58,7 @@ VARSAYILAN_AYARLAR = {
     # Panelin boştaki yazısı (eski Pts.exe gibi). Araç mesajı `huidu_mesaj_suresi`
     # saniye görünür, sonra bu yazıya dönülür. Boş yazı ya da 0 sn: dönülmez.
     "huidu_bekleme_yazisi": "T.P.A.O.",
+    "huidu_bekleme_yazisi_2": "TRAKYA",  # alt satır (iki bölgede alt yarıda, biraz küçük); boş olabilir
     "huidu_mesaj_suresi": 10,
 }
 
@@ -174,8 +175,14 @@ def _bekleme_yazisina_don(nesil: Optional[int] = None) -> bool:
         if ayarlar.get("led_mod") != "huidu" or not yazi:
             return False
         try:
-            # Pts.exe gibi: yazı üst bölgede, alt bölge boş.
-            _huidu_gonder(ayarlar, [yazi], iki_bolge=False)
+            huidu.bekleme_yazisi_gonder(
+                ayarlar["huidu_host"],
+                int(ayarlar["huidu_port"]),
+                ust=yazi,
+                alt=str(ayarlar.get("huidu_bekleme_yazisi_2") or ""),
+                iki_bolge=bool(ayarlar["huidu_iki_bolge"]),
+                genislik=int(ayarlar["huidu_genislik"]),
+            )
             return True
         except Exception as e:
             logger.error("LED bekleme yazısı gönderilemedi (mod=huidu): %s", e)

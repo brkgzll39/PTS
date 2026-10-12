@@ -200,15 +200,23 @@ def satirlari_duzenle(satirlar: Sequence[str], genislik: int = VARSAYILAN_GORUNU
     return temiz
 
 
-def metin_bitmap(satirlar: Sequence[str], genislik: int = VARSAYILAN_GORUNUR_GENISLIK) -> bytes:
+def tek_satir_font_boyutu(metin: str, genislik: int = VARSAYILAN_GORUNUR_GENISLIK) -> int:
+    """`metin` tek satır, tam yükseklikte çizilince kullanılacak font boyutu."""
+    font = _font_sec(metin, YUKSEKLIK, 20, 6, _genislik_dogrula(genislik))
+    return font.size if font else 6
+
+
+def metin_bitmap(
+    satirlar: Sequence[str], genislik: int = VARSAYILAN_GORUNUR_GENISLIK, en_buyuk: int = 20
+) -> bytes:
     """En fazla 2 satırı 128x16 bitmap'in soldaki `genislik` sütununa çizer:
-    1 satır tam yükseklikte, 2 satır 8'er px."""
+    1 satır tam yükseklikte (en fazla `en_buyuk` pt), 2 satır 8'er px."""
     img = Image.new("1", (GENISLIK, YUKSEKLIK), 0)
     ciz = ImageDraw.Draw(img)
     ciz.fontmode = "1"
     duzen = satirlari_duzenle(satirlar, genislik)
     if len(duzen) == 1:
-        _satir_ciz(ciz, duzen[0], 0, YUKSEKLIK, en_buyuk=20, genislik=genislik)
+        _satir_ciz(ciz, duzen[0], 0, YUKSEKLIK, en_buyuk=en_buyuk, genislik=genislik)
     elif len(duzen) == 2:
         _satir_ciz(ciz, duzen[0], 0, YUKSEKLIK // 2, en_buyuk=10, genislik=genislik)
         _satir_ciz(ciz, duzen[1], YUKSEKLIK // 2, YUKSEKLIK // 2, en_buyuk=10, genislik=genislik)
@@ -288,6 +296,31 @@ def gonder(
         bitmapler = {0: metin_bitmap(duzen[:1], genislik), 1: metin_bitmap(duzen[1:2], genislik)}
     else:
         bitmapler = {0: metin_bitmap(satirlar, genislik), 1: bytes(BITMAP_BOYUTU)}
+    _bitmapleri_gonder(host, port, bitmapler, " / ".join(s for s in satirlar if s), zaman_asimi)
+
+
+def bekleme_yazisi_gonder(
+    host: str,
+    port: int,
+    ust: str,
+    alt: str = "",
+    iki_bolge: bool = False,
+    zaman_asimi: float = 3.0,
+    genislik: int = VARSAYILAN_GORUNUR_GENISLIK,
+) -> None:
+    """Panelin boştaki yazısı (ör. T.P.A.O. / TRAKYA). Alt satır boşsa üst yazı
+    bölge 0'a, bölge 1 boş (Pts.exe gibi). iki_bolge=True ve alt satır varsa üst
+    yazı bölge 0'a, alt yazı bölge 1'e, üsttekinden 2 pt küçük çizilir."""
+    ust, alt = ust.strip(), alt.strip()
+    if alt and iki_bolge:
+        kucuk = max(6, tek_satir_font_boyutu(ust, genislik) - 2)
+        bitmapler = {0: metin_bitmap([ust], genislik), 1: metin_bitmap([alt], genislik, en_buyuk=kucuk)}
+    else:
+        bitmapler = {0: metin_bitmap([ust, alt], genislik), 1: bytes(BITMAP_BOYUTU)}
+    _bitmapleri_gonder(host, port, bitmapler, " / ".join(s for s in (ust, alt) if s), zaman_asimi)
+
+
+def _bitmapleri_gonder(host: str, port: int, bitmapler: dict, etiket: str, zaman_asimi: float) -> None:
     baslangic = time.monotonic()
     with _gonderim_kilidi:
         bekleme = time.monotonic() - baslangic
@@ -296,5 +329,5 @@ def gonder(
     # Gecikme teşhisi: kilit beklemesi (önceki gönderim sürüyordu) ve karta yazma süresi.
     logger.info(
         "Huidu panele yazıldı: %s (kilit bekleme %.2f sn, karta yazma %.2f sn)",
-        " / ".join(s for s in satirlar if s), bekleme, time.monotonic() - baslangic - bekleme,
+        etiket, bekleme, time.monotonic() - baslangic - bekleme,
     )

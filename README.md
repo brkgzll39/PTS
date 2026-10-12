@@ -2613,7 +2613,8 @@ birbirinden farklı davranan iki kopya mantık oluşmaz.
   alt satırda plaka. "Panel genişliği", panelin gösterdiği sütun sayısıdır (NİZAMİYE
   paneli 64x32: varsayılan 64); yazı bu genişliğe sığdırılır. Panel 32 px yüksekse
   (ör. 64x32) "İki bölge" seçeneğini açın: durum üst yarıda, plaka alt yarıda.
-  Boştayken panelde "Bekleme yazısı" (varsayılan T.P.A.O.) durur: PTS açılışında ve
+  Boştayken panelde "Bekleme yazısı" (varsayılan T.P.A.O.; "İki bölge" açıksa alt yarıda
+  biraz küçük "alt satır", varsayılan TRAKYA) durur: PTS açılışında ve
   LED ayarları kaydedilince yazılır; araç mesajı "Araç mesajı süresi" (varsayılan 10 sn)
   kadar görünür, sonra bekleme yazısına dönülür (0 sn ya da boş yazı: dönülmez). Protokol ayrıntıları
   `backend/huidu.py` başındaki açıklamada. Aynı karta başka bir yazılım (eski Pts.exe,

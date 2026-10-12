@@ -3600,6 +3600,7 @@ async function ledAyarlariYukle() {
   document.getElementById("ledHuiduIkiBolge").checked = !!ayarlar.huidu_iki_bolge;
   document.getElementById("ledHuiduGenislik").value = ayarlar.huidu_genislik;
   document.getElementById("ledHuiduBeklemeYazisi").value = ayarlar.huidu_bekleme_yazisi ?? "";
+  document.getElementById("ledHuiduBeklemeYazisi2").value = ayarlar.huidu_bekleme_yazisi_2 ?? "";
   document.getElementById("ledHuiduMesajSuresi").value = ayarlar.huidu_mesaj_suresi;
   ledModDegisti();
 }
@@ -3617,6 +3618,7 @@ document.getElementById("ledForm").addEventListener("submit", async (e) => {
     huidu_iki_bolge: document.getElementById("ledHuiduIkiBolge").checked,
     huidu_genislik: parseInt(document.getElementById("ledHuiduGenislik").value) || 64,
     huidu_bekleme_yazisi: document.getElementById("ledHuiduBeklemeYazisi").value.trim(),
+    huidu_bekleme_yazisi_2: document.getElementById("ledHuiduBeklemeYazisi2").value.trim(),
     huidu_mesaj_suresi: Math.max(0, parseInt(document.getElementById("ledHuiduMesajSuresi").value) || 0),
   };
   // DÜZELTME (2026-09-25, sistem taraması): bu form önceden hiç try/catch
