@@ -3598,6 +3598,7 @@ async function ledAyarlariYukle() {
   document.getElementById("ledHuiduHost").value = ayarlar.huidu_host;
   document.getElementById("ledHuiduPort").value = ayarlar.huidu_port;
   document.getElementById("ledHuiduIkiBolge").checked = !!ayarlar.huidu_iki_bolge;
+  document.getElementById("ledHuiduGenislik").value = ayarlar.huidu_genislik;
   ledModDegisti();
 }
 
@@ -3612,6 +3613,7 @@ document.getElementById("ledForm").addEventListener("submit", async (e) => {
     huidu_host: document.getElementById("ledHuiduHost").value,
     huidu_port: parseInt(document.getElementById("ledHuiduPort").value) || 6101,
     huidu_iki_bolge: document.getElementById("ledHuiduIkiBolge").checked,
+    huidu_genislik: parseInt(document.getElementById("ledHuiduGenislik").value) || 64,
   };
   // DÜZELTME (2026-09-25, sistem taraması): bu form önceden hiç try/catch
   // içermiyordu -- PUT /led/ayarlar başarısız olursa (ör. geçersiz port),

@@ -45,6 +45,10 @@ VARSAYILAN_PORT = 6101
 GENISLIK = 128
 YUKSEKLIK = 16
 BITMAP_BOYUTU = GENISLIK * YUKSEKLIK // 8  # 256
+# Bitmap her zaman 128 px gönderilir ama panel daha dar olabilir: NİZAMİYE paneli
+# 64x32 (fotoğraf, 2026-10-12) ve yalnızca soldaki 64 sütunu gösteriyor; bölge 0
+# üst, bölge 1 alt yarı. Pts.exe de yazıyı 64 px'in ortasına çiziyordu (x=13..50).
+VARSAYILAN_GORUNUR_GENISLIK = 64
 
 KOMUT_BASLA = 0x18
 KOMUT_BITMAP = 0x19
@@ -146,11 +150,13 @@ def _buyuk_harf_yuksekligi(font: ImageFont.FreeTypeFont) -> int:
     return -font.getbbox("H", anchor="ls")[1]
 
 
-def _font_sec(metin: str, alan_yuksekligi: int, en_buyuk: int, en_kucuk: int) -> Optional[ImageFont.FreeTypeFont]:
+def _font_sec(
+    metin: str, alan_yuksekligi: int, en_buyuk: int, en_kucuk: int, genislik: int
+) -> Optional[ImageFont.FreeTypeFont]:
     """Metnin genişliğe, büyük harf yüksekliğinin alana (1 px pay ile) sığdığı en büyük font."""
     for boyut in range(en_buyuk, en_kucuk - 1, -1):
         font = _font(boyut)
-        if _buyuk_harf_yuksekligi(font) <= alan_yuksekligi - 2 and font.getlength(metin) <= GENISLIK:
+        if _buyuk_harf_yuksekligi(font) <= alan_yuksekligi - 2 and font.getlength(metin) <= genislik:
             return font
     return None
 
@@ -167,34 +173,45 @@ def _ikiye_bol(metin: str) -> list:
     return [" ".join(kelimeler[:en_iyi]), " ".join(kelimeler[en_iyi:])]
 
 
-def _satir_ciz(ciz: ImageDraw.ImageDraw, metin: str, alan_ust: int, alan_yuksekligi: int, en_buyuk: int) -> None:
-    font = _font_sec(metin, alan_yuksekligi, en_buyuk, en_kucuk=6)
+def _satir_ciz(
+    ciz: ImageDraw.ImageDraw, metin: str, alan_ust: int, alan_yuksekligi: int, en_buyuk: int, genislik: int
+) -> None:
+    font = _font_sec(metin, alan_yuksekligi, en_buyuk, en_kucuk=6, genislik=genislik)
     if font is None:
         font = _font(6)
         logger.warning("LED metni panele sığmıyor, kırpılacak: %r", metin)
     taban = alan_ust + (alan_yuksekligi + _buyuk_harf_yuksekligi(font)) // 2
-    ciz.text((GENISLIK // 2, taban), metin, font=font, fill=1, anchor="ms")
+    ciz.text((genislik // 2, taban), metin, font=font, fill=1, anchor="ms")
 
 
-def satirlari_duzenle(satirlar: Sequence[str]) -> list:
+def _genislik_dogrula(genislik: int) -> int:
+    genislik = int(genislik)
+    if not 8 <= genislik <= GENISLIK:
+        raise ValueError(f"görünür genişlik 8-{GENISLIK} px olmalı, {genislik} verildi")
+    return genislik
+
+
+def satirlari_duzenle(satirlar: Sequence[str], genislik: int = VARSAYILAN_GORUNUR_GENISLIK) -> list:
     """Boşları atar; tek satır 16 px yüksekliğe okunur boyutta (>= 10 pt) sığmıyorsa ikiye böler."""
+    genislik = _genislik_dogrula(genislik)
     temiz = [s.strip() for s in satirlar if s and s.strip()][:2]
-    if len(temiz) == 1 and _font_sec(temiz[0], YUKSEKLIK, en_buyuk=20, en_kucuk=10) is None:
+    if len(temiz) == 1 and _font_sec(temiz[0], YUKSEKLIK, en_buyuk=20, en_kucuk=10, genislik=genislik) is None:
         return _ikiye_bol(temiz[0])
     return temiz
 
 
-def metin_bitmap(satirlar: Sequence[str]) -> bytes:
-    """En fazla 2 satırı 128x16 bitmap'e çizer: 1 satır tam yükseklikte, 2 satır 8'er px."""
+def metin_bitmap(satirlar: Sequence[str], genislik: int = VARSAYILAN_GORUNUR_GENISLIK) -> bytes:
+    """En fazla 2 satırı 128x16 bitmap'in soldaki `genislik` sütununa çizer:
+    1 satır tam yükseklikte, 2 satır 8'er px."""
     img = Image.new("1", (GENISLIK, YUKSEKLIK), 0)
     ciz = ImageDraw.Draw(img)
     ciz.fontmode = "1"
-    duzen = satirlari_duzenle(satirlar)
+    duzen = satirlari_duzenle(satirlar, genislik)
     if len(duzen) == 1:
-        _satir_ciz(ciz, duzen[0], 0, YUKSEKLIK, en_buyuk=20)
+        _satir_ciz(ciz, duzen[0], 0, YUKSEKLIK, en_buyuk=20, genislik=genislik)
     elif len(duzen) == 2:
-        _satir_ciz(ciz, duzen[0], 0, YUKSEKLIK // 2, en_buyuk=10)
-        _satir_ciz(ciz, duzen[1], YUKSEKLIK // 2, YUKSEKLIK // 2, en_buyuk=10)
+        _satir_ciz(ciz, duzen[0], 0, YUKSEKLIK // 2, en_buyuk=10, genislik=genislik)
+        _satir_ciz(ciz, duzen[1], YUKSEKLIK // 2, YUKSEKLIK // 2, en_buyuk=10, genislik=genislik)
     return img.tobytes()
 
 
@@ -257,18 +274,20 @@ def gonder(
     satirlar: Sequence[str] = (),
     iki_bolge: bool = False,
     zaman_asimi: float = 3.0,
+    genislik: int = VARSAYILAN_GORUNUR_GENISLIK,
 ) -> None:
     """Metni panele yazar. Hata durumunda HuiduHatasi fırlatır.
 
     iki_bolge=False: tüm metin bölge 0'a çizilir, bölge 1 boşaltılır (Pts.exe'nin
     yaptığı). iki_bolge=True: 1. satır bölge 0'a, 2. satır bölge 1'e, her biri
-    tam 16 px yükseklikte -- panel 128x32 ise bu kullanılmalı.
+    tam 16 px yükseklikte -- panel 32 px yüksekse (ör. 64x32) bu kullanılmalı.
+    genislik: panelin gösterdiği sütun sayısı (yazı bunun ortasına sığdırılır).
     """
     if iki_bolge:
-        duzen = satirlari_duzenle(satirlar)
-        bitmapler = {0: metin_bitmap(duzen[:1]), 1: metin_bitmap(duzen[1:2])}
+        duzen = satirlari_duzenle(satirlar, genislik)
+        bitmapler = {0: metin_bitmap(duzen[:1], genislik), 1: metin_bitmap(duzen[1:2], genislik)}
     else:
-        bitmapler = {0: metin_bitmap(satirlar), 1: bytes(BITMAP_BOYUTU)}
+        bitmapler = {0: metin_bitmap(satirlar, genislik), 1: bytes(BITMAP_BOYUTU)}
     with _gonderim_kilidi:
         for bolge, bitmap in bitmapler.items():
             bolge_gonder(host, port, bolge, bitmap, zaman_asimi)

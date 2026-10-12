@@ -2610,7 +2610,9 @@ birbirinden farklı davranan iki kopya mantık oluşmaz.
 - **tcp**: Ethernet/WiFi üzerinden IP ile konuşan panel. IP adresi ve port bilgisini girin.
 - **huidu**: Huidu HD-E62 kontrol kartı (kartın IP'si, port 6101). Metin Pillow ile
   128x16 bitmap olarak çizilip gönderilir; üst satırda durum (HOŞ GELDİNİZ, KARA LİSTE…),
-  alt satırda plaka. Panel 128x32 ise "İki bölge" seçeneğini açın. Protokol ayrıntıları
+  alt satırda plaka. "Panel genişliği", panelin gösterdiği sütun sayısıdır (NİZAMİYE
+  paneli 64x32: varsayılan 64); yazı bu genişliğe sığdırılır. Panel 32 px yüksekse
+  (ör. 64x32) "İki bölge" seçeneğini açın: durum üst yarıda, plaka alt yarıda. Protokol ayrıntıları
   `backend/huidu.py` başındaki açıklamada. Aynı karta başka bir yazılım (eski Pts.exe,
   HD2018) içerik gönderiyorsa birbirinin üstüne yazar; o yazılımlar kapatılmalıdır.
 

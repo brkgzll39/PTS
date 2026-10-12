@@ -279,3 +279,47 @@ def test_testler_canli_led_ayarlarina_dokunmaz():
     backend/config.json'ı ezmemeli ve oradaki panele mesaj göndermemeli."""
     gercek = os.path.join(led_panel.BACKEND_DIR, "config.json")
     assert os.path.abspath(led_panel.CONFIG_YOLU) != os.path.abspath(gercek)
+
+
+# ------------------------------------------------------------------
+# Görünür genişlik (NİZAMİYE paneli 64x32, yalnızca soldaki 64 sütunu gösterir)
+# ------------------------------------------------------------------
+
+def _yanik_sutunlar(bitmap):
+    return {x for y in range(huidu.YUKSEKLIK) for x in range(huidu.GENISLIK)
+            if bitmap[y * 16 + x // 8] >> (7 - x % 8) & 1}
+
+
+@pytest.mark.parametrize("metin", [
+    ["YETKİSİZ ARAÇ"], ["HOŞ GELDİNİZ"], ["KARA LİSTE"], ["SÜRESİ DOLDU"],
+    ["34ABC1234"], ["PTS SİSTEMİ TEST MESAJI"], ["HOŞ GELDİNİZ", "34ABC123"],
+])
+def test_yazi_gorunur_genislige_sigar(metin):
+    sutunlar = _yanik_sutunlar(huidu.metin_bitmap(metin, genislik=64))
+    assert sutunlar, "bir şey çizilmeli"
+    assert max(sutunlar) < 64, "64 px panelde sağdaki sütunlar görünmez, yazı kesilirdi"
+
+
+def test_pts_exe_gibi_64_pxin_ortasina_cizer():
+    # Pts.exe "T.P.A.O."yu x=13..50'ye çizmişti: ortası 31.5
+    sutunlar = _yanik_sutunlar(huidu.metin_bitmap(["T.P.A.O."], genislik=64))
+    assert abs((min(sutunlar) + max(sutunlar)) / 2 - 31.5) <= 2
+
+
+def test_128_genislikte_tum_bitmap_kullanilir():
+    assert max(_yanik_sutunlar(huidu.metin_bitmap(["YETKİSİZ ARAÇ 34ABC123"], genislik=128))) >= 64
+
+
+@pytest.mark.parametrize("genislik", [0, 7, 129])
+def test_gecersiz_genislik_reddedilir(genislik):
+    with pytest.raises(ValueError):
+        huidu.metin_bitmap(["TEST"], genislik=genislik)
+
+
+def test_led_panel_genislik_ayarini_iletir(kart, monkeypatch):
+    ayarlar = dict(_huidu_ayarlari(kart.port), huidu_genislik=64, huidu_iki_bolge=True)
+    monkeypatch.setattr(led_panel, "ayarlari_oku", lambda: ayarlar)
+    assert led_panel.led_mesaj_gonder("YETKİSİZ ARAÇ: 34TD1234", satirlar=("YETKİSİZ ARAÇ", "34TD1234"))
+    for c in kart.cerceveler:
+        if c[6] == huidu.KOMUT_BITMAP:
+            assert max(_yanik_sutunlar(c[53:309])) < 64

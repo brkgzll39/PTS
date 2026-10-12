@@ -52,7 +52,8 @@ VARSAYILAN_AYARLAR = {
     "tcp_port": 5000,
     "huidu_host": "172.17.1.224",
     "huidu_port": huidu.VARSAYILAN_PORT,
-    "huidu_iki_bolge": False,    # panel 128x32 ise True: 1. satır üst, 2. satır alt bölgeye
+    "huidu_iki_bolge": False,    # panel 32 px yüksekse (ör. 64x32) True: 1. satır üst, 2. satır alt bölgeye
+    "huidu_genislik": huidu.VARSAYILAN_GORUNUR_GENISLIK,  # panelin gösterdiği sütun sayısı (NİZAMİYE: 64)
 }
 
 
@@ -112,6 +113,7 @@ def led_mesaj_gonder(mesaj: str, satirlar: Optional[Sequence[str]] = None) -> bo
                 int(ayarlar["huidu_port"]),
                 satirlar=satirlar or [mesaj],
                 iki_bolge=bool(ayarlar["huidu_iki_bolge"]),
+                genislik=int(ayarlar["huidu_genislik"]),
             )
             return True
 
