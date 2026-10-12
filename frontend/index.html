@@ -25,6 +25,24 @@
 <div id="toastKonteyneri" class="toast-container position-fixed top-0 end-0 p-3" style="z-index:9999"></div>
 
 <!-- Plaka analiz modal -->
+<!-- NÖBET DEFTERİ (2026-10-12): girişte okunmamış açık devir-teslim notları.
+     Kapatma düğmesi YOK, arka plana tıklayınca/Esc ile kapanmaz: "Okudum"
+     denince kim/ne zaman okudu kaydedilir (bkz. app.js::nobetOkunmamislariGoster). -->
+<div class="modal fade" id="nobetOkunmamisModal" tabindex="-1" aria-hidden="true" data-bs-backdrop="static" data-bs-keyboard="false">
+  <div class="modal-dialog modal-lg modal-dialog-centered modal-dialog-scrollable">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title"><i class="bi bi-journal-text me-2"></i>Nöbet Defteri: okunmamış <span id="nobetModalSayi">0</span> not</h5>
+      </div>
+      <div class="modal-body" id="nobetModalIcerik"></div>
+      <div class="modal-footer">
+        <span class="small text-muted me-auto">Okuduğunuz kaydedilir; notlar kapatılana kadar Nöbet Defteri'nde kalır.</span>
+        <button type="button" class="btn btn-primary" id="nobetOkudumDugmesi" onclick="nobetModalOkudum()"><i class="bi bi-check2-all"></i> Okudum</button>
+      </div>
+    </div>
+  </div>
+</div>
+
 <div class="modal fade" id="plakaAnalizModal" tabindex="-1" aria-hidden="true">
   <div class="modal-dialog modal-xl modal-dialog-centered">
     <div class="modal-content">
@@ -704,6 +722,7 @@
     <button class="side-link" data-target="#kontrol-sekme"><i class="bi bi-house-door"></i>Kontrol Merkezi</button>
     <button class="side-link" data-target="#panel-sekme"><i class="bi bi-clock-history"></i>Son Geçişler</button>
     <button class="side-link" data-target="#iceride-sekme"><i class="bi bi-car-front"></i>İçerideki Araçlar</button>
+    <button class="side-link" data-target="#nobet-sekme"><i class="bi bi-journal-text"></i>Nöbet Defteri <span class="badge bg-danger ms-1 d-none nobet-rozet"></span></button>
     <button class="side-link" data-target="#kayitlar-sekme"><i class="bi bi-list-ul"></i>Geçiş Kayıtları</button>
     <button class="side-link" data-target="#kisiler-sekme"><i class="bi bi-people"></i>Aboneler ve Kişiler</button>
     <button class="side-link" data-target="#karaliste-sekme"><i class="bi bi-slash-circle"></i>Kara Liste</button>
@@ -733,6 +752,7 @@
     <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#kontrol-sekme" type="button"><i class="bi bi-speedometer2 me-1"></i>Kontrol Merkezi</button></li>
     <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#panel-sekme" type="button"><i class="bi bi-clock-history me-1"></i>Son Geçişler</button></li>
     <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#iceride-sekme" type="button"><i class="bi bi-car-front me-1"></i>İçeride</button></li>
+    <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#nobet-sekme" type="button"><i class="bi bi-journal-text me-1"></i>Nöbet Defteri <span class="badge bg-danger d-none nobet-rozet"></span></button></li>
     <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#kayitlar-sekme" type="button"><i class="bi bi-list-columns-reverse me-1"></i>Kayıtlar</button></li>
     <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#kisiler-sekme" type="button"><i class="bi bi-people-fill me-1"></i>Kişiler</button></li>
     <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#karaliste-sekme" type="button"><i class="bi bi-slash-circle me-1"></i>Kara Liste</button></li>
@@ -975,6 +995,57 @@
               <thead><tr><th>Plaka</th><th>Durum</th><th>Kapı</th><th>Giriş</th><th>Not</th></tr></thead>
               <tbody id="icerideOnaysizTablo"></tbody>
             </table>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- NÖBET DEFTERİ (2026-10-12): vardiya devir-teslim notları. Kurallar:
+         main.py "NÖBET DEFTERİ" bölümü. -->
+    <div class="tab-pane fade" id="nobet-sekme">
+      <div class="row g-3">
+        <div class="col-lg-4">
+          <div class="card mb-3">
+            <div class="card-header"><i class="bi bi-pencil-square me-1"></i>Sonraki vardiyaya not bırak</div>
+            <div class="card-body">
+              <form id="nobetNotForm" data-rol-min="operatör">
+                <div class="mb-2">
+                  <label class="form-label small" for="nobetKapi">Kapı</label>
+                  <input type="text" class="form-control" id="nobetKapi" list="nobetKapiListesi" maxlength="80" placeholder="Genel">
+                  <datalist id="nobetKapiListesi"></datalist>
+                </div>
+                <div class="mb-2">
+                  <label class="form-label small" for="nobetMetin">Not</label>
+                  <textarea class="form-control" id="nobetMetin" rows="4" maxlength="1000" required
+                    placeholder="örn. 34 ABC 123 yarın 09:00'da gelecek, içeri alın / Lojman bariyeri takılıyor"></textarea>
+                </div>
+                <button type="submit" class="btn btn-primary w-100"><i class="bi bi-send"></i> Notu Kaydet</button>
+              </form>
+            </div>
+          </div>
+          <div class="card">
+            <div class="card-header"><i class="bi bi-car-front me-1"></i>İçeride kalan ziyaretçiler <span class="badge bg-primary ms-1" id="nobetZiyaretciSayi">-</span></div>
+            <div class="card-body small" id="nobetZiyaretciler"><span class="text-muted">Yükleniyor…</span></div>
+          </div>
+        </div>
+        <div class="col-lg-8">
+          <div class="card">
+            <div class="card-header d-flex flex-wrap align-items-center gap-2">
+              <span><i class="bi bi-journal-text me-1"></i>Notlar</span>
+              <div class="btn-group btn-group-sm" role="group" aria-label="Durum">
+                <input type="radio" class="btn-check" name="nobetDurum" id="nobetDurumAcik" value="acik" checked onchange="nobetNotlariYukle()">
+                <label class="btn btn-outline-secondary" for="nobetDurumAcik">Açık</label>
+                <input type="radio" class="btn-check" name="nobetDurum" id="nobetDurumKapali" value="kapali" onchange="nobetNotlariYukle()">
+                <label class="btn btn-outline-secondary" for="nobetDurumKapali">Kapatılmış</label>
+                <input type="radio" class="btn-check" name="nobetDurum" id="nobetDurumTumu" value="tumu" onchange="nobetNotlariYukle()">
+                <label class="btn btn-outline-secondary" for="nobetDurumTumu">Tümü</label>
+              </div>
+              <div class="ms-auto d-flex flex-wrap gap-2">
+                <select class="form-select form-select-sm" id="nobetFiltreKapi" style="width: auto" onchange="nobetNotlariYukle()" aria-label="Kapı filtresi"></select>
+                <input type="search" class="form-control form-control-sm" id="nobetAra" placeholder="Notlarda ara" style="width: 12rem">
+              </div>
+            </div>
+            <div class="card-body" id="nobetListe"><span class="text-muted">Yükleniyor…</span></div>
           </div>
         </div>
       </div>

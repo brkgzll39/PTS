@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Float, DateTime, Boolean, ForeignKey, Text
+from sqlalchemy import Column, Integer, String, Float, DateTime, Boolean, ForeignKey, Text, UniqueConstraint
 from sqlalchemy.orm import relationship
 from datetime import datetime
 
@@ -502,3 +502,41 @@ class PushToken(Base):
     platform = Column(String(20), default="bilinmiyor")  # ios | android
     olusturma_tarihi = Column(DateTime, default=datetime.now)
     son_kullanim_tarihi = Column(DateTime, default=datetime.now)
+
+
+class NobetNotu(Base):
+    """Vardiya devir-teslim defteri (2026-10-12, kullanıcı isteği): bir vardiyanın
+    sonrakilere bıraktığı not (ör. "34 ABC 123 yarın 09:00'da gelecek", "Lojman
+    bariyeri takılıyor"). Notlar silinmez/düzenlenmez (denetim izi); "kapatılana
+    kadar" açık kalır ve her vardiyaya gösterilir. Yazan/kapatan kullanıcının adı
+    kopyalanarak saklanır (FK değil): kullanıcı sonradan silinse de not okunur kalır."""
+    __tablename__ = "nobet_notlari"
+
+    id = Column(Integer, primary_key=True, index=True)
+    metin = Column(Text, nullable=False)
+    kapi = Column(String(80), nullable=False, default="Genel")
+    olusturan_id = Column(Integer, nullable=True)
+    olusturan_adi = Column(String(80), nullable=False)
+    vardiya_adi = Column(String(30), nullable=True)
+    olusturma_zamani = Column(DateTime, default=datetime.now, index=True)
+    kapali = Column(Boolean, default=False, index=True)
+    kapatan_adi = Column(String(80), nullable=True)
+    kapanma_zamani = Column(DateTime, nullable=True)
+    kapanis_notu = Column(Text, nullable=True)
+
+    okumalar = relationship("NobetNotuOkuma", back_populates="nobet_notu", order_by="NobetNotuOkuma.okuma_zamani")
+
+
+class NobetNotuOkuma(Base):
+    """Bir nöbet notunun kim tarafından, ne zaman "Okudum" denerek okunduğu
+    (devir-teslimin kanıtı). Not başına kullanıcı başına en fazla bir satır."""
+    __tablename__ = "nobet_notu_okumalari"
+    __table_args__ = (UniqueConstraint("not_id", "kullanici_id", name="uq_nobet_notu_okuma"),)
+
+    id = Column(Integer, primary_key=True, index=True)
+    not_id = Column(Integer, ForeignKey("nobet_notlari.id"), nullable=False, index=True)
+    kullanici_id = Column(Integer, nullable=False, index=True)
+    kullanici_adi = Column(String(80), nullable=False)
+    okuma_zamani = Column(DateTime, default=datetime.now)
+
+    nobet_notu = relationship("NobetNotu", back_populates="okumalar")

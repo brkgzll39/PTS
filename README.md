@@ -4576,3 +4576,23 @@ Kurallar (`main.py::_iceride_durumu_hesapla`):
 
 Önceki "Şu An İçeride" sayacı yalnızca yetkili geçişlere bakıyordu: ziyaretçiler
 hiç sayılmıyor, çıkışı okunamamış araçlar sayıda sonsuza kadar kalıyordu.
+
+## Nöbet Defteri — Vardiya Devir-Teslim Notları (2026-10-12, kullanıcı isteği)
+
+Sol menüde **Nöbet Defteri**: bir vardiyanın sonrakilere bıraktığı notlar (ör.
+"34 ABC 123 yarın 09:00'da gelecek, içeri alın", "Lojman bariyeri takılıyor").
+
+- Her not bir **kapı etiketi** taşır (Genel / Ana Nizamiye / Lojman / tanımlı
+  siteler ya da serbest metin); her bilgisayar son kullandığı kapıyı hatırlar.
+  Notları tüm personel görür, kapıya göre filtrelenebilir.
+- Yazan, vardiyası ve zamanı otomatik kaydedilir. Notlar **silinmez ve
+  düzenlenmez**; "Kapat (çözüldü)" ile kapatılana kadar açık kalır ve her
+  vardiyaya gösterilir. Kapatılan notlar "Kapatılmış" sekmesinden aranabilir.
+  Oluşturma ve kapatma Denetim Kayıtları'na da yazılır.
+- **Güvenlik ve operatör** hesapları girişte okumadıkları açık notları bir
+  pencerede görür; pencere "Okudum" denmeden kapanmaz ve kimin ne zaman okuduğu
+  kaydedilir (devir-teslim kanıtı). Menüdeki kırmızı rozet okunmamış not
+  sayısını gösterir (2 dakikada bir tazelenir).
+- Defterde ayrıca "İçeride kalan ziyaretçiler" özeti görünür (bkz. İçerideki
+  Araçlar).
+- İzleyici rolü notları okuyabilir, yazamaz/kapatamaz.

@@ -46,6 +46,8 @@ _OPERATOR_GORMELI = {
     # 2026-10-12 kullanıcı isteği: "İçerideki Araçlar" -- güvenlik personelinin
     # vardiya devrinde "içeride kim kaldı" sorusu için; tüm personel rollerine açık.
     "#iceride-sekme",
+    # 2026-10-12: "Nöbet Defteri" (vardiya devir-teslim notları) -- tüm personel.
+    "#nobet-sekme",
 }
 # "Yönetim"e dair, operatörden HER giriş noktasından gizlenmesi gereken sekmeler.
 _OPERATOR_GORMEMELI = {

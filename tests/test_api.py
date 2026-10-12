@@ -7152,3 +7152,68 @@ def test_iceride_ziyaretci_sure_uyarisi(giris, simdi, ziyaretci, beklenen):
     satir = pts_main._iceride_satiri(k, None, datetime.strptime(simdi, "%Y-%m-%d %H:%M"), uyari_saat=4)
     assert satir["uyari"] == beklenen
     assert pts_main._iceride_satiri(k, None, datetime.strptime(simdi, "%Y-%m-%d %H:%M"), uyari_saat=0)["uyari"] is None
+
+
+# ------------------------------------------------------------------
+# Nöbet defteri -- vardiya devir-teslim notları (2026-10-12)
+# ------------------------------------------------------------------
+
+def test_nobet_notu_yazilir_ve_baskasinin_okunmamislarinda_gorunur(client, yetkili_header, operator_header):
+    _, giden = _rbac_guvenlik_kullanici_olustur_vardiyali(client, yetkili_header, "A")
+    r = client.post("/nobet-defteri", json={"metin": "  34 NBT 01 yarın 09:00'da gelecek, içeri alın  ", "kapi": "Lojman"},
+                    headers=giden)
+    assert r.status_code == 200, r.text
+    n = r.json()
+    assert (n["metin"], n["kapi"], n["vardiya_adi"], n["kapali"], n["benim_notum"], n["okundu"]) == (
+        "34 NBT 01 yarın 09:00'da gelecek, içeri alın", "Lojman", "A", False, True, True)
+    # Yazan kendi notunu "okunmamış" olarak görmez; başkası görür.
+    assert n["id"] not in [x["id"] for x in client.get("/nobet-defteri/okunmamis", headers=giden).json()]
+    gelen_okunmamis = client.get("/nobet-defteri/okunmamis", headers=operator_header).json()
+    assert n["id"] in [x["id"] for x in gelen_okunmamis]
+
+
+def test_nobet_notu_okudum_kaydedilir_ve_tekrarlanabilir(client, yetkili_header, operator_header):
+    n = client.post("/nobet-defteri", json={"metin": "NBT okuma testi"}, headers=yetkili_header).json()
+    assert n["kapi"] == "Genel"
+    for _ in range(2):  # ikinci çağrı da sorunsuz (tekrarlanabilir)
+        r = client.post("/nobet-defteri/okudum", json={"not_idleri": [n["id"]]}, headers=operator_header)
+        assert r.status_code == 200, r.text
+    assert n["id"] not in [x["id"] for x in client.get("/nobet-defteri/okunmamis", headers=operator_header).json()]
+    liste = client.get("/nobet-defteri", params={"ara": "NBT okuma testi"}, headers=yetkili_header).json()
+    me = client.get("/auth/me", headers=operator_header).json()["kullanici_adi"]
+    assert [o["kullanici_adi"] for o in liste[0]["okuyanlar"]] == [me], "iki 'Okudum' tek okuma kaydı olmalı"
+    r = client.post("/nobet-defteri/okudum", json={"not_idleri": [999999]}, headers=operator_header)
+    assert r.status_code == 404
+
+
+def test_nobet_notu_kapatilinca_acik_listeden_ve_okunmamislardan_cikar(client, yetkili_header, operator_header):
+    n = client.post("/nobet-defteri", json={"metin": "NBT Lojman bariyeri takılıyor", "kapi": "Lojman"},
+                    headers=yetkili_header).json()
+    r = client.post(f"/nobet-defteri/{n['id']}/kapat", json={"kapanis_notu": "Tamir edildi"}, headers=operator_header)
+    assert r.status_code == 200, r.text
+    assert (r.json()["kapali"], r.json()["kapanis_notu"]) == (True, "Tamir edildi")
+    assert r.json()["kapatan_adi"]
+    acik = [x["id"] for x in client.get("/nobet-defteri", headers=operator_header).json()]
+    kapali = [x["id"] for x in client.get("/nobet-defteri", params={"durum": "kapali"}, headers=operator_header).json()]
+    assert n["id"] not in acik and n["id"] in kapali
+    assert n["id"] not in [x["id"] for x in client.get("/nobet-defteri/okunmamis", headers=operator_header).json()]
+    assert client.post(f"/nobet-defteri/{n['id']}/kapat", json={}, headers=operator_header).status_code == 409
+    eylemler = [d["eylem"] for d in client.get("/denetim-kayitlari", headers=yetkili_header).json()]
+    assert "nobet_notu_ekle" in eylemler and "nobet_notu_kapat" in eylemler
+
+
+def test_nobet_defteri_yetki_ve_dogrulama(client, yetkili_header, izleyici_header):
+    assert client.post("/nobet-defteri", json={"metin": "izleyici yazamaz"}, headers=izleyici_header).status_code == 403
+    assert client.get("/nobet-defteri", headers=izleyici_header).status_code == 200
+    assert client.post("/nobet-defteri", json={"metin": "   "}, headers=yetkili_header).status_code in (400, 422)
+    assert client.post("/nobet-defteri", json={"metin": "x" * 1001}, headers=yetkili_header).status_code == 422
+    assert client.get("/nobet-defteri").status_code == 401
+
+
+def test_nobet_defteri_kapi_filtresi_ve_kapi_onerileri(client, yetkili_header):
+    client.post("/nobet-defteri", json={"metin": "NBT kapı filtresi", "kapi": "Ana Nizamiye"}, headers=yetkili_header)
+    liste = client.get("/nobet-defteri", params={"kapi": "Ana Nizamiye", "ara": "kapı filtresi"}, headers=yetkili_header).json()
+    assert len(liste) == 1 and liste[0]["kapi"] == "Ana Nizamiye"
+    assert client.get("/nobet-defteri", params={"kapi": "Lojman", "ara": "kapı filtresi"}, headers=yetkili_header).json() == []
+    kapilar = client.get("/nobet-defteri/kapilar", headers=yetkili_header).json()
+    assert kapilar[:3] == ["Genel", "Ana Nizamiye", "Lojman"] and len(kapilar) == len(set(kapilar))

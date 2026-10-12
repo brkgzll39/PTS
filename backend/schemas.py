@@ -674,3 +674,23 @@ class PushTokenCevap(BaseModel):
     olusturma_tarihi: Optional[datetime] = None
 
     model_config = ConfigDict(from_attributes=True)
+
+
+# ---------------------- Nöbet defteri (2026-10-12) ----------------------
+
+class NobetNotuOlustur(BaseModel):
+    metin: str = Field(min_length=1, max_length=1000)
+    kapi: str = Field("Genel", max_length=80)
+
+    @field_validator("metin", "kapi")
+    @classmethod
+    def bosluk_temizle(cls, v):
+        return v.strip()
+
+
+class NobetNotuKapat(BaseModel):
+    kapanis_notu: Optional[str] = Field(None, max_length=500)
+
+
+class NobetNotuOkudum(BaseModel):
+    not_idleri: List[int] = Field(min_length=1, max_length=500)

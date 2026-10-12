@@ -8362,6 +8362,138 @@ def araclar_iceridedurum(db: Session = Depends(get_db), kullanici: models.Kullan
 
 
 # ==================================================================
+# NÖBET DEFTERİ -- vardiya devir-teslim notları (2026-10-12, kullanıcı isteği)
+# ==================================================================
+# Kararlar (kullanıcı): notları TÜM personel görür, her not bir kapı etiketi
+# taşır; not "kapatılana kadar" açık kalır ve her vardiyaya gösterilir; güvenlik
+# ve operatör hesapları girişte okunmamış açık notları bir pencerede görür ve
+# "Okudum" demeden kapatamaz -- kim/ne zaman okudu saklanır (devir-teslim kanıtı).
+# Notlar silinmez/düzenlenmez; oluşturma ve kapatma denetim kaydına da yazılır.
+_NOBET_VARSAYILAN_KAPILAR = ("Genel", "Ana Nizamiye", "Lojman")
+
+
+def _nobet_notu_cevap(n: models.NobetNotu, kullanici_id: int) -> dict:
+    return {
+        "id": n.id,
+        "metin": n.metin,
+        "kapi": n.kapi,
+        "olusturan_adi": n.olusturan_adi,
+        "vardiya_adi": n.vardiya_adi,
+        "olusturma_zamani": n.olusturma_zamani.isoformat(),
+        "kapali": bool(n.kapali),
+        "kapatan_adi": n.kapatan_adi,
+        "kapanma_zamani": n.kapanma_zamani.isoformat() if n.kapanma_zamani else None,
+        "kapanis_notu": n.kapanis_notu,
+        "benim_notum": n.olusturan_id == kullanici_id,
+        "okundu": n.olusturan_id == kullanici_id or any(o.kullanici_id == kullanici_id for o in n.okumalar),
+        "okuyanlar": [{"kullanici_adi": o.kullanici_adi, "okuma_zamani": o.okuma_zamani.isoformat()} for o in n.okumalar],
+    }
+
+
+@app.get("/nobet-defteri")
+def nobet_notlari_listele(
+    durum: str = Query("acik", pattern="^(acik|kapali|tumu)$"),
+    kapi: Optional[str] = Query(None, max_length=80),
+    ara: Optional[str] = Query(None, max_length=100),
+    limit: int = Query(200, ge=1, le=1000),
+    db: Session = Depends(get_db),
+    kullanici: models.Kullanici = Depends(_personel_girisi_gerekli),
+):
+    sorgu = db.query(models.NobetNotu).options(selectinload(models.NobetNotu.okumalar))
+    if durum != "tumu":
+        sorgu = sorgu.filter(models.NobetNotu.kapali == (durum == "kapali"))
+    if kapi:
+        sorgu = sorgu.filter(models.NobetNotu.kapi == kapi)
+    if ara and ara.strip():
+        desen = f"%{ara.strip()}%"
+        sorgu = sorgu.filter(or_(models.NobetNotu.metin.ilike(desen), models.NobetNotu.olusturan_adi.ilike(desen)))
+    notlar = sorgu.order_by(desc(models.NobetNotu.olusturma_zamani), desc(models.NobetNotu.id)).limit(limit).all()
+    return [_nobet_notu_cevap(n, kullanici.id) for n in notlar]
+
+
+@app.get("/nobet-defteri/okunmamis")
+def nobet_notlari_okunmamis(db: Session = Depends(get_db), kullanici: models.Kullanici = Depends(_personel_girisi_gerekli)):
+    """Bu kullanıcının okumadığı (ve kendisinin yazmadığı) AÇIK notlar, eskiden yeniye."""
+    okunanlar = select(models.NobetNotuOkuma.not_id).where(models.NobetNotuOkuma.kullanici_id == kullanici.id)
+    notlar = (
+        db.query(models.NobetNotu)
+        .options(selectinload(models.NobetNotu.okumalar))
+        .filter(
+            models.NobetNotu.kapali == False,  # noqa: E712
+            or_(models.NobetNotu.olusturan_id.is_(None), models.NobetNotu.olusturan_id != kullanici.id),
+            models.NobetNotu.id.notin_(okunanlar),
+        )
+        .order_by(models.NobetNotu.olusturma_zamani, models.NobetNotu.id)
+        .all()
+    )
+    return [_nobet_notu_cevap(n, kullanici.id) for n in notlar]
+
+
+@app.get("/nobet-defteri/kapilar")
+def nobet_defteri_kapilari(db: Session = Depends(get_db), _: models.Kullanici = Depends(_personel_girisi_gerekli)):
+    """Kapı etiketi önerileri: varsayılanlar + tanımlı siteler + daha önce kullanılanlar."""
+    adlar = list(_NOBET_VARSAYILAN_KAPILAR)
+    for (ad,) in db.query(models.Site.ad).all():
+        adlar.append(ad)
+    for (ad,) in db.query(models.NobetNotu.kapi).distinct().all():
+        adlar.append(ad)
+    return list(dict.fromkeys(a for a in adlar if a))
+
+
+@app.post("/nobet-defteri")
+def nobet_notu_ekle(istek: schemas.NobetNotuOlustur, db: Session = Depends(get_db), kullanici: models.Kullanici = Depends(_personel_girisi_gerekli)):
+    _rol_dogrula(kullanici, ROL_YONETICI, ROL_OPERATOR, ROL_GUVENLIK)
+    if not istek.metin:
+        raise HTTPException(400, "Not boş olamaz")
+    n = models.NobetNotu(
+        metin=istek.metin,
+        kapi=istek.kapi or "Genel",
+        olusturan_id=kullanici.id,
+        olusturan_adi=kullanici.kullanici_adi,
+        vardiya_adi=kullanici.vardiya_adi,
+    )
+    db.add(n)
+    db.commit()  # denetim kaydından ÖNCE (bkz. _denetim_kaydet: kendi hatasında rollback yapar)
+    _denetim_kaydet(db, kullanici.kullanici_adi, "nobet_notu_ekle", f"#{n.id} [{n.kapi}] {n.metin[:200]}")
+    db.refresh(n)
+    return _nobet_notu_cevap(n, kullanici.id)
+
+
+@app.post("/nobet-defteri/okudum")
+def nobet_notlari_okudum(istek: schemas.NobetNotuOkudum, db: Session = Depends(get_db), kullanici: models.Kullanici = Depends(_personel_girisi_gerekli)):
+    """Verilen notları bu kullanıcı için "okundu" işaretler (tekrarlanabilir)."""
+    _rol_dogrula(kullanici, ROL_YONETICI, ROL_OPERATOR, ROL_GUVENLIK)
+    idler = set(istek.not_idleri)
+    mevcut = {i for (i,) in db.query(models.NobetNotu.id).filter(models.NobetNotu.id.in_(idler)).all()}
+    if mevcut != idler:
+        raise HTTPException(404, f"Not bulunamadı: {sorted(idler - mevcut)}")
+    zaten = {i for (i,) in db.query(models.NobetNotuOkuma.not_id).filter(
+        models.NobetNotuOkuma.kullanici_id == kullanici.id, models.NobetNotuOkuma.not_id.in_(idler)).all()}
+    for not_id in sorted(idler - zaten):
+        db.add(models.NobetNotuOkuma(not_id=not_id, kullanici_id=kullanici.id, kullanici_adi=kullanici.kullanici_adi))
+    db.commit()
+    return {"okundu": sorted(idler)}
+
+
+@app.post("/nobet-defteri/{not_id}/kapat")
+def nobet_notu_kapat(not_id: int, istek: schemas.NobetNotuKapat, db: Session = Depends(get_db), kullanici: models.Kullanici = Depends(_personel_girisi_gerekli)):
+    _rol_dogrula(kullanici, ROL_YONETICI, ROL_OPERATOR, ROL_GUVENLIK)
+    n = db.query(models.NobetNotu).filter(models.NobetNotu.id == not_id).first()
+    if not n:
+        raise HTTPException(404, "Not bulunamadı")
+    if n.kapali:
+        raise HTTPException(409, "Not zaten kapatılmış")
+    n.kapali = True
+    n.kapatan_adi = kullanici.kullanici_adi
+    n.kapanma_zamani = datetime.now()
+    n.kapanis_notu = (istek.kapanis_notu or "").strip() or None
+    db.commit()
+    _denetim_kaydet(db, kullanici.kullanici_adi, "nobet_notu_kapat", f"#{n.id} {n.kapanis_notu or ''}".strip())
+    db.refresh(n)
+    return _nobet_notu_cevap(n, kullanici.id)
+
+
+# ==================================================================
 # DİSK YÖNETİMİ VE VERİTABANI YEDEĞİ
 # ==================================================================
 

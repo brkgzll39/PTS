@@ -776,6 +776,7 @@ function authBasarili(kullanici) {
   rolBazliArayuzuUygula();
   uygulamaVerileriniYukle();
   _pwaKisaYolunuUygula();
+  _nobetDefteriniBaslat();
 }
 
 async function uygulamaVerileriniYukle() {
@@ -2632,6 +2633,198 @@ function icerideCiz() {
     _icerideZamanlayici = null;
   });
 })();
+
+// ---------------------- NÖBET DEFTERİ (2026-10-12) ----------------------
+// Vardiya devir-teslim notları (bkz. main.py "NÖBET DEFTERİ"). Güvenlik ve
+// operatör hesapları girişte okunmamış açık notları kapatılamayan bir pencerede
+// görür; "Okudum" denince okuma kaydedilir. Menüdeki kırmızı rozet okunmamış
+// not sayısını gösterir (2 dakikada bir tazelenir).
+const _NOBET_KAPI_ANAHTARI = "pts_nobet_kapi";
+let _nobetRozetZamanlayici = null;
+let _nobetAraZamanlayici = null;
+let _nobetModalNotIdleri = [];
+
+function _nobetKapiHatirla(kapi) {
+  try { localStorage.setItem(_NOBET_KAPI_ANAHTARI, kapi); } catch (e) { /* özel pencere vb. */ }
+}
+
+function _nobetKapiOku() {
+  try { return localStorage.getItem(_NOBET_KAPI_ANAHTARI) || ""; } catch (e) { return ""; }
+}
+
+function _nobetMetinHtml(metin) {
+  return `<div style="white-space: pre-wrap">${escapeHtml(metin)}</div>`;
+}
+
+function _nobetBaslikHtml(n) {
+  return `<span class="badge bg-secondary me-1">${escapeHtml(n.kapi)}</span>` +
+    `<strong>${escapeHtml(n.olusturan_adi)}</strong>` +
+    (n.vardiya_adi ? ` <span class="text-muted">(${escapeHtml(n.vardiya_adi)} vardiyası)</span>` : "") +
+    ` <span class="text-muted">· ${escapeHtml(tarihFormatla(n.olusturma_zamani))}</span>`;
+}
+
+async function nobetRozetGuncelle() {
+  let okunmamis;
+  try {
+    okunmamis = await apiCagir("/nobet-defteri/okunmamis");
+  } catch (e) {
+    _yuklemeHatasi("Nöbet defteri", e);
+    return null;
+  }
+  document.querySelectorAll(".nobet-rozet").forEach(el => {
+    el.textContent = okunmamis.length;
+    el.classList.toggle("d-none", okunmamis.length === 0);
+  });
+  return okunmamis;
+}
+
+async function nobetOkunmamislariGoster() {
+  if (mevcutRol !== "güvenlik" && mevcutRol !== "operatör") return;
+  const okunmamis = await nobetRozetGuncelle();
+  if (!okunmamis || !okunmamis.length || !window.bootstrap) return;
+  _nobetModalNotIdleri = okunmamis.map(n => n.id);
+  document.getElementById("nobetModalSayi").textContent = okunmamis.length;
+  document.getElementById("nobetModalIcerik").innerHTML = okunmamis.map(n => `
+    <div class="border rounded p-2 mb-2">
+      <div class="small mb-1">${_nobetBaslikHtml(n)}</div>
+      ${_nobetMetinHtml(n.metin)}
+    </div>`).join("");
+  bootstrap.Modal.getOrCreateInstance(document.getElementById("nobetOkunmamisModal")).show();
+}
+
+async function nobetModalOkudum() {
+  const dugme = document.getElementById("nobetOkudumDugmesi");
+  dugme.disabled = true;
+  try {
+    await apiCagir("/nobet-defteri/okudum", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ not_idleri: _nobetModalNotIdleri }) });
+    bootstrap.Modal.getOrCreateInstance(document.getElementById("nobetOkunmamisModal")).hide();
+    nobetRozetGuncelle();
+    if (document.getElementById("nobet-sekme").classList.contains("active")) nobetNotlariYukle();
+  } catch (e) {
+    toastGoster("Okundu kaydedilemedi: " + e.message, "hata");
+  } finally {
+    dugme.disabled = false;
+  }
+}
+
+async function nobetKapilariniYukle() {
+  let kapilar = [];
+  try { kapilar = await apiCagir("/nobet-defteri/kapilar"); } catch (e) { _yuklemeHatasi("Nöbet defteri kapıları", e); }
+  document.getElementById("nobetKapiListesi").innerHTML = kapilar.map(k => `<option value="${escapeHtml(k)}">`).join("");
+  const filtre = document.getElementById("nobetFiltreKapi");
+  const onceki = filtre.value;
+  filtre.innerHTML = '<option value="">Tüm kapılar</option>' + kapilar.map(k => `<option value="${escapeHtml(k)}">${escapeHtml(k)}</option>`).join("");
+  filtre.value = kapilar.includes(onceki) ? onceki : "";
+  const kapiAlani = document.getElementById("nobetKapi");
+  if (!kapiAlani.value) kapiAlani.value = _nobetKapiOku();
+}
+
+async function nobetNotlariYukle() {
+  const params = new URLSearchParams({ durum: document.querySelector('input[name="nobetDurum"]:checked').value });
+  const kapi = document.getElementById("nobetFiltreKapi").value;
+  const ara = document.getElementById("nobetAra").value.trim();
+  if (kapi) params.set("kapi", kapi);
+  if (ara) params.set("ara", ara);
+  let notlar;
+  try {
+    notlar = await apiCagir(`/nobet-defteri?${params}`);
+  } catch (e) {
+    _yuklemeHatasi("Nöbet defteri", e);
+    return;
+  }
+  const yazabilir = mevcutRol !== "izleyici";
+  document.getElementById("nobetListe").innerHTML = notlar.length ? notlar.map(n => {
+    const okuyanlar = n.okuyanlar.length
+      ? "Okuyanlar: " + n.okuyanlar.map(o => `${escapeHtml(o.kullanici_adi)} (${escapeHtml(tarihFormatla(o.okuma_zamani))})`).join(", ")
+      : "Henüz okuyan yok";
+    const kapanis = n.kapali
+      ? `<div class="small text-success mt-1"><i class="bi bi-check-circle"></i> ${escapeHtml(n.kapatan_adi || "")} kapattı · ${escapeHtml(tarihFormatla(n.kapanma_zamani))}${n.kapanis_notu ? ": " + escapeHtml(n.kapanis_notu) : ""}</div>`
+      : yazabilir ? `<div class="mt-1 nobet-kapat-alani">
+          <button type="button" class="btn btn-sm btn-outline-success" onclick="nobetKapatmaAlaniAc(${Number(n.id)})"><i class="bi bi-check2"></i> Kapat (çözüldü)</button>
+          <div class="input-group input-group-sm mt-1 d-none" id="nobetKapat${Number(n.id)}">
+            <input type="text" class="form-control" maxlength="500" placeholder="Kapanış notu (isteğe bağlı), örn. tamir edildi">
+            <button type="button" class="btn btn-success" onclick="nobetNotuKapat(${Number(n.id)})">Onayla</button>
+          </div></div>` : "";
+    const okunmadi = !n.okundu && !n.kapali ? ' <span class="badge bg-danger">okunmadı</span>' : "";
+    return `<div class="border rounded p-2 mb-2 ${n.kapali ? "bg-light" : ""}">
+      <div class="small mb-1">${_nobetBaslikHtml(n)}${okunmadi}</div>
+      ${_nobetMetinHtml(n.metin)}
+      <div class="small text-muted mt-1">${okuyanlar}</div>
+      ${kapanis}
+    </div>`;
+  }).join("") : '<span class="text-muted">Not yok.</span>';
+}
+
+function nobetKapatmaAlaniAc(id) {
+  const alan = document.getElementById(`nobetKapat${id}`);
+  alan.classList.remove("d-none");
+  alan.querySelector("input").focus();
+}
+
+async function nobetNotuKapat(id) {
+  const kapanisNotu = document.querySelector(`#nobetKapat${id} input`).value.trim();
+  try {
+    await apiCagir(`/nobet-defteri/${id}/kapat`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ kapanis_notu: kapanisNotu || null }) });
+    toastGoster("Not kapatıldı", "basari");
+    nobetNotlariYukle();
+    nobetRozetGuncelle();
+  } catch (e) {
+    toastGoster("Not kapatılamadı: " + e.message, "hata");
+  }
+}
+
+async function nobetZiyaretcileriYukle() {
+  const el = document.getElementById("nobetZiyaretciler");
+  try {
+    const veri = await apiCagir("/araclar/iceridedurum");
+    const ziyaretciler = veri.araclar.filter(a => a.ziyaretci);
+    document.getElementById("nobetZiyaretciSayi").textContent = ziyaretciler.length;
+    el.innerHTML = ziyaretciler.length ? ziyaretciler.map(a =>
+      `<div class="${a.uyari ? "text-danger fw-bold" : ""}">${escapeHtml(a.plaka_no)}` +
+      `${a.kim ? " · " + escapeHtml(a.kim) : ""} · ${escapeHtml(_icerideSureMetni(a.sure_dk))}</div>`).join("")
+      : '<span class="text-muted">İçeride ziyaretçi yok.</span>';
+  } catch (e) {
+    _yuklemeHatasi("İçerideki ziyaretçiler", e);
+  }
+}
+
+document.getElementById("nobetNotForm").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const metin = document.getElementById("nobetMetin").value.trim();
+  const kapi = document.getElementById("nobetKapi").value.trim() || "Genel";
+  if (!metin) return;
+  try {
+    await apiCagir("/nobet-defteri", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ metin, kapi }) });
+    _nobetKapiHatirla(kapi);
+    document.getElementById("nobetMetin").value = "";
+    toastGoster("Not kaydedildi", "basari");
+    nobetKapilariniYukle();
+    nobetNotlariYukle();
+  } catch (err) {
+    toastGoster("Not kaydedilemedi: " + err.message, "hata");
+  }
+});
+
+document.getElementById("nobetAra").addEventListener("input", () => {
+  clearTimeout(_nobetAraZamanlayici);
+  _nobetAraZamanlayici = setTimeout(nobetNotlariYukle, 300);
+});
+
+(function () {
+  const dugme = document.querySelector('[data-bs-target="#nobet-sekme"]');
+  if (!dugme) return;
+  dugme.addEventListener("shown.bs.tab", () => {
+    nobetKapilariniYukle();
+    nobetNotlariYukle();
+    nobetZiyaretcileriYukle();
+  });
+})();
+
+function _nobetDefteriniBaslat() {
+  nobetOkunmamislariGoster();
+  clearInterval(_nobetRozetZamanlayici);
+  _nobetRozetZamanlayici = setInterval(nobetRozetGuncelle, 120000);
+}
 
 function filtreParametreleri() {
   const params = new URLSearchParams();
