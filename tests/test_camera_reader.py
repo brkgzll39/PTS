@@ -1512,3 +1512,36 @@ def test_harici_katkili_celiskide_pts_kazanirsa_false(monkeypatch, sahte_api):
     assert gonderilen == ["39 AES 145"]
     assert len(sahte_api.alinan_alanlar) == 1
     assert sahte_api.alinan_alanlar[0]["harici_katkili"] == "False"
+
+
+# ------------------------------------------------------------------
+# Canlı izleme karesi çıkarımı beklemez (2026-10-12, kullanıcı: "canlı izleme
+# ilk açılışta çok zaman kaybediyor")
+# ------------------------------------------------------------------
+
+def test_canli_onizleme_karesi_anpr_cikarimindan_once_hazir(sahte_engine, monkeypatch):
+    """Önceden canlı önizleme JPEG'i ANPR çıkarımından SONRA üretiliyordu: motor
+    tek kilitle sırayla çalıştığı için açılışta (ilk çıkarım yavaş) kameralar uzun
+    süre görüntüsüz kalıyordu. Artık kare çıkarım bitmeden önizlemeye düşer."""
+    import threading
+    cikarim_basladi, birak = threading.Event(), threading.Event()
+
+    class _YavasEngine(_SahteEngine):
+        def tahmin_et(self, frame):
+            cikarim_basladi.set()
+            birak.wait(5)  # ilk (ısınma) çıkarımı gibi yavaş
+            return []
+
+    monkeypatch.setattr(camera_reader, "ANPREngine", _YavasEngine)
+    monkeypatch.setattr(camera_reader, "_paylasilan_motor", None)
+    pipeline = camera_reader.KameraPipeline(video_kaynagi="kullanilmiyor", kamera_id="TEST-CANLI")
+    kare = np.full((240, 320, 3), 128, dtype=np.uint8)
+    isci = threading.Thread(target=pipeline._kareyi_isle, args=(kare,), daemon=True)
+    isci.start()
+    try:
+        assert cikarim_basladi.wait(5)
+        jpeg = pipeline.son_goruntu_al()
+        assert jpeg is not None and jpeg[:2] == b"\xff\xd8", "çıkarım sürerken canlı kare hazır olmalı"
+    finally:
+        birak.set()
+        isci.join(5)

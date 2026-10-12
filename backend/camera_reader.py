@@ -901,6 +901,18 @@ class KameraPipeline:
         dedektore_giden_kare = (
             _kontrast_iyilestirmesi_uygula(frame) if _kontrast_iyilestirme_aktif_mi() else frame
         )
+        # CANLI İZLEME (2026-10-12, kullanıcı: "canlı izleme ilk açılışta çok zaman
+        # kaybediyor"): kare, ANPR çıkarımından ÖNCE JPEG'e kodlanıp canlı önizlemeye
+        # verilir. Önceden çıkarımdan SONRA veriliyordu: motor tek kilitle sırayla
+        # çalıştığı için (aşağısı) açılışta ilk -- yavaş -- çıkarımı bekleyen
+        # kameralar uzun süre görüntüsüz kalıyor, sonrasında da önizleme motor
+        # hızında güncelleniyordu. Aynı JPEG kayıt fotoğrafı için de kullanılır
+        # (ek kodlama yok).
+        _, buf = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 75])
+        jpeg_bytes = buf.tobytes()
+        with self._goruntu_kilit:
+            self._son_goruntu_jpeg = jpeg_bytes
+
         # GPU'ya (varsa DirectML/CUDA) aynı anda yalnızca TEK bir kameranın çıkarım
         # isteği gitmesini garanti eder — bkz. modül başındaki "PAYLAŞILAN ANPR
         # MOTORU" notu (çoklu kamerada GPU sürücüsü çökmesi/sıfırlanması riski).
@@ -1005,10 +1017,6 @@ class KameraPipeline:
         # -- kullanıcının orada sürükleyerek çizdiği bölge tarayıcıda kendi SVG
         # katmanıyla gösteriliyor, kare üzerine sunucu tarafında hiçbir şey
         # basılmasına gerek yok.
-        _, buf = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 75])
-        jpeg_bytes = buf.tobytes()
-        with self._goruntu_kilit:
-            self._son_goruntu_jpeg = jpeg_bytes
         self._son_tespitler = tespitler
 
         simdi = time.time()
