@@ -118,7 +118,10 @@ def onay_dogrula(onay: bytes, komut: int, sira: int) -> None:
         )
     if any(onay[21:27]):
         # Yakalamada bu alan hep sıfırdı; sıfır dışı değer büyük olasılıkla hata kodu.
-        raise HuiduHatasi(f"kart hata kodu döndü: {onay[21:27].hex()}")
+        raise HuiduHatasi(
+            f"kart hata kodu döndü (komut=0x{komut:02X}, sıra=0x{sira & 0xFF:02X}): "
+            f"{onay[21:27].hex()} -- onay: {onay.hex()}"
+        )
 
 
 def _bolge_dogrula(bolge: int) -> None:
