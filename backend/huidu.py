@@ -288,6 +288,13 @@ def gonder(
         bitmapler = {0: metin_bitmap(duzen[:1], genislik), 1: metin_bitmap(duzen[1:2], genislik)}
     else:
         bitmapler = {0: metin_bitmap(satirlar, genislik), 1: bytes(BITMAP_BOYUTU)}
+    baslangic = time.monotonic()
     with _gonderim_kilidi:
+        bekleme = time.monotonic() - baslangic
         for bolge, bitmap in bitmapler.items():
             bolge_gonder(host, port, bolge, bitmap, zaman_asimi)
+    # Gecikme teşhisi: kilit beklemesi (önceki gönderim sürüyordu) ve karta yazma süresi.
+    logger.info(
+        "Huidu panele yazıldı: %s (kilit bekleme %.2f sn, karta yazma %.2f sn)",
+        " / ".join(s for s in satirlar if s), bekleme, time.monotonic() - baslangic - bekleme,
+    )
