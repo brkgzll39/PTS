@@ -43,6 +43,9 @@ _OPERATOR_GORMELI = {
     # HİÇ olmadığı (operatöre açık) için bu yeni sekme de aynı şekilde açık
     # kalmalı -- yalnızca içerik taşındı, yetki modeli DEĞİŞMEDİ.
     "#kontrol-sekme",
+    # 2026-10-12 kullanıcı isteği: "İçerideki Araçlar" -- güvenlik personelinin
+    # vardiya devrinde "içeride kim kaldı" sorusu için; tüm personel rollerine açık.
+    "#iceride-sekme",
 }
 # "Yönetim"e dair, operatörden HER giriş noktasından gizlenmesi gereken sekmeler.
 _OPERATOR_GORMEMELI = {

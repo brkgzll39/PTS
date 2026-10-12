@@ -2532,6 +2532,107 @@ function _tarihSaatDegeriOlustur(tarihId, saatId) {
   });
 })();
 
+// ---------------------- İÇERİDEKİ ARAÇLAR (2026-10-12) ----------------------
+// Şu an içeride olan araçlar (bkz. main.py::_iceride_durumu_hesapla). Sekme
+// açıkken dakikada bir kendiliğinden yenilenir; filtreler (arama/kapı/sadece
+// ziyaretçi) sunucuya gitmeden son veride uygulanır.
+let _icerideVeri = null;
+let _icerideZamanlayici = null;
+
+function _icerideSureMetni(dk) {
+  const gun = Math.floor(dk / 1440), saat = Math.floor((dk % 1440) / 60), dakika = dk % 60;
+  if (gun) return `${gun} gün ${saat} sa`;
+  if (saat) return `${saat} sa ${dakika} dk`;
+  return `${dakika} dk`;
+}
+
+function _icerideGirisMetni(iso) {
+  const t = new Date(iso);
+  const saat = t.toLocaleTimeString("tr-TR", { hour: "2-digit", minute: "2-digit" });
+  const bugun = new Date();
+  if (t.toDateString() === bugun.toDateString()) return saat;
+  const dun = new Date(bugun);
+  dun.setDate(bugun.getDate() - 1);
+  if (t.toDateString() === dun.toDateString()) return `dün ${saat}`;
+  return `${t.toLocaleDateString("tr-TR")} ${saat}`;
+}
+
+async function icerideAraclariYukle() {
+  try {
+    _icerideVeri = await apiCagir("/araclar/iceridedurum");
+  } catch (e) {
+    _yuklemeHatasi("İçerideki araçlar", e);
+    return;
+  }
+  const kapiSecimi = document.getElementById("icerideKapi");
+  const onceki = kapiSecimi.value;
+  const kapilar = [...new Set([..._icerideVeri.araclar, ..._icerideVeri.onaysiz].map(a => a.kamera_id))].sort();
+  kapiSecimi.innerHTML = '<option value="">Tüm kapılar</option>' +
+    kapilar.map(k => `<option value="${escapeHtml(k)}">${escapeHtml(k)}</option>`).join("");
+  kapiSecimi.value = kapilar.includes(onceki) ? onceki : "";
+  icerideCiz();
+}
+
+function icerideCiz() {
+  const v = _icerideVeri;
+  if (!v) return;
+  const sadeceZiyaretci = document.getElementById("icerideSadeceZiyaretci").checked;
+  const kapi = document.getElementById("icerideKapi").value;
+  const ara = document.getElementById("icerideAra").value.trim().toLocaleUpperCase("tr-TR");
+  const araBosluksuz = ara.replace(/\s+/g, "");
+  const uygun = a => (!kapi || a.kamera_id === kapi) &&
+    (!ara || a.plaka_no.replace(/\s+/g, "").includes(araBosluksuz) || (a.kim || "").toLocaleUpperCase("tr-TR").includes(ara));
+  const satirAc = a => `role="button" tabindex="0" onclick="olayDetayAc(${Number(a.kayit_id)})" ` +
+    `onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();olayDetayAc(${Number(a.kayit_id)})}"`;
+  const notHucre = a => a.not_metni ? escapeHtml(a.not_metni) : '<span class="text-muted">-</span>';
+
+  const araclar = v.araclar.filter(a => uygun(a) && (!sadeceZiyaretci || a.ziyaretci));
+  document.getElementById("icerideToplam").textContent = v.iceride_sayisi;
+  document.getElementById("icerideOzet").textContent =
+    `${v.ziyaretci_sayisi} ziyaretçi` + (v.uyarili_sayisi ? ` · ${v.uyarili_sayisi} uzun süredir içeride` : "") +
+    ` · güncelleme ${new Date().toLocaleTimeString("tr-TR", { hour: "2-digit", minute: "2-digit" })}`;
+  document.getElementById("icerideTablo").innerHTML = araclar.length ? araclar.map(a => {
+    const sinif = a.uyari === "gece" ? "table-danger" : a.uyari === "uzun" ? "table-warning" : "";
+    const uyariIkonu = a.uyari === "gece" ? ' <i class="bi bi-moon-stars-fill text-danger" title="Gece yarısını geçti"></i>'
+      : a.uyari === "uzun" ? ' <i class="bi bi-exclamation-triangle-fill text-warning" title="Uzun süredir içeride"></i>' : "";
+    return `<tr class="${sinif}" ${satirAc(a)}>
+      <td class="fw-bold text-nowrap">${escapeHtml(a.plaka_no)}</td>
+      <td>${a.kim ? escapeHtml(a.kim) : '<span class="text-muted">-</span>'}</td>
+      <td>${tipRozeti(a.tip_kodu)}</td>
+      <td class="text-nowrap">${escapeHtml(a.kamera_id)}</td>
+      <td class="text-nowrap">${escapeHtml(_icerideGirisMetni(a.giris_saati))}</td>
+      <td class="text-nowrap">${escapeHtml(_icerideSureMetni(a.sure_dk))}${uyariIkonu}</td>
+      <td>${notHucre(a)}</td></tr>`;
+  }).join("") : `<tr><td colspan="7" class="text-muted text-center py-3">${v.araclar.length ? "Filtreye uyan araç yok" : "İçeride araç yok"}</td></tr>`;
+  document.getElementById("icerideAciklama").textContent = v.uyari_saat
+    ? `Turuncu: ${v.uyari_saat} saatten uzun içerideki ziyaretçi · Kırmızı: gece yarısını geçmiş ziyaretçi · Satıra tıklayınca kayıt detayı açılır.`
+    : "Satıra tıklayınca kayıt detayı açılır.";
+
+  const onaysiz = v.onaysiz.filter(uygun);
+  document.getElementById("icerideOnaysizSayi").textContent = v.onaysiz.length;
+  document.getElementById("icerideOnaysizTablo").innerHTML = onaysiz.length ? onaysiz.map(a => `<tr ${satirAc(a)}>
+      <td class="fw-bold text-nowrap">${escapeHtml(a.plaka_no)}</td>
+      <td>${durumRozeti(a.yetki_durumu)}</td>
+      <td class="text-nowrap">${escapeHtml(a.kamera_id)}</td>
+      <td class="text-nowrap">${escapeHtml(_icerideGirisMetni(a.giris_saati))}</td>
+      <td>${notHucre(a)}</td></tr>`).join("")
+    : '<tr><td colspan="5" class="text-muted text-center py-3">Onaylanmamış giriş yok</td></tr>';
+}
+
+(function () {
+  const dugme = document.querySelector('[data-bs-target="#iceride-sekme"]');
+  if (!dugme) return;
+  dugme.addEventListener("shown.bs.tab", () => {
+    icerideAraclariYukle();
+    clearInterval(_icerideZamanlayici);
+    _icerideZamanlayici = setInterval(icerideAraclariYukle, 60000);
+  });
+  dugme.addEventListener("hidden.bs.tab", () => {
+    clearInterval(_icerideZamanlayici);
+    _icerideZamanlayici = null;
+  });
+})();
+
 function filtreParametreleri() {
   const params = new URLSearchParams();
   const plaka = document.getElementById("filtrePlaka").value.trim();
@@ -5473,6 +5574,9 @@ async function sistemAyarlariYukle() {
       // DİSKİN GERÇEKTEN DOLMASINA KARŞI ERKEN UYARI (2026-09-26, kullanıcı
       // isteği) -- bkz. main.py::_disk_izleme_dongu.
       { key: "disk_uyari_esik_yuzde", label: "Disk doluluk uyarı eşiği (%, 50-99)", tip: "number" },
+      // İÇERİDEKİ ARAÇLAR (2026-10-12) -- bkz. main.py::_iceride_durumu_hesapla.
+      { key: "iceride_ziyaretci_uyari_saat", label: "İçerideki ziyaretçi uyarısı (saat, 0 = kapalı)", tip: "number" },
+      { key: "iceride_takip_gun", label: "İçeride sayılma süresi (gün; son geçişi daha eski araç sayılmaz)", tip: "number" },
     ];
     el.innerHTML = `<form id="sistemAyarlariForm" data-rol-min="yonetici">${satirlar.map(s =>
       `<div class="mb-2"><label class="form-label small">${escapeHtml(s.label)}</label>

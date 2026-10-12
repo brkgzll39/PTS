@@ -703,6 +703,7 @@
          gösteriyor (bkz. app.js::sonGecislerYukle). -->
     <button class="side-link" data-target="#kontrol-sekme"><i class="bi bi-house-door"></i>Kontrol Merkezi</button>
     <button class="side-link" data-target="#panel-sekme"><i class="bi bi-clock-history"></i>Son Geçişler</button>
+    <button class="side-link" data-target="#iceride-sekme"><i class="bi bi-car-front"></i>İçerideki Araçlar</button>
     <button class="side-link" data-target="#kayitlar-sekme"><i class="bi bi-list-ul"></i>Geçiş Kayıtları</button>
     <button class="side-link" data-target="#kisiler-sekme"><i class="bi bi-people"></i>Aboneler ve Kişiler</button>
     <button class="side-link" data-target="#karaliste-sekme"><i class="bi bi-slash-circle"></i>Kara Liste</button>
@@ -731,6 +732,7 @@
     <li class="nav-item"><button class="nav-link active" data-bs-toggle="tab" data-bs-target="#canli-sekme" type="button"><i class="bi bi-grid-3x3-gap-fill me-1"></i>Canlı</button></li>
     <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#kontrol-sekme" type="button"><i class="bi bi-speedometer2 me-1"></i>Kontrol Merkezi</button></li>
     <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#panel-sekme" type="button"><i class="bi bi-clock-history me-1"></i>Son Geçişler</button></li>
+    <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#iceride-sekme" type="button"><i class="bi bi-car-front me-1"></i>İçeride</button></li>
     <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#kayitlar-sekme" type="button"><i class="bi bi-list-columns-reverse me-1"></i>Kayıtlar</button></li>
     <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#kisiler-sekme" type="button"><i class="bi bi-people-fill me-1"></i>Kişiler</button></li>
     <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#karaliste-sekme" type="button"><i class="bi bi-slash-circle me-1"></i>Kara Liste</button></li>
@@ -824,8 +826,8 @@
           </div></div>
         </div>
         <div class="col-6 col-md-3">
-          <div class="card stat-card border-success"><div class="card-body">
-            <div class="text-muted small">Şu An İçeride</div>
+          <div class="card stat-card border-success" role="button" tabindex="0" data-gate-hedef="#iceride-sekme" title="İçerideki araçların listesini aç"><div class="card-body">
+            <div class="text-muted small">Şu An İçeride <i class="bi bi-box-arrow-up-right"></i></div>
             <div class="fs-2 fw-bold text-success" id="istIceride">-</div>
           </div></div>
         </div>
@@ -934,6 +936,50 @@
     </div>
 
     <!-- ================= KAYITLAR ================= -->
+    <!-- İÇERİDEKİ ARAÇLAR (2026-10-12): şu an içeride olan araçlar (yetkili ve
+         görevli onaylı ziyaretçi girişleri) + son 24 saatin onaylanmamış
+         girişleri. Kurallar: main.py::_iceride_durumu_hesapla. -->
+    <div class="tab-pane fade" id="iceride-sekme">
+      <div class="card mb-3">
+        <div class="card-header d-flex flex-wrap align-items-center gap-2">
+          <span><i class="bi bi-car-front me-1"></i>İçerideki Araçlar</span>
+          <span class="badge bg-success" id="icerideToplam">-</span>
+          <span class="small text-muted" id="icerideOzet"></span>
+          <div class="ms-auto d-flex flex-wrap align-items-center gap-2">
+            <input type="search" class="form-control form-control-sm" id="icerideAra" placeholder="Plaka veya isim ara" style="width: 12rem" oninput="icerideCiz()">
+            <select class="form-select form-select-sm" id="icerideKapi" style="width: auto" onchange="icerideCiz()" aria-label="Kapı"></select>
+            <div class="form-check form-switch mb-0">
+              <input class="form-check-input" type="checkbox" id="icerideSadeceZiyaretci" onchange="icerideCiz()">
+              <label class="form-check-label small" for="icerideSadeceZiyaretci">Sadece ziyaretçiler</label>
+            </div>
+            <button type="button" class="btn btn-sm btn-outline-secondary" onclick="icerideAraclariYukle()" title="Yenile"><i class="bi bi-arrow-clockwise"></i></button>
+          </div>
+        </div>
+        <div class="card-body p-0">
+          <div class="table-responsive">
+            <table class="table table-hover table-sm align-middle mb-0">
+              <thead><tr><th>Plaka</th><th>Kim</th><th>Tip</th><th>Kapı</th><th>Giriş</th><th>Süre</th><th>Not</th></tr></thead>
+              <tbody id="icerideTablo"><tr><td colspan="7" class="text-muted text-center py-3">Yükleniyor…</td></tr></tbody>
+            </table>
+          </div>
+        </div>
+        <div class="card-footer small text-muted" id="icerideAciklama"></div>
+      </div>
+      <div class="card">
+        <div class="card-header"><i class="bi bi-question-circle me-1"></i>Onaylanmamış Girişler (son 24 saat)
+          <span class="badge bg-secondary ms-1" id="icerideOnaysizSayi">0</span></div>
+        <div class="card-body p-0">
+          <div class="small text-muted px-3 pt-2">Girişi kaydedilmiş ama ziyaretçi olarak onaylanmamış araçlar: geri çevrilmiş de olabilirler, onay işaretlenmeden içeri alınmış da. İçeri alındıysa satıra tıklayıp ziyaretçi girişini onaylayın.</div>
+          <div class="table-responsive">
+            <table class="table table-hover table-sm align-middle mb-0">
+              <thead><tr><th>Plaka</th><th>Durum</th><th>Kapı</th><th>Giriş</th><th>Not</th></tr></thead>
+              <tbody id="icerideOnaysizTablo"></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+
     <div class="tab-pane fade" id="kayitlar-sekme">
       <!-- Yalnızca rol="güvenlik" girişinde görünür (bkz. app.js::uygulamaVerileriniYukle
            içindeki mevcutRol kontrolü) -- "Güvenlik Personeli Vardiya Filtresi"nin

@@ -7056,3 +7056,99 @@ def test_kamera_gecisi_dunun_notunu_devralmaz(client):
     finally:
         db.close()
     assert _otomatik_kayit(client, plaka, kamera, kare=5)["not_metni"] is None
+
+
+# ------------------------------------------------------------------
+# İçerideki Araçlar (2026-10-12)
+# ------------------------------------------------------------------
+
+def _kayit_ekle_db(plaka, yon, yetki="yetkili", kamera="NIZ-GIRIS", once=timedelta(minutes=5), **ek):
+    """Kaydı doğrudan veritabanına ekler: zamanı serbestçe verebilmek ve
+    çapraz kamera tekrar bastırmasına takılmamak için."""
+    from backend.database import SessionLocal
+    from backend import models as _models
+    db = SessionLocal()
+    try:
+        k = _models.Kayit(plaka_no=plaka, kamera_id=kamera, yon=yon, yetki_durumu=yetki,
+                          tarih_saat=datetime.now() - once, **ek)
+        db.add(k)
+        db.commit()
+        return k.id
+    finally:
+        db.close()
+
+
+def _iceride(client, header):
+    r = client.get("/araclar/iceridedurum", headers=header)
+    assert r.status_code == 200, r.text
+    veri = r.json()
+    return veri, {a["plaka_no"]: a for a in veri["araclar"]}, {a["plaka_no"]: a for a in veri["onaysiz"]}
+
+
+def test_iceride_onayli_ziyaretci_sayilir_ve_cikisi_yetkisiz_olsa_da_cikar(client, operator_header):
+    _kayit_ekle_db("34 ICR 01", "giris", "ziyaretci_onayli", misafir_adi="Ali Kargo", not_metni="Teslimat")
+    veri, araclar, _ = _iceride(client, operator_header)
+    a = araclar["34 ICR 01"]
+    assert (a["kim"], a["tip"], a["ziyaretci"], a["not_metni"]) == ("Ali Kargo", "Ziyaretçi", True, "Teslimat")
+    assert veri["iceride_sayisi"] == len(veri["araclar"]) and veri["ziyaretci_sayisi"] >= 1
+
+    # Ziyaretçinin çıkışı tanımsız plaka olarak "yetkisiz" kaydedilir -- yine de çıkıştır.
+    _kayit_ekle_db("34 ICR 01", "cikis", "yetkisiz", kamera="NIZ-CIKIS", once=timedelta(minutes=1))
+    _, araclar, onaysiz = _iceride(client, operator_header)
+    assert "34 ICR 01" not in araclar and "34 ICR 01" not in onaysiz
+
+
+def test_iceride_bir_kapidan_girip_digerinden_cikan_disarida(client, operator_header):
+    _kayit_ekle_db("34 ICR 02", "giris", kamera="NIZ-GIRIS", once=timedelta(hours=2))
+    _kayit_ekle_db("34 ICR 02", "cikis", kamera="LOJMAN-CIKIS", once=timedelta(hours=1))
+    _, araclar, _ = _iceride(client, operator_header)
+    assert "34 ICR 02" not in araclar
+
+
+def test_iceride_onaylanmamis_giris_ayri_listede_ve_24_saatle_sinirli(client, operator_header):
+    _kayit_ekle_db("34 ICR 03", "giris", "yetkisiz", once=timedelta(hours=2))
+    _kayit_ekle_db("34 ICR 04", "giris", "yetkisiz", once=timedelta(hours=30))
+    _, araclar, onaysiz = _iceride(client, operator_header)
+    assert "34 ICR 03" in onaysiz and "34 ICR 03" not in araclar
+    assert "34 ICR 04" not in onaysiz and "34 ICR 04" not in araclar
+
+
+def test_iceride_takip_suresinden_eski_giris_sayilmaz(client, operator_header):
+    _kayit_ekle_db("34 ICR 05", "giris", once=timedelta(days=40))  # çıkışı okunamamış eski giriş
+    _kayit_ekle_db("34 ICR 06", "giris", once=timedelta(days=20))  # lojmanda günlerdir duran araç
+    _, araclar, _ = _iceride(client, operator_header)
+    assert "34 ICR 05" not in araclar and "34 ICR 06" in araclar
+
+
+def test_iceride_kisi_bilgisi_ve_tipi(client, operator_header):
+    r = client.post("/kisiler", json={"ad_soyad": "Ayşe Demir", "plaka_no": "34 ICR 07", "tip": "abone",
+                                      "daire_departman": "A Blok 5"}, headers=operator_header)
+    assert r.status_code == 200, r.text
+    _kayit_ekle_db("34 ICR 07", "giris", kisi_id=r.json()["id"], once=timedelta(days=2))
+    _, araclar, _ = _iceride(client, operator_header)
+    a = araclar["34 ICR 07"]
+    assert (a["kim"], a["tip"], a["ziyaretci"], a["uyari"]) == ("Ayşe Demir – A Blok 5", "Abone", False, None)
+
+
+def test_iceride_kamera_kisitli_hesap_yalnizca_kendi_kapisindan_gireni_gorur(client, operator_header, monkeypatch):
+    _kayit_ekle_db("34 ICR 08", "giris", kamera="LOJMAN-GIRIS")
+    _kayit_ekle_db("34 ICR 09", "giris", kamera="NIZ-GIRIS")
+    monkeypatch.setattr(pts_main, "_kullanicinin_izinli_kamera_adlari", lambda k: {"LOJMAN-GIRIS"})
+    _, araclar, _ = _iceride(client, operator_header)
+    assert "34 ICR 08" in araclar and "34 ICR 09" not in araclar
+
+
+@pytest.mark.parametrize("giris, simdi, ziyaretci, beklenen", [
+    ("2026-10-12 09:00", "2026-10-12 12:59", True, None),     # 3 sa 59 dk
+    ("2026-10-12 09:00", "2026-10-12 13:00", True, "uzun"),   # 4 saat: turuncu
+    ("2026-10-11 22:00", "2026-10-12 00:30", True, "gece"),   # gece yarısını geçti: kırmızı
+    ("2026-10-10 08:00", "2026-10-12 12:00", False, None),    # personel/abone işaretlenmez
+])
+def test_iceride_ziyaretci_sure_uyarisi(giris, simdi, ziyaretci, beklenen):
+    from backend import models as _models
+    k = _models.Kayit(id=1, plaka_no="34 ICR 10", kamera_id="K", yon="giris",
+                      yetki_durumu="ziyaretci_onayli" if ziyaretci else "yetkili",
+                      tarih_saat=datetime.strptime(giris, "%Y-%m-%d %H:%M"))
+    satir = pts_main._iceride_satiri(k, None, datetime.strptime(simdi, "%Y-%m-%d %H:%M"), uyari_saat=4)
+    assert satir["uyari"] == beklenen
+    assert pts_main._iceride_satiri(k, None, datetime.strptime(simdi, "%Y-%m-%d %H:%M"), uyari_saat=0)["uyari"] is None

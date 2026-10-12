@@ -336,6 +336,12 @@ _VARSAYILAN_AYARLAR = {
     # doluluk YÜZDESİNE bakarak proaktif uyarır.
     "disk_izleme_aktif": True,
     "disk_uyari_esik_yuzde": 90,
+    # İÇERİDEKİ ARAÇLAR (2026-10-12): ziyaretçi bu kadar saatten uzun içerideyse
+    # listede turuncu işaretlenir (gece yarısını geçmişse kırmızı); 0 = kapalı.
+    "iceride_ziyaretci_uyari_saat": 4,
+    # Son geçişi bu kadar günden eski plakalar "içeride" sayılmaz (çıkışı
+    # okunamamış araçlar listede sonsuza kadar kalmasın).
+    "iceride_takip_gun": 30,
 }
 
 
@@ -8214,6 +8220,8 @@ _AYAR_DOGRULAYICILAR = {
     "otomatik_yedek_saklama_gun": lambda v: _ayar_int_dogrula(v, 0, None),
     "disk_izleme_aktif": _ayar_bool_dogrula,
     "disk_uyari_esik_yuzde": lambda v: _ayar_int_dogrula(v, 50, 99),
+    "iceride_ziyaretci_uyari_saat": lambda v: _ayar_int_dogrula(v, 0, 240),
+    "iceride_takip_gun": lambda v: _ayar_int_dogrula(v, 1, 3650),
 }
 
 
@@ -8246,40 +8254,110 @@ def sistem_ayarlarini_guncelle(yeni: dict = Body(...), db: Session = Depends(get
 # ARAÇ İÇERİDE / DIŞARIDA TAKİBİ
 # ==================================================================
 
-@app.get("/araclar/iceridedurum")
-def araclar_iceridedurum(db: Session = Depends(get_db), _: models.Kullanici = Depends(_personel_girisi_gerekli)):
-    """Her plaka için son yetkili geçiş 'giris' ise aracı içeride sayar."""
-    from sqlalchemy import func
-    son_kayit_sq = (
-        db.query(
-            models.Kayit.plaka_no,
-            func.max(models.Kayit.tarih_saat).label("son_zaman"),
-        )
-        .filter(models.Kayit.yetki_durumu == "yetkili")
+# İÇERİDEKİ ARAÇLAR (2026-10-12, kullanıcı isteği). Önceki sürüm yalnızca
+# "yetkili" kayıtlara bakıyordu: ziyaretçiler hiç sayılmıyor, ziyaretçi çıkışları
+# (çoğu "yetkisiz" kaydedilir) görülmüyor, çıkışı okunamamış araç sonsuza kadar
+# içeride kalıyordu. Kurallar:
+#   - Plakanın SON geçişi (durumu ne olursa olsun; çıkışlar her durumda sayılır)
+#     `iceride_takip_gun` içinde ve giriş yönündeyse ve bu giriş yetkili ya da
+#     görevli onaylı ziyaretçi ise araç içeride.
+#   - Son geçişi onaylanmamış bir giriş (yetkisiz/kara liste/süresi dolmuş) olan
+#     ve son 24 saatteki plakalar ayrı "onaylanmamış girişler" listesindedir
+#     (geri çevrilmiş de olabilir, onay işaretlenmeden içeri alınmış da).
+#   - Ana Nizamiye ve Lojman içeriden bağlantılı: bir kapıdan girip diğerinden
+#     çıkan araç dışarıda sayılır (son geçiş tüm kameralar üzerinden bulunur).
+_ICERIDE_SAYILAN_DURUMLAR = ("yetkili", "ziyaretci_onayli")
+_ONAYSIZ_GIRIS_SAAT = 24
+_KISI_TIP_ETIKETI = {"personel": "Personel", "abone": "Abone", "ziyaretci": "Ziyaretçi"}
+
+
+def _iceride_durumu_hesapla(db: Session, simdi: Optional[datetime] = None) -> "tuple[list, list]":
+    """(içerideki kayıtlar, onaylanmamış giriş kayıtları) -- her biri plakanın son kaydı."""
+    simdi = simdi or datetime.now()
+    takip_gun = int(_sistem_ayarlari_oku().get("iceride_takip_gun") or 30)
+    son = (
+        db.query(models.Kayit.plaka_no, func.max(models.Kayit.tarih_saat).label("son_zaman"))
+        .filter(models.Kayit.tarih_saat >= simdi - timedelta(days=takip_gun))
         .group_by(models.Kayit.plaka_no)
         .subquery()
     )
-    iceride = (
+    adaylar = (
         db.query(models.Kayit)
-        .join(
-            son_kayit_sq,
-            (models.Kayit.plaka_no == son_kayit_sq.c.plaka_no)
-            & (models.Kayit.tarih_saat == son_kayit_sq.c.son_zaman),
-        )
-        .filter(models.Kayit.yon == "giris")
+        .join(son, and_(models.Kayit.plaka_no == son.c.plaka_no, models.Kayit.tarih_saat == son.c.son_zaman))
         .all()
     )
+    son_kayit: dict = {}
+    for k in adaylar:  # aynı saniyede iki kayıt varsa sonra ekleneni al
+        if k.plaka_no not in son_kayit or k.id > son_kayit[k.plaka_no].id:
+            son_kayit[k.plaka_no] = k
+    onaysiz_sinir = simdi - timedelta(hours=_ONAYSIZ_GIRIS_SAAT)
+    iceride, onaysiz = [], []
+    for k in son_kayit.values():
+        if k.yon != "giris":
+            continue
+        if k.yetki_durumu in _ICERIDE_SAYILAN_DURUMLAR:
+            iceride.append(k)
+        elif k.tarih_saat >= onaysiz_sinir:
+            onaysiz.append(k)
+    return iceride, onaysiz
+
+
+def _iceride_satiri(k: models.Kayit, kisi: Optional[models.Kisi], simdi: datetime, uyari_saat: int) -> dict:
+    ziyaretci = (kisi is not None and kisi.tip == "ziyaretci") or k.yetki_durumu in ("ziyaretci_onayli", "suresi_dolmus")
+    if kisi is not None:
+        kim = kisi.ad_soyad + (f" – {kisi.daire_departman}" if kisi.daire_departman else "")
+        tip = _KISI_TIP_ETIKETI.get(kisi.tip, kisi.tip)
+    else:
+        kim = k.misafir_adi or ""
+        tip = "Ziyaretçi" if ziyaretci else ""
+    sure_sn = max(0, (simdi - k.tarih_saat).total_seconds())
+    uyari = None
+    if ziyaretci and uyari_saat > 0:
+        if k.tarih_saat.date() < simdi.date():
+            uyari = "gece"   # gece yarısını geçmiş: kırmızı
+        elif sure_sn >= uyari_saat * 3600:
+            uyari = "uzun"   # turuncu
     return {
-        "iceride_sayisi": len(iceride),
-        "araclar": [
-            {
-                "plaka_no": k.plaka_no,
-                "giris_saati": k.tarih_saat.isoformat(),
-                "kamera_id": k.kamera_id,
-                "goruntu_yolu": k.goruntu_yolu,
-            }
-            for k in sorted(iceride, key=lambda x: x.tarih_saat, reverse=True)
-        ],
+        "kayit_id": k.id,
+        "plaka_no": k.plaka_no,
+        "giris_saati": k.tarih_saat.isoformat(),
+        "kamera_id": k.kamera_id,
+        "goruntu_yolu": k.goruntu_yolu,
+        "yetki_durumu": k.yetki_durumu,
+        "kim": kim,
+        "tip": tip,
+        "tip_kodu": kisi.tip if kisi is not None else ("ziyaretci" if ziyaretci else None),
+        "ziyaretci": ziyaretci,
+        "not_metni": k.not_metni,
+        "sure_dk": int(sure_sn // 60),
+        "uyari": uyari,
+    }
+
+
+@app.get("/araclar/iceridedurum")
+def araclar_iceridedurum(db: Session = Depends(get_db), kullanici: models.Kullanici = Depends(_personel_girisi_gerekli)):
+    """Şu an içeride olan araçlar ve son 24 saatin onaylanmamış girişleri (bkz.
+    _iceride_durumu_hesapla). Kamera/nokta kısıtlaması olan hesap yalnızca kendi
+    kameralarından GİREN araçları görür. Vardiya penceresi kısıtı UYGULANMAZ:
+    önceki vardiyada içeri giren aracı görmek bu listenin amacıdır."""
+    simdi = datetime.now()
+    iceride, onaysiz = _iceride_durumu_hesapla(db, simdi)
+    izinli = _kullanicinin_izinli_kamera_adlari(kullanici)
+    if izinli is not None:
+        iceride = [k for k in iceride if k.kamera_id in izinli]
+        onaysiz = [k for k in onaysiz if k.kamera_id in izinli]
+    kisi_idleri = {k.kisi_id for k in iceride + onaysiz if k.kisi_id}
+    kisiler = {x.id: x for x in db.query(models.Kisi).filter(models.Kisi.id.in_(kisi_idleri)).all()} if kisi_idleri else {}
+    uyari_saat = int(_sistem_ayarlari_oku().get("iceride_ziyaretci_uyari_saat") or 0)
+    satir = lambda k: _iceride_satiri(k, kisiler.get(k.kisi_id), simdi, uyari_saat)  # noqa: E731
+    araclar = [satir(k) for k in sorted(iceride, key=lambda x: x.tarih_saat, reverse=True)]
+    return {
+        "iceride_sayisi": len(araclar),
+        "ziyaretci_sayisi": sum(1 for a in araclar if a["ziyaretci"]),
+        "uyarili_sayisi": sum(1 for a in araclar if a["uyari"]),
+        "araclar": araclar,
+        "onaysiz": [satir(k) for k in sorted(onaysiz, key=lambda x: x.tarih_saat, reverse=True)],
+        "uyari_saat": uyari_saat,
     }
 
 

@@ -4547,3 +4547,32 @@ elle eklenen kayıtlarda uygulanmaz (orada not kutusu zaten son nottan önerilir
 Özellik yalnızca YENİ geçişlerde çalışır -- daha önce oluşmuş kayıtlara geriye
 dönük not yazılmaz.
 
+
+## İçerideki Araçlar (2026-10-12, kullanıcı isteği)
+
+Sol menüde **İçerideki Araçlar** sekmesi (Kontrol Merkezi'ndeki "Şu An İçeride"
+kutusuna tıklayınca da açılır): şu an içeride olan araçları plaka, kişi/ziyaretçi
+adı, tip, giriş kapısı, giriş saati, içeride kalma süresi ve notla listeler.
+Arama, kapı filtresi ve "sadece ziyaretçiler" seçeneği vardır; sekme açıkken
+dakikada bir yenilenir. Satıra tıklayınca kayıt detayı (fotoğraf, not, ziyaretçi
+onayı) açılır.
+
+Kurallar (`main.py::_iceride_durumu_hesapla`):
+- Plakanın **son** geçişi giriş yönündeyse ve bu giriş **yetkili** ya da
+  **görevli onaylı ziyaretçi** ise araç içeride sayılır. Çıkışlar durumu ne
+  olursa olsun sayılır (ziyaretçi çıkışları çoğunlukla "yetkisiz" kaydedilir).
+- Ana Nizamiye ve Lojman içeriden bağlantılı kabul edilir: bir kapıdan girip
+  diğerinden çıkan araç dışarıda sayılır.
+- Son geçişi `iceride_takip_gun` (varsayılan 30) günden eski plakalar sayılmaz;
+  çıkışı okunamamış araçlar listede sonsuza kadar kalmaz.
+- Ziyaretçiler `iceride_ziyaretci_uyari_saat` (varsayılan 4) saatten uzun
+  içerideyse turuncu, gece yarısını geçmişse kırmızı işaretlenir; personel ve
+  aboneler işaretlenmez. İki ayar da Sistem Ayarları'ndan değiştirilebilir.
+- Son 24 saatte girişi kaydedilmiş ama onaylanmamış (yetkisiz / kara liste /
+  süresi dolmuş) araçlar ayrı "Onaylanmamış Girişler" bölümündedir ve sayıya
+  dahil edilmez; içeri alındıysa satırdan ziyaretçi girişi onaylanabilir.
+- Kamera/nokta kısıtlaması olan hesaplar yalnızca kendi kameralarından giren
+  araçları görür; vardiya saati kısıtı bu listeye uygulanmaz.
+
+Önceki "Şu An İçeride" sayacı yalnızca yetkili geçişlere bakıyordu: ziyaretçiler
+hiç sayılmıyor, çıkışı okunamamış araçlar sayıda sonsuza kadar kalıyordu.
