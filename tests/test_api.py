@@ -7217,3 +7217,97 @@ def test_nobet_defteri_kapi_filtresi_ve_kapi_onerileri(client, yetkili_header):
     assert client.get("/nobet-defteri", params={"kapi": "Lojman", "ara": "kapı filtresi"}, headers=yetkili_header).json() == []
     kapilar = client.get("/nobet-defteri/kapilar", headers=yetkili_header).json()
     assert kapilar[:3] == ["Genel", "Ana Nizamiye", "Lojman"] and len(kapilar) == len(set(kapilar))
+
+
+# ------------------------------------------------------------------
+# Vardiya çizelgesi -- Lojman A/B/C/D girişsiz (2026-10-12)
+# ------------------------------------------------------------------
+
+@pytest.fixture
+def cizelge_kameralari(monkeypatch):
+    """Lojman ("lojman" adlı) ve Ana Nizamiye kameraları; ayar None => adında lojman geçenler."""
+    monkeypatch.setattr(pts_main, "_kameralari_oku", lambda: [
+        {"id": "kam-loj", "ad": "Lojman"}, {"id": "kam-loj1", "ad": "Lojman1"}, {"id": "kam-niz", "ad": "Nizamıye"},
+    ])
+
+
+def _kayit_zamanli(plaka, kamera, zaman):
+    from backend.database import SessionLocal
+    from backend import models as _models
+    db = SessionLocal()
+    try:
+        k = _models.Kayit(plaka_no=plaka, kamera_id=kamera, yon="giris", yetki_durumu="yetkili", tarih_saat=zaman)
+        db.add(k)
+        db.commit()
+        return k.id
+    finally:
+        db.close()
+
+
+@pytest.mark.parametrize("plaka, zaman, beklenen", [
+    ("34 CZL 01", datetime(2026, 10, 12, 10, 0), "C"),   # sabah
+    ("34 CZL 02", datetime(2026, 10, 12, 15, 0), "D"),   # akşam başlangıcı
+    ("34 CZL 03", datetime(2026, 10, 13, 2, 30), "A"),   # 12 Ekim gecesi, ertesi gün 02:30
+    ("34 CZL 04", datetime(2026, 10, 1, 3, 0), "B"),     # 30 Eylül gecesi (döngüden)
+    ("34 CZL 05", datetime(2026, 11, 1, 8, 0), "C"),     # Kasım: 20 günlük döngü
+])
+def test_lojman_gecisi_cizelgeden_vardiya_alir(client, yetkili_header, cizelge_kameralari, plaka, zaman, beklenen):
+    _kayit_zamanli(plaka, "Lojman1", zaman)
+    r = client.get("/kayitlar", params={"plaka": plaka}, headers=yetkili_header)
+    assert r.status_code == 200, r.text
+    assert r.json()[0]["vardiya_adi"] == beklenen
+    bulunan = client.get("/kayitlar", params={"plaka": plaka, "vardiya_adi": beklenen}, headers=yetkili_header).json()
+    assert len(bulunan) == 1
+    baska = "A" if beklenen != "A" else "B"
+    assert client.get("/kayitlar", params={"plaka": plaka, "vardiya_adi": baska}, headers=yetkili_header).json() == []
+
+
+def test_ana_nizamiye_gecisi_cizelgeden_etiket_almaz(client, yetkili_header, cizelge_kameralari):
+    _kayit_zamanli("34 CZL 06", "Nizamıye", datetime(2026, 10, 12, 10, 0))
+    r = client.get("/kayitlar", params={"plaka": "34 CZL 06"}, headers=yetkili_header).json()
+    assert r[0]["vardiya_adi"] is None
+    assert client.get("/kayitlar", params={"plaka": "34 CZL 06", "vardiya_adi": "C"}, headers=yetkili_header).json() == []
+
+
+def test_raporda_cizelge_vardiyasi_ve_saatleri(client, yetkili_header, cizelge_kameralari):
+    from backend.database import SessionLocal
+    from backend import models as _models
+    kid = _kayit_zamanli("34 CZL 07", "Lojman", datetime(2026, 10, 12, 23, 30))
+    db = SessionLocal()
+    try:
+        kayit = db.get(_models.Kayit, kid)
+        assert pts_main._vardiya_etiketleri_haritasi([kayit], db)[kid] == "A vardiyası (23:00-07:00)"
+    finally:
+        db.close()
+
+
+def test_cizelge_ay_gorunumu(client, operator_header, cizelge_kameralari):
+    r = client.get("/vardiya-cizelgesi", params={"yil": 2026, "ay": 10}, headers=operator_header)
+    assert r.status_code == 200, r.text
+    v = r.json()
+    assert len(v["gunler"]) == 31 and {g["kaynak"] for g in v["gunler"]} == {"liste"}
+    g12 = v["gunler"][11]
+    assert (g12["gun"], g12["sabah"], g12["aksam"], g12["gece"], g12["tatil"]) == ("2026-10-12", "C", "D", "A", "B")
+    assert v["kameralar"] == ["Lojman", "Lojman1"]
+    kasim = client.get("/vardiya-cizelgesi", params={"yil": 2026, "ay": 11}, headers=operator_header).json()
+    assert {g["kaynak"] for g in kasim["gunler"]} == {"otomatik"} and len(kasim["gunler"]) == 30
+
+
+def test_cizelge_ay_listesi_girilir_ve_sonraki_aylar_ondan_devam_eder(client, yetkili_header, operator_header, cizelge_kameralari):
+    # Aralık 2026 için farklı (4 günlük) bir düzen girilir; Ocak 2027 bundan devam etmeli.
+    s, a, g = ("ABCD" * 8)[:31], ("BCDA" * 8)[:31], ("CDAB" * 8)[:31]
+    govde = {"sabah": s, "aksam": a, "gece": g}
+    assert client.put("/vardiya-cizelgesi/2026/12", json=govde, headers=operator_header).status_code == 403
+    assert client.put("/vardiya-cizelgesi/2026/12", json={**govde, "sabah": "A" * 31}, headers=yetkili_header).status_code == 400
+    r = client.put("/vardiya-cizelgesi/2026/12", json=govde, headers=yetkili_header)
+    assert r.status_code == 200, r.text
+    aralik = r.json()["gunler"]
+    assert {x["kaynak"] for x in aralik} == {"liste"} and aralik[0]["sabah"] == "A"
+    ocak = client.get("/vardiya-cizelgesi", params={"yil": 2027, "ay": 1}, headers=yetkili_header).json()["gunler"]
+    # 1 Ocak = döngüde 31 Aralık'tan sonraki gün: son 20 gün 12-31 Aralık, 1 Ocak = 12 Aralık
+    assert (ocak[0]["sabah"], ocak[0]["aksam"], ocak[0]["gece"]) == (s[11], a[11], g[11])
+    # Ekim listesi etkilenmez; girilmeyen Kasım boş kalmaz, Ekim'in döngüsünden devam eder.
+    ekim = client.get("/vardiya-cizelgesi", params={"yil": 2026, "ay": 10}, headers=yetkili_header).json()["gunler"]
+    assert ekim[11]["sabah"] == "C"
+    kasim = client.get("/vardiya-cizelgesi", params={"yil": 2026, "ay": 11}, headers=yetkili_header).json()["gunler"]
+    assert len(kasim) == 30 and (kasim[0]["sabah"], kasim[0]["aksam"], kasim[0]["gece"]) == ("C", "D", "A")

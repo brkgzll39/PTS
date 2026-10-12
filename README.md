@@ -4596,3 +4596,30 @@ Sol menüde **Nöbet Defteri**: bir vardiyanın sonrakilere bıraktığı notlar
 - Defterde ayrıca "İçeride kalan ziyaretçiler" özeti görünür (bkz. İçerideki
   Araçlar).
 - İzleyici rolü notları okuyabilir, yazamaz/kapatamaz.
+
+## Vardiya Çizelgesi — Lojman A/B/C/D Girişsiz (2026-10-12, kullanıcı isteği)
+
+Lojman nizamiyesinde A/B/C/D vardiyaları artık giriş yapıp vardiya seçmeye
+gerek kalmadan, **Bölge Müdürlüğü vardiya çizelgesine** göre belirlenir
+(`backend/vardiya_cizelgesi.py`).
+
+- Günde üç dilim: 07:00-15:00, 15:00-23:00, 23:00-07:00. Gece dilimi o gün
+  23:00'te başlar, **ertesi sabah** 07:00'de biter (2 Ekim 03:00'teki geçiş
+  1 Ekim'in gece vardiyasıdır). Dilim almayan vardiya hafta tatilidir.
+- Çizelge kameralarından (varsayılan: adında "Lojman" geçen kameralar;
+  Sistem → Vardiya Çizelgesi'nden seçilebilir) gelen geçişlerin "Vardiya"
+  etiketi, Kayıtlar ekranındaki vardiya filtresi ve Excel/PDF rapordaki vardiya
+  sütunu ("C vardiyası (07:00-15:00)") çizelgeden gelir. Diğer kameralar
+  (Ana Nizamiye) ve çizelge başlamadan önceki geçişler eskisi gibi vardiya
+  oturumlarından (giriş/çıkış) etiketlenir.
+- Ekim 2026 çizelgesi hazır yüklüdür. Listesi girilmemiş günler, kendisinden
+  önceki son listenin son 20 gününün tekrarıyla hesaplanır (Ekim çizelgesi 20
+  günde bir tekrar ediyor). Bölge Müdürlüğü bir ayı değiştirirse yönetici
+  Sistem → Vardiya Çizelgesi → "Bu ayın listesini gir" ile kağıttaki üç satırı
+  girer; girilen liste her zaman hesaplanandan önce gelir ve sonraki aylar
+  ondan devam eder. Tabloda gri/italik harfler hesaplanan günlerdir.
+- Üst çubuktaki rozet şu an nöbette olan Lojman vardiyasını gösterir.
+- Önerilen hesap düzeni: Lojman bilgisayarında **tek bir operatör hesabı**,
+  kamera erişimi yalnızca Lojman kameraları (Kullanıcılar → kamera erişimi);
+  bu hesap tüm Lojman geçişlerini görür, vardiyaya göre filtreleyebilir.
+  Ana Nizamiye'de kısıtlamasız tek bir operatör hesabı tüm geçişleri görür.

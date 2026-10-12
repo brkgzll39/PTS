@@ -32,7 +32,8 @@ import base64
 import asyncio
 from collections import deque
 from urllib.parse import urlsplit, urlunsplit
-from datetime import datetime, timedelta
+from calendar import monthrange
+from datetime import date, datetime, timedelta
 from typing import Optional, List
 
 # ================================================================
@@ -87,6 +88,7 @@ from backend.database import SQLALCHEMY_DATABASE_URL, sqlite_dosya_yolu
 from backend import excel_export
 from backend import pdf_export
 from backend import led_panel
+from backend import vardiya_cizelgesi
 from backend import lisans as lisans_modulu
 from backend.vardiya_eslestirme import kayitlari_oturumlarla_eslestir
 from backend import kucuk_gorsel
@@ -342,6 +344,10 @@ _VARSAYILAN_AYARLAR = {
     # Son geçişi bu kadar günden eski plakalar "içeride" sayılmaz (çıkışı
     # okunamamış araçlar listede sonsuza kadar kalmasın).
     "iceride_takip_gun": 30,
+    # VARDİYA ÇİZELGESİ (2026-10-12): geçişleri giriş/oturum yerine çizelgeye göre
+    # A/B/C/D etiketlenecek kameraların id'leri. None = adında "lojman" geçen
+    # kameralar (kullanıcının Lojman nizamiyesi).
+    "vardiya_cizelgesi_kameralar": None,
 }
 
 
@@ -2044,6 +2050,104 @@ def _kullanicinin_vardiya_pencereleri(db: Session, kullanici_id: Optional[int], 
     return [(o.giris_zamani, o.cikis_zamani) for o in sorgu.all()]
 
 
+# ================================================================
+# VARDİYA ÇİZELGESİ (2026-10-12, kullanıcı isteği): Lojman nizamiyesinde A/B/C/D
+# vardiyaları giriş yapılmadan Bölge Müdürlüğü çizelgesine göre belirlenir.
+# Çizelge kameralarından (bkz. _cizelge_kamera_adlari) gelen ve çizelgenin bir
+# dilimine düşen geçişin vardiyası YALNIZCA çizelgeden gelir; diğer kameralar
+# ve çizelge başlamadan önceki geçişler eskisi gibi vardiya oturumlarından
+# (giriş/çıkış) etiketlenir. Hesaplama: backend/vardiya_cizelgesi.py.
+# ================================================================
+_cizelge_tamamlanan_gun: Optional[date] = None
+_CIZELGE_ILERI_GUN = 62
+
+
+def _cizelge_kamera_adlari() -> set:
+    """Çizelgeye göre etiketlenen kameraların ADLARI (Kayit.kamera_id adı tutar)."""
+    secili = _sistem_ayarlari_oku().get("vardiya_cizelgesi_kameralar")
+    kameralar = _kameralari_oku()
+    if secili is None:
+        return {k["ad"] for k in kameralar if "lojman" in str(k.get("ad", "")).casefold()}
+    secili = set(secili)
+    return {k["ad"] for k in kameralar if k.get("id") in secili}
+
+
+def _cizelge_listesi(db: Session) -> dict:
+    """kaynak="liste" günler: {gün: (sabah, akşam, gece)}."""
+    gunler: dict = {}
+    for gun, dilim, ad in (
+        db.query(models.VardiyaCizelgeDilimi.gun, models.VardiyaCizelgeDilimi.dilim, models.VardiyaCizelgeDilimi.vardiya_adi)
+        .filter(models.VardiyaCizelgeDilimi.kaynak == "liste").all()
+    ):
+        gunler.setdefault(gun, {})[dilim] = ad
+    return {g: (d["sabah"], d["aksam"], d["gece"]) for g, d in gunler.items() if len(d) == 3}
+
+
+def _cizelge_gunu_yaz(db: Session, gun: date, v: tuple, kaynak: str) -> None:
+    for (kod, baslangic, bitis), ad in zip(vardiya_cizelgesi.dilim_araliklari(gun), v):
+        db.add(models.VardiyaCizelgeDilimi(gun=gun, dilim=kod, baslangic=baslangic, bitis=bitis,
+                                           vardiya_adi=ad, kaynak=kaynak))
+
+
+def _cizelge_tamamla(db: Session, bitis_gunu: Optional[date] = None) -> None:
+    """Listesi girilmemiş günleri (ilk listeden bir gün öncesinden `bitis_gunu`na
+    kadar) 20 günlük döngüden "otomatik" dilimlerle doldurur. Hiç liste yoksa
+    Ekim 2026 çizelgesini yükler. Aynı gün için bir kez çalışır (önbellek)."""
+    global _cizelge_tamamlanan_gun
+    bitis_gunu = bitis_gunu or (date.today() + timedelta(days=_CIZELGE_ILERI_GUN))
+    if _cizelge_tamamlanan_gun is not None and _cizelge_tamamlanan_gun >= bitis_gunu:
+        return
+    liste = _cizelge_listesi(db)
+    if not liste:
+        for gun, v in vardiya_cizelgesi.ekim_2026().items():
+            _cizelge_gunu_yaz(db, gun, v, "liste")
+        db.commit()
+        liste = _cizelge_listesi(db)
+        logger.info("Vardiya çizelgesi: Ekim 2026 Bölge Müdürlüğü çizelgesi yüklendi")
+    dolu = {g for (g,) in db.query(models.VardiyaCizelgeDilimi.gun).distinct().all()}
+    gun = min(liste) - timedelta(days=1)
+    eklenen = 0
+    while gun <= bitis_gunu:
+        if gun not in dolu:
+            v = vardiya_cizelgesi.donguden_hesapla(liste, gun)
+            if v is not None:
+                _cizelge_gunu_yaz(db, gun, v, "otomatik")
+                eklenen += 1
+        gun += timedelta(days=1)
+    if eklenen:
+        db.commit()
+    _cizelge_tamamlanan_gun = bitis_gunu
+
+
+def _cizelge_dilimi_kosulu(vardiya_adi: Optional[str] = None):
+    """Kayit.tarih_saat bir çizelge dilimine (verildiyse o vardiyanın) düşüyor (EXISTS)."""
+    D = models.VardiyaCizelgeDilimi
+    kosullar = [D.baslangic <= models.Kayit.tarih_saat, D.bitis > models.Kayit.tarih_saat]
+    if vardiya_adi:
+        kosullar.append(D.vardiya_adi == vardiya_adi)
+    return select(D.id).where(*kosullar).correlate(models.Kayit).exists()
+
+
+def _cizelge_vardiyalari(db: Session, zamanlar: list) -> dict:
+    """{zaman: (vardiya adı, dilim başlangıcı, dilim bitişi)} -- kapsayan dilim yoksa anahtar yok."""
+    if not zamanlar:
+        return {}
+    _cizelge_tamamla(db)
+    D = models.VardiyaCizelgeDilimi
+    dilimler = (
+        db.query(D.baslangic, D.bitis, D.vardiya_adi)
+        .filter(D.baslangic <= max(zamanlar), D.bitis > min(zamanlar))
+        .all()
+    )
+    sonuc = {}
+    for z in zamanlar:
+        for baslangic, bitis, ad in dilimler:
+            if baslangic <= z < bitis:
+                sonuc[z] = (ad, baslangic, bitis)
+                break
+    return sonuc
+
+
 def _vardiya_oturumu_kosulu(kullanici_id: Optional[int], vardiya_adi: Optional[str]):
     """`Kayit.tarih_saat`in, verilen hesabın (ya da vardiya ADININ) açık bir
     vardiya oturumuna denk düştüğünü ifade eden, veritabanında çalışan bir
@@ -2192,7 +2296,18 @@ def _vardiya_adi_filtresi_uygula(sorgu, vardiya_adi: Optional[str], db: Session)
         return sorgu
     # O isimde hiç oturum yoksa EXISTS her satır için yanlış olur -- yani
     # önceki "hiçbir kayıt döndürme" güvenli davranışı aynen korunur.
-    return sorgu.filter(_vardiya_oturumu_kosulu(None, vardiya_adi))
+    oturum_kosulu = _vardiya_oturumu_kosulu(None, vardiya_adi)
+    kameralar = _cizelge_kamera_adlari()
+    if not kameralar:
+        return sorgu.filter(oturum_kosulu)
+    # Çizelge (2026-10-12): çizelge kamerasının bir dilime düşen geçişi yalnızca
+    # çizelgeye göre; diğerleri eskisi gibi vardiya oturumlarına göre.
+    _cizelge_tamamla(db)
+    cizelge_kamerasi = models.Kayit.kamera_id.in_(kameralar)
+    return sorgu.filter(or_(
+        and_(cizelge_kamerasi, _cizelge_dilimi_kosulu(vardiya_adi)),
+        and_(~and_(cizelge_kamerasi, _cizelge_dilimi_kosulu()), oturum_kosulu),
+    ))
 
 
 def _guvenlik_kayit_filtresi_uygula(sorgu, kullanici: models.Kullanici, db: Session, vardiya_penceresini_atla: bool = False):
@@ -2280,6 +2395,10 @@ def _guvenlik_kayit_gorunur_mu(
         return False
     if kullanici.rol != ROL_GUVENLIK:
         return True
+    if vardiya_adi_filtresi and kayit.kamera_id in _cizelge_kamera_adlari():
+        cizelge = _cizelge_vardiyalari(db, [kayit.tarih_saat]).get(kayit.tarih_saat)
+        if cizelge is not None:
+            return cizelge[0] == vardiya_adi_filtresi
     if vardiya_adi_filtresi:
         pencereler = _kullanicinin_vardiya_pencereleri(db, None, vardiya_adi_filtresi)
     else:
@@ -2381,6 +2500,13 @@ def _kayitlarin_vardiya_adlarini_ekle(kayitlar: list, db: Session) -> None:
             if vardiya_adi not in adlar:
                 adlar.append(vardiya_adi)
         k.vardiya_adi = "/".join(adlar) if adlar else None
+    # Vardiya çizelgesi (2026-10-12): çizelge kameralarının geçişleri çizelgeden.
+    kameralar = _cizelge_kamera_adlari()
+    cizelgeli = [k for k in kayitlar if k.kamera_id in kameralar and k.tarih_saat is not None]
+    cizelge = _cizelge_vardiyalari(db, [k.tarih_saat for k in cizelgeli])
+    for k in cizelgeli:
+        if k.tarih_saat in cizelge:
+            k.vardiya_adi = cizelge[k.tarih_saat][0]
 
 
 def _guvenlik_oturum_baslat(db: Session, kullanici: models.Kullanici) -> None:
@@ -6423,7 +6549,16 @@ def _vardiya_etiketleri_haritasi(kayitlar: list, db: Session) -> dict:
         bitis_metni = cikis.strftime("%H:%M") if cikis else "devam ediyor"
         etiketli.append((giris, cikis, f"{kullanici_adi} ({giris.strftime('%H:%M')}-{bitis_metni})"))
     eslesmeler = kayitlari_oturumlarla_eslestir([(k.id, k.tarih_saat) for k in kayitlar], etiketli)
-    return {k.id: "; ".join(eslesmeler.get(k.id, [])) for k in kayitlar}
+    sonuc = {k.id: "; ".join(eslesmeler.get(k.id, [])) for k in kayitlar}
+    # Vardiya çizelgesi (2026-10-12): çizelge kameralarının geçişleri "C vardiyası (07:00-15:00)".
+    kameralar = _cizelge_kamera_adlari()
+    cizelgeli = [k for k in kayitlar if k.kamera_id in kameralar and k.tarih_saat is not None]
+    cizelge = _cizelge_vardiyalari(db, [k.tarih_saat for k in cizelgeli])
+    for k in cizelgeli:
+        if k.tarih_saat in cizelge:
+            ad, baslangic, bitis = cizelge[k.tarih_saat]
+            sonuc[k.id] = f"{ad} vardiyası ({baslangic:%H:%M}-{bitis:%H:%M})"
+    return sonuc
 
 
 def _kayitlari_rapor_satirlari(kayitlar: list, db: Session) -> list:
@@ -8164,6 +8299,14 @@ def _ayar_float_dogrula(v, min_deger: float = 0.0, max_deger: float = 1.0) -> fl
     return n
 
 
+def _ayar_kamera_listesi_dogrula(v):
+    if v is None:
+        return None
+    if not isinstance(v, list) or not all(isinstance(x, str) and x.strip() for x in v):
+        raise HTTPException(400, f"Kamera id listesi olmalı, alınan değer: {v!r}")
+    return list(dict.fromkeys(x.strip() for x in v))
+
+
 def _ayar_bool_dogrula(v) -> bool:
     if isinstance(v, bool):
         return v
@@ -8222,6 +8365,7 @@ _AYAR_DOGRULAYICILAR = {
     "disk_uyari_esik_yuzde": lambda v: _ayar_int_dogrula(v, 50, 99),
     "iceride_ziyaretci_uyari_saat": lambda v: _ayar_int_dogrula(v, 0, 240),
     "iceride_takip_gun": lambda v: _ayar_int_dogrula(v, 1, 3650),
+    "vardiya_cizelgesi_kameralar": lambda v: _ayar_kamera_listesi_dogrula(v),
 }
 
 
@@ -8491,6 +8635,94 @@ def nobet_notu_kapat(not_id: int, istek: schemas.NobetNotuKapat, db: Session = D
     _denetim_kaydet(db, kullanici.kullanici_adi, "nobet_notu_kapat", f"#{n.id} {n.kapanis_notu or ''}".strip())
     db.refresh(n)
     return _nobet_notu_cevap(n, kullanici.id)
+
+
+# ==================================================================
+# VARDİYA ÇİZELGESİ uç noktaları (2026-10-12) -- bkz. _cizelge_tamamla
+# ==================================================================
+
+def _simdiki_cizelge_vardiyasi(db: Session) -> Optional[dict]:
+    simdi = datetime.now()
+    v = _cizelge_vardiyalari(db, [simdi]).get(simdi)
+    if v is None:
+        return None
+    ad, baslangic, bitis = v
+    return {"vardiya_adi": ad, "baslangic": baslangic.isoformat(), "bitis": bitis.isoformat(),
+            "dilim": f"{baslangic:%H:%M}-{bitis:%H:%M}"}
+
+
+@app.get("/vardiya-cizelgesi/simdi")
+def vardiya_cizelgesi_simdi(db: Session = Depends(get_db), _: models.Kullanici = Depends(_personel_girisi_gerekli)):
+    """Çizelgeye göre şu an nöbette olan vardiya (çizelge kameraları için)."""
+    return {"simdi": _simdiki_cizelge_vardiyasi(db), "kameralar": sorted(_cizelge_kamera_adlari())}
+
+
+@app.get("/vardiya-cizelgesi")
+def vardiya_cizelgesi_ay(
+    yil: int = Query(..., ge=2000, le=2100),
+    ay: int = Query(..., ge=1, le=12),
+    db: Session = Depends(get_db),
+    _: models.Kullanici = Depends(_personel_girisi_gerekli),
+):
+    """Bir ayın çizelgesi: her gün sabah/akşam/gece vardiyası, hafta tatili ve
+    kaynak ("liste" = girilen çizelge, "otomatik" = 20 günlük döngüden)."""
+    ay_sonu = date(yil, ay, monthrange(yil, ay)[1])
+    _cizelge_tamamla(db, max(ay_sonu, date.today() + timedelta(days=_CIZELGE_ILERI_GUN)))
+    D = models.VardiyaCizelgeDilimi
+    satirlar = db.query(D).filter(D.gun >= date(yil, ay, 1), D.gun <= ay_sonu).all()
+    gunler: dict = {}
+    for d in satirlar:
+        g = gunler.setdefault(d.gun, {"gun": d.gun.isoformat(), "kaynak": d.kaynak})
+        g[d.dilim] = d.vardiya_adi
+    for g in gunler.values():
+        g["tatil"] = vardiya_cizelgesi.tatil_vardiyasi((g.get("sabah"), g.get("aksam"), g.get("gece")))
+    return {
+        "yil": yil, "ay": ay,
+        "gunler": [gunler[k] for k in sorted(gunler)],
+        "simdi": _simdiki_cizelge_vardiyasi(db),
+        "kameralar": sorted(_cizelge_kamera_adlari()),
+    }
+
+
+@app.put("/vardiya-cizelgesi/{yil}/{ay}")
+def vardiya_cizelgesi_ay_kaydet(
+    yil: int, ay: int, istek: schemas.VardiyaCizelgesiAy,
+    db: Session = Depends(get_db), kullanici: models.Kullanici = Depends(_personel_girisi_gerekli),
+):
+    """Bir ayın Bölge Müdürlüğü çizelgesini girer/değiştirir (kağıttaki üç satır).
+    O ayın günleri "liste" olur; sonraki otomatik günler yeni listeden yeniden hesaplanır."""
+    global _cizelge_tamamlanan_gun
+    _rol_dogrula(kullanici, ROL_YONETICI)
+    if not (2000 <= yil <= 2100 and 1 <= ay <= 12):
+        raise HTTPException(400, "Geçersiz yıl/ay")
+    try:
+        gunler = vardiya_cizelgesi.ay_listesini_coz(yil, ay, istek.sabah, istek.aksam, istek.gece)
+    except vardiya_cizelgesi.CizelgeHatasi as exc:
+        raise HTTPException(400, str(exc))
+    D = models.VardiyaCizelgeDilimi
+    ay_basi, ay_sonu = min(gunler), max(gunler)
+    db.query(D).filter(D.gun >= ay_basi, D.gun <= ay_sonu).delete(synchronize_session=False)
+    # Döngü dayanağı değişebilir: otomatik günlerin tamamı yeni listelere göre yeniden hesaplanır.
+    db.query(D).filter(D.kaynak == "otomatik").delete(synchronize_session=False)
+    for gun, v in gunler.items():
+        _cizelge_gunu_yaz(db, gun, v, "liste")
+    db.commit()
+    _cizelge_tamamlanan_gun = None
+    _cizelge_tamamla(db)
+    _denetim_kaydet(db, kullanici.kullanici_adi, "vardiya_cizelgesi_kaydet",
+                    f"{yil}-{ay:02d}: {istek.sabah} / {istek.aksam} / {istek.gece}")
+    return vardiya_cizelgesi_ay(yil=yil, ay=ay, db=db, _=kullanici)
+
+
+@app.on_event("startup")
+def _vardiya_cizelgesini_hazirla():
+    db = SessionLocal()
+    try:
+        _cizelge_tamamla(db)
+    except Exception:
+        logger.exception("Vardiya çizelgesi hazırlanamadı")
+    finally:
+        db.close()
 
 
 # ==================================================================

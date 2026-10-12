@@ -632,6 +632,7 @@
        küçük, yuvarlak köşeli beyaz bir "rozet" içine alındı (bkz.
        style.css::.navbar-logo-rozeti). -->
   <span class="navbar-brand mb-0 h1 navbar-logo-rozeti"><img src="/static/img/tpao-logo.png" alt="Türkiye Petrolleri Anonim Ortaklığı"></span>
+  <span class="badge bg-info text-dark me-2 d-none" id="cizelgeVardiyaRozet" title="Vardiya çizelgesine göre şu an nöbette olan vardiya"></span>
   <span class="text-white-50 small d-none d-md-inline me-3"><span id="oturumKullanici"></span> <span id="saatGosterge"></span></span>
   <button class="btn btn-sm btn-outline-light" onclick="oturumKapat()" title="Çıkış yap"><i class="bi bi-box-arrow-right"></i> Çıkış</button>
 </nav>
@@ -1960,6 +1961,43 @@
     <!-- ================= SİSTEM / LOG ================= -->
     <div class="tab-pane fade" id="sistem-sekme">
       <div class="row g-3">
+        <!-- VARDİYA ÇİZELGESİ (2026-10-12): Lojman A/B/C/D vardiyaları girişsiz,
+             Bölge Müdürlüğü çizelgesine göre. Bkz. backend/vardiya_cizelgesi.py. -->
+        <div class="col-12" data-rol-min="yonetici" data-rol-davranis="gizle">
+          <div class="card">
+            <div class="card-header d-flex flex-wrap align-items-center gap-2">
+              <span><i class="bi bi-calendar3 me-1"></i>Vardiya Çizelgesi</span>
+              <span class="small text-muted" id="cizelgeSimdi"></span>
+              <div class="ms-auto d-flex align-items-center gap-2">
+                <input type="month" class="form-control form-control-sm" id="cizelgeAy" onchange="cizelgeYukle()" aria-label="Ay">
+              </div>
+            </div>
+            <div class="card-body">
+              <div class="table-responsive mb-2">
+                <table class="table table-sm table-bordered text-center mb-0 small" id="cizelgeTablo"></table>
+              </div>
+              <div class="small text-muted mb-3">Gri ve italik harfler bu ay için liste girilmediğini, 20 günlük döngüden hesaplandığını gösterir.
+                Gece dilimi (23:00-07:00) o gün 23:00'te başlar, ertesi sabah 07:00'de biter.</div>
+              <details class="mb-3">
+                <summary class="small fw-bold">Bu ayın listesini gir / değiştir</summary>
+                <div class="small text-muted my-2">Kağıttaki üç satırı ayın gün sayısı kadar harfle yazın (ör. <code>DDDAAAAACCCCC…</code>; boşluk bırakılabilir).
+                  Sonraki aylar yeni listeden devam eder.</div>
+                <div class="row g-2">
+                  <div class="col-md-4"><label class="form-label small" for="cizelgeSabah">07:00-15:00</label>
+                    <input type="text" class="form-control form-control-sm font-monospace" id="cizelgeSabah" maxlength="100"></div>
+                  <div class="col-md-4"><label class="form-label small" for="cizelgeAksam">15:00-23:00</label>
+                    <input type="text" class="form-control form-control-sm font-monospace" id="cizelgeAksam" maxlength="100"></div>
+                  <div class="col-md-4"><label class="form-label small" for="cizelgeGece">23:00-07:00</label>
+                    <input type="text" class="form-control form-control-sm font-monospace" id="cizelgeGece" maxlength="100"></div>
+                </div>
+                <button type="button" class="btn btn-sm btn-primary mt-2" onclick="cizelgeKaydet()"><i class="bi bi-save"></i> Listeyi Kaydet</button>
+              </details>
+              <div class="small fw-bold mb-1">Çizelgeye göre etiketlenen kameralar</div>
+              <div id="cizelgeKameralar" class="small"></div>
+              <button type="button" class="btn btn-sm btn-outline-secondary mt-1" onclick="cizelgeKameralariKaydet()"><i class="bi bi-save"></i> Kameraları Kaydet</button>
+            </div>
+          </div>
+        </div>
         <!-- "Güvenlik uyarıları" (2026-09-20): PTS_LICENSE_SECRET/PTS_KAMERA_ANAHTARI/
              PTS_CORS_ORIGINS gibi ayarlar varsayılana sessizce düşerse önceden bu
              yalnızca (kimsenin günlük okumadığı) loglar/pts.log'a bir kez yazılıyordu --

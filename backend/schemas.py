@@ -694,3 +694,12 @@ class NobetNotuKapat(BaseModel):
 
 class NobetNotuOkudum(BaseModel):
     not_idleri: List[int] = Field(min_length=1, max_length=500)
+
+
+# ---------------------- Vardiya çizelgesi (2026-10-12) ----------------------
+
+class VardiyaCizelgesiAy(BaseModel):
+    """Kağıttaki üç satır: her biri ayın gün sayısı kadar A/B/C/D harfi."""
+    sabah: str = Field(max_length=100)   # 07:00-15:00
+    aksam: str = Field(max_length=100)   # 15:00-23:00
+    gece: str = Field(max_length=100)    # 23:00-07:00 (ertesi gün)

@@ -777,6 +777,7 @@ function authBasarili(kullanici) {
   uygulamaVerileriniYukle();
   _pwaKisaYolunuUygula();
   _nobetDefteriniBaslat();
+  _cizelgeBaslat();
 }
 
 async function uygulamaVerileriniYukle() {
@@ -2824,6 +2825,106 @@ function _nobetDefteriniBaslat() {
   nobetOkunmamislariGoster();
   clearInterval(_nobetRozetZamanlayici);
   _nobetRozetZamanlayici = setInterval(nobetRozetGuncelle, 120000);
+}
+
+// ---------------------- VARDİYA ÇİZELGESİ (2026-10-12) ----------------------
+// Lojman A/B/C/D vardiyaları Bölge Müdürlüğü çizelgesinden (bkz.
+// backend/vardiya_cizelgesi.py). Üst çubuktaki rozet şu an nöbette olan
+// vardiyayı gösterir (dakikada bir); yönetici Sistem sekmesinden ay listesini
+// girer ve çizelgeye göre etiketlenecek kameraları seçer.
+let _cizelgeRozetZamanlayici = null;
+
+async function cizelgeRozetGuncelle() {
+  const rozet = document.getElementById("cizelgeVardiyaRozet");
+  try {
+    const v = await apiCagir("/vardiya-cizelgesi/simdi");
+    if (!v.simdi || !v.kameralar.length) { rozet.classList.add("d-none"); return; }
+    rozet.textContent = `Lojman: ${v.simdi.vardiya_adi} vardiyası (${v.simdi.dilim})`;
+    rozet.classList.remove("d-none");
+  } catch (e) {
+    rozet.classList.add("d-none");
+  }
+}
+
+function _cizelgeBaslat() {
+  cizelgeRozetGuncelle();
+  clearInterval(_cizelgeRozetZamanlayici);
+  _cizelgeRozetZamanlayici = setInterval(cizelgeRozetGuncelle, 60000);
+  const ay = document.getElementById("cizelgeAy");
+  if (ay && !ay.value) {
+    const b = new Date();
+    ay.value = `${b.getFullYear()}-${String(b.getMonth() + 1).padStart(2, "0")}`;
+  }
+  if (mevcutRol === "yonetici") cizelgeYukle();
+}
+
+async function cizelgeYukle() {
+  const [yil, ay] = (document.getElementById("cizelgeAy").value || "").split("-").map(Number);
+  if (!yil || !ay) return;
+  let v, kameralar = [], ayarlar = {};
+  try {
+    [v, kameralar, ayarlar] = await Promise.all([
+      apiCagir(`/vardiya-cizelgesi?yil=${yil}&ay=${ay}`),
+      apiCagir("/kameralar").catch(() => []),
+      apiCagir("/sistem/ayarlar").catch(() => ({})),
+    ]);
+  } catch (e) {
+    _yuklemeHatasi("Vardiya çizelgesi", e);
+    return;
+  }
+  document.getElementById("cizelgeSimdi").textContent = v.simdi
+    ? `Şu an: ${v.simdi.vardiya_adi} vardiyası (${v.simdi.dilim})` : "";
+  const bugun = new Date().toISOString().slice(0, 10);
+  const gunNo = g => Number(g.gun.slice(8, 10));
+  const hucre = (g, alan) => {
+    const harf = escapeHtml(g[alan] || "-");
+    const stil = g.kaynak === "otomatik" ? ' class="text-muted fst-italic"' : "";
+    return `<td${stil}${g.gun === bugun ? ' style="outline: 2px solid #0d6efd"' : ""}>${harf}</td>`;
+  };
+  const satir = (etiket, alan) => `<tr><th class="text-nowrap text-start">${etiket}</th>${v.gunler.map(g => hucre(g, alan)).join("")}</tr>`;
+  document.getElementById("cizelgeTablo").innerHTML =
+    `<tr><th></th>${v.gunler.map(g => `<th>${gunNo(g)}</th>`).join("")}</tr>` +
+    satir("07:00-15:00", "sabah") + satir("15:00-23:00", "aksam") + satir("23:00-07:00", "gece") + satir("Hafta tatili", "tatil");
+  document.getElementById("cizelgeSabah").value = v.gunler.map(g => g.sabah || "").join("");
+  document.getElementById("cizelgeAksam").value = v.gunler.map(g => g.aksam || "").join("");
+  document.getElementById("cizelgeGece").value = v.gunler.map(g => g.gece || "").join("");
+  const secili = new Set(v.kameralar);
+  const ayarli = Array.isArray(ayarlar.vardiya_cizelgesi_kameralar);
+  document.getElementById("cizelgeKameralar").innerHTML = kameralar.length ? kameralar.map(k => `
+    <div class="form-check form-check-inline">
+      <input class="form-check-input" type="checkbox" value="${escapeHtml(k.id)}" id="cizelgeKam_${escapeHtml(k.id)}" ${secili.has(k.ad) ? "checked" : ""}>
+      <label class="form-check-label" for="cizelgeKam_${escapeHtml(k.id)}">${escapeHtml(k.ad)}</label>
+    </div>`).join("") + (ayarli ? "" : '<div class="text-muted">Henüz seçilmedi: adında "Lojman" geçen kameralar kullanılıyor.</div>')
+    : '<span class="text-muted">Tanımlı kamera yok.</span>';
+}
+
+async function cizelgeKaydet() {
+  const [yil, ay] = document.getElementById("cizelgeAy").value.split("-").map(Number);
+  const govde = {
+    sabah: document.getElementById("cizelgeSabah").value,
+    aksam: document.getElementById("cizelgeAksam").value,
+    gece: document.getElementById("cizelgeGece").value,
+  };
+  try {
+    await apiCagir(`/vardiya-cizelgesi/${yil}/${ay}`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(govde) });
+    toastGoster("Vardiya çizelgesi kaydedildi", "basari");
+    cizelgeYukle();
+    cizelgeRozetGuncelle();
+  } catch (e) {
+    toastGoster("Çizelge kaydedilemedi: " + e.message, "hata");
+  }
+}
+
+async function cizelgeKameralariKaydet() {
+  const idler = [...document.querySelectorAll("#cizelgeKameralar input:checked")].map(i => i.value);
+  try {
+    await apiCagir("/sistem/ayarlar", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ vardiya_cizelgesi_kameralar: idler }) });
+    toastGoster("Çizelge kameraları kaydedildi", "basari");
+    cizelgeYukle();
+    cizelgeRozetGuncelle();
+  } catch (e) {
+    toastGoster("Kameralar kaydedilemedi: " + e.message, "hata");
+  }
 }
 
 function filtreParametreleri() {

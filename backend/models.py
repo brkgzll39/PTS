@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Float, DateTime, Boolean, ForeignKey, Text, UniqueConstraint
+from sqlalchemy import Column, Integer, String, Float, DateTime, Boolean, ForeignKey, Text, UniqueConstraint, Date
 from sqlalchemy.orm import relationship
 from datetime import datetime
 
@@ -540,3 +540,22 @@ class NobetNotuOkuma(Base):
     okuma_zamani = Column(DateTime, default=datetime.now)
 
     nobet_notu = relationship("NobetNotu", back_populates="okumalar")
+
+
+class VardiyaCizelgeDilimi(Base):
+    """Vardiya çizelgesi (2026-10-12, kullanıcı isteği; bkz. backend/vardiya_cizelgesi.py):
+    bir günün bir dilimi (07-15 sabah, 15-23 akşam, 23-07 gece) ve o dilimde
+    nöbette olan vardiya (A/B/C/D). Çizelge kameralarından (Lojman) gelen
+    geçişlerin vardiya etiketi giriş/oturum yerine buradan gelir. Gün başına 3
+    satır; kaynak "liste" (girilen aylık çizelge) ya da "otomatik" (20 günlük
+    döngüden hesaplanan). Kayıtlarla veritabanında EXISTS ile eşleştirilir."""
+    __tablename__ = "vardiya_cizelge_dilimleri"
+    __table_args__ = (UniqueConstraint("gun", "dilim", name="uq_vardiya_cizelge_dilimi"),)
+
+    id = Column(Integer, primary_key=True, index=True)
+    gun = Column(Date, nullable=False, index=True)
+    dilim = Column(String(10), nullable=False)
+    baslangic = Column(DateTime, nullable=False, index=True)
+    bitis = Column(DateTime, nullable=False, index=True)
+    vardiya_adi = Column(String(10), nullable=False)
+    kaynak = Column(String(10), nullable=False, default="liste")
