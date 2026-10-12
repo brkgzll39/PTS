@@ -34,6 +34,8 @@ from collections import deque
 from urllib.parse import urlsplit, urlunsplit
 from calendar import monthrange
 from concurrent.futures import ThreadPoolExecutor
+
+from starlette.concurrency import run_in_threadpool
 from datetime import date, datetime, timedelta
 from typing import Optional, List
 
@@ -527,8 +529,9 @@ async def _kamera_bekci_dongu() -> None:
                 if any(p.calisiyor for p in _aktif_pipelineler.values()):
                     logger.error("[bekci] Lisans aktif değil/süresi dolmuş — tüm kamera pipeline'ları durduruluyor")
                     for kamera in _kameralari_oku():
-                        _pipeline_durdur(kamera["id"])
-                    _kamera_ariza_alarmi_olustur(
+                        await asyncio.to_thread(_pipeline_durdur, kamera["id"])
+                    await asyncio.to_thread(
+                        _kamera_ariza_alarmi_olustur,
                         "LİSANS", "lisans_durumu",
                         "LİSANS SÜRESİ DOLDU/GEÇERSİZ: tüm kamera pipeline'ları durduruldu. "
                         "Devam etmek için Sistem > Lisans ekranından geçerli bir anahtar girin.",
@@ -544,10 +547,13 @@ async def _kamera_bekci_dongu() -> None:
 
                 if p is None or not p.calisiyor or not p.thread_canli_mi():
                     logger.warning("[bekci] Kamera pipeline çalışmıyor/çökmüş, yeniden başlatılıyor: %s", kamera["ad"])
-                    _pipeline_durdur(kid)
+                    # OLAY DÖNGÜSÜNÜ KİLİTLEMESİN (2026-10-12, kullanıcı: "sistemin çalışmasını yavaşlatan şeyler var mı"): pipeline durdurma
+                    # thread join'iyle 3 sn'ye kadar bekleyebiliyor.
+                    await asyncio.to_thread(_pipeline_durdur, kid)
                     basarili = await asyncio.get_event_loop().run_in_executor(None, _pipeline_baslat, kamera)
                     if not basarili:
-                        _kamera_ariza_alarmi_olustur(
+                        await asyncio.to_thread(
+                            _kamera_ariza_alarmi_olustur,
                             kamera["ad"], kid,
                             f"KAMERA ÇEVRİMDIŞI: {kamera['ad']} pipeline'ı başlatılamadı (log dosyasını kontrol edin)",
                         )
@@ -557,7 +563,8 @@ async def _kamera_bekci_dongu() -> None:
                 if durum["donmus"]:
                     ilk = _kamera_donuk_baslangic.setdefault(kid, time.monotonic())
                     if time.monotonic() - ilk >= KAMERA_UZUN_SURELI_DONMA_ESIK_SN:
-                        _kamera_ariza_alarmi_olustur(
+                        await asyncio.to_thread(
+                            _kamera_ariza_alarmi_olustur,
                             kamera["ad"], kid,
                             f"KAMERA GÖRÜNTÜSÜ DONDU: {kamera['ad']} {KAMERA_UZUN_SURELI_DONMA_ESIK_SN:.0f} sn üzerinde taze kare almıyor",
                         )
@@ -578,32 +585,39 @@ async def _kamera_bekci_dongu() -> None:
 GORUNTU_TEMIZLIK_ARALIK_SN = 6 * 3600  # her 6 saatte bir kontrol et
 
 
+def _goruntu_temizlik_bir_tur() -> None:
+    gun = int(_sistem_ayarlari_oku().get("goruntu_saklama_gun") or 0)
+    if gun > 0:
+        db = SessionLocal()
+        try:
+            silinen, sinir = _goruntu_temizle_calistir(gun, db)
+            if silinen:
+                logger.info(
+                    "Görüntü temizliği (otomatik): %d dosya silindi (>%d gün, sınır: %s)",
+                    silinen, gun, sinir.isoformat(),
+                )
+        finally:
+            db.close()
+    # Orijinali silinmiş (saklama süresi, kayıt silme, düşük güven
+    # temizliği vb.) küçük resimleri de temizle -- bkz. kucuk_gorsel.py.
+    yetim = kucuk_gorsel.yetim_kucuk_gorselleri_temizle(GORUNTU_KLASORU)
+    if yetim:
+        logger.info("Görüntü temizliği: %d yetim küçük resim silindi", yetim)
+    eski_rapor = _eski_gecici_raporlari_temizle()
+    if eski_rapor:
+        logger.info("Geçici rapor/yedek temizliği: %d eski dosya silindi (disa_aktarilanlar/)", eski_rapor)
+
+
 async def _goruntu_temizlik_dongu() -> None:
     """Sonsuz döngü: periyodik olarak sistem ayarlarındaki saklama süresine
     göre eski görüntü dosyalarını temizler. Ayar 0 veya negatifse otomatik
     temizlik devre dışı bırakılmış demektir (manuel uç nokta yine çalışır)."""
     while True:
         try:
-            gun = int(_sistem_ayarlari_oku().get("goruntu_saklama_gun") or 0)
-            if gun > 0:
-                db = SessionLocal()
-                try:
-                    silinen, sinir = _goruntu_temizle_calistir(gun, db)
-                    if silinen:
-                        logger.info(
-                            "Görüntü temizliği (otomatik): %d dosya silindi (>%d gün, sınır: %s)",
-                            silinen, gun, sinir.isoformat(),
-                        )
-                finally:
-                    db.close()
-            # Orijinali silinmiş (saklama süresi, kayıt silme, düşük güven
-            # temizliği vb.) küçük resimleri de temizle -- bkz. kucuk_gorsel.py.
-            yetim = kucuk_gorsel.yetim_kucuk_gorselleri_temizle(GORUNTU_KLASORU)
-            if yetim:
-                logger.info("Görüntü temizliği: %d yetim küçük resim silindi", yetim)
-            eski_rapor = _eski_gecici_raporlari_temizle()
-            if eski_rapor:
-                logger.info("Geçici rapor/yedek temizliği: %d eski dosya silindi (disa_aktarilanlar/)", eski_rapor)
+            # OLAY DÖNGÜSÜNÜ KİLİTLEMESİN (2026-10-12, kullanıcı: "sistemin çalışmasını yavaşlatan şeyler var mı"): binlerce dosya
+            # silme ve görüntü klasörünün taranması açılışta ve 6 saatte bir
+            # tüm sunucuyu bekletiyordu.
+            await asyncio.to_thread(_goruntu_temizlik_bir_tur)
         except Exception as exc:
             logger.error("[görüntü-temizlik] Otomatik temizlik döngüsünde hata: %s", exc, exc_info=True)
         await asyncio.sleep(GORUNTU_TEMIZLIK_ARALIK_SN)
@@ -934,7 +948,9 @@ async def _otomatik_yedek_dongu() -> None:
                     db_yolu = sqlite_dosya_yolu()
                     klasor = _otomatik_yedek_klasoru_al(ayarlar)
                     if os.path.exists(db_yolu):
-                        _otomatik_yedek_uret_ve_dogrula(db_yolu, klasor)
+                        # OLAY DÖNGÜSÜNÜ KİLİTLEMESİN (2026-10-12, kullanıcı: "sistemin çalışmasını yavaşlatan şeyler var mı"): tam veritabanı
+                        # kopyası + bütünlük doğrulaması açılışta ve günde bir.
+                        await asyncio.to_thread(_otomatik_yedek_uret_ve_dogrula, db_yolu, klasor)
                         # gün başarısız da olsa bir dahaki 6 saatlik kontrolde
                         # HEMEN tekrar denenmesin diye (ör. disk o an geçici
                         # olarak doluysa) gün işaretlenir -- bir sonraki gün
@@ -943,7 +959,7 @@ async def _otomatik_yedek_dongu() -> None:
                         son_yedek_gunu = bugun
                         try:
                             saklama_gun = int(ayarlar.get("otomatik_yedek_saklama_gun", 30) or 0)
-                            silinen = _eski_otomatik_yedekleri_temizle(klasor, saklama_gun)
+                            silinen = await asyncio.to_thread(_eski_otomatik_yedekleri_temizle, klasor, saklama_gun)
                             if silinen:
                                 logger.info("Eski otomatik yedeklerden %d tanesi temizlendi (>%d gün)", silinen, saklama_gun)
                         except (TypeError, ValueError, OSError) as exc:
@@ -1075,7 +1091,7 @@ async def _disk_izleme_dongu() -> None:
     YENİDEN uyarabilmek için kayıt sıfırlanır."""
     while True:
         try:
-            _disk_izleme_bir_kontrol(_sistem_ayarlari_oku())
+            await asyncio.to_thread(_disk_izleme_bir_kontrol, _sistem_ayarlari_oku())
         except Exception as exc:
             logger.error("[disk-izleme] döngüsünde beklenmeyen hata: %s", exc, exc_info=True)
         await asyncio.sleep(DISK_IZLEME_ARALIK_SN)
@@ -2569,6 +2585,20 @@ def _vardiya_otomatik_kapama_calistir(db: Session) -> int:
     return len(acik_ve_gecmis)
 
 
+def _vardiya_otomatik_kapama_bir_tur() -> None:
+    db = SessionLocal()
+    try:
+        kapatilan = _vardiya_otomatik_kapama_calistir(db)
+        if kapatilan:
+            logger.info(
+                "Vardiya otomatik kapama: %d oturum giriş saatinden %d saat sonrasına "
+                "ayarlanarak kapatıldı (unutulan çıkış)",
+                kapatilan, VARDIYA_MAKS_SURE_SAAT,
+            )
+    finally:
+        db.close()
+
+
 async def _vardiya_otomatik_kapama_dongu() -> None:
     """Sonsuz döngü: "unutulan çıkış" (bkz. VardiyaOturumu docstring'i ve
     yukarıdaki _guvenlik_oturum_baslat) için, bir SONRAKİ girişe kadar
@@ -2591,17 +2621,7 @@ async def _vardiya_otomatik_kapama_dongu() -> None:
     burada yalnızca periyodik çağrı ve hata izolasyonu var."""
     while True:
         try:
-            db = SessionLocal()
-            try:
-                kapatilan = _vardiya_otomatik_kapama_calistir(db)
-                if kapatilan:
-                    logger.info(
-                        "Vardiya otomatik kapama: %d oturum giriş saatinden %d saat sonrasına "
-                        "ayarlanarak kapatıldı (unutulan çıkış)",
-                        kapatilan, VARDIYA_MAKS_SURE_SAAT,
-                    )
-            finally:
-                db.close()
+            await asyncio.to_thread(_vardiya_otomatik_kapama_bir_tur)
         except Exception as exc:
             logger.error("[vardiya-otomatik-kapama] Döngüde hata: %s", exc, exc_info=True)
         await asyncio.sleep(VARDIYA_OTOMATIK_KAPAMA_ARALIK_SN)
@@ -2691,7 +2711,7 @@ async def _oturum_temizlik_dongu() -> None:
     while True:
         await asyncio.sleep(OTURUM_TEMIZLIK_ARALIK_SN)
         try:
-            silinen = _oturum_temizlik_bir_kontrol()
+            silinen = await asyncio.to_thread(_oturum_temizlik_bir_kontrol)
             if silinen:
                 logger.debug("Süresi dolmuş oturum kayıtları temizlendi: %d", silinen)
         except Exception as exc:
@@ -5226,13 +5246,12 @@ def _kayit_olustur_ve_bildir(db: Session, plaka_no: str, kamera_id: str, yon: st
         # GETİRMİYOR.
         "goruntu_yolu": kayit.goruntu_yolu,
     }
-    try:
-        loop = asyncio.get_event_loop()
-        if loop.is_running():
-            asyncio.ensure_future(_sse_yayinla("kayit", sse_veri, db))
-            asyncio.ensure_future(_webhook_bildir(db, yetki, sse_veri))
-    except RuntimeError:
-        pass
+    # Canlı ekranlar (SSE) ve webhook/Telegram. DÜZELTME (2026-10-12): önceden
+    # yalnızca olay döngüsü iş parçacığında çalışıyordu; arayüzden elle girilen
+    # kayıtlar (POST /kayitlar, threadpool) için get_event_loop() RuntimeError
+    # verip bildirim SESSİZCE atlanıyordu. Artık hangi iş parçacığından olursa
+    # olsun ana döngüye gönderilir; isteğin db oturumu yerine kendi oturumunu açar.
+    _olay_dongusunde_calistir(_kayit_bildirimlerini_yayinla(yetki, sse_veri))
 
     # TUTARLILIK DÜZELTMESİ (2026-09-22 kod incelemesi): kayit_duzenle'deki
     # AYNI kök nedenle -- bu fonksiyon (POST /kayitlar VE POST /kayitlar/
@@ -5465,10 +5484,54 @@ async def _gunluk_ozet_dongu() -> None:
     onun docstring'i)."""
     while True:
         try:
-            _gunluk_ozet_bir_kontrol(datetime.now())
+            await asyncio.to_thread(_gunluk_ozet_bir_kontrol, datetime.now())
         except Exception as exc:
             logger.error("[gunluk-ozet] Döngüde beklenmeyen hata: %s", exc, exc_info=True)
         await asyncio.sleep(GUNLUK_OZET_KONTROL_ARALIK_SN)
+
+
+_ana_olay_dongusu: Optional[asyncio.AbstractEventLoop] = None
+
+
+@app.on_event("startup")
+async def _ana_olay_dongusunu_kaydet():
+    global _ana_olay_dongusu
+    _ana_olay_dongusu = asyncio.get_running_loop()
+
+
+def _olay_dongusunde_calistir(coro) -> None:
+    """Bir coroutine'i ana olay döngüsünde çalıştırır: olay döngüsü
+    iş parçacığından çağrıldıysa ensure_future, başka bir iş parçacığından
+    (threadpool, LED/arka plan) çağrıldıysa run_coroutine_threadsafe."""
+    try:
+        asyncio.get_running_loop()
+        asyncio.ensure_future(coro)
+        return
+    except RuntimeError:
+        pass
+    try:
+        # Starlette/FastAPI threadpool iş parçacığı (senkron uç noktalar,
+        # run_in_threadpool): isteğin kendi olay döngüsüne gönder.
+        import anyio.from_thread
+        anyio.from_thread.run_sync(asyncio.ensure_future, coro)
+        return
+    except RuntimeError:
+        pass  # anyio iş parçacığı değil (ör. LED kuyruğu): kayıtlı ana döngü
+    if _ana_olay_dongusu is not None and _ana_olay_dongusu.is_running():
+        asyncio.run_coroutine_threadsafe(coro, _ana_olay_dongusu)
+    else:
+        coro.close()  # döngü yok (ör. betik/test): sessizce atla, "never awaited" uyarısı verme
+
+
+async def _kayit_bildirimlerini_yayinla(yetki: str, sse_veri: dict) -> None:
+    db = SessionLocal()
+    try:
+        await _sse_yayinla("kayit", sse_veri, db)
+        await _webhook_bildir(db, yetki, sse_veri)
+    except Exception:
+        logger.exception("Kayıt bildirimi (SSE/webhook) gönderilemedi")
+    finally:
+        db.close()
 
 
 async def _webhook_bildir(db: Session, yetki_durumu: str, veri: dict) -> None:
@@ -5611,7 +5674,7 @@ async def kayit_ekle_otomatik(
                 "plaka=%s güven=%.3f (genel eşik=%.3f, bilinen araç eşiği=%.3f)",
                 kamera_id, plaka_no, guven_skoru, esik, bilinen_esik,
             )
-            return _kaydi_olustur_gorseli_koru(db, plaka_no, kamera_id, yon, guven_skoru, goruntu_yolu,
+            return await run_in_threadpool(_kaydi_olustur_gorseli_koru, db, plaka_no, kamera_id, yon, guven_skoru, goruntu_yolu,
                                                dogrulama_kare_sayisi, farkli_okuma_sayisi,
                                                harici_katkili=harici_katkili)
 
@@ -5632,7 +5695,7 @@ async def kayit_ekle_otomatik(
             "esik": esik,
         })
 
-    return _kaydi_olustur_gorseli_koru(db, plaka_no, kamera_id, yon, guven_skoru, goruntu_yolu,
+    return await run_in_threadpool(_kaydi_olustur_gorseli_koru, db, plaka_no, kamera_id, yon, guven_skoru, goruntu_yolu,
                                        dogrulama_kare_sayisi, farkli_okuma_sayisi,
                                        harici_katkili=harici_katkili)
 
@@ -7999,7 +8062,8 @@ async def kamera_saglik_kontrol(kamera_id: str, kullanici: models.Kullanici = De
         import socket
         t0 = time.monotonic()
         try:
-            s = socket.create_connection((host, port), timeout=3)
+            # Olay döngüsünü 3 sn'ye kadar bekletmesin (2026-10-12).
+            s = await asyncio.get_event_loop().run_in_executor(None, lambda: socket.create_connection((host, port), timeout=3))
             s.close()
             tcp_ok = True
             gecikme_ms = round((time.monotonic() - t0) * 1000, 1)

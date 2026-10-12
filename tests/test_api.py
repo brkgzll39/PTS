@@ -7341,3 +7341,46 @@ def test_arac_kaydi_led_gonderimini_beklemez(client, yetkili_header, monkeypatch
     assert gonderilen and gonderilen[0][1] == "34 LED 77"
     durum = client.get("/led/durum", headers=yetkili_header).json()
     assert any("34 LED 77" in m["mesaj"] and m["basarili"] for m in durum["son_mesajlar"])
+
+
+def test_elle_girilen_kayit_canli_bildirimi_tetikler(client, yetkili_header, monkeypatch):
+    """2026-10-12: POST /kayitlar senkron uç nokta (threadpool); kayıt akışındaki
+    asyncio.get_event_loop() orada RuntimeError verdiği için canlı ekran (SSE) ve
+    webhook bildirimi SESSİZCE atlanıyordu."""
+    import threading
+    gelen, olay = [], threading.Event()
+
+    async def sahte_sse(olay_turu, veri, db=None):
+        gelen.append((olay_turu, veri["plaka_no"]))
+        olay.set()
+
+    monkeypatch.setattr(pts_main, "_sse_yayinla", sahte_sse)
+    r = client.post("/kayitlar", json={"plaka_no": "34 SSE 01", "kamera_id": "TEST", "yon": "giris"},
+                    headers=yetkili_header)
+    assert r.status_code == 200, r.text
+    assert olay.wait(5), "canlı bildirim gönderilmedi"
+    assert ("kayit", "34 SSE 01") in gelen
+
+
+def test_olay_dongusunde_calistir_baska_is_parcaciginda():
+    import asyncio
+    import threading
+    dongu = asyncio.new_event_loop()
+    t = threading.Thread(target=dongu.run_forever, daemon=True)
+    t.start()
+    eski = pts_main._ana_olay_dongusu
+    pts_main._ana_olay_dongusu = dongu
+    bitti = threading.Event()
+
+    async def is_():
+        assert threading.current_thread() is t
+        bitti.set()
+
+    try:
+        pts_main._olay_dongusunde_calistir(is_())  # test iş parçacığından (döngü yok)
+        assert bitti.wait(5)
+    finally:
+        pts_main._ana_olay_dongusu = eski
+        dongu.call_soon_threadsafe(dongu.stop)
+        t.join(5)
+        dongu.close()
