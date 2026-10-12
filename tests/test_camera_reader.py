@@ -29,7 +29,10 @@ class _SahteSonuc:
     def __init__(self, plaka="34ABC123", guven=0.95):
         self.plaka_no = plaka
         self.guven_skoru = guven
-        self.kutu = (10, 10, 100, 60)
+        # Merkez (55,35); testlerin 100x100'lük karelerinde kenara DEĞMEZ --
+        # kenara değen kutular yalnızca destekleyici oy sayılır (bkz.
+        # camera_reader._kutu_kenarda_mi).
+        self.kutu = (20, 20, 90, 50)
 
 
 class _SahteEngine:
@@ -1565,3 +1568,183 @@ def test_ilk_kare_gelene_kadar_donmus_degil_baglaniyor(sahte_engine):
     assert (d["baglaniyor"], d["donmus"]) == (False, False)
     p._son_kare_zamani = _time.monotonic() - 15  # 15 sn kare yok: donmuş
     assert p.durum_bilgisi()["donmus"] is True
+
+
+# ---------------------------------------------------------------------------
+# 2026-10-12: biçime göre karakter düzeltme, kenardaki kesik plakalar ve
+# kameranın kendi okumasıyla uyuşmazlık
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("ham, beklenen", [
+    ("34ZX7528", "34 ZK 7528"),   # X Türk plakasında yok -- loglardaki gerçek vaka
+    ("3AABC123", None),           # il kodu düzeltilmez
+    ("34ABC12B", "34 ABC 128"),   # son rakamlarda B -> 8
+    ("06D01918", "06 DO 1918"),   # harf konumunda 0 -> O
+    ("05QQT919", None),           # iki karakter değişmeli -- tahmin yapılmaz
+    ("C0BDT778", None),           # C rakama çevrilemez
+    ("2ACA999", None),            # baştan kesik okuma -- uydurma il koduna ('24') dönüşmemeli
+    ("34A1B12", None),            # iki farklı tek-değişiklikli aday -- belirsiz
+    ("34ABC123", None),           # zaten geçerli: düzeltme gerekmez
+    ("39AEA9", None),             # kesik '39 AEA 9..' -> '39 AE 49' resmi kalıba uymaz
+    ("301202", None),             # harf grubu tamamen rakamdan uydurulmaz
+    ("06FVW494", "06 FVV 494"),   # W Türk plakasında yok
+])
+def test_plaka_bicime_gore_duzelt(ham, beklenen):
+    assert camera_reader.plaka_bicime_gore_duzelt(ham) == beklenen
+
+
+def test_plaka_bicime_gore_duzelt_yuksek_guvenli_karakteri_degistirmez():
+    dusuk = [0.99, 0.99, 0.98, 0.55, 0.99, 0.99, 0.99, 0.99]
+    yuksek = [0.99, 0.99, 0.98, 0.97, 0.99, 0.99, 0.99, 0.99]
+    assert camera_reader.plaka_bicime_gore_duzelt("34ZX7528", dusuk) == "34 ZK 7528"
+    assert camera_reader.plaka_bicime_gore_duzelt("34ZX7528", yuksek) is None
+    # Karakterlerle hizalanamayan güven listesi kapıyı devre dışı bırakır.
+    assert camera_reader.plaka_bicime_gore_duzelt("34ZX7528", [0.99] * 3) == "34 ZK 7528"
+
+
+def test_anpr_karakter_guvenleri_metinle_hizalanir():
+    from backend import anpr_engine
+    assert anpr_engine._karakter_guvenleri("34ZX7528", [0.9] * 7 + [0.8, 0.1, 0.1]) == [0.9] * 7 + [0.8]
+    assert anpr_engine._karakter_guvenleri("34 ZX", [0.9, 0.8, 0.0, 0.7, 0.6]) == [0.9, 0.8, 0.7, 0.6]
+    assert anpr_engine._karakter_guvenleri("34ZX", 0.9) is None
+    assert anpr_engine._karakter_guvenleri("34ZX", [0.9]) is None
+
+
+@pytest.mark.parametrize("kutu, beklenen", [
+    ((20, 20, 90, 50), False),
+    ((0, 20, 90, 50), True),
+    ((20, 2, 90, 50), True),
+    ((20, 20, 97, 50), True),
+    ((20, 20, 90, 99), True),
+    (None, False),
+])
+def test_kutu_kenarda_mi(kutu, beklenen):
+    assert camera_reader._kutu_kenarda_mi(kutu, 100, 100) is beklenen
+
+
+def test_destekleyici_okuma_tek_basina_kazanan_olamaz():
+    b = camera_reader.PlakaOyBirikimi("34 ZK 7528", 0.95, 0.0, agirlik=0.5, destekleyici=True)
+    k = b.kazanan()
+    assert k["yalniz_destekleyici"] is True
+    assert k["harici_katkili"] is False
+
+    # Doğrudan okunan bir metin, destekleyici metin daha çok oy alsa bile kazanır;
+    # destekleyici oylar aynı metne eklenince onu güçlendirir.
+    b.ekle("34 ZK 7528", 0.95, 0.1, agirlik=0.5, destekleyici=True)
+    b.ekle("34 ZK 7528", 0.95, 0.2, agirlik=0.5, destekleyici=True)
+    b.ekle("34 ZH 7528", 0.90, 0.3)
+    k = b.kazanan()
+    assert k["yalniz_destekleyici"] is False
+    assert k["plaka"] == "34 ZH 7528"
+    b.ekle("34 ZK 7528", 0.97, 0.4)
+    assert b.kazanan()["plaka"] == "34 ZK 7528"
+
+
+def test_kazanan_kameranin_farkli_okumasini_bildirir():
+    b = camera_reader.PlakaOyBirikimi("16 AC 9302", camera_reader.HARICI_OKUMA_GUVENI, 0.0,
+                                      agirlik=camera_reader.HARICI_OKUMA_OY_AGIRLIGI)
+    for i in range(6):
+        b.ekle("16 AC 9301", 0.99, 0.1 * (i + 1))
+    k = b.kazanan()
+    assert k["plaka"] == "16 AC 9301"
+    assert k["harici_katkili"] is False
+    assert k["kamera_okumasi"] == "16 AC 9302"
+    assert k["harici_varyantlar"] == ["16 AC 9302"]
+
+    ayni = camera_reader.PlakaOyBirikimi("16 AC 9301", 0.99, 0.0)
+    ayni.ekle("16 AC 9301", camera_reader.HARICI_OKUMA_GUVENI, 0.1, agirlik=camera_reader.HARICI_OKUMA_OY_AGIRLIGI)
+    assert ayni.kazanan()["kamera_okumasi"] is None
+
+
+def _istek_yakalayan_pipeline(monkeypatch, kamera_id):
+    istekler = []
+
+    def sahte_post(url, data=None, files=None, headers=None, timeout=None):
+        istekler.append((url, dict(data or {})))
+
+        class _Yanit:
+            status_code = 200
+            text = ""
+
+        return _Yanit()
+
+    monkeypatch.setattr(camera_reader.requests, "post", sahte_post)
+    pipeline = camera_reader.KameraPipeline(video_kaynagi="kullanilmiyor.mp4", kamera_id=kamera_id)
+    return pipeline, istekler
+
+
+def test_bicime_gore_duzeltilen_okuma_tek_basina_kayit_olusturmaz(monkeypatch, sahte_engine):
+    pipeline, istekler = _istek_yakalayan_pipeline(monkeypatch, "TEST-DUZELTME")
+    pipeline.motor._plaka = "34ZX7528"
+    kare = np.full((100, 100, 3), 128, dtype=np.uint8)
+    for _ in range(3):
+        pipeline._kareyi_isle(kare)
+    assert pipeline._kareyi_isle(kare, oturumu_hemen_kapat=True) == []
+    assert istekler == []
+
+
+def test_bicime_gore_duzeltilen_okuma_dogrudan_okumayi_destekler(monkeypatch, sahte_engine):
+    pipeline, istekler = _istek_yakalayan_pipeline(monkeypatch, "TEST-DUZELTME-2")
+    kare = np.full((100, 100, 3), 128, dtype=np.uint8)
+    pipeline.motor._plaka = "34ZK7528"
+    pipeline._kareyi_isle(kare)
+    pipeline.motor._plaka = "34ZX7528"
+    pipeline._kareyi_isle(kare)
+    assert pipeline._kareyi_isle(kare, oturumu_hemen_kapat=True) == ["34 ZK 7528"]
+    assert istekler[0][1]["dogrulama_kare_sayisi"] == 3
+    assert istekler[0][1]["farkli_okuma_sayisi"] == 1
+
+
+def test_kenardaki_kesik_okuma_tam_okumayi_yenemez(monkeypatch, sahte_engine):
+    """Loglardaki '06 DB 915' / '06 DB 9154' vakası: kare kenarında kesik
+    okunan kısa metin çok karede görülse bile kazanan olamaz."""
+    pipeline, istekler = _istek_yakalayan_pipeline(monkeypatch, "TEST-KENAR")
+    kare = np.full((100, 100, 3), 128, dtype=np.uint8)
+    pipeline.motor._plaka = "06DB9154"
+    pipeline._kareyi_isle(kare)
+    pipeline.motor._plaka = "06DB915"
+    monkeypatch.setattr(_SahteSonuc, "__init__", _kenarda_sonuc_init)
+    for _ in range(4):
+        pipeline._kareyi_isle(kare)
+    assert pipeline._kareyi_isle(kare, oturumu_hemen_kapat=True) == ["06 DB 9154"]
+
+
+def _kenarda_sonuc_init(self, plaka="34ABC123", guven=0.95):
+    self.plaka_no = plaka
+    self.guven_skoru = guven
+    self.kutu = (40, 20, 99, 50)
+
+
+def test_kameranin_farkli_okumasi_kayitla_gonderilir(monkeypatch, sahte_engine):
+    pipeline, istekler = _istek_yakalayan_pipeline(monkeypatch, "TEST-UYUSMAZLIK")
+    kare = np.full((100, 100, 3), 128, dtype=np.uint8)
+    pipeline.motor._plaka = "16AC9301"
+    pipeline.motor._guven = 0.99
+    pipeline.harici_okuma_ekle("16AC9302")
+    for _ in range(6):
+        pipeline._kareyi_isle(kare)
+    assert pipeline._kareyi_isle(kare, oturumu_hemen_kapat=True) == ["16 AC 9301"]
+    assert istekler[0][1]["kamera_okumasi"] == "16 AC 9302"
+
+
+def test_sonradan_gelen_farkli_kamera_okumasi_onceki_kaydi_isaretletir(monkeypatch, sahte_engine):
+    pipeline, istekler = _istek_yakalayan_pipeline(monkeypatch, "TEST-GEC-OKUMA")
+    kare = np.full((100, 100, 3), 128, dtype=np.uint8)
+    pipeline.motor._plaka = "16AC9301"
+    for _ in range(3):
+        pipeline._kareyi_isle(kare)
+    pipeline.motor._plaka = "16AC9302"
+    assert pipeline._kareyi_isle(kare, oturumu_hemen_kapat=True) == ["16 AC 9301"]
+    assert [d["plaka_no"] for _, d in istekler] == ["16 AC 9301"]
+    assert istekler[0][1]["kamera_okumasi"] == ""
+
+    # Kamera kendi okumasını birkaç saniye sonra gönderir: yeni kayıt
+    # oluşmaz, önceki kayıt işaretlenir (yalnızca bir kez).
+    pipeline.motor._plaka = "X"
+    for _ in range(2):
+        pipeline.harici_okuma_ekle("16AC9302")
+        assert pipeline._kareyi_isle(kare, oturumu_hemen_kapat=True) == []
+    assert len(istekler) == 2
+    url, veri = istekler[1]
+    assert url.endswith("/kayitlar/otomatik/kamera-okumasi")
+    assert veri == {"plaka_no": "16 AC 9301", "kamera_id": "TEST-GEC-OKUMA", "kamera_okumasi": "16 AC 9302"}

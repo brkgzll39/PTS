@@ -79,6 +79,10 @@ class PlakaSonucu:
     plaka_no: str
     guven_skoru: float
     kutu: Optional[tuple[int, int, int, int]] = None
+    # OCR'ın karakter başına güvenleri (kütüphane veriyorsa) -- biçime göre
+    # karakter düzeltmesinde yalnızca DÜŞÜK güvenli karakterin değiştirilmesi
+    # için (bkz. camera_reader.py::plaka_bicime_gore_duzelt).
+    karakter_guvenleri: Optional[list[float]] = None
 
 
 class ANPREngine:
@@ -278,7 +282,8 @@ class ANPREngine:
             plaka = _alan(ocr_sonucu, "text", "plate") or _alan(sonuc, "plate", "text")
             if not plaka:
                 continue
-            guven = _ocr_guveni_hesapla(_alan(ocr_sonucu, "confidence", "score"))
+            ocr_guveni_ham = _alan(ocr_sonucu, "confidence", "score")
+            guven = _ocr_guveni_hesapla(ocr_guveni_ham)
             if guven is None:
                 guven = _ocr_guveni_hesapla(_alan(tespit_sonucu, "confidence", "score"))
             if guven is None:
@@ -287,7 +292,8 @@ class ANPREngine:
                 guven = 0.0
             kutu_verisi = _alan(tespit_sonucu, "bounding_box", "box", "bbox") or _alan(sonuc, "box", "bbox")
             kutu = _kutuya_cevir(kutu_verisi)
-            donus.append(PlakaSonucu(_plaka_temizle(str(plaka)), guven, kutu))
+            donus.append(PlakaSonucu(_plaka_temizle(str(plaka)), guven, kutu,
+                                     _karakter_guvenleri(str(plaka), ocr_guveni_ham)))
         return [sonuc for sonuc in donus if sonuc.plaka_no]
 
 
@@ -316,6 +322,23 @@ def _ocr_guveni_hesapla(deger: Any) -> Optional[float]:
     except (TypeError, ValueError):
         return None
     return sum(degerler) / len(degerler) if degerler else None
+
+
+def _karakter_guvenleri(ham_metin: str, deger: Any) -> Optional[list[float]]:
+    """Karakter başına güven listesini, _plaka_temizle'nin attığı karakterler
+    (boşluk, dolgu '_' vb.) çıkarılmış metinle hizalı döndürür. Liste yoksa ya
+    da metinle hizalanamıyorsa None (çağıran taraf güven kapısını atlar)."""
+    if deger is None or isinstance(deger, (int, float, str)):
+        return None
+    try:
+        degerler = [float(x) for x in deger]
+    except (TypeError, ValueError):
+        return None
+    metin = ham_metin.upper()
+    if len(degerler) < len(metin):
+        return None
+    hizali = [g for ch, g in zip(metin, degerler) if re.match(r"[A-Z0-9]", ch)]
+    return hizali or None
 
 
 def _kutuya_cevir(kutu: Any) -> Optional[tuple[int, int, int, int]]:

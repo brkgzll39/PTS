@@ -553,8 +553,14 @@ function kayitIsimGoster(kayit) {
 // HİÇBİR karede doğrulanmadan tek başına kesinleşmiş -- yanlış okuma riski
 // daha yüksek, operatör dikkat etsin diye ayrıca işaretlenir. >=2: birden
 // fazla karenin oydaşmasıyla kesinleşmiş, daha güvenilir.
-function dogrulamaRozeti(kareSayisi, farkliOkumaSayisi) {
+function dogrulamaRozeti(kareSayisi, farkliOkumaSayisi, kameraOkumasi) {
   if (kareSayisi === null || kareSayisi === undefined) return '<span class="text-muted small">-</span>';
+  // 2026-10-12: kameranın kendi ANPR'ı kayıttan FARKLI bir plaka okuduysa
+  // (bkz. backend/models.py::Kayit.kamera_okumasi) iki okumadan biri yanlıştır
+  // -- kare sayısından bağımsız olarak operatörün kontrol etmesi gerekir.
+  if (kameraOkumasi) {
+    return `<span class="badge badge-dogrulama-zayif" title="Kameranın kendi plaka okuması farklı: ${escapeHtml(kameraOkumasi)}. Fotoğraftan doğru plakayı kontrol edin.">⚠ Kontrol: kamera ${escapeHtml(kameraOkumasi)}</span>`;
+  }
   if (kareSayisi <= 1) {
     return `<span class="badge badge-dogrulama-zayif" title="Bu okuma yalnızca TEK bir karede yapıldı, başka hiçbir karede doğrulanmadı -- yanlış okuma ihtimali daha yüksektir.">⚠ 1 kare</span>`;
   }
@@ -3015,7 +3021,7 @@ async function kayitlariYukle(sifirla = true) {
         <td class="small">${kayitIsimGoster(k)}</td>
         <td class="small">${k.surucu_adi ? escapeHtml(k.surucu_adi) : '<span class="text-muted">-</span>'}</td>
         <td>${k.vardiya_adi ? `<span class="badge bg-info text-dark">${escapeHtml(k.vardiya_adi)}</span>` : '<span class="text-muted small">-</span>'}</td>
-        ${rolYeterli("yonetici") ? `<td>${dogrulamaRozeti(k.dogrulama_kare_sayisi, k.farkli_okuma_sayisi)}</td>` : ""}
+        ${rolYeterli("yonetici") ? `<td>${dogrulamaRozeti(k.dogrulama_kare_sayisi, k.farkli_okuma_sayisi, k.kamera_okumasi)}</td>` : ""}
         <td class="text-nowrap">
           <button class="btn btn-sm btn-outline-danger" onclick="kayitPdfIndir(${k.id})" title="PDF indir" aria-label="PDF indir"><i class="bi bi-file-earmark-pdf"></i></button>
           ${rolYeterli("operatör") ? `<button class="btn btn-sm btn-outline-primary ms-1" onclick="kayitDuzenleAc(${k.id})" title="Kaydı düzenle" aria-label="Kaydı düzenle"><i class="bi bi-pencil"></i></button>` : ""}
@@ -4576,7 +4582,7 @@ async function plakaAnalizAc(plaka) {
         <td>${durumRozeti(k.yetki_durumu)}</td>
         <td class="small">${kayitIsimGoster(k)}</td>
         <td>${k.vardiya_adi ? `<span class="badge bg-info text-dark">${escapeHtml(k.vardiya_adi)}</span>` : '<span class="text-muted small">-</span>'}</td>
-        <td>${dogrulamaRozeti(k.dogrulama_kare_sayisi, k.farkli_okuma_sayisi)}</td>
+        <td>${dogrulamaRozeti(k.dogrulama_kare_sayisi, k.farkli_okuma_sayisi, k.kamera_okumasi)}</td>
         <td class="small">${k.manuel_giris ? '<span class="badge bg-secondary d-block mb-1">Manuel</span>' : ""}${k.not_metni ? escapeHtml(k.not_metni) : (k.manuel_giris ? "" : '<span class="text-muted">-</span>')}</td>
         <td class="text-nowrap">
           ${rolYeterli("operatör") ? `<button class="btn btn-sm btn-outline-primary" onclick="kayitDuzenleAc(${k.id})" title="Kaydı düzenle" aria-label="Kaydı düzenle"><i class="bi bi-pencil"></i></button>` : ""}

@@ -48,7 +48,7 @@ import time
 import threading
 import logging
 from collections import Counter, deque
-from typing import Optional
+from typing import Optional, Sequence
 from urllib.parse import urlsplit, urlunsplit
 
 try:
@@ -275,6 +275,15 @@ HARICI_OKUMA_GUVENI = 0.98
 # plaka olma ihtimaline karşı çoğunluk oyu korunur.
 SONDAN_EKSIK_KARAKTER_TERCIH_ORANI = 0.34  # uzun varyant, kısa varyantın en az bu oranı kadar oy aldıysa "yakın çağrı" sayılır
 
+# DESTEKLEYİCİ OKUMALAR (2026-10-12): biçime göre tek karakteri düzeltilmiş
+# okumalar (bkz. plaka_bicime_gore_duzelt) ve kutusu karenin kenarına değen
+# (plakası kısmen kadraj dışında olabilecek) okumalar oylamaya bu ağırlıkla
+# girer ve bir oturumun kazananı YALNIZCA bu tür okumalarla desteklenen bir
+# metin olamaz -- aynı metin en az bir karede doğrudan (tam ve biçime uygun)
+# okunmuş olmalıdır.
+DESTEKLEYICI_OY_AGIRLIGI = 0.5
+KENAR_PAYI_PX = 3
+
 # Dedektör ardı ardına hiçbir plaka adayı bulamazsa (bkz. _kareyi_isle), bunu en
 # fazla bu sıklıkta (saniye) özetleyen TEK bir log satırı yazılır. Amaç spam
 # değil, "pipeline canlı ve kare işliyor ama dedektör gerçekten hiçbir şey mi
@@ -329,11 +338,11 @@ class PlakaOyBirikimi:
     __slots__ = (
         "oylar", "_varyant_maks_guven", "ilk_gorulme", "son_gorulme",
         "en_iyi_jpeg", "_en_iyi_jpeg_guveni", "toplam_kare_sayisi",
-        "_harici_katkili_varyantlar",
+        "_harici_katkili_varyantlar", "_dogrudan_varyantlar",
     )
 
     def __init__(self, plaka: str, guven: float, simdi: float, jpeg: Optional[bytes] = None,
-                 agirlik: float = 1.0):
+                 agirlik: float = 1.0, destekleyici: bool = False):
         # `agirlik` (2026-09-25): oya katkı çarpanı -- kameranın KENDİ ANPR
         # okuması (bkz. KameraPipeline.harici_okuma_ekle) birkaç iyi kareye
         # denk sayılır. Kaydedilen güven (`_varyant_maks_guven`) ağırlıktan
@@ -353,15 +362,20 @@ class PlakaOyBirikimi:
         # yalnızca SEÇİLEN varyant bu kümedeyse "harici_katkili=True" der --
         # yani oturuma bir Dahua okuması girmiş olması TEK BAŞINA yetmez, o
         # okumanın gerçekten KAZANAN metni desteklemiş olması gerekir.
-        self._harici_katkili_varyantlar: set = {plaka} if agirlik != 1.0 else set()
+        self._harici_katkili_varyantlar: set = {plaka} if agirlik != 1.0 and not destekleyici else set()
+        # En az bir DOĞRUDAN (destekleyici olmayan) okumayla desteklenen metinler
+        # -- bkz. DESTEKLEYICI_OY_AGIRLIGI. Kazanan yalnızca bunlar arasından seçilir.
+        self._dogrudan_varyantlar: set = set() if destekleyici else {plaka}
 
     def ekle(self, plaka: str, guven: float, simdi: float, jpeg: Optional[bytes] = None,
-             agirlik: float = 1.0) -> None:
+             agirlik: float = 1.0, destekleyici: bool = False) -> None:
         self.oylar[plaka] += guven * agirlik
         if guven > self._varyant_maks_guven.get(plaka, -1.0):
             self._varyant_maks_guven[plaka] = guven
-        if agirlik != 1.0:
-            self._harici_katkili_varyantlar.add(plaka)
+        if not destekleyici:
+            self._dogrudan_varyantlar.add(plaka)
+            if agirlik != 1.0:
+                self._harici_katkili_varyantlar.add(plaka)
         self.son_gorulme = simdi
         self.toplam_kare_sayisi += 1
         if jpeg is not None and guven >= self._en_iyi_jpeg_guveni:
@@ -372,6 +386,11 @@ class PlakaOyBirikimi:
 
     def kazanan(self) -> dict:
         sirali = self.oylar.most_common()
+        # Destekleyici okumalar (bkz. DESTEKLEYICI_OY_AGIRLIGI) doğrudan okunan
+        # bir metne oy ekleyebilir ama kendi başlarına kazanan olamaz.
+        yalniz_destekleyici = not self._dogrudan_varyantlar
+        if not yalniz_destekleyici:
+            sirali = [(p, o) for p, o in sirali if p in self._dogrudan_varyantlar]
         secilen_plaka, _agirlik = sirali[0]
         uzun_varyant_tercih_edildi = False
 
@@ -417,7 +436,18 @@ class PlakaOyBirikimi:
             # kesinleştirdiyse False -- main.py::kayit_ekle_otomatik'e iletilip
             # Kayit.harici_katkili olarak saklanır.
             "harici_katkili": secilen_plaka in self._harici_katkili_varyantlar,
+            "yalniz_destekleyici": yalniz_destekleyici,
+            # Kameranın KENDİ okuması (Dahua) kazanandan FARKLI bir metin
+            # söylediyse o metin (en çok oy alan harici varyant); aynıysa ya da
+            # harici okuma yoksa None. Kayıt "Kontrol gerekli" diye işaretlenir.
+            "kamera_okumasi": self._kamera_okumasi_farki(secilen_plaka),
+            "harici_varyantlar": sorted(self._harici_katkili_varyantlar),
         }
+
+    def _kamera_okumasi_farki(self, secilen_plaka: str) -> Optional[str]:
+        if not self._harici_katkili_varyantlar or secilen_plaka in self._harici_katkili_varyantlar:
+            return None
+        return max(self._harici_katkili_varyantlar, key=lambda p: self.oylar[p])
 
 
 class PlakaOturumTakipcisi:
@@ -438,7 +468,7 @@ class PlakaOturumTakipcisi:
         self.max_oturum_sure_sn = max_oturum_sure_sn
 
     def guncelle(self, plaka: str, guven: float, simdi: float, jpeg: Optional[bytes] = None,
-                 agirlik: float = 1.0) -> None:
+                 agirlik: float = 1.0, destekleyici: bool = False) -> None:
         en_yakin_anahtar = None
         en_yakin_mesafe = None
         for anahtar, birikim in self._acik.items():
@@ -448,9 +478,9 @@ class PlakaOturumTakipcisi:
             if mesafe <= self.benzerlik_esigi and (en_yakin_mesafe is None or mesafe < en_yakin_mesafe):
                 en_yakin_anahtar, en_yakin_mesafe = anahtar, mesafe
         if en_yakin_anahtar is not None:
-            self._acik[en_yakin_anahtar].ekle(plaka, guven, simdi, jpeg, agirlik)
+            self._acik[en_yakin_anahtar].ekle(plaka, guven, simdi, jpeg, agirlik, destekleyici)
         else:
-            self._acik[plaka] = PlakaOyBirikimi(plaka, guven, simdi, jpeg, agirlik)
+            self._acik[plaka] = PlakaOyBirikimi(plaka, guven, simdi, jpeg, agirlik, destekleyici)
 
     def bitmis_oturumlari_al(self, simdi: float, zorla: bool = False) -> list:
         """Kapanmış oturumların kazananlarını döner -- her sözlüğe ayrıca bir
@@ -495,6 +525,85 @@ def plaka_dogrula(text: str) -> Optional[str]:
         if 1 <= il_kodu <= 81:
             return f"{eslesme.group(1)} {eslesme.group(2)} {eslesme.group(3)}"
     return None
+
+
+# BİÇİME GÖRE KARAKTER DÜZELTME (2026-10-12, kullanıcı: "bazı plakalar hatalı
+# okunuyor"). Loglarda Türk plaka biçimine uymadığı için atılan okumaların
+# bir kısmı tek bir karakter dışında doğruydu: '34ZX7528' (X Türk plakasında
+# yok; aynı geçişte kamera '34 ZK 7528' okudu). Türk plakasının yapısı belli
+# (2 rakam + 1-3 harf + 2-4 rakam) olduğundan, o konumda geçersiz olan TEK bir
+# karakter görsel olarak en çok karıştırıldığı geçerli karakterle değiştirilir.
+# Düzeltilmiş okuma yalnızca DESTEKLEYİCİ oydur (bkz. DESTEKLEYICI_OY_AGIRLIGI):
+# aynı metin en az bir karede doğrudan okunmadıkça tek başına kayıt oluşturmaz.
+_RAKAMA_DUZELTME = {"O": "0", "Q": "0", "D": "0", "I": "1", "L": "1", "Z": "2",
+                    "A": "4", "S": "5", "G": "6", "T": "7", "B": "8"}
+_HARFE_DUZELTME = {"0": "O", "1": "I", "2": "Z", "4": "A", "5": "S", "6": "G",
+                   "7": "T", "8": "B", "X": "K", "Q": "O", "W": "V"}
+_GECERLI_HARFLER = frozenset("ABCDEFGHIJKLMNOPRSTUVYZ")
+# Resmi Türk plaka kalıpları: harf sayısı -> izin verilen son rakam sayıları.
+# PLAKA_REGEX bundan gevşektir; düzeltilmiş okumalara ise bu sıkı kural
+# uygulanır -- kesik okumalar ('39AEA9' -> '39 AE 49') böyle elenir.
+_RESMI_RAKAM_SAYILARI = {1: (4,), 2: (3, 4), 3: (2, 3)}
+# Karakter başına güven biliniyorsa yalnızca bundan düşük güvenli bir karakter
+# değiştirilir -- OCR'ın emin olduğu bir karakteri tahminle bozmayalım.
+KARAKTER_DUZELTME_GUVEN_TAVANI = 0.90
+
+
+def plaka_bicime_gore_duzelt(metin: str, karakter_guvenleri: Optional[Sequence[float]] = None) -> Optional[str]:
+    """Türk plaka biçimine uymayan bir OCR okumasını, TEK bir karakteri
+    değiştirerek biçime uydurmaya çalışır. Tek bir anlamlı sonuç varsa
+    biçimlenmiş plakayı ("34 ZK 7528"), yoksa (hiç ya da birden fazla aday,
+    ya da değişmesi gereken karakter yüksek güvenle okunmuş) None döner."""
+    temiz = re.sub(r"[^A-Z0-9]", "", (metin or "").upper())
+    if not 5 <= len(temiz) <= 9:
+        return None
+    guvenler = list(karakter_guvenleri) if karakter_guvenleri is not None else None
+    if guvenler is not None and len(guvenler) != len(temiz):
+        guvenler = None  # karakterlerle eşleştirilemiyor -- güven kapısı uygulanmaz
+    adaylar = set()
+    for harf_sayisi in (1, 2, 3):
+        son_rakam = len(temiz) - 2 - harf_sayisi
+        if son_rakam not in _RESMI_RAKAM_SAYILARI[harf_sayisi]:
+            continue
+        if not any(ch.isalpha() for ch in temiz[2:2 + harf_sayisi]):
+            continue  # harf grubu tamamen rakamlardan uydurulmasın ('301202' -> '30 I 202')
+        sonuc = []
+        degisiklik = 0
+        for i, ch in enumerate(temiz):
+            harf_olmali = 2 <= i < 2 + harf_sayisi
+            if harf_olmali:
+                yeni = ch if ch in _GECERLI_HARFLER else _HARFE_DUZELTME.get(ch)
+            elif i < 2:
+                # İl kodu düzeltilmez: baştan kesik okumalar ('2ACA999', loglarda
+                # yüzlerce kez) yoksa uydurma bir ile dönüşürdü ('24 CA 999').
+                yeni = ch if ch.isdigit() else None
+            else:
+                yeni = ch if ch.isdigit() else _RAKAMA_DUZELTME.get(ch)
+            if yeni is None:
+                break
+            if yeni != ch:
+                degisiklik += 1
+                if guvenler is not None and guvenler[i] >= KARAKTER_DUZELTME_GUVEN_TAVANI:
+                    break
+            sonuc.append(yeni)
+        else:
+            if degisiklik == 1:
+                plaka = plaka_dogrula("".join(sonuc))
+                if plaka:
+                    adaylar.add(plaka)
+    return adaylar.pop() if len(adaylar) == 1 else None
+
+
+def _kutu_kenarda_mi(kutu: Optional[Sequence[int]], genislik: int, yukseklik: int,
+                     pay: int = None) -> bool:
+    """Plaka kutusu karenin kenarına değiyor mu? Değiyorsa plakanın bir kısmı
+    kadraj dışında olabilir: loglarda '06 DB 915' (doğrusu '06 DB 9154') gibi
+    son karakteri eksik ama biçime uyan okumalar böyle oluşuyor."""
+    if not kutu or len(kutu) != 4:
+        return False
+    pay = KENAR_PAYI_PX if pay is None else pay
+    x1, y1, x2, y2 = kutu
+    return x1 <= pay or y1 <= pay or x2 >= genislik - 1 - pay or y2 >= yukseklik - 1 - pay
 
 
 def _roi_pixel_sinirlarini_hesapla(roi: dict, genislik: int, yukseklik: int) -> tuple:
@@ -973,8 +1082,19 @@ class KameraPipeline:
             if ham_kare_dizini:
                 self._ham_kareyi_kaydet_gerekirse(frame, _simdi_mono, ham_kare_dizini)
 
+        kare_yukseklik, kare_genislik = frame.shape[:2]
         for sonuc in motor_sonuclari:
             plaka = plaka_dogrula(sonuc.plaka_no)
+            destekleyici_neden = None
+            if not plaka:
+                plaka = plaka_bicime_gore_duzelt(sonuc.plaka_no, getattr(sonuc, "karakter_guvenleri", None))
+                if plaka:
+                    destekleyici_neden = "biçime göre düzeltildi"
+                    logger.info(
+                        "[%s] OCR okuması plaka biçimine göre düzeltildi: '%s' -> '%s' (güven=%.2f; "
+                        "destekleyici oy, tek başına kayıt oluşturmaz)",
+                        self.kamera_id, sonuc.plaka_no, plaka, sonuc.guven_skoru,
+                    )
             if not plaka:
                 # GÖZLEMLENEBİLİRLİK: OCR bir şey okudu ama Türk plaka formatına
                 # uymadığı için tamamen sessizce atlanıyordu — "kamera görüntü
@@ -985,10 +1105,13 @@ class KameraPipeline:
                     self.kamera_id, sonuc.plaka_no, sonuc.guven_skoru,
                 )
                 continue
+            if destekleyici_neden is None and _kutu_kenarda_mi(sonuc.kutu, kare_genislik, kare_yukseklik):
+                destekleyici_neden = "plaka kutusu kare kenarında"
             tespitler.append({
                 "plaka": plaka,
                 "guven": sonuc.guven_skoru,
                 "kutu": list(sonuc.kutu) if sonuc.kutu else None,
+                "destekleyici": destekleyici_neden,
             })
 
         # TESPİT ALANI SINIRI (ROI): kameraya bir ROI tanımlıysa (dikdörtgen ya
@@ -1076,14 +1199,28 @@ class KameraPipeline:
                     self.kamera_id, t["plaka"], t["guven"], self.min_guven_skoru,
                 )
                 continue  # düşük güvenli tek kare — oy birikimine hiç girmesin
-            self._oturum_takipcisi.guncelle(t["plaka"], t["guven"], simdi, jpeg_bytes)
+            if t.get("destekleyici"):
+                self._oturum_takipcisi.guncelle(t["plaka"], t["guven"], simdi, jpeg_bytes,
+                                                agirlik=DESTEKLEYICI_OY_AGIRLIGI, destekleyici=True)
+            else:
+                self._oturum_takipcisi.guncelle(t["plaka"], t["guven"], simdi, jpeg_bytes)
 
         if oturumu_hemen_kapat:
             bitmis_oturumlar += self._oturum_takipcisi.bitmis_oturumlari_al(simdi, zorla=True)
 
         gonderilenler = []
         for oturum in bitmis_oturumlar:
+            if oturum.get("yalniz_destekleyici"):
+                logger.info(
+                    "[%s] %s yalnızca destekleyici okumalarla (biçime göre düzeltilmiş ya da kare "
+                    "kenarında kesik olabilecek) görüldü, hiçbir karede doğrudan okunmadı -- kayıt "
+                    "oluşturulmadı.", self.kamera_id, oturum["plaka"],
+                )
+                continue
             if not self._oturum_gonderilmeli_mi(oturum, simdi):
+                gec = oturum.pop("gec_kamera_okumasi", None)
+                if gec:
+                    self._kamera_okumasini_bildir(*gec)
                 continue
             plaka = oturum["plaka"]
 
@@ -1148,7 +1285,11 @@ class KameraPipeline:
                               # requests bunu form alanı olarak string'e çevirir
                               # ("True"/"False"); kayit_ekle_otomatik tarafı
                               # gevşek biçimde ayrıştırır (bkz. orada).
-                              "harici_katkili": oturum.get("harici_katkili", False)},
+                              "harici_katkili": oturum.get("harici_katkili", False),
+                              # Kameranın kendi okuması kazanandan farklıysa
+                              # (bkz. PlakaOyBirikimi.kazanan) -- kayıt panelde
+                              # "Kontrol gerekli" diye işaretlenir.
+                              "kamera_okumasi": oturum.get("kamera_okumasi") or ""},
                         files={"gorsel": f},
                         headers=_istek_basliklari,
                         timeout=5,
@@ -1243,11 +1384,48 @@ class KameraPipeline:
                 "aynı görünüm için ikinci kayıt oluşturulmadı.",
                 self.kamera_id, plaka,
             )
+            # Kameranın kendi okuması çoğu zaman PTS kaydı oluşturduktan
+            # birkaç saniye SONRA gelir ve böyle ayrı bir oturuma düşer
+            # (loglarda: PTS '16 AC 9301' kaydetti, 7 sn sonra kamera
+            # '16AC9302' gönderdi). Bu okuma kaydedilen metinden farklıysa
+            # önceki kayıt "Kontrol gerekli" diye işaretlenir (görünüm başına
+            # bir kez).
+            for g in aktif:
+                kayit_plakasi = g.get("kayit_plakasi")
+                if not g["bildirildi"] or not kayit_plakasi or g.get("kamera_okumasi_bildirildi"):
+                    continue
+                farkli = [v for v in oturum.get("harici_varyantlar") or [] if v != kayit_plakasi]
+                if farkli:
+                    g["kamera_okumasi_bildirildi"] = True
+                    oturum["gec_kamera_okumasi"] = (kayit_plakasi, farkli[0])
+                    break
             return False
         for g in aktif:
             g["bildirildi"] = True
+            g["kayit_plakasi"] = plaka
+            g["kamera_okumasi_bildirildi"] = bool(oturum.get("kamera_okumasi"))
         self.son_plaka_zamani[plaka] = simdi
         return True
+
+    def _kamera_okumasini_bildir(self, kayit_plakasi: str, kamera_okumasi: str) -> None:
+        """Bu kameranın az önce oluşturduğu `kayit_plakasi` kaydına, kameranın
+        kendi (farklı) okumasını iletir; sunucu kaydı "Kontrol gerekli" diye
+        işaretler. Hata kaydı engellemez, yalnızca loglanır."""
+        logger.info("[%s] Kameranın kendi okuması kayıttan farklı: kayıt=%s, kamera=%s -- kayıt "
+                    "'Kontrol gerekli' olarak işaretleniyor.", self.kamera_id, kayit_plakasi, kamera_okumasi)
+        _kamera_anahtari = (os.getenv("PTS_KAMERA_ANAHTARI") or "").strip() or None
+        try:
+            yanit = requests.post(
+                self.api_url.rstrip("/") + "/kamera-okumasi",
+                data={"plaka_no": kayit_plakasi, "kamera_id": self.kamera_id, "kamera_okumasi": kamera_okumasi},
+                headers={"X-PTS-Kamera-Anahtari": _kamera_anahtari} if _kamera_anahtari else {},
+                timeout=5,
+            )
+            if yanit.status_code >= 400:
+                logger.warning("[%s] Kamera okuması kayda işlenemedi (HTTP %d): %s",
+                               self.kamera_id, yanit.status_code, yanit.text[:200])
+        except Exception as e:
+            logger.warning("[%s] Kamera okuması kayda işlenemedi: %s", self.kamera_id, e)
 
     def _arac_ayrilma_suresi(self) -> float:
         return max(float(self.tekrar_gecikme_sn), ARAC_AYRILMA_MIN_SN)

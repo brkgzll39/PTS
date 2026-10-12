@@ -198,6 +198,8 @@ def _veritabani_migrasyon() -> None:
         # ihtiyacı YOK -- var olan (bu alanın hiç hesaplanmadığı) satırlar
         # zaten istenen değer olan NULL'a düşer.
         f"ALTER TABLE plaka_kayitlari ADD {col_kw}harici_katkili {'INTEGER' if sqlite_mod else 'BIT'}",
+        # Kamera okuması uyuşmazlığı (2026-10-12) -- bkz. models.Kayit.kamera_okumasi.
+        f"ALTER TABLE plaka_kayitlari ADD {col_kw}kamera_okumasi VARCHAR(20)",
         f"ALTER TABLE plaka_kayitlari ADD {col_kw}not_metni {'TEXT' if sqlite_mod else 'NVARCHAR(MAX)'}",
         # "Misafir Adı Soyadı" (2026-09-22) -- bkz. models.Kayit.misafir_adi'nin
         # docstring'i. NULL kabul eden, DEFAULT'suz bir metin sütunu olduğu
@@ -4995,13 +4997,24 @@ def _ayni_gun_onceki_not(db: Session, plaka_no: str, simdi: Optional[datetime] =
     return (son[0] or "").strip() or None
 
 
+def _kamera_okumasi_farki(plaka_no: str, kamera_okumasi: Optional[str]) -> Optional[str]:
+    """Kameranın kendi okuması kaydedilen plakadan FARKLIYSA saklanacak metin
+    (bkz. models.Kayit.kamera_okumasi); aynıysa (ör. bilinen plaka düzeltmesi
+    iki okumayı birleştirdiyse) ya da boşsa None."""
+    temiz = re.sub(r"[^A-Za-z0-9 ]", "", kamera_okumasi or "").strip().upper()[:20]
+    if not temiz or _plaka_normalize(temiz) == _plaka_normalize(plaka_no):
+        return None
+    return temiz
+
+
 def _kayit_olustur_ve_bildir(db: Session, plaka_no: str, kamera_id: str, yon: str,
                               guven_skoru: Optional[float], goruntu_yolu: Optional[str],
                               dogrulama_kare_sayisi: Optional[int] = None,
                               not_metni: Optional[str] = None, manuel_giris: bool = False,
                               farkli_okuma_sayisi: Optional[int] = None,
                               misafir_adi: Optional[str] = None,
-                              harici_katkili: Optional[bool] = None):
+                              harici_katkili: Optional[bool] = None,
+                              kamera_okumasi: Optional[str] = None):
     plaka_no = re.sub(r"[^A-Za-z0-9 ]", "", plaka_no).strip().upper() or "BILINMEYEN"
     kamera_id = _kamera_adini_kayit_icin_temizle(kamera_id)
 
@@ -5082,6 +5095,7 @@ def _kayit_olustur_ve_bildir(db: Session, plaka_no: str, kamera_id: str, yon: st
         manuel_giris=manuel_giris,
         farkli_okuma_sayisi=farkli_okuma_sayisi,
         harici_katkili=harici_katkili,
+        kamera_okumasi=_kamera_okumasi_farki(plaka_no, kamera_okumasi),
     )
     db.add(kayit)
     db.commit()
@@ -5566,6 +5580,8 @@ async def kayit_ekle_otomatik(
     # göndermediği (Optional, varsayılan None) durumda "hesaplanmadı" anlamına
     # gelmeye devam eder.
     harici_katkili: Optional[bool] = Form(None),
+    # Kameranın kendi okuması kazanandan farklıysa -- bkz. models.Kayit.kamera_okumasi.
+    kamera_okumasi: Optional[str] = Form(None),
     gorsel: Optional[UploadFile] = File(None),
     x_pts_kamera_anahtari: Optional[str] = Header(None),
     db: Session = Depends(get_db),
@@ -5676,7 +5692,7 @@ async def kayit_ekle_otomatik(
             )
             return await run_in_threadpool(_kaydi_olustur_gorseli_koru, db, plaka_no, kamera_id, yon, guven_skoru, goruntu_yolu,
                                                dogrulama_kare_sayisi, farkli_okuma_sayisi,
-                                               harici_katkili=harici_katkili)
+                                               harici_katkili=harici_katkili, kamera_okumasi=kamera_okumasi)
 
         if goruntu_yolu and os.path.isfile(goruntu_yolu):
             try:
@@ -5697,7 +5713,55 @@ async def kayit_ekle_otomatik(
 
     return await run_in_threadpool(_kaydi_olustur_gorseli_koru, db, plaka_no, kamera_id, yon, guven_skoru, goruntu_yolu,
                                        dogrulama_kare_sayisi, farkli_okuma_sayisi,
-                                       harici_katkili=harici_katkili)
+                                       harici_katkili=harici_katkili, kamera_okumasi=kamera_okumasi)
+
+
+# Kameranın kendi okuması PTS kaydından birkaç saniye sonra gelebilir; bu
+# kadar eski kayıtlar artık eşleştirilmez.
+KAMERA_OKUMASI_ESLESME_SN = 120
+
+
+@app.post("/kayitlar/otomatik/kamera-okumasi", dependencies=[Depends(_hiz_sinir_otomatik_kayit)])
+def kayit_kamera_okumasi_isle(
+    plaka_no: str = Form(...),
+    kamera_id: str = Form(...),
+    kamera_okumasi: str = Form(...),
+    x_pts_kamera_anahtari: Optional[str] = Header(None),
+    db: Session = Depends(get_db),
+):
+    """Kamera pipeline'ı, az önce kaydettiği bir geçiş için kameranın KENDİ
+    ANPR'ının (sonradan gelen) farklı okumasını bildirir (bkz.
+    camera_reader.py::KameraPipeline._kamera_okumasini_bildir). Bu kameranın
+    son KAMERA_OKUMASI_ESLESME_SN içindeki aynı plakalı otomatik kaydı
+    "Kontrol gerekli" diye işaretlenir. Kimlik doğrulaması /kayitlar/otomatik
+    ile aynıdır."""
+    beklenen_anahtar = _kamera_anahtari_degeri()
+    if beklenen_anahtar and (x_pts_kamera_anahtari or "").strip() != beklenen_anahtar:
+        raise HTTPException(401, "Geçersiz kamera anahtarı")
+    kamera_id = _kamera_adini_kayit_icin_temizle(kamera_id)
+    hedef = _plaka_normalize(plaka_no)
+    K = models.Kayit
+    adaylar = (
+        db.query(K)
+        .filter(K.kamera_id == kamera_id,
+                K.tarih_saat >= datetime.now() - timedelta(seconds=KAMERA_OKUMASI_ESLESME_SN),
+                or_(K.manuel_giris == False, K.manuel_giris.is_(None)))  # noqa: E712
+        .order_by(K.tarih_saat.desc(), K.id.desc())
+        .limit(20)
+        .all()
+    )
+    kayit = next((k for k in adaylar
+                  if hedef in (_plaka_normalize(k.plaka_no or ""), _plaka_normalize(k.ham_plaka_metni or ""))), None)
+    if kayit is None:
+        return {"guncellendi": False, "sebep": "kayit_bulunamadi"}
+    fark = _kamera_okumasi_farki(kayit.plaka_no, kamera_okumasi)
+    if fark is None or kayit.kamera_okumasi:
+        return {"guncellendi": False, "kayit_id": kayit.id}
+    kayit.kamera_okumasi = fark
+    db.commit()
+    logger.info("[%s] Kayıt %d (%s) 'Kontrol gerekli' işaretlendi: kameranın kendi okuması %s",
+                kamera_id, kayit.id, kayit.plaka_no, fark)
+    return {"guncellendi": True, "kayit_id": kayit.id, "kamera_okumasi": fark}
 
 
 def _yarim_dosyayi_sil(yol: Optional[str]) -> None:
@@ -5751,7 +5815,7 @@ def _gorsel_yazma_hatasini_bildir(db: Session, kamera_id: str, plaka_no: str, ex
 def _kaydi_olustur_gorseli_koru(db: Session, plaka_no: str, kamera_id: str, yon: str,
                                 guven_skoru: Optional[float], goruntu_yolu: Optional[str],
                                 dogrulama_kare_sayisi: Optional[int], farkli_okuma_sayisi: Optional[int],
-                                harici_katkili: Optional[bool] = None):
+                                harici_katkili: Optional[bool] = None, kamera_okumasi: Optional[str] = None):
     """`_kayit_olustur_ve_bildir`'i çağırır; kayıt oluşturma bir istisnayla
     başarısız olursa (ör. veritabanı o an erişilemez) ve bu görsel hiçbir
     kayda BAĞLANMADIYSA diskteki dosyayı siler -- eskiden bu durumda dosya,
@@ -5762,7 +5826,7 @@ def _kaydi_olustur_gorseli_koru(db: Session, plaka_no: str, kamera_id: str, yon:
     try:
         return _kayit_olustur_ve_bildir(db, plaka_no, kamera_id, yon, guven_skoru, goruntu_yolu,
                                          dogrulama_kare_sayisi, farkli_okuma_sayisi=farkli_okuma_sayisi,
-                                         harici_katkili=harici_katkili)
+                                         harici_katkili=harici_katkili, kamera_okumasi=kamera_okumasi)
     except Exception:
         if goruntu_yolu:
             try:
@@ -5927,7 +5991,7 @@ async def arvento_webhook(istek: Request, x_arvento_anahtari: Optional[str] = He
     return {"durum": "ok", "plaka_no": plaka_no, "surucu_adi": surucu_adi}
 
 
-_DOGRULAMA_FILTRELERI = ("riskli", "tek_kare", "kararsiz", "duzeltilmis")
+_DOGRULAMA_FILTRELERI = ("riskli", "tek_kare", "kararsiz", "duzeltilmis", "kamera_farkli")
 
 
 def _dogrulama_filtresi_uygula(sorgu, dogrulama: Optional[str]):
@@ -5939,6 +6003,7 @@ def _dogrulama_filtresi_uygula(sorgu, dogrulama: Optional[str]):
     * tek_kare    -- plaka yalnızca 1 karede okunup kaydedilmiş
     * kararsiz    -- aynı geçişte plaka farklı karelerde FARKLI okunmuş
     * duzeltilmis -- kayıtlı bir plakaya bakılarak tek karakter düzeltilmiş
+    * kamera_farkli -- kameranın kendi ANPR'ı farklı bir plaka okumuş
     * riskli      -- yukarıdakilerden herhangi biri
 
     Elle girilen kayıtlar bu filtrelerde hiç görünmez (doğrulanacak bir OCR
@@ -5950,6 +6015,7 @@ def _dogrulama_filtresi_uygula(sorgu, dogrulama: Optional[str]):
         "tek_kare": K.dogrulama_kare_sayisi <= 1,
         "kararsiz": K.farkli_okuma_sayisi > 1,
         "duzeltilmis": K.ham_plaka_metni.isnot(None),
+        "kamera_farkli": K.kamera_okumasi.isnot(None),
     }
     if dogrulama == "riskli":
         kosul = or_(*kosullar.values())
@@ -6448,6 +6514,7 @@ def plaka_analiz(plaka_no: str, db: Session = Depends(get_db), kullanici: models
              "yetki_durumu": k.yetki_durumu, "kamera_id": k.kamera_id,
              "goruntu_yolu": k.goruntu_yolu, "guven_skoru": k.guven_skoru,
              "dogrulama_kare_sayisi": k.dogrulama_kare_sayisi, "farkli_okuma_sayisi": k.farkli_okuma_sayisi,
+             "kamera_okumasi": k.kamera_okumasi,
              "not_metni": k.not_metni,
              "misafir_adi": k.misafir_adi,
              # Arvento entegrasyonu (2026-09-23) -- bu dict elle kurulduğu

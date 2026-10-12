@@ -467,6 +467,8 @@ class KayitCevap(BaseModel):
     # çeviren bir field_validator'a ihtiyaç YOK -- None burada zaten anlamlı
     # bir değerdir ("bu bilgi hiç hesaplanmadı").
     harici_katkili: Optional[bool] = None
+    # Kameranın kendi okuması kayıttan farklıysa -- bkz. models.Kayit.kamera_okumasi.
+    kamera_okumasi: Optional[str] = None
 
     model_config = ConfigDict(from_attributes=True)
 

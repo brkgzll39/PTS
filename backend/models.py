@@ -241,6 +241,11 @@ class Kayit(Base):
     # olarak False değil None kullanılır. Kamera bazında karşılaştırma:
     # main.py::kamera_dahua_karsilastirma.
     harici_katkili = Column(Boolean, nullable=True)
+    # KAMERA OKUMASI UYUŞMAZLIĞI (2026-10-12): kameranın KENDİ ANPR'ı (Dahua)
+    # bu geçişte kaydedilen plakadan FARKLI bir metin okuduysa o metin
+    # ("16 AC 9302"); aynıysa ya da kamera okuması yoksa None. Doluysa kayıt
+    # panelde "Kontrol gerekli" diye işaretlenir -- iki okumadan biri yanlıştır.
+    kamera_okumasi = Column(String(20), nullable=True)
     # Tek seferlik, bu kayda özel not (örn. "görevli tarafından elle içeri
     # alındı, sebep: teslimat"). Kişinin KENDİ profilindeki kalıcı notlar
     # (bkz. Kisi.aciklama) ile KARIŞTIRILMAMALI -- bu SADECE bu tekil geçişe

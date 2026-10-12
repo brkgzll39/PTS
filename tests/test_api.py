@@ -7384,3 +7384,66 @@ def test_olay_dongusunde_calistir_baska_is_parcaciginda():
         dongu.call_soon_threadsafe(dongu.stop)
         t.join(5)
         dongu.close()
+
+
+def test_kamera_okumasi_farkliysa_kayitta_saklanir_ve_filtrelenir(client, yetkili_header):
+    """2026-10-12: kameranın kendi ANPR'ı kayıttan FARKLI bir plaka okuduysa
+    kayıt "Kontrol gerekli" diye işaretlenir (kamera_okumasi); aynıysa ya da
+    boşsa işaret konmaz. "Kameranın okuması farklı" filtresi ve "riskli"
+    filtresi bu kayıtları getirir."""
+    farkli = client.post("/kayitlar/otomatik", data={
+        "plaka_no": "34 KOF 101", "kamera_id": "KOF-KAM", "guven_skoru": 0.99,
+        "dogrulama_kare_sayisi": 8, "farkli_okuma_sayisi": 2, "kamera_okumasi": "34 KOF 107",
+    }).json()
+    assert farkli["kamera_okumasi"] == "34 KOF 107"
+    ayni = client.post("/kayitlar/otomatik", data={
+        "plaka_no": "34 KOF 102", "kamera_id": "KOF-KAM", "guven_skoru": 0.99,
+        "dogrulama_kare_sayisi": 8, "kamera_okumasi": "34KOF102",
+    }).json()
+    assert ayni["kamera_okumasi"] is None
+    bos = _otomatik_kayit(client, "34 KOF 103", "KOF-KAM", kare=8)
+    assert bos["kamera_okumasi"] is None
+
+    def idler(deger):
+        r = client.get("/kayitlar", params={"plaka": "34 KOF", "dogrulama": deger}, headers=yetkili_header)
+        assert r.status_code == 200, r.text
+        return {k["id"] for k in r.json()}
+
+    assert idler("kamera_farkli") == {farkli["id"]}
+    assert farkli["id"] in idler("riskli")
+    assert ayni["id"] not in idler("riskli")
+
+
+def test_sonradan_gelen_kamera_okumasi_son_kaydi_isaretler(client, yetkili_header):
+    kayit = _otomatik_kayit(client, "34 KOG 201", "KOG-KAM", kare=6)
+    baska_kamera = _otomatik_kayit(client, "34 KOG 202", "KOG-KAM-2", kare=6)
+
+    r = client.post("/kayitlar/otomatik/kamera-okumasi", data={
+        "plaka_no": "34 KOG 201", "kamera_id": "KOG-KAM", "kamera_okumasi": "34 KOG 207",
+    })
+    assert r.status_code == 200, r.text
+    assert r.json() == {"guncellendi": True, "kayit_id": kayit["id"], "kamera_okumasi": "34 KOG 207"}
+
+    # İkinci bildirim ilk işareti değiştirmez; başka kameranın kaydı ve
+    # eşleşmeyen plaka hiç etkilenmez.
+    r = client.post("/kayitlar/otomatik/kamera-okumasi", data={
+        "plaka_no": "34 KOG 201", "kamera_id": "KOG-KAM", "kamera_okumasi": "34 KOG 208",
+    })
+    assert r.json()["guncellendi"] is False
+    r = client.post("/kayitlar/otomatik/kamera-okumasi", data={
+        "plaka_no": "34 KOG 202", "kamera_id": "KOG-KAM", "kamera_okumasi": "34 KOG 209",
+    })
+    assert r.json() == {"guncellendi": False, "sebep": "kayit_bulunamadi"}
+
+    liste = {k["id"]: k["kamera_okumasi"] for k in
+             client.get("/kayitlar", params={"plaka": "34 KOG"}, headers=yetkili_header).json()}
+    assert liste[kayit["id"]] == "34 KOG 207"
+    assert liste[baska_kamera["id"]] is None
+
+
+def test_sonradan_gelen_kamera_okumasi_kamera_anahtari_ister(client, monkeypatch):
+    monkeypatch.setenv("PTS_KAMERA_ANAHTARI", "gizli-anahtar")
+    r = client.post("/kayitlar/otomatik/kamera-okumasi", data={
+        "plaka_no": "34 KOG 301", "kamera_id": "KOG-KAM", "kamera_okumasi": "34 KOG 307",
+    })
+    assert r.status_code == 401
