@@ -257,8 +257,10 @@ def test_kart_ulasilamazsa_hata():
 # led_panel entegrasyonu
 # ------------------------------------------------------------------
 
-def _huidu_ayarlari(port):
-    return dict(led_panel.VARSAYILAN_AYARLAR, led_mod="huidu", huidu_host="127.0.0.1", huidu_port=port)
+def _huidu_ayarlari(port, **ek):
+    # mesaj süresi 0: test bittikten sonra tetiklenecek zamanlayıcı bırakılmasın
+    return {**led_panel.VARSAYILAN_AYARLAR, "led_mod": "huidu", "huidu_host": "127.0.0.1",
+            "huidu_port": port, "huidu_mesaj_suresi": 0, **ek}
 
 
 def test_led_panel_huidu_modu_satirlari_iletir(kart, monkeypatch):
@@ -323,3 +325,66 @@ def test_led_panel_genislik_ayarini_iletir(kart, monkeypatch):
     for c in kart.cerceveler:
         if c[6] == huidu.KOMUT_BITMAP:
             assert max(_yanik_sutunlar(c[53:309])) < 64
+
+
+# ------------------------------------------------------------------
+# Bekleme yazısı (T.P.A.O.): araç mesajından sonra panele geri dönülür
+# ------------------------------------------------------------------
+
+def _bitmapler(kart):
+    return [c[53:309] for c in kart.cerceveler if c[6] == huidu.KOMUT_BITMAP]
+
+
+def _bekle(kosul, sure=3.0):
+    import time
+    bitis = time.monotonic() + sure
+    while time.monotonic() < bitis:
+        if kosul():
+            return True
+        time.sleep(0.02)
+    return kosul()
+
+
+TPAO = huidu.metin_bitmap(["T.P.A.O."], genislik=64)
+
+
+def test_arac_mesajindan_sonra_bekleme_yazisina_doner(kart, monkeypatch):
+    monkeypatch.setattr(led_panel, "ayarlari_oku",
+                        lambda: _huidu_ayarlari(kart.port, huidu_mesaj_suresi=0.2, huidu_iki_bolge=True))
+    assert led_panel.led_mesaj_gonder("x", satirlar=("YETKİSİZ ARAÇ", "34TD1234"))
+    assert _bekle(lambda: len(_bitmapler(kart)) == 4)
+    ust, alt = _bitmapler(kart)[2:]
+    assert ust == TPAO, "bekleme yazısı üst bölgede, Pts.exe gibi"
+    assert alt == bytes(huidu.BITMAP_BOYUTU)
+
+
+def test_sure_dolmadan_yeni_mesaj_gelirse_eski_zamanlayici_yazmaz(kart, monkeypatch):
+    monkeypatch.setattr(led_panel, "ayarlari_oku",
+                        lambda: _huidu_ayarlari(kart.port, huidu_mesaj_suresi=0.3))
+    led_panel.led_mesaj_gonder("x", satirlar=("HOŞ GELDİNİZ", "34ABC123"))
+    led_panel.led_mesaj_gonder("y", satirlar=("KARA LİSTE", "06XYZ99"))
+    assert _bekle(lambda: len(_bitmapler(kart)) >= 6)
+    import time
+    time.sleep(0.5)
+    bitmapler = _bitmapler(kart)
+    assert len(bitmapler) == 6, "iki mesaj + yalnızca BİR kez bekleme yazısı"
+    assert bitmapler[4] == TPAO
+
+
+def test_sure_sifirsa_bekleme_yazisina_donulmez(kart, monkeypatch):
+    monkeypatch.setattr(led_panel, "ayarlari_oku", lambda: _huidu_ayarlari(kart.port))
+    led_panel.led_mesaj_gonder("x", satirlar=("HOŞ GELDİNİZ", "34ABC123"))
+    import time
+    time.sleep(0.3)
+    assert len(_bitmapler(kart)) == 2
+
+
+def test_bekleme_yazisi_dogrudan_gosterilir(kart, monkeypatch):
+    monkeypatch.setattr(led_panel, "ayarlari_oku", lambda: _huidu_ayarlari(kart.port))
+    assert led_panel._bekleme_yazisina_don() is True
+    assert _bitmapler(kart)[0] == TPAO
+
+
+def test_huidu_modunda_degilse_bekleme_yazisi_gonderilmez(monkeypatch):
+    monkeypatch.setattr(led_panel, "ayarlari_oku", lambda: dict(led_panel.VARSAYILAN_AYARLAR))
+    assert led_panel._bekleme_yazisina_don() is False

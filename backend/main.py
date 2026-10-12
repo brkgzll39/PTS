@@ -1552,6 +1552,13 @@ async def _son_not_onbellek_temizligini_baslat():
 
 
 @app.on_event("startup")
+async def _led_bekleme_yazisini_goster():
+    """Huidu modunda panelin boştaki yazısını (varsayılan T.P.A.O.) açılışta
+    yazar; panel ulaşılamazsa açılışı bekletmez (arka plan iş parçacığı)."""
+    led_panel.bekleme_yazisini_goster_arka_planda()
+
+
+@app.on_event("startup")
 async def _vardiya_otomatik_kapamayi_baslat():
     """Arka planda sürekli çalışan, 8 saati aşan (unutulmuş) açık vardiya
     oturumlarını otomatik kapatan görevi başlatır (bkz. yukarısı)."""
@@ -6734,6 +6741,8 @@ def led_ayarlarini_guncelle(ayarlar: dict, kullanici: models.Kullanici = Depends
     mevcut = led_panel.ayarlari_oku()
     mevcut.update(ayarlar)
     led_panel.ayarlari_kaydet(mevcut)
+    # Huidu modunda yeni bekleme yazısı (T.P.A.O.) hemen panelde görünsün.
+    led_panel.bekleme_yazisini_goster_arka_planda()
     return mevcut
 
 

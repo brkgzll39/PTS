@@ -2612,7 +2612,10 @@ birbirinden farklı davranan iki kopya mantık oluşmaz.
   128x16 bitmap olarak çizilip gönderilir; üst satırda durum (HOŞ GELDİNİZ, KARA LİSTE…),
   alt satırda plaka. "Panel genişliği", panelin gösterdiği sütun sayısıdır (NİZAMİYE
   paneli 64x32: varsayılan 64); yazı bu genişliğe sığdırılır. Panel 32 px yüksekse
-  (ör. 64x32) "İki bölge" seçeneğini açın: durum üst yarıda, plaka alt yarıda. Protokol ayrıntıları
+  (ör. 64x32) "İki bölge" seçeneğini açın: durum üst yarıda, plaka alt yarıda.
+  Boştayken panelde "Bekleme yazısı" (varsayılan T.P.A.O.) durur: PTS açılışında ve
+  LED ayarları kaydedilince yazılır; araç mesajı "Araç mesajı süresi" (varsayılan 10 sn)
+  kadar görünür, sonra bekleme yazısına dönülür (0 sn ya da boş yazı: dönülmez). Protokol ayrıntıları
   `backend/huidu.py` başındaki açıklamada. Aynı karta başka bir yazılım (eski Pts.exe,
   HD2018) içerik gönderiyorsa birbirinin üstüne yazar; o yazılımlar kapatılmalıdır.
 

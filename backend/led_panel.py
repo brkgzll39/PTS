@@ -18,6 +18,7 @@ import json
 import logging
 import os
 import socket
+import threading
 from datetime import datetime
 from typing import Optional, Sequence
 
@@ -54,6 +55,10 @@ VARSAYILAN_AYARLAR = {
     "huidu_port": huidu.VARSAYILAN_PORT,
     "huidu_iki_bolge": False,    # panel 32 px yüksekse (ör. 64x32) True: 1. satır üst, 2. satır alt bölgeye
     "huidu_genislik": huidu.VARSAYILAN_GORUNUR_GENISLIK,  # panelin gösterdiği sütun sayısı (NİZAMİYE: 64)
+    # Panelin boştaki yazısı (eski Pts.exe gibi). Araç mesajı `huidu_mesaj_suresi`
+    # saniye görünür, sonra bu yazıya dönülür. Boş yazı ya da 0 sn: dönülmez.
+    "huidu_bekleme_yazisi": "T.P.A.O.",
+    "huidu_mesaj_suresi": 10,
 }
 
 
@@ -80,6 +85,7 @@ def led_mesaj_gonder(mesaj: str, satirlar: Optional[Sequence[str]] = None) -> bo
     `satirlar` verilirse (ör. ("HOŞ GELDİNİZ", "34ABC123")) satır tabanlı
     paneller (huidu) metni bu şekilde böler; diğer modlar yalnızca `mesaj`ı kullanır.
     """
+    global _huidu_nesil
     ayarlar = ayarlari_oku()
     mod = ayarlar.get("led_mod", "simulate")
 
@@ -108,13 +114,10 @@ def led_mesaj_gonder(mesaj: str, satirlar: Optional[Sequence[str]] = None) -> bo
             return True
 
         elif mod == "huidu":
-            huidu.gonder(
-                ayarlar["huidu_host"],
-                int(ayarlar["huidu_port"]),
-                satirlar=satirlar or [mesaj],
-                iki_bolge=bool(ayarlar["huidu_iki_bolge"]),
-                genislik=int(ayarlar["huidu_genislik"]),
-            )
+            with _huidu_kilidi:
+                _huidu_nesil += 1
+                _huidu_gonder(ayarlar, satirlar or [mesaj], bool(ayarlar["huidu_iki_bolge"]))
+                _bekleme_yazisini_zamanla(ayarlar, _huidu_nesil)
             return True
 
         else:
@@ -124,3 +127,62 @@ def led_mesaj_gonder(mesaj: str, satirlar: Optional[Sequence[str]] = None) -> bo
     except Exception as e:
         logger.error("LED mesajı gönderilemedi (mod=%s): %s", mod, e)
         return False
+
+
+# ------------------------------------------------------------------
+# Huidu: boştaki yazı (T.P.A.O.)
+# ------------------------------------------------------------------
+# Her araç mesajı "nesil"i artırır; zamanlayıcı tetiklendiğinde bu arada yeni bir
+# mesaj geldiyse (nesil değiştiyse) bekleme yazısını GÖNDERMEZ. Kilit, "kontrol et
+# + gönder"in yeni bir mesajla iç içe geçip onu ezmesini önler.
+_huidu_kilidi = threading.Lock()
+_huidu_nesil = 0
+_huidu_zamanlayici: Optional[threading.Timer] = None
+
+
+def _huidu_gonder(ayarlar: dict, satirlar: Sequence[str], iki_bolge: bool) -> None:
+    huidu.gonder(
+        ayarlar["huidu_host"],
+        int(ayarlar["huidu_port"]),
+        satirlar=satirlar,
+        iki_bolge=iki_bolge,
+        genislik=int(ayarlar["huidu_genislik"]),
+    )
+
+
+def _bekleme_yazisini_zamanla(ayarlar: dict, nesil: int) -> None:
+    global _huidu_zamanlayici
+    if _huidu_zamanlayici is not None:
+        _huidu_zamanlayici.cancel()
+        _huidu_zamanlayici = None
+    sure = float(ayarlar.get("huidu_mesaj_suresi") or 0)
+    if sure <= 0 or not str(ayarlar.get("huidu_bekleme_yazisi") or "").strip():
+        return
+    _huidu_zamanlayici = threading.Timer(sure, _bekleme_yazisina_don, args=(nesil,))
+    _huidu_zamanlayici.daemon = True
+    _huidu_zamanlayici.start()
+
+
+def _bekleme_yazisina_don(nesil: Optional[int] = None) -> bool:
+    """Bekleme yazısını panele yazar. `nesil` verilmişse yalnızca o mesajdan sonra
+    yeni mesaj gelmediyse yazar. Huidu modunda değilse ya da yazı boşsa hiçbir şey yapmaz."""
+    with _huidu_kilidi:
+        if nesil is not None and nesil != _huidu_nesil:
+            return False
+        ayarlar = ayarlari_oku()
+        yazi = str(ayarlar.get("huidu_bekleme_yazisi") or "").strip()
+        if ayarlar.get("led_mod") != "huidu" or not yazi:
+            return False
+        try:
+            # Pts.exe gibi: yazı üst bölgede, alt bölge boş.
+            _huidu_gonder(ayarlar, [yazi], iki_bolge=False)
+            return True
+        except Exception as e:
+            logger.error("LED bekleme yazısı gönderilemedi (mod=huidu): %s", e)
+            return False
+
+
+def bekleme_yazisini_goster_arka_planda() -> None:
+    """PTS açılışında / LED ayarları kaydedilince bekleme yazısını panele yazar.
+    Panel ulaşılamazsa isteği/açılışı bekletmemek için ayrı iş parçacığında çalışır."""
+    threading.Thread(target=_bekleme_yazisina_don, name="led-bekleme-yazisi", daemon=True).start()
