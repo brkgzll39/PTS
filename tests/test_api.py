@@ -7603,30 +7603,54 @@ def test_ana_port_otomatik_giris_yalnizca_ayarliysa_ve_var_olan_hesapla(client, 
 def test_nizamiye_filtresi_liste_sayac_ve_raporlara_uygulanir(client, yetkili_header):
     """2026-10-14: Kayıtlar ekranındaki "Nizamiye" seçimi (Lojman / Nizamiye)
     listeye, sayfa sayacına, PDF'e ve Excel'e uygulanır. Sahadaki kamera adları:
-    Lojman, Lojman1, Nizamiye, Nizamıye."""
+    Lojman, Lojman1, Nizamiye, Nizamıye. Seçenekler yalnızca TANIMLI
+    kameralardan gelir; eski kayıtlarda kalmış adlar ("Nizamiye Giri",
+    "Lojman C" -- Türkçe harfleri silinmiş eski kamera adları) uygun
+    nizamiyeye sayılır, hiçbirine uymayanlar ("GIRIS-KAMERA") seçenek olmaz."""
     import io
     import openpyxl
-    for plaka, kamera in (("34 NZF 001", "Lojman"), ("34 NZF 002", "Lojman1"),
-                          ("34 NZF 003", "Nizamiye"), ("34 NZF 004", "Nizamıye")):
-        r = client.post("/kayitlar", json={"plaka_no": plaka, "kamera_id": kamera, "yon": "giris"}, headers=yetkili_header)
+    anahtar = lisans.uret("Nizamiye Test", kamera_limiti=50, gun=30)
+    assert client.post("/lisans/aktive-et", json={"anahtar": anahtar}, headers=yetkili_header).status_code == 200
+    kamera_idleri = []
+    for ad in ("Lojman", "Lojman1", "Nizamiye", "Nizamıye"):
+        r = client.post("/kameralar", json={"ad": ad, "rtsp_url": f"rtsp://127.0.0.1:554/{len(kamera_idleri)}", "yon": "giris"},
+                        headers=yetkili_header)
         assert r.status_code == 200, r.text
+        kamera_idleri.append(r.json()["id"])
+    try:
+        for plaka, kamera in (("34 NZF 001", "Lojman"), ("34 NZF 002", "Lojman1"),
+                              ("34 NZF 003", "Nizamiye"), ("34 NZF 004", "Nizamıye"),
+                              ("34 NZF 005", "Nizamiye Giri"), ("34 NZF 006", "Lojman C"),
+                              ("34 NZF 007", "GIRIS-KAMERA")):
+            r = client.post("/kayitlar", json={"plaka_no": plaka, "kamera_id": kamera, "yon": "giris"}, headers=yetkili_header)
+            assert r.status_code == 200, r.text
 
-    secenekler = client.get("/kayitlar/nizamiyeler", headers=yetkili_header).json()
-    degerler = {s["deger"]: s["ad"] for s in secenekler}
-    assert degerler["lojman"] == "Lojman" and degerler["nizamiye"] == "Nizamiye"
+        secenekler = client.get("/kayitlar/nizamiyeler", headers=yetkili_header).json()
+        degerler = {s["deger"]: s["ad"] for s in secenekler}
+        assert degerler.get("lojman") == "Lojman" and degerler.get("nizamiye") == "Nizamiye"
+        assert not any("giri" in d for d in degerler), degerler
 
-    def plakalar(nizamiye):
-        r = client.get("/kayitlar", params={"plaka": "34 NZF", "nizamiye": nizamiye, "limit": 50}, headers=yetkili_header)
-        return sorted(k["plaka_no"] for k in r.json())
+        def plakalar(nizamiye):
+            r = client.get("/kayitlar", params={"plaka": "34 NZF", "nizamiye": nizamiye, "limit": 50}, headers=yetkili_header)
+            return sorted(k["plaka_no"] for k in r.json())
 
-    assert plakalar("lojman") == ["34 NZF 001", "34 NZF 002"]
-    assert plakalar("nizamiye") == ["34 NZF 003", "34 NZF 004"]
-    sayac = client.get("/kayitlar/sayfa-bilgisi", params={"plaka": "34 NZF", "nizamiye": "lojman"}, headers=yetkili_header).json()
-    assert sayac["toplam"] == 2
+        assert plakalar("lojman") == ["34 NZF 001", "34 NZF 002", "34 NZF 006"]
+        assert plakalar("nizamiye") == ["34 NZF 003", "34 NZF 004", "34 NZF 005"]
+        sayac = client.get("/kayitlar/sayfa-bilgisi", params={"plaka": "34 NZF", "nizamiye": "lojman"},
+                           headers=yetkili_header).json()
+        assert sayac["toplam"] == 3
 
-    r = client.get("/disa-aktar/excel/kayitlar", params={"plaka": "34 NZF", "nizamiye": "nizamiye"}, headers=yetkili_header)
-    ws = openpyxl.load_workbook(io.BytesIO(r.content)).active
-    assert sorted(row[1] for row in ws.iter_rows(min_row=2, values_only=True)) == ["34 NZF 003", "34 NZF 004"]
+        r = client.get("/disa-aktar/excel/kayitlar", params={"plaka": "34 NZF", "nizamiye": "nizamiye"}, headers=yetkili_header)
+        ws = openpyxl.load_workbook(io.BytesIO(r.content)).active
+        assert sorted(row[1] for row in ws.iter_rows(min_row=2, values_only=True)) == ["34 NZF 003", "34 NZF 004", "34 NZF 005"]
 
-    r = client.get("/disa-aktar/pdf/kayitlar", params={"plaka": "34 NZF", "nizamiye": "lojman"}, headers=yetkili_header)
-    assert r.status_code == 200 and r.content[:4] == b"%PDF"
+        # Tümü: tanımlı nizamiyeler ayrı sayfada, uymayan eski ad "Diğer"de.
+        r = client.get("/disa-aktar/excel/kayitlar", params={"plaka": "34 NZF"}, headers=yetkili_header)
+        wb = openpyxl.load_workbook(io.BytesIO(r.content))
+        assert wb.sheetnames == ["Lojman", "Nizamiye", "Diğer"]
+
+        r = client.get("/disa-aktar/pdf/kayitlar", params={"plaka": "34 NZF", "nizamiye": "lojman"}, headers=yetkili_header)
+        assert r.status_code == 200 and r.content[:4] == b"%PDF"
+    finally:
+        for kid in kamera_idleri:
+            client.delete(f"/kameralar/{kid}", headers=yetkili_header)

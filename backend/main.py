@@ -6172,18 +6172,23 @@ def _kayitlardaki_kamera_adlari(db: Session) -> set:
     return adlar
 
 
+def _tanimli_nizamiyeler() -> list:
+    """Şu an tanımlı kameralardan türeyen nizamiye anahtarları ("lojman", "nizamiye")."""
+    return sorted({excel_export.nizamiye_grubu(k.get("ad", "")) for k in _kameralari_oku()} - {""})
+
+
 def _nizamiye_filtresi_uygula(sorgu, nizamiye: Optional[str], db: Session):
     if not nizamiye:
         return sorgu
     anahtar = excel_export.nizamiye_grubu(nizamiye)
-    adlar = [a for a in _kayitlardaki_kamera_adlari(db) if excel_export.nizamiye_grubu(a) == anahtar]
+    adlar = [a for a in _kayitlardaki_kamera_adlari(db) if excel_export.nizamiye_eslesir_mi(a, anahtar)]
     return sorgu.filter(models.Kayit.kamera_id.in_(adlar) if adlar else false())
 
 
 def _nizamiye_basligi(nizamiye: str, db: Session) -> str:
     """Rapor başlığı için büyük harfli Türkçe nizamiye adı ("NİZAMİYE")."""
     anahtar = excel_export.nizamiye_grubu(nizamiye)
-    adlar = [a for a in _kayitlardaki_kamera_adlari(db) if excel_export.nizamiye_grubu(a) == anahtar]
+    adlar = [k.get("ad", "") for k in _kameralari_oku() if excel_export.nizamiye_grubu(k.get("ad", "")) == anahtar]
     ad = excel_export.nizamiye_gorunen_adi(anahtar, adlar) if adlar else nizamiye
     return ad.replace("i", "İ").replace("ı", "I").upper()
 
@@ -6195,7 +6200,10 @@ def kayit_nizamiyeleri(db: Session = Depends(get_db),
     Kamera erişimi kısıtlı hesaplar yalnızca kendi kameralarının nizamiyesini görür."""
     izinli = _kullanicinin_izinli_kamera_adlari(kullanici)
     gruplar: dict = {}
-    for ad in _kayitlardaki_kamera_adlari(db):
+    # Yalnızca ŞU AN tanımlı kameralar: eski kayıtlarda kalmış kamera adları
+    # ("Nizamiye Giri", "GIRIS-KAMERA" ...) ayrı seçenek olarak görünmesin --
+    # onlar _nizamiye_filtresi_uygula'da uygun nizamiyeye sayılır.
+    for ad in (k.get("ad") for k in _kameralari_oku()):
         if izinli is not None and ad not in izinli:
             continue
         anahtar = excel_export.nizamiye_grubu(ad)
@@ -7202,7 +7210,8 @@ def kayitlari_excel_indir(
         )
         satirlar = _kayitlari_rapor_satirlari(kayitlar, db)
         dosya_yolu = _gecici_rapor_yolu("pts_kayitlar", "xlsx")
-        _raporu_uret(excel_export.kayitlar_excel_olustur, satirlar, dosya_yolu)
+        _raporu_uret(excel_export.kayitlar_excel_olustur, satirlar, dosya_yolu,
+                     nizamiyeler=_tanimli_nizamiyeler())
     return _indirip_sil(dosya_yolu, "pts_kayitlari.xlsx", _XLSX_MEDIA)
 
 

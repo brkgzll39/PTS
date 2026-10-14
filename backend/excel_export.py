@@ -69,6 +69,18 @@ def nizamiye_grubu(nokta: str) -> str:
     return kok.replace("I", "ı").replace("İ", "i").lower().replace("ı", "i")
 
 
+def nizamiye_eslesir_mi(nokta: str, anahtar: str) -> bool:
+    """`nokta` (kamera/nokta adı) `anahtar` nizamiyesine mi ait? Aynı kök adın
+    yanında, kökle başlayıp devam eden ESKİ adlar da eşleşir: sahadaki eski
+    kayıtlarda kamera adları "Nizamiye Giriş"/"Lojman Çıkış" iken Türkçe
+    harfleri silinmiş biçimde ("Nizamiye Giri", "Lojman C") saklanmış
+    (2026-10-14, kullanıcının seçim listesinde gördüğü fazlalık)."""
+    if not anahtar:
+        return False
+    kok = nizamiye_grubu(nokta)
+    return kok == anahtar or bool(re.match(re.escape(anahtar) + r"[\s_\-]", kok))
+
+
 def nizamiye_gorunen_adi(anahtar: str, noktalar: list) -> str:
     """Sayfa adı: gruptaki adlardan "i" ile yazılmış olanı (Nizamiye), yoksa
     en sık geçeni (Nizamıye)."""
@@ -117,7 +129,7 @@ def _kayit_sayfasi_yaz(ws, satirlar: list) -> None:
     ws.freeze_panes = "A2"
 
 
-def kayitlar_excel_olustur(satirlar: list, dosya_yolu: str) -> str:
+def kayitlar_excel_olustur(satirlar: list, dosya_yolu: str, nizamiyeler: list = None) -> str:
     """`satirlar`: main.py::_kayitlari_rapor_satirlari'nin ürettiği, her biri
     bir geçiş kaydını temsil eden düz (plain) sözlüklerden oluşan liste.
 
@@ -140,7 +152,13 @@ def kayitlar_excel_olustur(satirlar: list, dosya_yolu: str) -> str:
     sayfa ("Geçiş Raporu") kalır."""
     gruplar: dict = {}
     for s in satirlar:
-        gruplar.setdefault(nizamiye_grubu(s.get("nokta", "")), []).append(s)
+        nokta = s.get("nokta", "")
+        if nizamiyeler is None:
+            anahtar = nizamiye_grubu(nokta)
+        else:
+            # Tanımlı nizamiyelerden birine uymayan (eski/test) adlar "Diğer"e düşer.
+            anahtar = next((n for n in nizamiyeler if nizamiye_eslesir_mi(nokta, n)), "")
+        gruplar.setdefault(anahtar, []).append(s)
 
     wb = Workbook()
     if len(gruplar) <= 1:
