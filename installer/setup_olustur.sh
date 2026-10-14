@@ -80,11 +80,11 @@ echo "4/5 Plaka modelleri..."
 # HOME altına indirilir; Windows'ta %USERPROFILE%\.cache altına kopyalanır.
 SAHTE_HOME="$CALISMA/model_home"
 mkdir -p "$SAHTE_HOME"
-FAST_ALPR=$(grep -E '^fast-alpr==' "$KOK/backend/requirements-windows.txt")
+FAST_ALPR_SURUM=$(grep -E '^fast-alpr==' "$KOK/backend/requirements-windows.txt" | cut -d= -f3)
 OCR_PAKET=$(grep -E '^fast-plate-ocr==' "$KOK/backend/requirements-windows.txt")
 OIM_PAKET=$(grep -E '^open-image-models==' "$KOK/backend/requirements-windows.txt")
 HOME="$SAHTE_HOME" uv run --no-project --python 3.12 \
-  --with "${FAST_ALPR}[onnx]" --with "$OCR_PAKET" --with "$OIM_PAKET" -- python -c "
+  --with "fast-alpr[onnx]==${FAST_ALPR_SURUM}" --with "$OCR_PAKET" --with "$OIM_PAKET" -- python -c "
 from fast_alpr import ALPR
 ALPR(detector_model='$DEDEKTOR', ocr_model='$OCR')
 print('modeller hazır')"

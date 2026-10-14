@@ -60,13 +60,29 @@ pts_sistemi/
 
 ## Kurulum ve Çalıştırma
 
-### Profesyonel Windows Kurulumu
+### Profesyonel Windows Kurulumu (PTS-Kurulum.exe)
 
-Kurulum paketi üretmek için önce [Inno Setup 6](https://jrsoftware.org/isdl.php)
-kurun, ardından `installer\build_setup.bat` dosyasını çalıştırın. Oluşan
-`installer\output\SPY-PTS-Setup.exe` paketi program klasörünü, masaüstü ve başlat
-menüsü kısayollarını oluşturur. Hedef bilgisayarda kurulum sonrası Python ortamı
-ve bağımlılıklar otomatik hazırlanır.
+`installer/setup_olustur.sh` (Linux; `git`, `makensis`, `uv`, `curl` gerekir)
+tek dosyalık bir Windows kurulum programı üretir: `installer/output/PTS-Kurulum.exe`.
+İçinde gömülü Python 3.12, `backend/requirements-windows.txt`'deki tüm paketler
+(kamera kütüphaneleri dahil) ve plaka modelleri vardır -- **hedef bilgisayarda
+internet, Python veya uv gerekmez.** Proje dosyaları `git archive` ile alındığı
+için yerel veritabanı, `.env`, lisans ve kamera/LED ayarları pakete girmez.
+
+Kurulum programı:
+- `C:\PTS` klasörüne kurar (Program Files'a değil: PTS verisini kendi klasörüne yazar),
+- `kurulum.bat`'ı çalıştırıp Python ortamını kurar ve `.env` güvenlik anahtarlarını üretir,
+- masaüstüne "PTS Baslat" ve "PTS Paneli" kısayollarını koyar,
+- isteğe bağlı: güvenlik duvarında 8000 portunu açar (diğer nizamiye
+  bilgisayarlarının bağlanması için), Windows açılışında PTS'i başlatır,
+- daha önce kurulmuş bir PTS'in üzerine kurulursa veriye dokunmaz; kaldırma da
+  veritabanını, görüntüleri ve ayarları silmez.
+
+Kameralar plaka okumuyorsa hedef bilgisayarda "Microsoft Visual C++ 2015-2022
+Redistributable (x64)" eksik olabilir (`kurulum.bat` bunu kurulumda dener ve uyarır).
+
+Eski Inno Setup yolu (`installer\build_setup.bat` + `PTS.iss`) hâlâ duruyor ama
+hedef bilgisayarda internet ve uv ister.
 
 ### SQL Server
 
