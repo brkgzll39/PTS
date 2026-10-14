@@ -1,4 +1,6 @@
 """Kayıtları ve kişileri .xlsx (Excel) formatında dışa aktarma."""
+import re
+
 from openpyxl import Workbook
 from openpyxl.cell.cell import ILLEGAL_CHARACTERS_RE
 from openpyxl.styles import Font, PatternFill, Alignment
@@ -43,29 +45,49 @@ def _baslik_satiri_bicimlendir(ws, sutun_sayisi):
         hucre.alignment = Alignment(horizontal="center")
 
 
-def kayitlar_excel_olustur(satirlar: list, dosya_yolu: str) -> str:
-    """`satirlar`: main.py::_kayitlari_rapor_satirlari'nin ürettiği, her biri
-    bir geçiş kaydını temsil eden düz (plain) sözlüklerden oluşan liste.
+_KAYIT_BASLIKLARI = [
+    "ID", "Plaka", "Adı", "Soyadı", "Site", "Blok", "Daire", "Otopark",
+    "Nokta", "Geçiş Tipi", "Araç Tipi", "Tarih", "Notlar", "Vardiya",
+]
 
-    Sütun düzeni (2026-09-18), kullanıcının paylaştığı bir referans ürünün
-    "GEÇİŞ RAPORU" Excel çıktısıyla BİREBİR eşleşecek şekilde tasarlandı:
-    Plaka/Adı/Soyadı/Site/Blok/Daire/Otopark/Nokta/Geçiş Tipi/Araç Tipi/
-    Tarih/Notlar. "ID" en başa, bizim sistemimize özgü ekstra bir sütun
-    olarak eklendi (kayda geri dönüp bakabilmek için faydalı, referansta
-    yok). "Blok" ve "Otopark" bu sistemde MODELLENMEDİĞİ için her zaman
-    boştur -- var olmayan bir veri asla uydurulmaz (bkz. main.py'deki not).
-    "Vardiya" (2026-09-20 kullanıcı talebi, bkz. README) da AYNI şekilde,
-    referansta olmayan ama bizim sistemimize özgü bir sütun olarak en SONA
-    eklendi -- o kaydın gerçekleştiği anda hangi güvenlik personelinin
-    vardiyasının açık olduğunu (varsa) gösterir."""
-    wb = Workbook()
-    ws = wb.active
-    ws.title = "Geçiş Raporu"
 
-    basliklar = [
-        "ID", "Plaka", "Adı", "Soyadı", "Site", "Blok", "Daire", "Otopark",
-        "Nokta", "Geçiş Tipi", "Araç Tipi", "Tarih", "Notlar", "Vardiya",
-    ]
+def _nokta_kok_adi(nokta: str) -> str:
+    """Sondaki numara ve giriş/çıkış ekleri atılmış nokta adı ("Lojman1" -> "Lojman")."""
+    temiz = (nokta or "").strip()
+    temiz = re.sub(r"(?i)[\s_-]*(giri[sş]|[cç][iı]k[iı][sş])$", "", temiz)
+    return re.sub(r"[\s_\-\d]+$", "", temiz).strip()
+
+
+def nizamiye_grubu(nokta: str) -> str:
+    """Bir kamera/nokta adının ait olduğu nizamiyenin KARŞILAŞTIRMA anahtarı:
+    sondaki numara ve giriş/çıkış ekleri atılır, büyük/küçük harf ve Türkçe
+    "ı"/"i" farkı yok sayılır -- sahadaki "Lojman" + "Lojman1" aynı,
+    "Nizamiye" + "Nizamıye" aynı nizamiyedir."""
+    kok = _nokta_kok_adi(nokta)
+    if not kok:
+        return ""
+    return kok.replace("I", "ı").replace("İ", "i").lower().replace("ı", "i")
+
+
+def _grup_gorunen_adi(anahtar: str, noktalar: list) -> str:
+    """Sayfa adı: gruptaki adlardan "i" ile yazılmış olanı (Nizamiye), yoksa
+    en sık geçeni (Nizamıye)."""
+    if not anahtar:
+        return "Diğer"
+    koklar = [_nokta_kok_adi(n) for n in noktalar]
+    for k in koklar:
+        if k.lower() == anahtar:
+            return k
+    return max(set(koklar), key=koklar.count)
+
+
+def _sayfa_adi(ad: str) -> str:
+    # Excel sayfa adı: en fazla 31 karakter, []:*?/\ yasak.
+    return re.sub(r"[\[\]:*?/\\]", "", ad)[:31] or "Sayfa"
+
+
+def _kayit_sayfasi_yaz(ws, satirlar: list) -> None:
+    basliklar = _KAYIT_BASLIKLARI
     ws.append(basliklar)
     _baslik_satiri_bicimlendir(ws, len(basliklar))
 
@@ -91,8 +113,48 @@ def kayitlar_excel_olustur(satirlar: list, dosya_yolu: str) -> str:
         ws.column_dimensions[get_column_letter(i)].width = max(10, len(baslik) + 4)
     ws.column_dimensions[get_column_letter(basliklar.index("Notlar") + 1)].width = 35
     ws.column_dimensions[get_column_letter(basliklar.index("Vardiya") + 1)].width = 32
-
     ws.freeze_panes = "A2"
+
+
+def kayitlar_excel_olustur(satirlar: list, dosya_yolu: str) -> str:
+    """`satirlar`: main.py::_kayitlari_rapor_satirlari'nin ürettiği, her biri
+    bir geçiş kaydını temsil eden düz (plain) sözlüklerden oluşan liste.
+
+    Sütun düzeni (2026-09-18), kullanıcının paylaştığı bir referans ürünün
+    "GEÇİŞ RAPORU" Excel çıktısıyla BİREBİR eşleşecek şekilde tasarlandı:
+    Plaka/Adı/Soyadı/Site/Blok/Daire/Otopark/Nokta/Geçiş Tipi/Araç Tipi/
+    Tarih/Notlar. "ID" en başa, bizim sistemimize özgü ekstra bir sütun
+    olarak eklendi (kayda geri dönüp bakabilmek için faydalı, referansta
+    yok). "Blok" ve "Otopark" bu sistemde MODELLENMEDİĞİ için her zaman
+    boştur -- var olmayan bir veri asla uydurulmaz (bkz. main.py'deki not).
+    "Vardiya" (2026-09-20 kullanıcı talebi, bkz. README) da AYNI şekilde,
+    referansta olmayan ama bizim sistemimize özgü bir sütun olarak en SONA
+    eklendi -- o kaydın gerçekleştiği anda hangi güvenlik personelinin
+    vardiyasının açık olduğunu (varsa) gösterir.
+
+    2026-10-14 (kullanıcı: "excel kayıt alırken lojman ve nizamiye giriş
+    çıkışlarını ayrı ayrı almak istiyorum, bir listede gelmesin"): kayıtlar
+    birden fazla nizamiyeye aitse (bkz. `nizamiye_grubu`) her nizamiye AYRI
+    bir sayfaya yazılır ("Lojman", "Nizamiye"); tek nizamiyelik raporda tek
+    sayfa ("Geçiş Raporu") kalır."""
+    gruplar: dict = {}
+    for s in satirlar:
+        gruplar.setdefault(nizamiye_grubu(s.get("nokta", "")), []).append(s)
+
+    wb = Workbook()
+    if len(gruplar) <= 1:
+        ws = wb.active
+        ws.title = "Geçiş Raporu"
+        _kayit_sayfasi_yaz(ws, satirlar)
+    else:
+        wb.remove(wb.active)
+        kullanilan = set()
+        for anahtar in sorted(gruplar, key=lambda a: (a == "", a)):
+            ad = _sayfa_adi(_grup_gorunen_adi(anahtar, [s.get("nokta", "") for s in gruplar[anahtar]]))
+            while ad.lower() in kullanilan:
+                ad = _sayfa_adi(ad[:28] + "_" + str(len(kullanilan)))
+            kullanilan.add(ad.lower())
+            _kayit_sayfasi_yaz(wb.create_sheet(ad), gruplar[anahtar])
     wb.save(dosya_yolu)
     return dosya_yolu
 

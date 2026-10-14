@@ -210,3 +210,37 @@ def test_ice_aktarma_sablonu_tip_sutununda_veri_dogrulamasi_var(tmp_path):
     assert dogrulama.type == "list"
     for tip in ("abone", "personel", "ziyaretci"):
         assert tip in dogrulama.formula1
+
+
+def test_kayitlar_nizamiyelere_gore_ayri_sayfalara_bolunur(tmp_path):
+    """2026-10-14: "lojman ve nizamiye giriş çıkışlarını ayrı ayrı almak
+    istiyorum, bir listede gelmesin". Sahadaki kamera adları: Lojman, Lojman1,
+    Nizamiye, Nizamıye."""
+    dosya = tmp_path / "kayitlar.xlsx"
+    satirlar = [
+        _ornek_satir(id=1, nokta="Nizamıye"),
+        _ornek_satir(id=2, nokta="Lojman"),
+        _ornek_satir(id=3, nokta="Lojman1"),
+        _ornek_satir(id=4, nokta="Nizamiye"),
+    ]
+    excel_export.kayitlar_excel_olustur(satirlar, str(dosya))
+    wb = openpyxl.load_workbook(str(dosya))
+    assert wb.sheetnames == ["Lojman", "Nizamiye"]
+    idler = {ws.title: [r[0] for r in ws.iter_rows(min_row=2, values_only=True)] for ws in wb}
+    assert idler == {"Lojman": [2, 3], "Nizamiye": [1, 4]}
+    for ws in wb:
+        assert [h.value for h in ws[1]][0:2] == ["ID", "Plaka"]
+
+
+def test_tek_nizamiyelik_rapor_tek_sayfa_kalir(tmp_path):
+    dosya = tmp_path / "kayitlar.xlsx"
+    excel_export.kayitlar_excel_olustur(
+        [_ornek_satir(id=1, nokta="Lojman"), _ornek_satir(id=2, nokta="Lojman1")], str(dosya))
+    assert openpyxl.load_workbook(str(dosya)).sheetnames == ["Geçiş Raporu"]
+
+
+def test_nizamiye_grubu():
+    g = excel_export.nizamiye_grubu
+    assert g("Lojman") == g("Lojman1") == g("LOJMAN GİRİŞ") == g("Lojman Çıkış")
+    assert g("Nizamiye") == g("Nizamıye") == g("NİZAMİYE")
+    assert g("Lojman") != g("Nizamiye")

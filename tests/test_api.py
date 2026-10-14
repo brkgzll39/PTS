@@ -7573,3 +7573,28 @@ def test_otomatik_giris_ip_kisiti_ve_yonetici_hesabi_reddedilir(client, yetkili_
     monkeypatch.setenv("PTS_OTOMATIK_GIRIS_PORTU", "0")               # kapalı
     monkeypatch.setenv("PTS_OTOMATIK_GIRIS_KULLANICI", "lojman_kiosk")
     assert client.post("/auth/otomatik-giris").status_code == 403
+
+
+def test_ana_port_otomatik_giris_yalnizca_ayarliysa_ve_var_olan_hesapla(client, yetkili_header, monkeypatch):
+    """2026-10-14 (devam): ana port (8000) da PTS_ANA_PORT_OTOMATIK_GIRIS_KULLANICI
+    ayarlıysa o hesapla parolasız açılır; ayarsızsa kapalıdır. Hesap otomatik
+    oluşturulmaz (yazım hatası sessizce yeni hesap açmasın)."""
+    monkeypatch.setenv("PTS_PORT", "80")
+    monkeypatch.setenv("PTS_OTOMATIK_GIRIS_PORTU", "8787")
+    assert client.post("/auth/otomatik-giris").status_code == 403          # ayarsız: kapalı
+
+    monkeypatch.setenv("PTS_ANA_PORT_OTOMATIK_GIRIS_KULLANICI", "nizamiye_yok_boyle")
+    r = client.post("/auth/otomatik-giris")
+    assert r.status_code == 403 and "bulunamadı" in r.json()["detail"]
+
+    r = client.post("/kullanicilar", json={"kullanici_adi": "nizamiye_kiosk", "parola": "GucluParola123!",
+                                           "rol": "operatör"}, headers=yetkili_header)
+    assert r.status_code == 200, r.text
+    monkeypatch.setenv("PTS_ANA_PORT_OTOMATIK_GIRIS_KULLANICI", "nizamiye_kiosk")
+    r = client.post("/auth/otomatik-giris")
+    assert r.status_code == 200, r.text
+    ben = client.get("/auth/me", headers={"Authorization": f"Bearer {r.json()['token']}"}).json()
+    assert ben["kullanici_adi"] == "nizamiye_kiosk" and ben["rol"] == "operatör"
+
+    monkeypatch.setenv("PTS_ANA_PORT_OTOMATIK_GIRIS_IPLERI", "172.17.1.245")
+    assert client.post("/auth/otomatik-giris").status_code == 403          # bu bilgisayara izin yok

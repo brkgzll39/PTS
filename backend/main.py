@@ -2805,16 +2805,48 @@ def giris_yap(istek: schemas.GirisIstegi, request: Request, db: Session = Depend
 # kamera erişimini değiştirebilir. Güvenlik: yönetici ve sakin hesapları
 # parolasız açılmaz; PTS_OTOMATIK_GIRIS_IPLERI (virgülle ayrılmış) ayarlıysa
 # yalnızca o bilgisayarlardan izin verilir.
-def _otomatik_giris_portu() -> int:
+def _ortam_portu(ad: str, varsayilan: str) -> int:
     try:
-        return int((os.environ.get("PTS_OTOMATIK_GIRIS_PORTU") or "8787").strip())
+        return int((os.environ.get(ad) or varsayilan).strip())
     except ValueError:
         return 0
 
 
-def _otomatik_giris_hesabi(db: Session) -> models.Kullanici:
-    kullanici_adi = (os.environ.get("PTS_OTOMATIK_GIRIS_KULLANICI") or "lojman").strip() or "lojman"
+def _otomatik_giris_portu() -> int:
+    return _ortam_portu("PTS_OTOMATIK_GIRIS_PORTU", "8787")
+
+
+def _ip_listesi(ad: str) -> set:
+    return {p.strip() for p in (os.environ.get(ad) or "").split(",") if p.strip()}
+
+
+def _otomatik_giris_ayari(port: Optional[int]) -> Optional[tuple]:
+    """Bu porttan gelen isteğe parolasız oturum açılacaksa
+    (kullanici_adi, izinli_ipler, hesap_yoksa_olustur), değilse None.
+
+    2026-10-14 (devam, kullanıcı: "8000 için de PTS kullanıcısı ... 8 saati
+    dolunca çıkış yapıyor, 8787'de olduğu gibi kullanıcı adı şifre sormasın"):
+    ana port (PTS_PORT, varsayılan 8000) da PTS_ANA_PORT_OTOMATIK_GIRIS_KULLANICI
+    ayarlıysa o hesapla parolasız açılır. Yönetici o porttan yine panelin
+    "Farklı kullanıcı" düğmesiyle parolalı girer. Ana port hesabı OTOMATİK
+    OLUŞTURULMAZ: var olan bir hesabın adı yazılmalı (yazım hatası sessizce
+    yeni bir hesap açmasın)."""
+    if port is None:
+        return None
+    otomatik_port = _otomatik_giris_portu()
+    if otomatik_port and port == otomatik_port:
+        kullanici_adi = (os.environ.get("PTS_OTOMATIK_GIRIS_KULLANICI") or "lojman").strip() or "lojman"
+        return kullanici_adi, _ip_listesi("PTS_OTOMATIK_GIRIS_IPLERI"), True
+    ana_kullanici = (os.environ.get("PTS_ANA_PORT_OTOMATIK_GIRIS_KULLANICI") or "").strip()
+    if ana_kullanici and port == _ortam_portu("PTS_PORT", "8000"):
+        return ana_kullanici, _ip_listesi("PTS_ANA_PORT_OTOMATIK_GIRIS_IPLERI"), False
+    return None
+
+
+def _otomatik_giris_hesabi(db: Session, kullanici_adi: str, olustur: bool) -> models.Kullanici:
     kullanici = db.query(models.Kullanici).filter(models.Kullanici.kullanici_adi == kullanici_adi).first()
+    if kullanici is None and not olustur:
+        raise HTTPException(403, f"Otomatik giriş hesabı '{kullanici_adi}' bulunamadı")
     if kullanici is None:
         izinli_adlar = _cizelge_kamera_adlari()
         kamera_idleri = [k["id"] for k in _kameralari_oku() if k.get("ad") in izinli_adlar]
@@ -2837,15 +2869,15 @@ def _otomatik_giris_hesabi(db: Session) -> models.Kullanici:
 @app.post("/auth/otomatik-giris", dependencies=[Depends(_hiz_sinir_giris)])
 def otomatik_giris(request: Request, db: Session = Depends(get_db)):
     port = (request.scope.get("server") or (None, None))[1]
-    hedef_port = _otomatik_giris_portu()
-    if not hedef_port or port != hedef_port:
+    ayar = _otomatik_giris_ayari(port)
+    if ayar is None:
         raise HTTPException(403, "Bu adreste otomatik giriş kapalı; kullanıcı adı ve parolayla giriş yapın")
+    kullanici_adi, izinli_ipler, olustur = ayar
     ip_adresi = request.client.host if request.client else None
-    izinli_ipler = {p.strip() for p in (os.environ.get("PTS_OTOMATIK_GIRIS_IPLERI") or "").split(",") if p.strip()}
     if izinli_ipler and ip_adresi not in izinli_ipler:
         logger.warning("Otomatik giriş reddedildi: %s izinli bilgisayarlar arasında değil", ip_adresi)
         raise HTTPException(403, "Bu bilgisayardan otomatik giriş izni yok")
-    kullanici = _otomatik_giris_hesabi(db)
+    kullanici = _otomatik_giris_hesabi(db, kullanici_adi, olustur)
     if not kullanici.aktif:
         raise HTTPException(403, "Otomatik giriş hesabı pasif")
     if kullanici.rol in (ROL_YONETICI, ROL_SAKIN):

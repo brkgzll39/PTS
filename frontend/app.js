@@ -774,7 +774,7 @@ async function authBaslat() {
   if (token) {
     try { const kullanici = await apiCagir("/auth/me"); authBasarili(kullanici); return true; } catch { sessionStorage.removeItem("pts_token"); }
   }
-  if (durum.kurulum_tamamlandi && await _otomatikGirisDene()) return true;
+  if (durum.kurulum_tamamlandi && !_otomatikGirisAtlansinMi() && await _otomatikGirisDene()) return true;
   return false;
 }
 
@@ -784,6 +784,19 @@ async function authBaslat() {
 // ve normal giriş ekranı gösterilir.
 function _otomatikGirisMi() {
   try { return sessionStorage.getItem("pts_otomatik") === "1"; } catch { return false; }
+}
+
+// "Farklı kullanıcı" düğmesine basıldıysa bu sekmede otomatik giriş yapılmaz,
+// normal giriş ekranı gösterilir (ör. yöneticinin 8000'den parolayla girmesi).
+function _otomatikGirisAtlansinMi() {
+  try { return sessionStorage.getItem("pts_otomatik_atla") === "1"; } catch { return false; }
+}
+
+function farkliKullaniciylaGiris() {
+  try { sessionStorage.setItem("pts_otomatik_atla", "1"); } catch { }
+  sessionStorage.removeItem("pts_token");
+  sessionStorage.removeItem("pts_otomatik");
+  location.reload();
 }
 
 async function _otomatikGirisDene() {
@@ -803,8 +816,10 @@ async function _otomatikGirisDene() {
 
 function authBasarili(kullanici) {
   document.getElementById("authKapisi").classList.add("d-none");
-  // Otomatik girişli ekranda "Çıkış" anlamsız (sayfa hemen yeniden girer).
+  // Otomatik girişli ekranda "Çıkış" anlamsız (sayfa hemen yeniden girer);
+  // yerine parolalı girişe geçiren "Farklı kullanıcı" düğmesi gösterilir.
   document.getElementById("cikisButonu")?.classList.toggle("d-none", _otomatikGirisMi());
+  document.getElementById("farkliKullaniciButonu")?.classList.toggle("d-none", !_otomatikGirisMi());
   _oturumBitisUyarisiniKur();
   document.getElementById("oturumKullanici").textContent = kullanici.kullanici_adi;
   mevcutRol = kullanici.rol;
@@ -846,6 +861,8 @@ async function oturumKapat() {
     console.error(e);
   }
   sessionStorage.removeItem("pts_token");
+  // "Farklı kullanıcı" ile girilmişse çıkışta ekran otomatik girişe döner.
+  sessionStorage.removeItem("pts_otomatik_atla");
   location.reload();
 }
 
