@@ -2791,6 +2791,74 @@ def giris_yap(istek: schemas.GirisIstegi, request: Request, db: Session = Depend
     return {"token": _token_uret(kullanici.id, db, ip_adresi=ip_adresi), "kullanici": kullanici_cevap}
 
 
+# ================================================================
+# OTOMATİK (PAROLASIZ) GİRİŞ PORTU (2026-10-14, kullanıcı isteği: "8787 ile
+# lojman bağlanacak, kullanıcı ve şifre gerektirmeden vardiyaya göre otomatik
+# değişecek; Nizamiye için tek kullanıcı, onda kullanıcı adı şifre isteyecek")
+# ================================================================
+# Sunucu aynı süreçte iki portu dinler (bkz. backend/sunucu.py). Yalnızca
+# PTS_OTOMATIK_GIRIS_PORTU'ndan (varsayılan 8787) gelen istek, parola
+# sorulmadan PTS_OTOMATIK_GIRIS_KULLANICI hesabıyla (varsayılan "lojman")
+# oturum açabilir. Ana porttan (8000) bu uç her zaman 403 döner. Hesap yoksa
+# ilk kullanımda "operatör" rolüyle ve yalnızca çizelge (Lojman) kameralarını
+# görecek şekilde oluşturulur; yönetici Kullanıcılar sekmesinden rolünü ve
+# kamera erişimini değiştirebilir. Güvenlik: yönetici ve sakin hesapları
+# parolasız açılmaz; PTS_OTOMATIK_GIRIS_IPLERI (virgülle ayrılmış) ayarlıysa
+# yalnızca o bilgisayarlardan izin verilir.
+def _otomatik_giris_portu() -> int:
+    try:
+        return int((os.environ.get("PTS_OTOMATIK_GIRIS_PORTU") or "8787").strip())
+    except ValueError:
+        return 0
+
+
+def _otomatik_giris_hesabi(db: Session) -> models.Kullanici:
+    kullanici_adi = (os.environ.get("PTS_OTOMATIK_GIRIS_KULLANICI") or "lojman").strip() or "lojman"
+    kullanici = db.query(models.Kullanici).filter(models.Kullanici.kullanici_adi == kullanici_adi).first()
+    if kullanici is None:
+        izinli_adlar = _cizelge_kamera_adlari()
+        kamera_idleri = [k["id"] for k in _kameralari_oku() if k.get("ad") in izinli_adlar]
+        kullanici = models.Kullanici(
+            kullanici_adi=kullanici_adi,
+            # Kimsenin bilmediği rastgele parola: bu hesap ana porttan parolayla açılamaz.
+            parola_hash=_parola_hashle(secrets.token_urlsafe(32)),
+            rol=ROL_OPERATOR,
+            aktif=True,
+            kamera_erisim_listesi=json.dumps(kamera_idleri) if kamera_idleri else None,
+        )
+        db.add(kullanici)
+        db.commit()
+        db.refresh(kullanici)
+        logger.info("Otomatik giriş hesabı oluşturuldu: %s (rol=%s, kameralar=%s)",
+                    kullanici_adi, kullanici.rol, sorted(izinli_adlar) or "kısıtlamasız")
+    return kullanici
+
+
+@app.post("/auth/otomatik-giris", dependencies=[Depends(_hiz_sinir_giris)])
+def otomatik_giris(request: Request, db: Session = Depends(get_db)):
+    port = (request.scope.get("server") or (None, None))[1]
+    hedef_port = _otomatik_giris_portu()
+    if not hedef_port or port != hedef_port:
+        raise HTTPException(403, "Bu adreste otomatik giriş kapalı; kullanıcı adı ve parolayla giriş yapın")
+    ip_adresi = request.client.host if request.client else None
+    izinli_ipler = {p.strip() for p in (os.environ.get("PTS_OTOMATIK_GIRIS_IPLERI") or "").split(",") if p.strip()}
+    if izinli_ipler and ip_adresi not in izinli_ipler:
+        logger.warning("Otomatik giriş reddedildi: %s izinli bilgisayarlar arasında değil", ip_adresi)
+        raise HTTPException(403, "Bu bilgisayardan otomatik giriş izni yok")
+    kullanici = _otomatik_giris_hesabi(db)
+    if not kullanici.aktif:
+        raise HTTPException(403, "Otomatik giriş hesabı pasif")
+    if kullanici.rol in (ROL_YONETICI, ROL_SAKIN):
+        raise HTTPException(403, "Yönetici ve sakin hesapları parolasız açılamaz")
+    kullanici.son_giris = datetime.now()
+    db.commit()
+    _guvenlik_oturum_baslat(db, kullanici)
+    logger.info("Otomatik giriş: %s (%s)", kullanici.kullanici_adi, ip_adresi)
+    kullanici_cevap = schemas.KullaniciCevap.model_validate(kullanici).model_dump(mode="json")
+    return {"token": _token_uret(kullanici.id, db, ip_adresi=ip_adresi), "kullanici": kullanici_cevap,
+            "otomatik": True}
+
+
 @app.post("/auth/cikis")
 def cikis_yap(db: Session = Depends(get_db), kullanici: models.Kullanici = Depends(_giris_gerekli)):
     """İstemcinin "Çıkış Yap" butonuna bastığında (bkz. frontend/app.js::

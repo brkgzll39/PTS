@@ -20,6 +20,7 @@ if exist "modeller\fast-plate-ocr\" xcopy "modeller\fast-plate-ocr" "%USERPROFIL
 
 echo.
 echo PTS baslatiliyor. Tarayicidan http://localhost:8000 adresine gidin.
+echo Lojman ^(parolasiz otomatik giris^): http://^<bu bilgisayarin IP adresi^>:8787
 echo Durdurmak icin bu pencereye gelip CTRL+C tuslarina basin.
 echo.
 
@@ -79,7 +80,11 @@ if defined port_pid (
 set "ilk_baslatma=0"
 for /f %%t in ('powershell -NoProfile -Command "[DateTimeOffset]::UtcNow.ToUnixTimeSeconds()"') do set "baslangic_zamani=%%t"
 
-".venv\Scripts\python.exe" -m uvicorn backend.main:app --host 0.0.0.0 --port 8000
+rem 2026-10-14: uvicorn dogrudan degil backend\sunucu.py ile baslatilir --
+rem ayni surec hem 8000 (kullanici adi/parola ile giris) hem 8787 (Lojman,
+rem parolasiz otomatik giris) portunu dinler. Portlar .env'deki PTS_PORT ve
+rem PTS_OTOMATIK_GIRIS_PORTU ile degistirilebilir (0 = otomatik giris kapali).
+".venv\Scripts\python.exe" -m backend.sunucu
 set "cikis_kodu=%errorlevel%"
 
 if "%cikis_kodu%" == "0" goto :son

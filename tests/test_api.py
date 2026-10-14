@@ -7515,3 +7515,61 @@ def test_yonu_dogrulanan_ters_yonlu_gecis_capraz_kamera_tekrari_sayilmaz(client,
 
     assert "atlandi" not in gonder("34 CKT 102", "CKT-GIRIS", "giris")
     assert gonder("34 CKT 102", "CKT-GIRIS-2", "giris", dogrulandi=True).get("atlandi") is True  # aynı yön
+
+
+# ---------------------------------------------------------------------------
+# 2026-10-14: otomatik (parolasız) giriş portu -- Lojman 8787
+# ---------------------------------------------------------------------------
+# TestClient istekleri ("testserver", 80) sunucusuna gelmiş gibi görünür;
+# "otomatik giriş portu" testte 80'e ayarlanarak 8787'den gelen istek taklit edilir.
+
+def test_otomatik_giris_ana_porttan_kapali(client):
+    r = client.post("/auth/otomatik-giris")
+    assert r.status_code == 403
+
+
+def test_otomatik_giris_kendi_portundan_parolasiz_oturum_acar(client, yetkili_header, monkeypatch):
+    monkeypatch.setenv("PTS_OTOMATIK_GIRIS_PORTU", "80")
+    monkeypatch.setenv("PTS_OTOMATIK_GIRIS_KULLANICI", "lojman_kiosk")
+    anahtar = lisans.uret("Kiosk Test", kamera_limiti=50, gun=30)
+    assert client.post("/lisans/aktive-et", json={"anahtar": anahtar}, headers=yetkili_header).status_code == 200
+    r = client.post("/kameralar", json={"ad": "Lojman Kiosk Kam", "rtsp_url": "rtsp://127.0.0.1:554/k", "yon": "giris"},
+                    headers=yetkili_header)
+    assert r.status_code == 200, r.text
+    kamera_id = r.json()["id"]
+    try:
+        r = client.post("/auth/otomatik-giris")
+        assert r.status_code == 200, r.text
+        assert r.json()["otomatik"] is True
+        token = r.json()["token"]
+        ben = client.get("/auth/me", headers={"Authorization": f"Bearer {token}"}).json()
+        assert ben["kullanici_adi"] == "lojman_kiosk"
+        assert ben["rol"] == "operatör"
+        # Hesap ilk kullanımda yalnızca çizelge (adında "lojman" geçen) kameralarla sınırlanır.
+        kullanicilar = client.get("/kullanicilar", headers=yetkili_header).json()
+        hesap = next(k for k in kullanicilar if k["kullanici_adi"] == "lojman_kiosk")
+        assert kamera_id in (hesap.get("kamera_erisim_listesi") or [])
+
+        # İkinci açılış aynı hesabı kullanır (yeni hesap oluşturmaz).
+        assert client.post("/auth/otomatik-giris").status_code == 200
+        kullanicilar = client.get("/kullanicilar", headers=yetkili_header).json()
+        assert sum(1 for k in kullanicilar if k["kullanici_adi"] == "lojman_kiosk") == 1
+
+        # Bu hesap ana girişte bilinen bir parolayla açılamaz.
+        assert client.post("/auth/giris", json={"kullanici_adi": "lojman_kiosk", "parola": ""}).status_code in (401, 422)
+    finally:
+        client.delete(f"/kameralar/{kamera_id}", headers=yetkili_header)
+
+
+def test_otomatik_giris_ip_kisiti_ve_yonetici_hesabi_reddedilir(client, yetkili_header, monkeypatch):
+    monkeypatch.setenv("PTS_OTOMATIK_GIRIS_PORTU", "80")
+    monkeypatch.setenv("PTS_OTOMATIK_GIRIS_IPLERI", "172.17.1.50, 172.17.1.51")
+    assert client.post("/auth/otomatik-giris").status_code == 403   # TestClient IP'si listede değil
+
+    monkeypatch.delenv("PTS_OTOMATIK_GIRIS_IPLERI")
+    monkeypatch.setenv("PTS_OTOMATIK_GIRIS_KULLANICI", "admin")       # yönetici hesabı
+    assert client.post("/auth/otomatik-giris").status_code == 403
+
+    monkeypatch.setenv("PTS_OTOMATIK_GIRIS_PORTU", "0")               # kapalı
+    monkeypatch.setenv("PTS_OTOMATIK_GIRIS_KULLANICI", "lojman_kiosk")
+    assert client.post("/auth/otomatik-giris").status_code == 403

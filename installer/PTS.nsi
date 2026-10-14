@@ -116,12 +116,12 @@ Section "PTS (gerekli)" SecAna
   WriteRegDWORD HKLM "${KALDIRMA_ANAHTARI}" "NoRepair" 1
 SectionEnd
 
-Section "Diger bilgisayarlarin panele baglanmasina izin ver (guvenlik duvari, port 8000)" SecGuvenlikDuvari
+Section "Diger bilgisayarlarin panele baglanmasina izin ver (guvenlik duvari, port 8000 ve 8787)" SecGuvenlikDuvari
   ; Nizamiyelerdeki diger bilgisayarlar paneli http://<bu bilgisayar>:8000
   ; adresinden acar; Windows Guvenlik Duvari bu portu varsayilan olarak kapatir.
   nsExec::ExecToLog 'netsh advfirewall firewall delete rule name="PTS Panel (8000)"'
   Pop $0
-  nsExec::ExecToLog 'netsh advfirewall firewall add rule name="PTS Panel (8000)" dir=in action=allow protocol=TCP localport=8000 profile=domain,private'
+  nsExec::ExecToLog 'netsh advfirewall firewall add rule name="PTS Panel (8000)" dir=in action=allow protocol=TCP localport=8000,8787 profile=domain,private'
   Pop $0
 SectionEnd
 
@@ -133,7 +133,7 @@ SectionEnd
 
 !insertmacro MUI_FUNCTION_DESCRIPTION_BEGIN
   !insertmacro MUI_DESCRIPTION_TEXT ${SecAna} "Program dosyalari, gomulu Python 3.12, paketler ve plaka modelleri."
-  !insertmacro MUI_DESCRIPTION_TEXT ${SecGuvenlikDuvari} "Ag uzerindeki diger nizamiye bilgisayarlarinin bu PTS'e tarayiciyla baglanabilmesi icin 8000 portunu (alan ve ozel aglarda) acar."
+  !insertmacro MUI_DESCRIPTION_TEXT ${SecGuvenlikDuvari} "Ag uzerindeki diger nizamiye bilgisayarlarinin bu PTS'e tarayiciyla baglanabilmesi icin 8000 (parolali giris) ve 8787 (Lojman, parolasiz giris) portlarini (alan ve ozel aglarda) acar."
   !insertmacro MUI_DESCRIPTION_TEXT ${SecOtomatik} "Bilgisayar acildiginda (kullanici oturum actiginda) PTS kendiliginden baslar."
 !insertmacro MUI_FUNCTION_DESCRIPTION_END
 

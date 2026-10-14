@@ -651,6 +651,8 @@ function _oturumSuresiDoldu() {
   if (_oturumSuresiDolduBildirildi) return;
   _oturumSuresiDolduBildirildi = true;
   sessionStorage.removeItem("pts_token");
+  // Otomatik girişli ekran: mesaj göstermeden yenile, sayfa yeniden girer.
+  if (_otomatikGirisMi()) { location.reload(); return; }
   try {
     sessionStorage.setItem("pts_oturum_mesaji", "Oturumunuzun süresi doldu. Devam etmek için lütfen tekrar giriş yapın.");
   } catch { }
@@ -678,6 +680,15 @@ function _oturumBitisUyarisiniKur() {
   const bitis = _tokenBitisZamaniMs(sessionStorage.getItem("pts_token"));
   if (!bitis) return;
   const kalan = bitis - Date.now();
+  if (_otomatikGirisMi()) {
+    // Otomatik girişli ekranda uyarı yerine süre dolmadan 1 dk önce sessizce
+    // yeniden giriş yapılır (nizamiye ekranı 8 saatte bir donmasın).
+    _oturumUyariZamanlayici = setTimeout(() => {
+      sessionStorage.removeItem("pts_token");
+      location.reload();
+    }, Math.max(kalan - 60 * 1000, 1000));
+    return;
+  }
   const uyar = () => toastGoster(
     `Oturumunuz ${Math.max(1, Math.round((bitis - Date.now()) / 60000))} dakika içinde sona erecek. Süre dolunca giriş ekranına yönlendirileceksiniz.`,
     "uyari"
@@ -763,11 +774,37 @@ async function authBaslat() {
   if (token) {
     try { const kullanici = await apiCagir("/auth/me"); authBasarili(kullanici); return true; } catch { sessionStorage.removeItem("pts_token"); }
   }
+  if (durum.kurulum_tamamlandi && await _otomatikGirisDene()) return true;
   return false;
+}
+
+// OTOMATİK (PAROLASIZ) GİRİŞ (2026-10-14): panel sunucunun otomatik giriş
+// portundan (varsayılan 8787, Lojman) açıldıysa sunucu parola sormadan oturum
+// verir (bkz. backend/main.py::otomatik_giris). Ana porttan (8000) 403 döner
+// ve normal giriş ekranı gösterilir.
+function _otomatikGirisMi() {
+  try { return sessionStorage.getItem("pts_otomatik") === "1"; } catch { return false; }
+}
+
+async function _otomatikGirisDene() {
+  try {
+    const cevap = await apiCagir("/auth/otomatik-giris", { method: "POST" });
+    sessionStorage.setItem("pts_token", cevap.token);
+    sessionStorage.setItem("pts_otomatik", "1");
+    const kullanici = await apiCagir("/auth/me");
+    authBasarili(kullanici);
+    return true;
+  } catch (e) {
+    sessionStorage.removeItem("pts_otomatik");
+    if (e && e.status !== 403) console.error("Otomatik giriş yapılamadı:", e);
+    return false;
+  }
 }
 
 function authBasarili(kullanici) {
   document.getElementById("authKapisi").classList.add("d-none");
+  // Otomatik girişli ekranda "Çıkış" anlamsız (sayfa hemen yeniden girer).
+  document.getElementById("cikisButonu")?.classList.toggle("d-none", _otomatikGirisMi());
   _oturumBitisUyarisiniKur();
   document.getElementById("oturumKullanici").textContent = kullanici.kullanici_adi;
   mevcutRol = kullanici.rol;
