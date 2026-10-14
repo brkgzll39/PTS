@@ -242,6 +242,9 @@ class ANPREngine:
             self.ocr_modeli_kaynagi = "varsayılan (ayarlanan model yüklenemedi)"
             self._alpr = ALPR(detector_model=DEDEKTOR_MODELI_VARSAYILAN, ocr_model=OCR_MODELI_VARSAYILAN, **ek_parametreler)
 
+        self.calisan_donanim = _calisan_donanim(self._alpr)
+        logger.info("ANPR motoru çalıştığı donanım: %s", self.calisan_donanim)
+
     def tahmin_et(self, frame: Any) -> list[PlakaSonucu]:
         """Frame üzerinde plaka bulur; motorun sonuç nesnelerini PTS tipine çevirir.
 
@@ -295,6 +298,24 @@ class ANPREngine:
             donus.append(PlakaSonucu(_plaka_temizle(str(plaka)), guven, kutu,
                                      _karakter_guvenleri(str(plaka), ocr_guveni_ham)))
         return [sonuc for sonuc in donus if sonuc.plaka_no]
+
+
+def _calisan_donanim(alpr: Any) -> str:
+    """Dedektör ve OCR'ın onnxruntime oturumlarının FİİLEN kullandığı
+    sağlayıcı ("DmlExecutionProvider" = ekran kartı / DirectML,
+    "CUDAExecutionProvider" = NVIDIA, "CPUExecutionProvider" = işlemci)
+    -- hız ölçümü logunda gösterilir (bkz. camera_reader.py::HIZ_OLCUM_LOG_ARALIK_SN)."""
+    sonuc = []
+    for ad, yol in (("dedektör", ("detector", "detector", "model")), ("OCR", ("ocr", "ocr_model", "model"))):
+        nesne = alpr
+        for alan in yol:
+            nesne = getattr(nesne, alan, None)
+        try:
+            saglayici = next((p for p in nesne.get_providers() if p != "AzureExecutionProvider"), "?")
+        except Exception:
+            saglayici = "?"
+        sonuc.append(f"{ad}={saglayici.replace('ExecutionProvider', '')}")
+    return ", ".join(sonuc)
 
 
 def _alan(nesne: Any, *alanlar: str) -> Any:

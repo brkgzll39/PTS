@@ -324,6 +324,12 @@ TERS_YON_GECIKMELI_OKUMA_SN = 20.0
 # bulamıyor" sorusuna en azından kaba bir gözlemlenebilirlik kazandırmaktır —
 # bkz. anpr_engine.py::PTS_ANPR_DETECTOR_ESIGI notu.
 BOS_TESPIT_LOG_ARALIK_SN = 120
+# HIZ ÖLÇÜMÜ (2026-10-14, kullanıcı: "ram ve ekran kartı desteği iyi olan
+# bilgisayar kullansam işim hızlanır mı"): her kamera bu aralıkla loga kaç
+# kare işlediğini, plaka tanımanın kare başına ne kadar sürdüğünü ve
+# paylaşılan motoru (bkz. _motor_cagri_kilit) ne kadar beklediğini yazar.
+# Yeni donanım kararı tahminle değil bu sayılarla verilsin.
+HIZ_OLCUM_LOG_ARALIK_SN = 60
 
 # ------------------------------------------------------------------
 # HAM KARE TEŞHİS KAYDI (opsiyonel, varsayılan KAPALI)
@@ -1168,8 +1174,11 @@ class KameraPipeline:
         # GPU'ya (varsa DirectML/CUDA) aynı anda yalnızca TEK bir kameranın çıkarım
         # isteği gitmesini garanti eder — bkz. modül başındaki "PAYLAŞILAN ANPR
         # MOTORU" notu (çoklu kamerada GPU sürücüsü çökmesi/sıfırlanması riski).
+        _t0 = time.monotonic()
         with _motor_cagri_kilit:
+            _t1 = time.monotonic()
             motor_sonuclari = self.motor.tahmin_et(dedektore_giden_kare)
+        self._hiz_olcumu_ekle(_t1 - _t0, time.monotonic() - _t1)
 
         if not motor_sonuclari:
             # GÖZLEMLENEBİLİRLİK: dedektör bu karede TEK bir plaka adayı bile
@@ -1471,6 +1480,23 @@ class KameraPipeline:
 
         self._plaka_hafizasini_buda()
         return gonderilenler
+
+    def _hiz_olcumu_ekle(self, bekleme_sn: float, cikarim_sn: float) -> None:
+        o = self.__dict__.setdefault("_hiz_olcumu", {"bas": time.monotonic(), "kare": 0, "bekleme": 0.0, "cikarim": 0.0})
+        o["kare"] += 1
+        o["bekleme"] += bekleme_sn
+        o["cikarim"] += cikarim_sn
+        gecen = time.monotonic() - o["bas"]
+        if gecen < HIZ_OLCUM_LOG_ARALIK_SN:
+            return
+        logger.info(
+            "[%s] Hız ölçümü: son %.0f sn'de %d kare işlendi (%.1f kare/sn); plaka tanıma kare başına "
+            "ort. %.0f ms, motor sırası bekleme ort. %.0f ms (motor: %s)",
+            self.kamera_id, gecen, o["kare"], o["kare"] / gecen,
+            1000 * o["cikarim"] / o["kare"], 1000 * o["bekleme"] / o["kare"],
+            getattr(self.motor, "calisan_donanim", "bilinmiyor"),
+        )
+        self._hiz_olcumu = {"bas": time.monotonic(), "kare": 0, "bekleme": 0.0, "cikarim": 0.0}
 
     def _erken_karar_uygun_mu(self, kazanan: dict) -> bool:
         """Erken kesinleştirme yalnızca oturum BU kameraya ait olduğu kesinken:

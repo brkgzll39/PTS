@@ -1958,3 +1958,15 @@ def test_erken_karar_yon_filtresinde_yon_belli_olmadan_verilmez(monkeypatch, sah
     for _ in range(3):
         assert pipeline._kareyi_isle(kare) == []                 # duran araç: yön belli değil, erken karar yok
     assert pipeline._kareyi_isle(kare, oturumu_hemen_kapat=True) == ["34 ABC 123"]   # çıkınca ROI kuralı
+
+
+def test_hiz_olcumu_loga_yazilir(monkeypatch, sahte_engine, caplog):
+    """2026-10-14: donanım kararı için her kamera kare/sn ve plaka tanıma süresini loglar."""
+    import logging
+    monkeypatch.setattr(camera_reader, "HIZ_OLCUM_LOG_ARALIK_SN", 0)
+    pipeline, _ = _istek_yakalayan_pipeline(monkeypatch, "HIZ-1")
+    pipeline.motor.calisan_donanim = "dedektör=Dml, OCR=Dml"
+    with caplog.at_level(logging.INFO, logger="pts.camera"):
+        pipeline._kareyi_isle(np.full((100, 100, 3), 128, dtype=np.uint8))
+    satir = next(r.getMessage() for r in caplog.records if "Hız ölçümü" in r.getMessage())
+    assert "[HIZ-1]" in satir and "kare/sn" in satir and "dedektör=Dml" in satir
