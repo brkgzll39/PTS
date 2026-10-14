@@ -205,6 +205,18 @@ _PLAKA_HAFIZA_CARPANI = 4
 OTURUM_KAPANMA_SN = 1.2      # bu kadar süre yeni okuma gelmezse oturum kapanır (kazanan gönderilir)
 OTURUM_BENZERLIK_ESIGI = 2   # aynı oturuma dahil edilecek okumalar arası azami Levenshtein mesafesi
 OTURUM_MAX_SURE_SN = 8.0     # bir oturum en fazla bu kadar açık kalır (çok yavaş/duran araç için emniyet)
+# ERKEN KARAR (2026-10-14, kullanıcı: "araç geçişlerinde tabela yine biraz
+# gecikmeli plakayı yansıtıyor"): oturum eskiden YALNIZCA araç kadrajdan
+# çıkınca (1.2 sn okuma gelmeyince) ya da 8 sn dolunca kapanıyordu; kayıt,
+# LED ve Son Geçişler hep bunu bekliyordu (saha logunda araç görüldükten
+# kayda ortanca ~7.7 sn). Plaka bu kadar karede BİREBİR aynı okunup oyların
+# bu kadarını aldıysa (ya da kameranın kendi okuması PTS'inkiyle aynıysa)
+# araç kadrajda dursa bile kayıt hemen gönderilir. Oturum KAPANMAZ: aracın
+# sonraki okumaları aynı oturumda toplanmaya devam eder ve araç çıkınca oturum
+# ikinci bir kayıt açmadan kapanır (ayrı bir oturuma düşüp tek karakter farklı
+# okunmuş bir plakayla ikinci kayıt açmasın diye).
+ERKEN_KARAR_MIN_KARE = 3
+ERKEN_KARAR_MIN_OY_PAYI = 0.75
 VARSAYILAN_MIN_GUVEN_SKORU = 0.4  # bu eşiğin altındaki OCR sonuçları oylamaya hiç girmez
 
 # 2026-09-24 kullanıcı geri bildirimi ("bu plakayı neden 3 dakika içinde 3
@@ -361,7 +373,7 @@ class PlakaOyBirikimi:
         "oylar", "_varyant_maks_guven", "ilk_gorulme", "son_gorulme",
         "en_iyi_jpeg", "_en_iyi_jpeg_guveni", "toplam_kare_sayisi",
         "_harici_katkili_varyantlar", "_dogrudan_varyantlar",
-        "konumlar", "roi_icinde_goruldu",
+        "konumlar", "roi_icinde_goruldu", "_dogrudan_kare", "erken_bildirilen",
     )
 
     def __init__(self, plaka: str, guven: float, simdi: float, jpeg: Optional[bytes] = None,
@@ -397,6 +409,10 @@ class PlakaOyBirikimi:
         # None (ROI bilgisi yok: ROI tanımsız ya da kameranın kendi okuması)
         # içeride sayılır.
         self.roi_icinde_goruldu = roi_icinde is not False
+        # Metin başına DOĞRUDAN (PTS OCR'ı, destekleyici değil) okuma kare sayısı -- erken karar için.
+        self._dogrudan_kare: "Counter[str]" = Counter({plaka: 1} if not destekleyici and agirlik == 1.0 else {})
+        # Erken karar ile kaydı gönderilen plaka (bkz. ERKEN_KARAR_MIN_KARE); None = henüz değil.
+        self.erken_bildirilen: Optional[str] = None
 
     def ekle(self, plaka: str, guven: float, simdi: float, jpeg: Optional[bytes] = None,
              agirlik: float = 1.0, destekleyici: bool = False,
@@ -412,6 +428,8 @@ class PlakaOyBirikimi:
             self._dogrudan_varyantlar.add(plaka)
             if agirlik != 1.0:
                 self._harici_katkili_varyantlar.add(plaka)
+            else:
+                self._dogrudan_kare[plaka] += 1
         self.son_gorulme = simdi
         self.toplam_kare_sayisi += 1
         if jpeg is not None and guven >= self._en_iyi_jpeg_guveni:
@@ -481,7 +499,25 @@ class PlakaOyBirikimi:
             "konum_sayisi": len(self.konumlar),
             "roi_icinde_goruldu": self.roi_icinde_goruldu,
             "harici_varyantlar": sorted(self._harici_katkili_varyantlar),
+            "erken_bildirilen": self.erken_bildirilen,
         }
+
+    def erken_karar_verilebilir_mi(self) -> bool:
+        """Araç kadrajdan çıkmadan kesinleştirmeye yetecek kanıt var mı? (bkz.
+        ERKEN_KARAR_MIN_KARE). Lider metin: en az ERKEN_KARAR_MIN_KARE karede
+        birebir aynı okunmuş ve doğrudan oyların en az ERKEN_KARAR_MIN_OY_PAYI'nı
+        almış olmalı -- ya da kameranın kendi okuması PTS'in en az bir
+        okumasıyla birebir aynı olmalı. Destekleyici (düzeltilmiş/kenar) oylar
+        sayılmaz."""
+        if not self._dogrudan_kare:
+            return False
+        lider, kare = self._dogrudan_kare.most_common(1)[0]
+        if lider in self._harici_katkili_varyantlar:
+            return True
+        if kare < ERKEN_KARAR_MIN_KARE:
+            return False
+        dogrudan_oy = sum(o for p, o in self.oylar.items() if p in self._dogrudan_varyantlar)
+        return dogrudan_oy > 0 and self.oylar[lider] / dogrudan_oy >= ERKEN_KARAR_MIN_OY_PAYI
 
     def _kamera_okumasi_farki(self, secilen_plaka: str) -> Optional[str]:
         if not self._harici_katkili_varyantlar or secilen_plaka in self._harici_katkili_varyantlar:
@@ -551,6 +587,23 @@ class PlakaOturumTakipcisi:
                 bitmisler.append(kazanan)
                 del self._acik[anahtar]
         return bitmisler
+
+    def erken_kararlari_al(self, karar_verilebilir_mi) -> list:
+        """Henüz erken bildirilmemiş açık oturumlardan `erken_karar_verilebilir_mi`
+        ve `karar_verilebilir_mi(kazanan)` olanların kazananlarını
+        ("kapanma_nedeni": "erken") döner ve oturumu "erken bildirildi" diye
+        işaretler. Oturum AÇIK kalır (bkz. ERKEN_KARAR_MIN_KARE notu)."""
+        kararlar = []
+        for birikim in self._acik.values():
+            if birikim.erken_bildirilen or not birikim.erken_karar_verilebilir_mi():
+                continue
+            kazanan = birikim.kazanan()
+            if not karar_verilebilir_mi(kazanan):
+                continue
+            birikim.erken_bildirilen = kazanan["plaka"]
+            kazanan["kapanma_nedeni"] = "erken"
+            kararlar.append(kazanan)
+        return kararlar
 
     def acik_oturum_sayisi(self) -> int:
         return len(self._acik)
@@ -1286,9 +1339,15 @@ class KameraPipeline:
 
         if oturumu_hemen_kapat:
             bitmis_oturumlar += self._oturum_takipcisi.bitmis_oturumlari_al(simdi, zorla=True)
+        else:
+            bitmis_oturumlar += self._oturum_takipcisi.erken_kararlari_al(self._erken_karar_uygun_mu)
 
         gonderilenler = []
         for oturum in bitmis_oturumlar:
+            if oturum.get("kapanma_nedeni") != "erken" and oturum.get("erken_bildirilen"):
+                # Kaydı erken gönderilmiş oturum şimdi kapandı: ikinci kayıt yok.
+                self._erken_bildirilen_oturum_kapandi(oturum, simdi)
+                continue
             if oturum.get("yalniz_destekleyici"):
                 logger.info(
                     "[%s] %s yalnızca destekleyici okumalarla (biçime göre düzeltilmiş ya da kare "
@@ -1413,6 +1472,17 @@ class KameraPipeline:
         self._plaka_hafizasini_buda()
         return gonderilenler
 
+    def _erken_karar_uygun_mu(self, kazanan: dict) -> bool:
+        """Erken kesinleştirme yalnızca oturum BU kameraya ait olduğu kesinken:
+        yön filtresi açıksa aracın filtreye uygun yönde gittiği görülmüş, değilse
+        (ROI varsa) en az bir okuma ROI içinde yapılmış olmalı. Aksi halde oturum
+        olağan şekilde (araç çıkınca) kapanır ve tam kurallarla değerlendirilir."""
+        if kazanan.get("yalniz_destekleyici"):
+            return False
+        if self.yon_filtresi:
+            return kazanan.get("hareket_yonu") == self.yon_filtresi
+        return not self.roi or kazanan.get("roi_icinde_goruldu", True)
+
     def _oturum_alan_karari(self, oturum: dict, simdi: float) -> Optional[str]:
         """Kapanan bir oturumun bu kameraya AİT olup olmadığına karar verir;
         değilse (loglanacak) nedeni, aitse None döner.
@@ -1477,7 +1547,7 @@ class KameraPipeline:
         plaka = oturum["plaka"]
         kapanma_nedeni = oturum.get("kapanma_nedeni")
 
-        if kapanma_nedeni == "max_sure":
+        if kapanma_nedeni in ("max_sure", "erken"):
             # Araç HÂLÂ kareden ayrılmadı. Bu plaka için bu KESİNTİSİZ
             # görünüm boyunca DAHA ÖNCE zaten bir kayıt gönderildiyse
             # (_suregelen_plakalar'da varsa), bu yalnızca aynı aracın
@@ -1540,6 +1610,39 @@ class KameraPipeline:
             g["kamera_okumasi_bildirildi"] = bool(oturum.get("kamera_okumasi"))
         self.son_plaka_zamani[plaka] = simdi
         return True
+
+    def _erken_bildirilen_oturum_kapandi(self, oturum: dict, simdi: float) -> None:
+        erken = oturum["erken_bildirilen"]
+        # Erken karardan SONRA bu oturuma eklenen farklı okumalar ("16 AC 9302")
+        # da aynı, zaten kaydedilmiş geçişe aittir: görünümleri "bildirildi"
+        # işaretlenir ki kameranın sonradan gelen okuması ikinci kayıt açmasın.
+        for v in oturum.get("varyantlar") or []:
+            g = self._gorunumler.get(v)
+            if g is not None:
+                g["bildirildi"] = True
+                g.setdefault("kayit_plakasi", erken)
+        if oturum.get("kapanma_nedeni") == "max_sure":
+            # Araç hâlâ kadrajda: bir sonraki oturum aynı aracın devamı sayılsın.
+            self._suregelen_plakalar[erken] = simdi
+        else:
+            self._suregelen_plakalar.pop(erken, None)
+        if oturum["plaka"] != erken:
+            logger.warning(
+                "[%s] Erken kesinleşen %s, araç çıkana kadarki tüm okumalarla %s olarak "
+                "oylandı -- kayıt %s olarak kaldı, kontrol edin.",
+                self.kamera_id, erken, oturum["plaka"], erken,
+            )
+        # Kameranın kendi okuması erken karardan SONRA geldiyse ve farklıysa
+        # kayıt "Kontrol gerekli" işaretlensin (bkz. _kamera_okumasini_bildir).
+        farkli = [v for v in oturum.get("harici_varyantlar") or [] if v != erken]
+        if farkli:
+            for g in (self._gorunumler.get(v) for v in (oturum.get("varyantlar") or [])):
+                if g is not None and g.get("kamera_okumasi_bildirildi"):
+                    return
+            for v in oturum.get("varyantlar") or []:
+                if v in self._gorunumler:
+                    self._gorunumler[v]["kamera_okumasi_bildirildi"] = True
+            self._kamera_okumasini_bildir(erken, farkli[0])
 
     def _kamera_okumasini_bildir(self, kayit_plakasi: str, kamera_okumasi: str) -> None:
         """Bu kameranın az önce oluşturduğu `kayit_plakasi` kaydına, kameranın

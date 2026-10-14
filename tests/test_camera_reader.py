@@ -1731,10 +1731,12 @@ def test_sonradan_gelen_farkli_kamera_okumasi_onceki_kaydi_isaretletir(monkeypat
     pipeline, istekler = _istek_yakalayan_pipeline(monkeypatch, "TEST-GEC-OKUMA")
     kare = np.full((100, 100, 3), 128, dtype=np.uint8)
     pipeline.motor._plaka = "16AC9301"
+    gonderilen = []
     for _ in range(3):
-        pipeline._kareyi_isle(kare)
+        gonderilen += pipeline._kareyi_isle(kare)
+    assert gonderilen == ["16 AC 9301"]          # 3. karede erken karar
     pipeline.motor._plaka = "16AC9302"
-    assert pipeline._kareyi_isle(kare, oturumu_hemen_kapat=True) == ["16 AC 9301"]
+    assert pipeline._kareyi_isle(kare, oturumu_hemen_kapat=True) == []   # ikinci kayıt yok
     assert [d["plaka_no"] for _, d in istekler] == ["16 AC 9301"]
     assert istekler[0][1]["kamera_okumasi"] == ""
 
@@ -1824,7 +1826,7 @@ def test_yaklasan_arac_roi_disinda_okunsa_da_kaydedilir(monkeypatch, sahte_engin
     pipeline, istekler = _yonlu_pipeline(monkeypatch, "YON-1", _yol("34ABC123", *_YAKLASAN),
                                          roi=_KUCUK_ROI, yon_filtresi="yaklasan")
     assert _hepsini_isle(pipeline, 4) == ["34 ABC 123"]
-    assert istekler[0][1]["dogrulama_kare_sayisi"] == 4
+    assert istekler[0][1]["dogrulama_kare_sayisi"] >= 3  # erken karar: 3. karede gönderilir
 
 
 def test_uzaklasan_arac_roi_icinden_gecse_de_kaydedilmez(monkeypatch, sahte_engine):
@@ -1896,3 +1898,63 @@ def test_yonu_dogrulanan_gecis_sunucuya_bildirilir(monkeypatch, sahte_engine):
                                          roi=icerde, yon_filtresi="yaklasan")
     assert _hepsini_isle(pipeline, 4) == ["34 ABC 124"]
     assert istekler[0][1]["yon_dogrulandi"] is False
+
+
+
+# ---------------------------------------------------------------------------
+# 2026-10-14: erken karar -- plaka kesinleşince araç kadrajdan çıkmayı beklemeden
+# ---------------------------------------------------------------------------
+
+def test_erken_karar_arac_kadrajdayken_kayit_gonderir_ikinci_kayit_acmaz(monkeypatch, sahte_engine):
+    pipeline, istekler = _istek_yakalayan_pipeline(monkeypatch, "ERKEN-1")
+    kare = np.full((100, 100, 3), 128, dtype=np.uint8)
+    pipeline.motor._plaka = "34ABC123"
+    assert pipeline._kareyi_isle(kare) == []
+    assert pipeline._kareyi_isle(kare) == []
+    assert pipeline._kareyi_isle(kare) == ["34 ABC 123"]       # 3 aynı kare: araç hâlâ kadrajda
+    # Araç kadrajda kalmaya devam ediyor, bir karede farklı okunuyor, sonra çıkıyor.
+    pipeline.motor._plaka = "34ABC128"
+    assert pipeline._kareyi_isle(kare) == []
+    pipeline.motor._plaka = "34ABC123"
+    assert pipeline._kareyi_isle(kare, oturumu_hemen_kapat=True) == []
+    assert [d["plaka_no"] for _, d in istekler] == ["34 ABC 123"]
+
+
+def test_erken_karar_kararsiz_okumada_beklenir(monkeypatch, sahte_engine):
+    """Lider metin oyların %75'ini almadıysa erken karar verilmez; oturum araç
+    çıkınca olağan şekilde kapanır."""
+    pipeline, istekler = _istek_yakalayan_pipeline(monkeypatch, "ERKEN-2")
+    kare = np.full((100, 100, 3), 128, dtype=np.uint8)
+    for plaka in ("34ABC123", "34ABC128", "34ABC123", "34ABC128", "34ABC123"):
+        pipeline.motor._plaka = plaka
+        assert pipeline._kareyi_isle(kare) == []
+    assert pipeline._kareyi_isle(kare, oturumu_hemen_kapat=True) == ["34 ABC 123"]
+
+
+def test_erken_karar_kamera_okumasi_ayniysa_hemen(monkeypatch, sahte_engine):
+    pipeline, istekler = _istek_yakalayan_pipeline(monkeypatch, "ERKEN-3")
+    kare = np.full((100, 100, 3), 128, dtype=np.uint8)
+    pipeline.harici_okuma_ekle("34ABC123")
+    pipeline.motor._plaka = "34ABC123"
+    assert pipeline._kareyi_isle(kare) == ["34 ABC 123"]       # tek PTS karesi + kamera okuması aynı
+
+
+def test_erken_karar_sonrasi_farkli_kamera_okumasi_kaydi_isaretletir(monkeypatch, sahte_engine):
+    pipeline, istekler = _istek_yakalayan_pipeline(monkeypatch, "ERKEN-4")
+    kare = np.full((100, 100, 3), 128, dtype=np.uint8)
+    pipeline.motor._plaka = "16AC9301"
+    for _ in range(3):
+        pipeline._kareyi_isle(kare)
+    pipeline.harici_okuma_ekle("16AC9302")
+    assert pipeline._kareyi_isle(kare, oturumu_hemen_kapat=True) == []
+    assert [u.rsplit("/", 1)[-1] for u, _ in istekler] == ["otomatik", "kamera-okumasi"]
+    assert istekler[1][1]["kamera_okumasi"] == "16 AC 9302"
+
+
+def test_erken_karar_yon_filtresinde_yon_belli_olmadan_verilmez(monkeypatch, sahte_engine):
+    pipeline, istekler = _yonlu_pipeline(monkeypatch, "ERKEN-5", _yol("34ABC123", *_DURAN),
+                                         roi={"x1": 40, "y1": 60, "x2": 70, "y2": 90}, yon_filtresi="yaklasan")
+    kare = np.zeros((720, 1280, 3), dtype=np.uint8)
+    for _ in range(3):
+        assert pipeline._kareyi_isle(kare) == []                 # duran araç: yön belli değil, erken karar yok
+    assert pipeline._kareyi_isle(kare, oturumu_hemen_kapat=True) == ["34 ABC 123"]   # çıkınca ROI kuralı
