@@ -1748,3 +1748,126 @@ def test_sonradan_gelen_farkli_kamera_okumasi_onceki_kaydi_isaretletir(monkeypat
     url, veri = istekler[1]
     assert url.endswith("/kayitlar/otomatik/kamera-okumasi")
     assert veri == {"plaka_no": "16 AC 9301", "kamera_id": "TEST-GEC-OKUMA", "kamera_okumasi": "16 AC 9302"}
+
+
+# ---------------------------------------------------------------------------
+# 2026-10-14: hareket yönü filtresi ve oturum düzeyinde ROI kararı
+# ---------------------------------------------------------------------------
+
+def _konumlar(*nokta):
+    return [(0.5, cy, w) for cy, w in nokta]
+
+
+@pytest.mark.parametrize("konumlar, beklenen", [
+    (_konumlar((0.30, 0.05), (0.40, 0.06), (0.55, 0.08)), "yaklasan"),   # büyüyor + aşağı iniyor
+    (_konumlar((0.55, 0.08), (0.45, 0.07), (0.35, 0.06)), "uzaklasan"),  # küçülüyor + yukarı çıkıyor
+    (_konumlar((0.40, 0.06), (0.34, 0.06), (0.30, 0.06)), "uzaklasan"),  # sabit boy + yukarı
+    (_konumlar((0.40, 0.06), (0.40, 0.06), (0.41, 0.06)), None),         # duran araç
+    (_konumlar((0.15, 0.05), (0.15, 0.06), (0.16, 0.06)), None),         # yatay geçen sokak trafiği
+    (_konumlar((0.30, 0.05), (0.55, 0.08)), None),                       # 2 okuma: karar yok
+])
+def test_hareket_yonu_hesapla(konumlar, beklenen):
+    assert camera_reader.hareket_yonu_hesapla(konumlar) == beklenen
+
+
+def test_hareket_yonu_tek_sapan_kutuya_dayanikli():
+    konumlar = _konumlar((0.30, 0.05), (0.33, 0.05), (0.90, 0.20), (0.45, 0.07), (0.50, 0.075), (0.55, 0.08))
+    assert camera_reader.hareket_yonu_hesapla(konumlar) == "yaklasan"
+
+
+class _SiraliMotor:
+    """Her karede sıradaki (plaka, kutu) sonucunu döndüren sahte motor."""
+
+    def __init__(self, sonuclar):
+        self._sonuclar = list(sonuclar)
+
+    def tahmin_et(self, frame):
+        if not self._sonuclar:
+            return []
+        plaka, kutu = self._sonuclar.pop(0)
+        s = _SahteSonuc(plaka, 0.95)
+        s.kutu = kutu
+        return [s]
+
+
+def _yol(plaka, *kutular):
+    return [(plaka, k) for k in kutular]
+
+
+# 1280x720 karede kameraya yaklaşan (sağ-aşağı inip büyüyen) ve uzaklaşan yol
+_YAKLASAN = ((300, 150, 380, 170), (420, 220, 520, 245), (560, 320, 690, 352), (700, 430, 860, 470))
+_UZAKLASAN = tuple(reversed(_YAKLASAN))
+_DURAN = ((600, 500, 720, 530),) * 4
+
+
+def _yonlu_pipeline(monkeypatch, kamera_id, sonuclar, **kw):
+    pipeline, istekler = _istek_yakalayan_pipeline(monkeypatch, kamera_id)
+    for ad, deger in kw.items():
+        setattr(pipeline, ad, deger)
+    pipeline.motor = _SiraliMotor(sonuclar)
+    return pipeline, istekler
+
+
+def _hepsini_isle(pipeline, adim):
+    kare = np.zeros((720, 1280, 3), dtype=np.uint8)
+    gonderilen = []
+    for _ in range(adim - 1):
+        gonderilen += pipeline._kareyi_isle(kare)
+    return gonderilen + pipeline._kareyi_isle(kare, oturumu_hemen_kapat=True)
+
+
+# ROI yalnızca karenin sol-alt köşesi: yukarıdaki yollar onun DIŞINDA kalır.
+_KUCUK_ROI = {"x1": 0, "y1": 80, "x2": 20, "y2": 100}
+
+
+def test_yaklasan_arac_roi_disinda_okunsa_da_kaydedilir(monkeypatch, sahte_engine):
+    pipeline, istekler = _yonlu_pipeline(monkeypatch, "YON-1", _yol("34ABC123", *_YAKLASAN),
+                                         roi=_KUCUK_ROI, yon_filtresi="yaklasan")
+    assert _hepsini_isle(pipeline, 4) == ["34 ABC 123"]
+    assert istekler[0][1]["dogrulama_kare_sayisi"] == 4
+
+
+def test_uzaklasan_arac_roi_icinden_gecse_de_kaydedilmez(monkeypatch, sahte_engine):
+    """Karşı şeritteki / diğer kameranın önünden geçmiş araç: ROI tüm kare
+    olsa bile yönü uymadığı için kaydedilmez; kameranın kendi okuması aynı
+    aracı birkaç saniye sonra (konumsuz) bildirse de kaydedilmez."""
+    tum_kare = {"x1": 0, "y1": 0, "x2": 100, "y2": 100}
+    pipeline, istekler = _yonlu_pipeline(monkeypatch, "YON-2", _yol("34ABC123", *_UZAKLASAN),
+                                         roi=tum_kare, yon_filtresi="yaklasan")
+    assert _hepsini_isle(pipeline, 4) == []
+    pipeline.harici_okuma_ekle("34ABC123")
+    assert _hepsini_isle(pipeline, 1) == []
+    assert istekler == []
+
+
+def test_yon_filtresi_kapaliyken_eski_davranis_ama_oturum_duzeyinde(monkeypatch, sahte_engine):
+    # Filtre kapalı: yaklaşan araç ROI'ye hiç girmediyse kaydedilmez...
+    pipeline, istekler = _yonlu_pipeline(monkeypatch, "YON-3", _yol("34ABC123", *_YAKLASAN), roi=_KUCUK_ROI)
+    assert _hepsini_isle(pipeline, 4) == []
+    # ...ama bir kez bile girdiyse, ROI DIŞINDAKİ okumalar da oylamaya katılır.
+    yol = _YAKLASAN[:3] + ((40, 620, 200, 660),)
+    pipeline, istekler = _yonlu_pipeline(monkeypatch, "YON-4", _yol("34ABC123", *yol), roi=_KUCUK_ROI)
+    assert _hepsini_isle(pipeline, 4) == ["34 ABC 123"]
+    assert istekler[0][1]["dogrulama_kare_sayisi"] == 4
+
+
+def test_yonu_belirsiz_gecis_roi_kuralina_duser(monkeypatch, sahte_engine):
+    pipeline, _ = _yonlu_pipeline(monkeypatch, "YON-5", _yol("34ABC123", *_DURAN),
+                                  roi=_KUCUK_ROI, yon_filtresi="yaklasan")
+    assert _hepsini_isle(pipeline, 4) == []
+    icerde = {"x1": 40, "y1": 60, "x2": 70, "y2": 90}
+    pipeline, _ = _yonlu_pipeline(monkeypatch, "YON-6", _yol("34ABC123", *_DURAN),
+                                  roi=icerde, yon_filtresi="yaklasan")
+    assert _hepsini_isle(pipeline, 4) == ["34 ABC 123"]
+
+
+def test_uzaklasan_filtresi_ters_calisir(monkeypatch, sahte_engine):
+    pipeline, _ = _yonlu_pipeline(monkeypatch, "YON-7", _yol("34ABC123", *_UZAKLASAN), yon_filtresi="uzaklasan")
+    assert _hepsini_isle(pipeline, 4) == ["34 ABC 123"]
+    pipeline, _ = _yonlu_pipeline(monkeypatch, "YON-8", _yol("34ABC123", *_YAKLASAN), yon_filtresi="uzaklasan")
+    assert _hepsini_isle(pipeline, 4) == []
+
+
+def test_gecersiz_yon_filtresi_kapali_sayilir(sahte_engine):
+    pipeline = camera_reader.KameraPipeline(video_kaynagi="x.mp4", kamera_id="YON-9", yon_filtresi="sola")
+    assert pipeline.yon_filtresi is None

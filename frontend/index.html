@@ -478,6 +478,15 @@
           <span class="small text-muted" id="roiPoligonNoktaSayisi">0 nokta</span>
         </div>
       </div>
+      <div class="mt-3">
+        <label class="form-label small fw-semibold" for="roiYonFiltresi">Hareket yönü</label>
+        <select class="form-select form-select-sm" id="roiYonFiltresi">
+          <option value="kapali">Kapalı -- yalnızca tespit alanına bak</option>
+          <option value="yaklasan">Yalnızca kameraya YAKLAŞAN araçları kaydet (önerilen)</option>
+          <option value="uzaklasan">Yalnızca kameradan UZAKLAŞAN araçları kaydet</option>
+        </select>
+        <div class="form-text">Açıkken karşı şeritten ya da diğer kameranın önünden geçip giden araç, tespit alanının içinden geçse bile kaydedilmez; kameraya doğru gelen araç ise tespit alanına girmeden okunduysa da kaydedilir. Yönü anlaşılamayan geçişlerde (duran araç, çok az okuma) tespit alanı kuralı geçerlidir. Tespit alanı çizmeden yalnızca bunu değiştirmek için alanı boş bırakıp Kaydet'e basın.</div>
+      </div>
       <div id="roiSonuc" class="small mt-2"></div>
     </div>
     <div class="modal-footer">

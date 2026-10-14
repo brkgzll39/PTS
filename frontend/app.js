@@ -1998,6 +1998,7 @@ async function kameraRoiAc(id) {
   document.getElementById("roiX2").value = (kamera.roi && !poligonMi) ? Math.round(kamera.roi.x2) : "";
   document.getElementById("roiY2").value = (kamera.roi && !poligonMi) ? Math.round(kamera.roi.y2) : "";
   _roiPoligonNoktalari = poligonMi ? kamera.roi.noktalar.map(n => ({ x: n.x, y: n.y })) : [];
+  document.getElementById("roiYonFiltresi").value = kamera.yon_filtresi || "kapali";
   document.getElementById("roiSonuc").textContent = "";
   _roiOnizlemeGuncelle();
   roiModuDegisti();
@@ -2032,8 +2033,13 @@ async function kameraRoiKaydet() {
   const sonuc = document.getElementById("roiSonuc");
   const poligonMi = document.getElementById("roiModPoligon")?.checked === true;
 
+  const yonFiltresi = document.getElementById("roiYonFiltresi").value;
+  const kareBos = ["roiX1", "roiY1", "roiX2", "roiY2"].every(a => document.getElementById(a).value === "");
   let govde;
-  if (poligonMi) {
+  if ((poligonMi && _roiPoligonNoktalari.length === 0) || (!poligonMi && kareBos)) {
+    // Alan çizilmedi: yalnızca hareket yönü ayarı kaydedilir, mevcut alan korunur.
+    govde = {};
+  } else if (poligonMi) {
     if (_roiPoligonNoktalari.length < 3) {
       sonuc.className = "small mt-2 text-danger";
       sonuc.textContent = "Serbest çizim için en az 3 nokta işaretlemelisiniz. Sınırı tamamen kaldırmak için 'Sınırı Kaldır' butonunu kullanın.";
@@ -2052,6 +2058,7 @@ async function kameraRoiKaydet() {
     }
     govde = { x1: Number(x1), y1: Number(y1), x2: Number(x2), y2: Number(y2) };
   }
+  govde.yon_filtresi = yonFiltresi;
 
   try {
     await apiCagir(`/kameralar/${id}/roi`, {

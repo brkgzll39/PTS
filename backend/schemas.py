@@ -3,7 +3,7 @@ import re
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 from datetime import datetime
-from typing import Optional, List
+from typing import Literal, Optional, List
 
 GECERLI_TIPLER = ("abone", "personel", "ziyaretci")
 # "sakin": bir Kişi kaydına bağlı, yalnızca kendi araç/geçmiş bilgisine
@@ -572,6 +572,10 @@ class KameraRoiGuncelle(BaseModel):
     y2: Optional[float] = None
     polygon: Optional[List[KameraRoiNoktasi]] = None
     temizle: bool = False
+    # YÖN FİLTRESİ (2026-10-14) -- bkz. camera_reader.py::YON_FILTRELERI:
+    # "yaklasan" / "uzaklasan" / "kapali". Gönderilmezse (None) mevcut ayar
+    # korunur. Yalnızca bu alan gönderilirse ROI'ye dokunulmaz.
+    yon_filtresi: Optional[Literal["yaklasan", "uzaklasan", "kapali"]] = None
 
 
 class AlarmCevap(BaseModel):

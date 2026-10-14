@@ -437,6 +437,9 @@ def _pipeline_baslat(kamera: dict) -> bool:
                 yon=kamera.get("yon", "giris"),
                 min_guven_skoru=min_guven,
                 roi=kamera.get("roi"),
+                # 2026-10-14: kameraya yaklaşan/uzaklaşan araç filtresi --
+                # bkz. camera_reader.py::KameraPipeline._oturum_alan_karari.
+                yon_filtresi=kamera.get("yon_filtresi"),
                 tekrar_gecikme_sn=max(0, tekrar_gecikme_sn),
                 # 2026-09-25: kameranın kendi ANPR okuması (Dahua) açıksa
                 # pipeline onu da dinleyip oylamaya ekler -- bkz.
@@ -3390,7 +3393,15 @@ def kamera_roi_guncelle(kamera_id: str, veri: schemas.KameraRoiGuncelle, kullani
         kamera = next((k for k in kameralar if k["id"] == kamera_id), None)
         if not kamera:
             raise HTTPException(404, "Kamera bulunamadı")
-        if veri.temizle:
+        if veri.yon_filtresi == "kapali":
+            kamera.pop("yon_filtresi", None)
+        elif veri.yon_filtresi is not None:
+            kamera["yon_filtresi"] = veri.yon_filtresi
+        yalniz_yon = (veri.yon_filtresi is not None and not veri.temizle and veri.polygon is None
+                      and all(v is None for v in (veri.x1, veri.y1, veri.x2, veri.y2)))
+        if yalniz_yon:
+            pass
+        elif veri.temizle:
             kamera.pop("roi", None)
         elif veri.polygon is not None:
             kamera["roi"] = _roi_polygon_gecerlilestir(veri.polygon)

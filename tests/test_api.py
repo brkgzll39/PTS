@@ -7447,3 +7447,29 @@ def test_sonradan_gelen_kamera_okumasi_kamera_anahtari_ister(client, monkeypatch
         "plaka_no": "34 KOG 301", "kamera_id": "KOG-KAM", "kamera_okumasi": "34 KOG 307",
     })
     assert r.status_code == 401
+
+
+def test_kamera_yon_filtresi_roiye_dokunmadan_kaydedilir_ve_kapatilir(client, operator_header, roi_test_kamera_id):
+    """2026-10-14: hareket yönü filtresi ROI penceresinden ayarlanır; yalnızca
+    yon_filtresi gönderilirse mevcut tespit alanı korunur."""
+    r = client.patch(f"/kameralar/{roi_test_kamera_id}/roi",
+                     json={"x1": 10, "y1": 5, "x2": 90, "y2": 95}, headers=operator_header)
+    assert r.status_code == 200, r.text
+
+    r = client.patch(f"/kameralar/{roi_test_kamera_id}/roi", json={"yon_filtresi": "yaklasan"}, headers=operator_header)
+    assert r.status_code == 200, r.text
+    assert r.json()["yon_filtresi"] == "yaklasan"
+    assert r.json()["roi"] == {"x1": 10.0, "y1": 5.0, "x2": 90.0, "y2": 95.0}
+
+    # Alanla birlikte gönderilince ikisi de kaydedilir.
+    r = client.patch(f"/kameralar/{roi_test_kamera_id}/roi",
+                     json={"x1": 0, "y1": 0, "x2": 50, "y2": 50, "yon_filtresi": "uzaklasan"}, headers=operator_header)
+    assert r.json()["yon_filtresi"] == "uzaklasan"
+    assert r.json()["roi"] == {"x1": 0.0, "y1": 0.0, "x2": 50.0, "y2": 50.0}
+
+    r = client.patch(f"/kameralar/{roi_test_kamera_id}/roi", json={"yon_filtresi": "kapali"}, headers=operator_header)
+    assert r.json().get("yon_filtresi") is None
+    assert r.json()["roi"] == {"x1": 0.0, "y1": 0.0, "x2": 50.0, "y2": 50.0}
+
+    r = client.patch(f"/kameralar/{roi_test_kamera_id}/roi", json={"yon_filtresi": "sola"}, headers=operator_header)
+    assert r.status_code == 422

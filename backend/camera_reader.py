@@ -284,6 +284,22 @@ SONDAN_EKSIK_KARAKTER_TERCIH_ORANI = 0.34  # uzun varyant, kısa varyantın en a
 DESTEKLEYICI_OY_AGIRLIGI = 0.5
 KENAR_PAYI_PX = 3
 
+# YÖN FİLTRESİ (2026-10-14, kullanıcı: "karşı şeritten geçen araçları
+# çekmeyecek ... hiç araç kaçırmaması için"). Bir geçiş oturumu boyunca plaka
+# kutusunun nasıl hareket ettiğine bakılır: kameraya YAKLAŞAN aracın plakası
+# büyür ve görüntüde aşağı iner; UZAKLAŞAN (karşı şeritteki ya da diğer
+# kameranın önünden geçip giden) aracınki küçülür/sabit kalır ve yukarı çıkar.
+# 6 günlük saha logunda aynı aracı iki kamera birden gördüğünde 676 geçişte
+# biri "yaklaşan" öbürü "uzaklaşan" dedi, ikisinin birden "yaklaşan" dediği
+# yalnızca 1 geçiş vardı -- yani yön, aracın HANGİ kameraya ait olduğunu
+# konumdan (ROI) çok daha güvenilir ayırıyor.
+YON_FILTRELERI = ("yaklasan", "uzaklasan")
+HAREKET_MIN_KUTU = 3            # yön kararı için gereken en az konumlu okuma
+HAREKET_YAKLASMA_ORANI = 1.15   # plaka genişliği en az bu kadar büyümeli...
+HAREKET_UZAKLASMA_ORANI = 1.05  # ...ya da en fazla bu kadar (uzaklaşan)
+HAREKET_KUCULME_ORANI = 0.87    # belirgin küçülme tek başına uzaklaşmadır
+HAREKET_DIKEY_ESIK = 0.03       # kare yüksekliğinin oranı olarak dikey hareket
+
 # Dedektör ardı ardına hiçbir plaka adayı bulamazsa (bkz. _kareyi_isle), bunu en
 # fazla bu sıklıkta (saniye) özetleyen TEK bir log satırı yazılır. Amaç spam
 # değil, "pipeline canlı ve kare işliyor ama dedektör gerçekten hiçbir şey mi
@@ -339,10 +355,12 @@ class PlakaOyBirikimi:
         "oylar", "_varyant_maks_guven", "ilk_gorulme", "son_gorulme",
         "en_iyi_jpeg", "_en_iyi_jpeg_guveni", "toplam_kare_sayisi",
         "_harici_katkili_varyantlar", "_dogrudan_varyantlar",
+        "konumlar", "roi_icinde_goruldu",
     )
 
     def __init__(self, plaka: str, guven: float, simdi: float, jpeg: Optional[bytes] = None,
-                 agirlik: float = 1.0, destekleyici: bool = False):
+                 agirlik: float = 1.0, destekleyici: bool = False,
+                 konum: Optional[tuple] = None, roi_icinde: Optional[bool] = None):
         # `agirlik` (2026-09-25): oya katkı çarpanı -- kameranın KENDİ ANPR
         # okuması (bkz. KameraPipeline.harici_okuma_ekle) birkaç iyi kareye
         # denk sayılır. Kaydedilen güven (`_varyant_maks_guven`) ağırlıktan
@@ -366,10 +384,22 @@ class PlakaOyBirikimi:
         # En az bir DOĞRUDAN (destekleyici olmayan) okumayla desteklenen metinler
         # -- bkz. DESTEKLEYICI_OY_AGIRLIGI. Kazanan yalnızca bunlar arasından seçilir.
         self._dogrudan_varyantlar: set = set() if destekleyici else {plaka}
+        # Plaka kutusunun oturum boyunca izlediği yol: (merkez_x, merkez_y,
+        # genişlik), kare boyutuna oranlı -- bkz. hareket_yonu_hesapla.
+        self.konumlar: list = [konum] if konum else []
+        # Oturumun en az bir okuması tespit alanının (ROI) içinde mi yapıldı?
+        # None (ROI bilgisi yok: ROI tanımsız ya da kameranın kendi okuması)
+        # içeride sayılır.
+        self.roi_icinde_goruldu = roi_icinde is not False
 
     def ekle(self, plaka: str, guven: float, simdi: float, jpeg: Optional[bytes] = None,
-             agirlik: float = 1.0, destekleyici: bool = False) -> None:
+             agirlik: float = 1.0, destekleyici: bool = False,
+             konum: Optional[tuple] = None, roi_icinde: Optional[bool] = None) -> None:
         self.oylar[plaka] += guven * agirlik
+        if konum:
+            self.konumlar.append(konum)
+        if roi_icinde is not False:
+            self.roi_icinde_goruldu = True
         if guven > self._varyant_maks_guven.get(plaka, -1.0):
             self._varyant_maks_guven[plaka] = guven
         if not destekleyici:
@@ -441,6 +471,8 @@ class PlakaOyBirikimi:
             # söylediyse o metin (en çok oy alan harici varyant); aynıysa ya da
             # harici okuma yoksa None. Kayıt "Kontrol gerekli" diye işaretlenir.
             "kamera_okumasi": self._kamera_okumasi_farki(secilen_plaka),
+            "hareket_yonu": hareket_yonu_hesapla(self.konumlar),
+            "roi_icinde_goruldu": self.roi_icinde_goruldu,
             "harici_varyantlar": sorted(self._harici_katkili_varyantlar),
         }
 
@@ -468,7 +500,8 @@ class PlakaOturumTakipcisi:
         self.max_oturum_sure_sn = max_oturum_sure_sn
 
     def guncelle(self, plaka: str, guven: float, simdi: float, jpeg: Optional[bytes] = None,
-                 agirlik: float = 1.0, destekleyici: bool = False) -> None:
+                 agirlik: float = 1.0, destekleyici: bool = False,
+                 konum: Optional[tuple] = None, roi_icinde: Optional[bool] = None) -> None:
         en_yakin_anahtar = None
         en_yakin_mesafe = None
         for anahtar, birikim in self._acik.items():
@@ -478,9 +511,9 @@ class PlakaOturumTakipcisi:
             if mesafe <= self.benzerlik_esigi and (en_yakin_mesafe is None or mesafe < en_yakin_mesafe):
                 en_yakin_anahtar, en_yakin_mesafe = anahtar, mesafe
         if en_yakin_anahtar is not None:
-            self._acik[en_yakin_anahtar].ekle(plaka, guven, simdi, jpeg, agirlik, destekleyici)
+            self._acik[en_yakin_anahtar].ekle(plaka, guven, simdi, jpeg, agirlik, destekleyici, konum, roi_icinde)
         else:
-            self._acik[plaka] = PlakaOyBirikimi(plaka, guven, simdi, jpeg, agirlik, destekleyici)
+            self._acik[plaka] = PlakaOyBirikimi(plaka, guven, simdi, jpeg, agirlik, destekleyici, konum, roi_icinde)
 
     def bitmis_oturumlari_al(self, simdi: float, zorla: bool = False) -> list:
         """Kapanmış oturumların kazananlarını döner -- her sözlüğe ayrıca bir
@@ -592,6 +625,39 @@ def plaka_bicime_gore_duzelt(metin: str, karakter_guvenleri: Optional[Sequence[f
                 if plaka:
                     adaylar.add(plaka)
     return adaylar.pop() if len(adaylar) == 1 else None
+
+
+def hareket_yonu_hesapla(konumlar: Sequence[tuple]) -> Optional[str]:
+    """Bir oturumdaki plaka kutularının (merkez_x, merkez_y, genişlik; kare
+    boyutuna oranlı, zaman sırasıyla) izlediği yoldan aracın kameraya
+    "yaklasan" mı "uzaklasan" mı olduğunu söyler; karar verilemiyorsa (çok az
+    okuma, duran araç, yatay geçen sokak trafiği) None. Baştaki ve sondaki
+    üçte birlik dilimlerin ortancası karşılaştırılır -- tek bir sapan kutu
+    kararı çevirmesin."""
+    if len(konumlar) < HAREKET_MIN_KUTU:
+        return None
+    k = max(1, len(konumlar) // 3)
+
+    def ortanca(degerler):
+        sirali = sorted(degerler)
+        return sirali[len(sirali) // 2]
+
+    ilk_w = ortanca([c[2] for c in konumlar[:k]])
+    son_w = ortanca([c[2] for c in konumlar[-k:]])
+    dy = ortanca([c[1] for c in konumlar[-k:]]) - ortanca([c[1] for c in konumlar[:k]])
+    oran = son_w / ilk_w if ilk_w > 0 else 1.0
+    if oran >= HAREKET_YAKLASMA_ORANI and dy >= HAREKET_DIKEY_ESIK:
+        return "yaklasan"
+    if (oran <= HAREKET_UZAKLASMA_ORANI and dy <= -HAREKET_DIKEY_ESIK) or (oran <= HAREKET_KUCULME_ORANI and dy <= 0):
+        return "uzaklasan"
+    return None
+
+
+def _kutu_konumu(kutu: Optional[Sequence[int]], genislik: int, yukseklik: int) -> Optional[tuple]:
+    if not kutu or len(kutu) != 4 or genislik <= 0 or yukseklik <= 0:
+        return None
+    x1, y1, x2, y2 = kutu
+    return ((x1 + x2) / 2 / genislik, (y1 + y2) / 2 / yukseklik, max(x2 - x1, 0) / genislik)
 
 
 def _kutu_kenarda_mi(kutu: Optional[Sequence[int]], genislik: int, yukseklik: int,
@@ -749,7 +815,8 @@ class KameraPipeline:
                  kamera_id: str = "KAMERA-1", tekrar_gecikme_sn: int = 30, yon: str = "giris",
                  baglanti_zaman_asimi_sn: float = 8.0, donma_esigi_sn: float = 10.0,
                  min_guven_skoru: float = VARSAYILAN_MIN_GUVEN_SKORU,
-                 roi: Optional[dict] = None, dahua_ayarlari: Optional[dict] = None):
+                 roi: Optional[dict] = None, dahua_ayarlari: Optional[dict] = None,
+                 yon_filtresi: Optional[str] = None):
         if not KUTUPHANELER_MEVCUT:
             raise RuntimeError(
                 "Gerekli kütüphaneler kurulu değil. "
@@ -783,6 +850,16 @@ class KameraPipeline:
         # tespit ediyor"), serbest çizim biçimi şeridin gerçek hattını takip
         # edebilir.
         self.roi = roi
+        # YÖN FİLTRESİ (bkz. YON_FILTRELERI): "yaklasan" ise yalnızca kameraya
+        # yaklaşan araçlar kaydedilir, uzaklaşanlar (karşı şerit, diğer
+        # kameradan geçip giden) ROI içinden geçse bile kaydedilmez; yaklaşan
+        # araç ROI'ye hiç girmeden okunduysa da kaydedilir. Yönü belli
+        # olmayan geçişlerde ROI kuralı geçerlidir. None: kapalı.
+        self.yon_filtresi = yon_filtresi if yon_filtresi in YON_FILTRELERI else None
+        # Yönü filtreye uymadığı için reddedilen plakalar (plaka -> zaman):
+        # kameranın kendi (Dahua) okuması aynı aracı birkaç saniye sonra,
+        # konum bilgisi olmadan bildirirse o okuma da reddedilsin.
+        self._ters_yon_plakalari: dict[str, float] = {}
 
         self.motor = _paylasilan_motoru_al()
         self.calisiyor = False
@@ -1169,21 +1246,12 @@ class KameraPipeline:
             )
 
         for t in tespitler:
-            if self.roi and not t.get("roi_icinde", True):
-                # GÖZLEMLENEBİLİRLİK: bu tespit format ve güven olarak geçerliydi
-                # ama yapılandırılmış tespit alanının (ROI) DIŞINDA kaldığı için
-                # oy birikimine hiç girmedi -- tipik olarak komşu şeridi de gören
-                # bir kameranın, o şeritteki (asıl kendi şeridine ait olmayan)
-                # bir aracı yanlışlıkla kaydetmesini önlemek içindir (bkz.
-                # README.md'deki "giriş ve çıkış kameraları birbirinin şeridini
-                # görüyor" notu). `min_guven_skoru` filtresiyle aynı gözlemlenebilirlik
-                # ilkesini izler: sessizce elenmez, burada loglanır.
-                logger.info(
-                    "[%s] Tespit yapılandırılmış alan (ROI) dışında kaldı, oy "
-                    "birikimine girmedi: %s (kutu=%s)",
-                    self.kamera_id, t["plaka"], t.get("kutu"),
-                )
-                continue
+            # 2026-10-14: ROI DIŞINDAKİ okumalar artık atılmıyor -- oylamaya ve
+            # aracın hareket yoluna katılıyor; ROI kararı kare başına değil
+            # OTURUM başına verilir (bkz. `_oturum_alan_karari`). Eskiden araç
+            # ROI'ye girmeden okunup ROI içinde plakası okunamadıysa (açı, hız)
+            # hiç kayda düşmüyordu: 6 günlük logda kameraya yaklaşan geçişlerin
+            # büyük kısmı böyle kayboluyordu.
             # Aracın hâlâ kamerada olduğunun kanıtı: güveni düşük olsa bile
             # (gece, parlama) bu plaka okunduysa araç oradadır -- görünümü
             # tazele (oy birikimine girip girmemesinden bağımsız).
@@ -1199,11 +1267,15 @@ class KameraPipeline:
                     self.kamera_id, t["plaka"], t["guven"], self.min_guven_skoru,
                 )
                 continue  # düşük güvenli tek kare — oy birikimine hiç girmesin
+            konum = _kutu_konumu(t.get("kutu"), kare_genislik, kare_yukseklik)
+            roi_icinde = t.get("roi_icinde") if self.roi else None
             if t.get("destekleyici"):
                 self._oturum_takipcisi.guncelle(t["plaka"], t["guven"], simdi, jpeg_bytes,
-                                                agirlik=DESTEKLEYICI_OY_AGIRLIGI, destekleyici=True)
+                                                agirlik=DESTEKLEYICI_OY_AGIRLIGI, destekleyici=True,
+                                                konum=konum, roi_icinde=roi_icinde)
             else:
-                self._oturum_takipcisi.guncelle(t["plaka"], t["guven"], simdi, jpeg_bytes)
+                self._oturum_takipcisi.guncelle(t["plaka"], t["guven"], simdi, jpeg_bytes,
+                                                konum=konum, roi_icinde=roi_icinde)
 
         if oturumu_hemen_kapat:
             bitmis_oturumlar += self._oturum_takipcisi.bitmis_oturumlari_al(simdi, zorla=True)
@@ -1216,6 +1288,10 @@ class KameraPipeline:
                     "kenarında kesik olabilecek) görüldü, hiçbir karede doğrudan okunmadı -- kayıt "
                     "oluşturulmadı.", self.kamera_id, oturum["plaka"],
                 )
+                continue
+            red_nedeni = self._oturum_alan_karari(oturum, simdi)
+            if red_nedeni:
+                logger.info("[%s] %s kayda alınmadı: %s", self.kamera_id, oturum["plaka"], red_nedeni)
                 continue
             if not self._oturum_gonderilmeli_mi(oturum, simdi):
                 gec = oturum.pop("gec_kamera_okumasi", None)
@@ -1323,6 +1399,47 @@ class KameraPipeline:
 
         self._plaka_hafizasini_buda()
         return gonderilenler
+
+    def _oturum_alan_karari(self, oturum: dict, simdi: float) -> Optional[str]:
+        """Kapanan bir oturumun bu kameraya AİT olup olmadığına karar verir;
+        değilse (loglanacak) nedeni, aitse None döner.
+
+        1. Yön filtresi açık ve aracın yönü belliyse karar YÖNE göre verilir:
+           filtreye uyan geçiş ROI'ye hiç girmemiş olsa da kaydedilir, uymayan
+           (karşı şerit / diğer kameranın aracı) ROI içinden geçse de
+           kaydedilmez.
+        2. Yön belli değilse (az okuma, duran araç, yatay sokak trafiği) ya da
+           filtre kapalıysa: ROI tanımlıysa oturumun en az bir okuması ROI
+           içinde olmalı.
+        """
+        yon = oturum.get("hareket_yonu")
+        varyantlar = set(oturum.get("varyantlar") or []) | {oturum["plaka"]}
+        if self.yon_filtresi:
+            if yon is not None and yon != self.yon_filtresi:
+                for v in varyantlar:
+                    self._ters_yon_plakalari[v] = simdi
+                self._ters_yon_plakalarini_buda(simdi)
+                return (f"araç kameraya göre {'yaklaşıyor' if yon == 'yaklasan' else 'uzaklaşıyor'}, "
+                        f"bu kamera yalnızca {'yaklaşan' if self.yon_filtresi == 'yaklasan' else 'uzaklaşan'} "
+                        f"araçları kaydediyor (karşı şerit ya da diğer kameranın aracı)")
+            if yon == self.yon_filtresi:
+                return None
+            # Yönü bilinmeyen bir oturum (tipik: yalnızca kameranın kendi
+            # okuması, konum yok) az önce ters yönde giderken reddedilen aracın
+            # plakasını taşıyorsa o da reddedilir.
+            esik = simdi - self._arac_ayrilma_suresi()
+            if any(self._ters_yon_plakalari.get(v, -1.0) >= esik for v in varyantlar):
+                return "aynı araç az önce ters yönde giderken görüldü"
+        if self.roi and not oturum.get("roi_icinde_goruldu", True):
+            return "araç tespit alanının (ROI) dışında kaldı ve hareket yönü belirlenemedi"
+        return None
+
+    def _ters_yon_plakalarini_buda(self, simdi: float) -> None:
+        if len(self._ters_yon_plakalari) < 200:
+            return
+        esik = simdi - self._arac_ayrilma_suresi() * 2
+        for p in [p for p, t in self._ters_yon_plakalari.items() if t < esik]:
+            self._ters_yon_plakalari.pop(p, None)
 
     def _oturum_gonderilmeli_mi(self, oturum: dict, simdi: float) -> bool:
         """Kapanmış bir oturumun (bkz. PlakaOturumTakipcisi.bitmis_oturumlari_al)
