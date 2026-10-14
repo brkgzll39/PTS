@@ -2312,34 +2312,11 @@ function _canliAkislariBaslat(canliKameralar) {
 
   canliKameralar.forEach(k => _kameraAkisiBaslat(k.id));
 
-  // Son plaka overlay — 2 sn'de bir güncelle
-  const _plakalariGuncelle = () => {
-    canliKameralar.forEach(async k => {
-      try {
-        const token = sessionStorage.getItem("pts_token");
-        const r = await fetch(`/kameralar/${k.id}/son-plaka`, { headers: { Authorization: `Bearer ${token}` } });
-        if (!r.ok) return;
-        const veri = await r.json();
-        const tile = document.getElementById(`tile-${k.id}`);
-        if (!tile) return;
-        let overlay = tile.querySelector(".plaka-overlay");
-        if (veri.tespitler?.length) {
-          const t = veri.tespitler[0];
-          if (!overlay) {
-            overlay = document.createElement("div");
-            overlay.className = "plaka-overlay";
-            tile.appendChild(overlay);
-          }
-          overlay.textContent = `${t.plaka}  ${(t.guven * 100).toFixed(0)}%`;
-          overlay.className = "plaka-overlay";
-          overlay._timeout && clearTimeout(overlay._timeout);
-          overlay._timeout = setTimeout(() => overlay.remove(), 8000);
-        }
-      } catch {}
-    });
-  };
-  _plakalariGuncelle();
-  _kameraPlakaInterval = setInterval(_plakalariGuncelle, 2000);
+  // 2026-10-14 kullanıcı isteği: canlı görüntülerin altında yeşil "PLAKA %XX"
+  // yazısı çıkmasın. Eskiden burada her kamera için 2 sn'de bir
+  // /kameralar/{id}/son-plaka sorgulanıp karonun üzerine o yazı basılıyordu;
+  // sorgu da yazı da kaldırıldı (okunan plakalar zaten Son Geçişler ve anlık
+  // bildirimlerde görünüyor).
 }
 
 // Sekme arka plana alınıp öne geldiğinde akışları durdurup yeniden başlatır
