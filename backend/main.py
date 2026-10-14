@@ -7493,11 +7493,26 @@ def kullanici_sil(kullanici_id: int, db: Session = Depends(get_db), kullanici: m
     # "Aktif Oturumlar" listesinde sonsuza kadar "#<id> (silinmiş)" olarak
     # görünmeye devam ederlerdi (bkz. models.OturumTokeni).
     db.query(models.OturumTokeni).filter(models.OturumTokeni.kullanici_id == hedef.id).delete()
+    # 2026-10-14 SAHA HATASI (SQL Server): vardiya oturumu açmış (güvenlik)
+    # bir hesabı silmek "Sunucuda beklenmeyen bir hata" veriyordu -- bu
+    # tablolar kullanicilar.id'ye YABANCI ANAHTARLA bağlı; SQL Server bağlı
+    # satırı olan kullanıcının silinmesini reddediyor (testlerdeki SQLite
+    # yabancı anahtarı denetlemediği için görülmemişti). Bağlı satırlar
+    # birlikte silinir. Not: silinen hesabın vardiya oturumlarına dayanan eski
+    # kayıtların "Vardiya" etiketi kalkar (çizelgeye göre etiketlenen Lojman
+    # kayıtları etkilenmez).
+    vardiya_oturumu = db.query(models.VardiyaOturumu).filter(
+        models.VardiyaOturumu.kullanici_id == hedef.id).delete(synchronize_session=False)
+    db.query(models.VardiyaAtamasi).filter(models.VardiyaAtamasi.kullanici_id == hedef.id).delete(synchronize_session=False)
+    db.query(models.PushToken).filter(models.PushToken.kullanici_id == hedef.id).delete(synchronize_session=False)
+    db.query(models.NobetNotuOkuma).filter(models.NobetNotuOkuma.kullanici_id == hedef.id).delete(synchronize_session=False)
     db.delete(hedef)
     db.commit()
     # 2026-09-20: bir hesabın silinmesi önceden hiçbir yere loglanmıyordu --
     # kim, hangi hesabı, ne zaman sildi sorusu tamamen cevapsızdı.
-    _denetim_kaydet(db, kullanici.kullanici_adi, "kullanici_sil", f"{silinen_kullanici_adi} (rol: {silinen_rol})")
+    _denetim_kaydet(db, kullanici.kullanici_adi, "kullanici_sil",
+                    f"{silinen_kullanici_adi} (rol: {silinen_rol})"
+                    + (f", {vardiya_oturumu} vardiya oturumu silindi" if vardiya_oturumu else ""))
     return {"mesaj": "Kullanıcı silindi"}
 
 

@@ -7714,3 +7714,34 @@ def test_eski_kayit_temizle_once_rapor_sonra_onayla_siler(client, yetkili_header
         db.close()
     assert tm.main(["--ad", "TMZ GIRIS-KAMERA", "--sil", "--manuel-dahil", "--evet"]) == 0
     assert plakalar() == ["34 TMZ 001"]
+
+
+def test_vardiya_oturumu_olan_kullanici_silinebilir_bagli_satirlar_temizlenir(client, yetkili_header):
+    """2026-10-14 saha hatası (SQL Server): vardiya oturumu açmış bir güvenlik
+    hesabını silmek yabancı anahtar ihlaliyle 500 veriyordu (SQLite testlerde
+    yabancı anahtarı denetlemediği için görülmemişti). Bağlı satırlar
+    (vardiya oturumu, push token, nöbet okuma) birlikte silinmeli -- yetim
+    satır kalmamalı."""
+    from backend import models as M
+    from backend.database import SessionLocal
+    _rol_ile_kullanici_olustur_ve_giris_yap(client, yetkili_header, "silinecek_guvenlik", "güvenlik")
+    db = SessionLocal()
+    try:
+        hedef = db.query(M.Kullanici).filter(M.Kullanici.kullanici_adi == "silinecek_guvenlik").first()
+        hid = hedef.id
+        assert db.query(M.VardiyaOturumu).filter(M.VardiyaOturumu.kullanici_id == hid).count() >= 1
+        db.add(M.PushToken(kullanici_id=hid, expo_push_token="ExponentPushToken[silinecek]"))
+        db.commit()
+    finally:
+        db.close()
+
+    r = client.delete(f"/kullanicilar/{hid}", headers=yetkili_header)
+    assert r.status_code == 200, r.text
+
+    db = SessionLocal()
+    try:
+        assert db.query(M.Kullanici).filter(M.Kullanici.id == hid).count() == 0
+        for tablo in (M.VardiyaOturumu, M.PushToken, M.OturumTokeni, M.VardiyaAtamasi, M.NobetNotuOkuma):
+            assert db.query(tablo).filter(tablo.kullanici_id == hid).count() == 0, tablo.__name__
+    finally:
+        db.close()

@@ -5328,7 +5328,7 @@ document.getElementById("kullaniciDuzenleForm")?.addEventListener("submit", asyn
 });
 
 async function kullaniciSil(id) {
-  if (!(await onayAl("Bu kullanıcıyı silmek istediğinize emin misiniz?"))) return;
+  if (!(await onayAl("Bu kullanıcıyı silmek istediğinize emin misiniz? Hesabın vardiya oturumları da silinir; o oturumlara dayanan eski kayıtların Vardiya etiketi kalkar."))) return;
   try {
     await apiCagir(`/kullanicilar/${id}`, { method: "DELETE" });
     kullanicilariYukle();
