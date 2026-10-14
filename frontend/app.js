@@ -839,7 +839,7 @@ function authBasarili(kullanici) {
 }
 
 async function uygulamaVerileriniYukle() {
-  panelYenile(); sonGecislerYukle(); kayitlariYukle(); kisileriYukle(); ledAyarlariYukle(); lisansYukle(); kameralariYukle();
+  panelYenile(); sonGecislerYukle(); kayitlariYukle(); nizamiyeSecenekleriniYukle(); kisileriYukle(); ledAyarlariYukle(); lisansYukle(); kameralariYukle();
   grafikYukle(); karaListesiYukle(); bariyerleriYukle(); kullanicilariYukle(); sistemSagliginiYukle();
   bildirimAyarlariYukle(); vardiyaOturumlariniYukle(); oturumlariYukle(); _panelYenilemeAyariniYukle();
   await siteleriYukle(); noktalariYukle();
@@ -2524,6 +2524,7 @@ function _kayitlarFiltresiDuzenleniyorMu() {
   const aktif = document.activeElement;
   return !!aktif && [
     "filtrePlaka", "filtreBaslangic", "filtreBaslangicSaat", "filtreBitis", "filtreBitisSaat", "filtreDurum", "filtreDogrulama",
+    "filtreNizamiye",
   ].includes(aktif.id);
 }
 
@@ -2576,7 +2577,7 @@ function _tarihSaatDegeriOlustur(tarihId, saatId) {
   const kayitlarSekmeDugmesi = document.querySelector('[data-bs-target="#kayitlar-sekme"]');
   if (!kayitlarSekmeDugmesi) return;
   kayitlarSekmeDugmesi.addEventListener("hidden.bs.tab", () => {
-    const metinAlanIdleri = ["filtrePlaka", "filtreBaslangic", "filtreBaslangicSaat", "filtreBitis", "filtreBitisSaat", "filtreDurum", "filtreVardiyaAdi", "filtreDogrulama"];
+    const metinAlanIdleri = ["filtrePlaka", "filtreBaslangic", "filtreBaslangicSaat", "filtreBitis", "filtreBitisSaat", "filtreDurum", "filtreVardiyaAdi", "filtreDogrulama", "filtreNizamiye"];
     const doluAlanVarMi = metinAlanIdleri.some(id => document.getElementById(id)?.value);
     if (!doluAlanVarMi) return;
     metinAlanIdleri.forEach(id => { const el = document.getElementById(id); if (el) el.value = ""; });
@@ -3013,9 +3014,27 @@ function filtreParametreleri() {
   // "Doğrulama" filtresi (2026-09-25) -- rapora (disaAktar) da uygulanır.
   const dogrulama = document.getElementById("filtreDogrulama")?.value || "";
   if (dogrulama) params.set("dogrulama", dogrulama);
+  // "Nizamiye" (Lojman / Nizamiye) seçimi (2026-10-14) -- PDF/Excel'e de uygulanır.
+  const nizamiye = document.getElementById("filtreNizamiye")?.value || "";
+  if (nizamiye) params.set("nizamiye", nizamiye);
   params.set("limit", _kayitlarLimit);
   params.set("offset", _kayitlarSayfa * _kayitlarLimit);
   return params;
+}
+
+// "Nizamiye" seçiminin seçenekleri kameralardan gelir (Lojman, Nizamiye ...).
+async function nizamiyeSecenekleriniYukle() {
+  const sec = document.getElementById("filtreNizamiye");
+  if (!sec) return;
+  try {
+    const liste = await apiCagir("/kayitlar/nizamiyeler");
+    const secili = sec.value;
+    sec.innerHTML = '<option value="">Tümü</option>' + liste.map(n =>
+      `<option value="${escapeHtml(n.deger)}">${escapeHtml(n.ad)}</option>`).join("");
+    if (liste.some(n => n.deger === secili)) sec.value = secili;
+  } catch (e) {
+    _yuklemeHatasi("Nizamiye listesi", e);
+  }
 }
 
 async function kayitlariYukle(sifirla = true) {

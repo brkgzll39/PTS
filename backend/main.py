@@ -6159,6 +6159,52 @@ def _dogrulama_filtresi_uygula(sorgu, dogrulama: Optional[str]):
     return sorgu.filter(kosul, or_(K.manuel_giris == False, K.manuel_giris.is_(None)))  # noqa: E712
 
 
+# NİZAMİYE FİLTRESİ (2026-10-14, kullanıcı: "pdf raporunda seçim için sütun
+# olsun, nizamiye seçilince nizamiyedeki kayıtlar, lojman seçilince
+# lojmandakiler"). Kayit.kamera_id kameranın ADINI tutar; nizamiye, kamera
+# adından türetilir (bkz. excel_export.nizamiye_grubu: "Lojman"+"Lojman1" ->
+# lojman, "Nizamiye"+"Nizamıye" -> nizamiye). Tanımlı kameralarla birlikte
+# kayıtlarda geçen eski kamera adları da hesaba katılır (adı değişmiş ya da
+# silinmiş bir kameranın eski kayıtları da doğru nizamiyede görünsün).
+def _kayitlardaki_kamera_adlari(db: Session) -> set:
+    adlar = {k.get("ad") for k in _kameralari_oku() if k.get("ad")}
+    adlar |= {a for (a,) in db.query(models.Kayit.kamera_id).distinct().all() if a}
+    return adlar
+
+
+def _nizamiye_filtresi_uygula(sorgu, nizamiye: Optional[str], db: Session):
+    if not nizamiye:
+        return sorgu
+    anahtar = excel_export.nizamiye_grubu(nizamiye)
+    adlar = [a for a in _kayitlardaki_kamera_adlari(db) if excel_export.nizamiye_grubu(a) == anahtar]
+    return sorgu.filter(models.Kayit.kamera_id.in_(adlar) if adlar else false())
+
+
+def _nizamiye_basligi(nizamiye: str, db: Session) -> str:
+    """Rapor başlığı için büyük harfli Türkçe nizamiye adı ("NİZAMİYE")."""
+    anahtar = excel_export.nizamiye_grubu(nizamiye)
+    adlar = [a for a in _kayitlardaki_kamera_adlari(db) if excel_export.nizamiye_grubu(a) == anahtar]
+    ad = excel_export.nizamiye_gorunen_adi(anahtar, adlar) if adlar else nizamiye
+    return ad.replace("i", "İ").replace("ı", "I").upper()
+
+
+@app.get("/kayitlar/nizamiyeler")
+def kayit_nizamiyeleri(db: Session = Depends(get_db),
+                       kullanici: models.Kullanici = Depends(_personel_girisi_gerekli)):
+    """Kayıtlar ekranındaki "Nizamiye" seçiminin seçenekleri: [{deger, ad}].
+    Kamera erişimi kısıtlı hesaplar yalnızca kendi kameralarının nizamiyesini görür."""
+    izinli = _kullanicinin_izinli_kamera_adlari(kullanici)
+    gruplar: dict = {}
+    for ad in _kayitlardaki_kamera_adlari(db):
+        if izinli is not None and ad not in izinli:
+            continue
+        anahtar = excel_export.nizamiye_grubu(ad)
+        if anahtar:
+            gruplar.setdefault(anahtar, []).append(ad)
+    return [{"deger": anahtar, "ad": excel_export.nizamiye_gorunen_adi(anahtar, adlar)}
+            for anahtar, adlar in sorted(gruplar.items())]
+
+
 @app.get("/kayitlar", response_model=List[schemas.KayitCevap])
 def kayitlari_listele(
     plaka: Optional[str] = None,
@@ -6173,9 +6219,11 @@ def kayitlari_listele(
     db: Session = Depends(get_db),
     kullanici: models.Kullanici = Depends(_personel_girisi_gerekli),
     dogrulama: Optional[str] = None,
+    nizamiye: Optional[str] = None,
 ):
     sorgu = db.query(models.Kayit)
     sorgu = _dogrulama_filtresi_uygula(sorgu, dogrulama)
+    sorgu = _nizamiye_filtresi_uygula(sorgu, nizamiye, db)
     if plaka:
         sorgu = sorgu.filter(models.Kayit.plaka_no.ilike(f"%{plaka}%"))
     if yetki_durumu:
@@ -6248,10 +6296,12 @@ def kayitlar_sayfa_bilgisi(
     db: Session = Depends(get_db),
     kullanici: models.Kullanici = Depends(_personel_girisi_gerekli),
     dogrulama: Optional[str] = None,
+    nizamiye: Optional[str] = None,
 ):
     """Sayfalama için toplam kayıt sayısını döndürür."""
     sorgu = db.query(models.Kayit)
     sorgu = _dogrulama_filtresi_uygula(sorgu, dogrulama)
+    sorgu = _nizamiye_filtresi_uygula(sorgu, nizamiye, db)
     if plaka:
         sorgu = sorgu.filter(models.Kayit.plaka_no.ilike(f"%{plaka}%"))
     if yetki_durumu:
@@ -7111,7 +7161,8 @@ _XLSX_MEDIA = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet
 def kayitlari_excel_indir(
     plaka: Optional[str] = None, baslangic: Optional[str] = None,
     bitis: Optional[str] = None, vardiya_adi: Optional[str] = None,
-    yetki_durumu: Optional[str] = None, dogrulama: Optional[str] = None, db: Session = Depends(get_db),
+    yetki_durumu: Optional[str] = None, dogrulama: Optional[str] = None, nizamiye: Optional[str] = None,
+    db: Session = Depends(get_db),
     kullanici: models.Kullanici = Depends(_personel_girisi_gerekli),
 ):
     # NOT: kayitlari_listele() burada FastAPI'nin DI mekanizması ÜZERİNDEN
@@ -7147,6 +7198,7 @@ def kayitlari_excel_indir(
             plaka=plaka, baslangic=baslangic, bitis=bitis, yetki_durumu=yetki_durumu or None,
             kamera_id=None, yon=None, vardiya_adi=vardiya_adi,
             limit=5000, offset=0, db=db, kullanici=kullanici, dogrulama=dogrulama or None,
+            nizamiye=nizamiye or None,
         )
         satirlar = _kayitlari_rapor_satirlari(kayitlar, db)
         dosya_yolu = _gecici_rapor_yolu("pts_kayitlar", "xlsx")
@@ -7158,7 +7210,8 @@ def kayitlari_excel_indir(
 def kayitlari_pdf_indir(
     plaka: Optional[str] = None, baslangic: Optional[str] = None,
     bitis: Optional[str] = None, vardiya_adi: Optional[str] = None,
-    yetki_durumu: Optional[str] = None, dogrulama: Optional[str] = None, db: Session = Depends(get_db),
+    yetki_durumu: Optional[str] = None, dogrulama: Optional[str] = None, nizamiye: Optional[str] = None,
+    db: Session = Depends(get_db),
     kullanici: models.Kullanici = Depends(_personel_girisi_gerekli),
 ):
     # bkz. kayitlari_excel_indir'deki AYNI başlıklı not: `kullanici` VE
@@ -7170,11 +7223,14 @@ def kayitlari_pdf_indir(
             plaka=plaka, baslangic=baslangic, bitis=bitis, yetki_durumu=yetki_durumu or None,
             kamera_id=None, yon=None, vardiya_adi=vardiya_adi,
             limit=2000, offset=0, db=db, kullanici=kullanici, dogrulama=dogrulama or None,
+            nizamiye=nizamiye or None,
         )
         satirlar = _kayitlari_rapor_satirlari(kayitlar, db)
         tarih_araligi_metni = _rapor_tarih_araligi_metni(baslangic, bitis, kayitlar)
         dosya_yolu = _gecici_rapor_yolu("pts_kayitlar", "pdf")
-        _raporu_uret(pdf_export.kayitlar_pdf_olustur, satirlar, dosya_yolu, tarih_araligi_metni=tarih_araligi_metni)
+        baslik = f"GEÇİŞ RAPORU - {_nizamiye_basligi(nizamiye, db)}" if nizamiye else "GEÇİŞ RAPORU"
+        _raporu_uret(pdf_export.kayitlar_pdf_olustur, satirlar, dosya_yolu,
+                     tarih_araligi_metni=tarih_araligi_metni, baslik=baslik)
     return _indirip_sil(dosya_yolu, "pts_kayitlari.pdf", "application/pdf")
 
 

@@ -69,16 +69,17 @@ def nizamiye_grubu(nokta: str) -> str:
     return kok.replace("I", "ı").replace("İ", "i").lower().replace("ı", "i")
 
 
-def _grup_gorunen_adi(anahtar: str, noktalar: list) -> str:
+def nizamiye_gorunen_adi(anahtar: str, noktalar: list) -> str:
     """Sayfa adı: gruptaki adlardan "i" ile yazılmış olanı (Nizamiye), yoksa
     en sık geçeni (Nizamıye)."""
     if not anahtar:
         return "Diğer"
     koklar = [_nokta_kok_adi(n) for n in noktalar]
-    for k in koklar:
-        if k.lower() == anahtar:
-            return k
-    return max(set(koklar), key=koklar.count)
+
+    def oncelik(k):
+        # 1) "i" ile yazılmış, 2) yalnız baş harfi büyük ("Lojman", "LOJMAN" değil), 3) en sık geçen
+        return (k.lower() == anahtar, k[1:] == k[1:].lower(), koklar.count(k))
+    return max(set(koklar), key=oncelik)
 
 
 def _sayfa_adi(ad: str) -> str:
@@ -150,7 +151,7 @@ def kayitlar_excel_olustur(satirlar: list, dosya_yolu: str) -> str:
         wb.remove(wb.active)
         kullanilan = set()
         for anahtar in sorted(gruplar, key=lambda a: (a == "", a)):
-            ad = _sayfa_adi(_grup_gorunen_adi(anahtar, [s.get("nokta", "") for s in gruplar[anahtar]]))
+            ad = _sayfa_adi(nizamiye_gorunen_adi(anahtar, [s.get("nokta", "") for s in gruplar[anahtar]]))
             while ad.lower() in kullanilan:
                 ad = _sayfa_adi(ad[:28] + "_" + str(len(kullanilan)))
             kullanilan.add(ad.lower())

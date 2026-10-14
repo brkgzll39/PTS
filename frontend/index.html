@@ -1139,6 +1139,14 @@
                 <option value="D">D Vardiyası</option>
               </select>
             </div>
+            <!-- 2026-10-14: Lojman / Nizamiye seçimi -- liste, PDF ve Excel'e uygulanır
+                 (bkz. main.py::_nizamiye_filtresi_uygula). Seçenekler kameralardan doldurulur. -->
+            <div class="col-md-2">
+              <label class="form-label small" for="filtreNizamiye">Nizamiye</label>
+              <select class="form-select" id="filtreNizamiye" title="Yalnızca seçilen nizamiyenin kayıtları (rapora da uygulanır)">
+                <option value="">Tümü</option>
+              </select>
+            </div>
             <!-- 2026-09-25: yanlış okunmuş olma ihtimali en yüksek otomatik kayıtları
                  gözden geçirmek için (bkz. main.py::_dogrulama_filtresi_uygula). -->
             <div class="col-md-2">

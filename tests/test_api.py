@@ -7598,3 +7598,35 @@ def test_ana_port_otomatik_giris_yalnizca_ayarliysa_ve_var_olan_hesapla(client, 
 
     monkeypatch.setenv("PTS_ANA_PORT_OTOMATIK_GIRIS_IPLERI", "172.17.1.245")
     assert client.post("/auth/otomatik-giris").status_code == 403          # bu bilgisayara izin yok
+
+
+def test_nizamiye_filtresi_liste_sayac_ve_raporlara_uygulanir(client, yetkili_header):
+    """2026-10-14: Kayıtlar ekranındaki "Nizamiye" seçimi (Lojman / Nizamiye)
+    listeye, sayfa sayacına, PDF'e ve Excel'e uygulanır. Sahadaki kamera adları:
+    Lojman, Lojman1, Nizamiye, Nizamıye."""
+    import io
+    import openpyxl
+    for plaka, kamera in (("34 NZF 001", "Lojman"), ("34 NZF 002", "Lojman1"),
+                          ("34 NZF 003", "Nizamiye"), ("34 NZF 004", "Nizamıye")):
+        r = client.post("/kayitlar", json={"plaka_no": plaka, "kamera_id": kamera, "yon": "giris"}, headers=yetkili_header)
+        assert r.status_code == 200, r.text
+
+    secenekler = client.get("/kayitlar/nizamiyeler", headers=yetkili_header).json()
+    degerler = {s["deger"]: s["ad"] for s in secenekler}
+    assert degerler["lojman"] == "Lojman" and degerler["nizamiye"] == "Nizamiye"
+
+    def plakalar(nizamiye):
+        r = client.get("/kayitlar", params={"plaka": "34 NZF", "nizamiye": nizamiye, "limit": 50}, headers=yetkili_header)
+        return sorted(k["plaka_no"] for k in r.json())
+
+    assert plakalar("lojman") == ["34 NZF 001", "34 NZF 002"]
+    assert plakalar("nizamiye") == ["34 NZF 003", "34 NZF 004"]
+    sayac = client.get("/kayitlar/sayfa-bilgisi", params={"plaka": "34 NZF", "nizamiye": "lojman"}, headers=yetkili_header).json()
+    assert sayac["toplam"] == 2
+
+    r = client.get("/disa-aktar/excel/kayitlar", params={"plaka": "34 NZF", "nizamiye": "nizamiye"}, headers=yetkili_header)
+    ws = openpyxl.load_workbook(io.BytesIO(r.content)).active
+    assert sorted(row[1] for row in ws.iter_rows(min_row=2, values_only=True)) == ["34 NZF 003", "34 NZF 004"]
+
+    r = client.get("/disa-aktar/pdf/kayitlar", params={"plaka": "34 NZF", "nizamiye": "lojman"}, headers=yetkili_header)
+    assert r.status_code == 200 and r.content[:4] == b"%PDF"
