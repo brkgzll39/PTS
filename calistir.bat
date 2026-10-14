@@ -2,18 +2,21 @@
 setlocal enabledelayedexpansion
 cd /d "%~dp0"
 
-where uv >nul 2>nul
-if errorlevel 1 (
-    echo uv bulunamadi. Once kurulum.bat dosyasini calistirin.
-    pause
-    exit /b 1
-)
-
+rem 2026-10-14: uv yalnizca KURULUM icin gerekir (ve PTS-Kurulum.exe ile
+rem kurulan pakette hic gerekmez: gomulu Python kullanilir). Calistirmak
+rem icin yalnizca .venv yeterli -- eskiden uv bulunamazsa, kurulum tamam
+rem olsa bile PTS hic baslatilmiyordu.
 if not exist ".venv\Scripts\python.exe" (
     echo PTS kurulumu bulunamadi. Kurulum baslatiliyor...
     call "%~dp0kurulum.bat"
     if errorlevel 1 exit /b 1
 )
+
+rem Plaka modelleri bu Windows kullanicisinin onbellegine (yoksa) kopyalanir
+rem -- PTS kurulumu yapan kullanicidan FARKLI bir hesapla calistirildiginda
+rem da modeller internetten indirilmek zorunda kalmasin.
+if exist "modeller\open-image-models\" xcopy "modeller\open-image-models" "%USERPROFILE%\.cache\open-image-models\" /E /I /D /Y /Q >nul
+if exist "modeller\fast-plate-ocr\" xcopy "modeller\fast-plate-ocr" "%USERPROFILE%\.cache\fast-plate-ocr\" /E /I /D /Y /Q >nul
 
 echo.
 echo PTS baslatiliyor. Tarayicidan http://localhost:8000 adresine gidin.

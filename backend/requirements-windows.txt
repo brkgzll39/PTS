@@ -1,0 +1,59 @@
+# PTS -- Windows (Python 3.12, 64 bit) için TAM ve SABİT bağımlılık listesi
+# (2026-10-14). Kamera/ANPR kütüphaneleri dahil -- `kurulum.bat` bunu kurar.
+#
+# Neden ayrı bir liste: requirements.txt yalnızca panelin temel paketlerini
+# sürümüyle sabitler; kamera hattı (fast-alpr, onnxruntime, opencv) "elle
+# kurun" diye bırakılmıştı ve her kurulum o günün en yeni sürümünü alıyordu.
+# Bu liste `uv pip compile` ile Windows için çözüldü ve bu sürümlerle PTS'in
+# plaka motoru (anpr_engine.ANPREngine: yolo-v9-s-608 + cct-xs-v2-global)
+# gerçek modellerle çalıştırılarak denendi. Kurulum paketindeki `paket\`
+# klasörü bu listenin Windows wheel dosyalarını içerir (internetsiz kurulum).
+#
+# opencv-python BİLİNÇLİ OLARAK YOK: fast-alpr opencv-python-headless'a
+# bağımlı; ikisi aynı "cv2" klasörüne kurulup birbirinin üzerine yazar.
+# PTS pencere açmadığı için (imshow vb. yok) headless yeterlidir.
+annotated-types==0.8.0
+anyio==4.15.1
+certifi==2026.7.22
+chardet==7.6.0
+charset-normalizer==3.5.2
+click==8.5.0
+colorama==0.4.6
+et-xmlfile==2.0.0
+fast-alpr==0.4.0
+fast-plate-ocr==1.1.0
+fastapi==0.115.0
+flatbuffers==25.12.19
+greenlet==3.5.6
+h11==0.16.0
+httptools==0.9.0
+idna==3.20
+markdown-it-py==4.2.0
+mdurl==0.1.2
+numpy==2.5.4
+onnxruntime==1.31.0
+open-image-models==0.6.0
+opencv-python-headless==5.0.0.93
+openpyxl==3.1.5
+packaging==26.3
+pillow==11.0.0
+protobuf==7.36.2
+pydantic==2.9.2
+pydantic-core==2.23.4
+pygments==2.21.0
+pyodbc==5.2.0
+python-dotenv==1.2.4
+python-multipart==0.0.9
+pyyaml==6.0.3
+reportlab==4.2.5
+requests==2.34.2
+rich==15.0.0
+sqlalchemy==2.0.35
+starlette==0.38.6
+tqdm==4.70.1
+truststore==0.10.5
+typing-extensions==4.16.0
+urllib3==2.8.0
+uvicorn==0.30.6
+watchfiles==1.3.0
+websockets==17.2
