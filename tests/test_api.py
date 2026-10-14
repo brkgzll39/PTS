@@ -7473,3 +7473,23 @@ def test_kamera_yon_filtresi_roiye_dokunmadan_kaydedilir_ve_kapatilir(client, op
 
     r = client.patch(f"/kameralar/{roi_test_kamera_id}/roi", json={"yon_filtresi": "sola"}, headers=operator_header)
     assert r.status_code == 422
+
+
+def test_alarmlar_haric_tip_filtresi(client, yetkili_header):
+    """2026-10-14: Son Geçişler panelindeki alarm satırlarından yetkisiz /
+    süresi dolmuş araç alarmları çıkarılır (geçiş satırı zaten işaretli);
+    kara liste alarmı görünmeye devam eder."""
+    r = client.post("/kara-listesi", json={"plaka_no": "34 HRC 999", "sebep": "test"}, headers=yetkili_header)
+    assert r.status_code in (200, 201), r.text
+    client.post("/kayitlar/otomatik", data={"plaka_no": "34 HRC 999", "kamera_id": "HRC-KAM", "guven_skoru": 0.99})
+    client.post("/kayitlar/otomatik", data={"plaka_no": "34 HRC 998", "kamera_id": "HRC-KAM", "guven_skoru": 0.99})
+
+    tumu = client.get("/alarmlar", params={"limit": 500}, headers=yetkili_header).json()
+    tipler = {a["alarm_tipi"] for a in tumu if a["plaka_no"].startswith("34 HRC")}
+    assert {"kara_liste", "yetkisiz_arac"} <= tipler
+
+    r = client.get("/alarmlar", params=[("limit", 500), ("haric_tip", "yetkisiz_arac"), ("haric_tip", "suresi_dolmus")],
+                   headers=yetkili_header)
+    assert r.status_code == 200, r.text
+    tipler = {a["alarm_tipi"] for a in r.json() if a["plaka_no"].startswith("34 HRC")}
+    assert tipler == {"kara_liste"}

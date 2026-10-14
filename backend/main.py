@@ -6180,6 +6180,8 @@ def olaylari_getir(
 def alarmlari_listele(
     sadece_acik: bool = False,
     alarm_tipi: Optional[str] = None,
+    # Bu tiplerdeki alarmlar listeye girmez (tekrarlanabilir): ?haric_tip=a&haric_tip=b
+    haric_tip: Optional[List[str]] = Query(None),
     limit: int = Query(100, ge=1, le=500),
     db: Session = Depends(get_db),
     _: models.Kullanici = Depends(_personel_girisi_gerekli),
@@ -6189,6 +6191,8 @@ def alarmlari_listele(
         sorgu = sorgu.filter(models.Alarm.okundu == False)  # noqa: E712
     if alarm_tipi:
         sorgu = sorgu.filter(models.Alarm.alarm_tipi == alarm_tipi)
+    if haric_tip:
+        sorgu = sorgu.filter(models.Alarm.alarm_tipi.notin_(haric_tip))
     return sorgu.order_by(desc(models.Alarm.tarih_saat)).limit(limit).all()
 
 

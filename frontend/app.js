@@ -1058,7 +1058,12 @@ async function panelYenile() {
     const kayitlar = await apiCagir("/kayitlar?limit=10");
     const canliOlaylar = document.getElementById("canliOlaylar");
     if (canliOlaylar) {
-      const alarmlar = await apiCagir("/alarmlar?sadece_acik=true&limit=4");
+      // 2026-10-14 kullanıcı isteği: yetkisiz / süresi dolmuş araç alarmları
+      // bu listede ayrı (ünlemli) satır olarak çıkmasın -- aynı geçiş hemen
+      // altındaki son geçiş satırında zaten yetki durumuyla işaretli. Kara
+      // liste, şüpheli araç ve sistem (kamera, disk, bariyer) alarmları
+      // görünmeye devam eder.
+      const alarmlar = await apiCagir("/alarmlar?sadece_acik=true&limit=4&haric_tip=yetkisiz_arac&haric_tip=suresi_dolmus");
       // 2026-09-23 KULLANICI GERİ BİLDİRİMİ (birebir): "şu ekranda son
       // geçişlerde tüm alarmlar okundu işaretle demeden son giriş yapan
       // araçların ekranı açılmıyor onları da otomatik yapar mısın" --
