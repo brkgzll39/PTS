@@ -7605,8 +7605,8 @@ def test_nizamiye_filtresi_liste_sayac_ve_raporlara_uygulanir(client, yetkili_he
     listeye, sayfa sayacına, PDF'e ve Excel'e uygulanır. Sahadaki kamera adları:
     Lojman, Lojman1, Nizamiye, Nizamıye. Seçenekler yalnızca TANIMLI
     kameralardan gelir; eski kayıtlarda kalmış adlar ("Nizamiye Giri",
-    "Lojman C" -- Türkçe harfleri silinmiş eski kamera adları) uygun
-    nizamiyeye sayılır, hiçbirine uymayanlar ("GIRIS-KAMERA") seçenek olmaz."""
+    "Lojman C", "GIRIS-KAMERA") hiçbir nizamiyeye sayılmaz (kullanıcı: "eski
+    adları da kullanma") -- yalnızca "Tümü"de / Excel'de "Diğer"de görünür."""
     import io
     import openpyxl
     anahtar = lisans.uret("Nizamiye Test", kamera_limiti=50, gun=30)
@@ -7634,23 +7634,83 @@ def test_nizamiye_filtresi_liste_sayac_ve_raporlara_uygulanir(client, yetkili_he
             r = client.get("/kayitlar", params={"plaka": "34 NZF", "nizamiye": nizamiye, "limit": 50}, headers=yetkili_header)
             return sorted(k["plaka_no"] for k in r.json())
 
-        assert plakalar("lojman") == ["34 NZF 001", "34 NZF 002", "34 NZF 006"]
-        assert plakalar("nizamiye") == ["34 NZF 003", "34 NZF 004", "34 NZF 005"]
+        assert plakalar("lojman") == ["34 NZF 001", "34 NZF 002"]
+        assert plakalar("nizamiye") == ["34 NZF 003", "34 NZF 004"]
         sayac = client.get("/kayitlar/sayfa-bilgisi", params={"plaka": "34 NZF", "nizamiye": "lojman"},
                            headers=yetkili_header).json()
-        assert sayac["toplam"] == 3
+        assert sayac["toplam"] == 2
 
         r = client.get("/disa-aktar/excel/kayitlar", params={"plaka": "34 NZF", "nizamiye": "nizamiye"}, headers=yetkili_header)
         ws = openpyxl.load_workbook(io.BytesIO(r.content)).active
-        assert sorted(row[1] for row in ws.iter_rows(min_row=2, values_only=True)) == ["34 NZF 003", "34 NZF 004", "34 NZF 005"]
+        assert sorted(row[1] for row in ws.iter_rows(min_row=2, values_only=True)) == ["34 NZF 003", "34 NZF 004"]
 
-        # Tümü: tanımlı nizamiyeler ayrı sayfada, uymayan eski ad "Diğer"de.
+        # Tümü: tanımlı nizamiyeler ayrı sayfada, eski adlar "Diğer"de.
         r = client.get("/disa-aktar/excel/kayitlar", params={"plaka": "34 NZF"}, headers=yetkili_header)
         wb = openpyxl.load_workbook(io.BytesIO(r.content))
         assert wb.sheetnames == ["Lojman", "Nizamiye", "Diğer"]
+        assert sorted(r[1] for r in wb["Diğer"].iter_rows(min_row=2, values_only=True)) == \
+            ["34 NZF 005", "34 NZF 006", "34 NZF 007"]
 
         r = client.get("/disa-aktar/pdf/kayitlar", params={"plaka": "34 NZF", "nizamiye": "lojman"}, headers=yetkili_header)
         assert r.status_code == 200 and r.content[:4] == b"%PDF"
     finally:
         for kid in kamera_idleri:
             client.delete(f"/kameralar/{kid}", headers=yetkili_header)
+
+
+
+def test_eski_kayit_temizle_once_rapor_sonra_onayla_siler(client, yetkili_header, tmp_path, monkeypatch, capsys):
+    """2026-10-14: backend/eski_kayit_temizle.py -- tanımlı olmayan (eski/test)
+    kamera adlı kayıtları raporlar; --sil ile siler, elle girilenleri korur."""
+    import json as _json
+    from backend import eski_kayit_temizle as tm, models as M
+    from backend.database import SessionLocal
+    kameralar = tmp_path / "cameras.json"
+    kameralar.write_text(_json.dumps([{"id": "1", "ad": "TMZ Lojman"}, {"id": "2", "ad": "TMZ Nizamiye"}]), encoding="utf-8")
+    monkeypatch.setattr(tm, "KAMERA_DOSYASI", str(kameralar))
+    gorsel = tmp_path / "eski.jpg"
+    gorsel.write_bytes(b"x")
+    monkeypatch.setattr(tm, "GORUNTU_KLASORU", str(tmp_path))
+
+    db = SessionLocal()
+    try:
+        # Bu testten önce başka testlerin bıraktığı tüm kamera adları da "eski" sayılır;
+        # yalnızca kendi adlarımızla (--ad) çalışıyoruz.
+        for plaka, kamera, manuel, yol in (("34 TMZ 001", "TMZ Lojman", False, None),
+                                           ("34 TMZ 002", "TMZ Nizamiye Giri", False, str(gorsel)),
+                                           ("34 TMZ 003", "TMZ GIRIS-KAMERA", False, None),
+                                           ("34 TMZ 004", "TMZ GIRIS-KAMERA", True, None)):
+            db.add(M.Kayit(plaka_no=plaka, kamera_id=kamera, yon="giris", yetki_durumu="yetkisiz",
+                           manuel_giris=manuel, goruntu_yolu=yol))
+        db.commit()
+        kayit = db.query(M.Kayit).filter(M.Kayit.plaka_no == "34 TMZ 002").first()
+        db.add(M.Alarm(kayit_id=kayit.id, plaka_no="34 TMZ 002", alarm_tipi="yetkisiz_arac", mesaj="t"))
+        db.commit()
+    finally:
+        db.close()
+
+    secim = ["--ad", "TMZ Nizamiye Giri", "--ad", "TMZ GIRIS-KAMERA"]
+    assert tm.main(secim) == 0                                     # yalnızca rapor
+    cikti = capsys.readouterr().out
+    assert "TMZ GIRIS-KAMERA" in cikti and "hiçbir şey değiştirilmedi" in cikti
+
+    def plakalar():
+        db = SessionLocal()
+        try:
+            return sorted(p for (p,) in db.query(M.Kayit.plaka_no).filter(M.Kayit.plaka_no.like("34 TMZ%")).all())
+        finally:
+            db.close()
+
+    assert plakalar() == ["34 TMZ 001", "34 TMZ 002", "34 TMZ 003", "34 TMZ 004"]
+    assert tm.main(secim + ["--sil", "--evet"]) == 0
+    assert plakalar() == ["34 TMZ 001", "34 TMZ 004"]              # tanımlı kamera ve elle giriş korundu
+    assert not gorsel.exists()
+    db = SessionLocal()
+    try:
+        alarm = db.query(M.Alarm).filter(M.Alarm.plaka_no == "34 TMZ 002").first()
+        assert alarm is not None and alarm.kayit_id is None         # alarm korunur, bağlantı kopar
+        assert db.query(M.DenetimKaydi).filter(M.DenetimKaydi.eylem == "eski_kayit_sil").count() >= 1
+    finally:
+        db.close()
+    assert tm.main(["--ad", "TMZ GIRIS-KAMERA", "--sil", "--manuel-dahil", "--evet"]) == 0
+    assert plakalar() == ["34 TMZ 001"]

@@ -6163,13 +6163,12 @@ def _dogrulama_filtresi_uygula(sorgu, dogrulama: Optional[str]):
 # olsun, nizamiye seçilince nizamiyedeki kayıtlar, lojman seçilince
 # lojmandakiler"). Kayit.kamera_id kameranın ADINI tutar; nizamiye, kamera
 # adından türetilir (bkz. excel_export.nizamiye_grubu: "Lojman"+"Lojman1" ->
-# lojman, "Nizamiye"+"Nizamıye" -> nizamiye). Tanımlı kameralarla birlikte
-# kayıtlarda geçen eski kamera adları da hesaba katılır (adı değişmiş ya da
-# silinmiş bir kameranın eski kayıtları da doğru nizamiyede görünsün).
-def _kayitlardaki_kamera_adlari(db: Session) -> set:
-    adlar = {k.get("ad") for k in _kameralari_oku() if k.get("ad")}
-    adlar |= {a for (a,) in db.query(models.Kayit.kamera_id).distinct().all() if a}
-    return adlar
+# lojman, "Nizamiye"+"Nizamıye" -> nizamiye). YALNIZCA şu an tanımlı
+# kameraların adları kullanılır (kullanıcı: "eski adları da kullanma"):
+# eski/test kamera adlı kayıtlar yalnızca "Tümü"de görünür; temizlemek için
+# bkz. backend/eski_kayit_temizle.py.
+def _tanimli_kamera_adlari() -> set:
+    return {k.get("ad") for k in _kameralari_oku() if k.get("ad")}
 
 
 def _tanimli_nizamiyeler() -> list:
@@ -6181,14 +6180,14 @@ def _nizamiye_filtresi_uygula(sorgu, nizamiye: Optional[str], db: Session):
     if not nizamiye:
         return sorgu
     anahtar = excel_export.nizamiye_grubu(nizamiye)
-    adlar = [a for a in _kayitlardaki_kamera_adlari(db) if excel_export.nizamiye_eslesir_mi(a, anahtar)]
+    adlar = [a for a in _tanimli_kamera_adlari() if excel_export.nizamiye_grubu(a) == anahtar]
     return sorgu.filter(models.Kayit.kamera_id.in_(adlar) if adlar else false())
 
 
 def _nizamiye_basligi(nizamiye: str, db: Session) -> str:
     """Rapor başlığı için büyük harfli Türkçe nizamiye adı ("NİZAMİYE")."""
     anahtar = excel_export.nizamiye_grubu(nizamiye)
-    adlar = [k.get("ad", "") for k in _kameralari_oku() if excel_export.nizamiye_grubu(k.get("ad", "")) == anahtar]
+    adlar = [a for a in _tanimli_kamera_adlari() if excel_export.nizamiye_grubu(a) == anahtar]
     ad = excel_export.nizamiye_gorunen_adi(anahtar, adlar) if adlar else nizamiye
     return ad.replace("i", "İ").replace("ı", "I").upper()
 
@@ -6201,9 +6200,8 @@ def kayit_nizamiyeleri(db: Session = Depends(get_db),
     izinli = _kullanicinin_izinli_kamera_adlari(kullanici)
     gruplar: dict = {}
     # Yalnızca ŞU AN tanımlı kameralar: eski kayıtlarda kalmış kamera adları
-    # ("Nizamiye Giri", "GIRIS-KAMERA" ...) ayrı seçenek olarak görünmesin --
-    # onlar _nizamiye_filtresi_uygula'da uygun nizamiyeye sayılır.
-    for ad in (k.get("ad") for k in _kameralari_oku()):
+    # ("Nizamiye Giri", "GIRIS-KAMERA" ...) seçenek olarak görünmez.
+    for ad in _tanimli_kamera_adlari():
         if izinli is not None and ad not in izinli:
             continue
         anahtar = excel_export.nizamiye_grubu(ad)

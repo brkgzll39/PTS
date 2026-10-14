@@ -244,10 +244,3 @@ def test_nizamiye_grubu():
     assert g("Lojman") == g("Lojman1") == g("LOJMAN GİRİŞ") == g("Lojman Çıkış")
     assert g("Nizamiye") == g("Nizamıye") == g("NİZAMİYE")
     assert g("Lojman") != g("Nizamiye")
-
-
-def test_nizamiye_eslesir_mi_eski_kirpik_adlar():
-    e = excel_export.nizamiye_eslesir_mi
-    assert e("Nizamiye Giri", "nizamiye") and e("Nizamiye k", "nizamiye") and e("Nizamıye", "nizamiye")
-    assert e("Lojman C", "lojman") and e("Lojman1", "lojman")
-    assert not e("giri", "nizamiye") and not e("GIRIS-KAMERA", "lojman") and not e("Lojmanlar", "lojman")
