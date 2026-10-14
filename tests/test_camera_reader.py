@@ -1871,3 +1871,28 @@ def test_uzaklasan_filtresi_ters_calisir(monkeypatch, sahte_engine):
 def test_gecersiz_yon_filtresi_kapali_sayilir(sahte_engine):
     pipeline = camera_reader.KameraPipeline(video_kaynagi="x.mp4", kamera_id="YON-9", yon_filtresi="sola")
     assert pipeline.yon_filtresi is None
+
+
+def test_ters_yonde_reddedilen_arac_hemen_donerse_cikisi_yutulmaz(monkeypatch, sahte_engine):
+    """2026-10-14 saha: araç bu kameranın önünden uzaklaşarak girdi (ret),
+    birkaç saniye sonra geri dönüp bu kameraya geldi ama yönü belirsiz
+    (duruyor) okundu -- eskiden 60 sn boyunca "aynı araç ters yönde görüldü"
+    diye yutuluyordu. Artık PTS'in kendisinin gördüğü geçiş ROI kuralına
+    düşer; yalnızca konumsuz (kameranın gecikmeli) okuması reddedilir."""
+    icerde = {"x1": 40, "y1": 60, "x2": 70, "y2": 90}
+    pipeline, istekler = _yonlu_pipeline(monkeypatch, "YON-10", _yol("34ABC123", *_UZAKLASAN),
+                                         roi=icerde, yon_filtresi="yaklasan")
+    assert _hepsini_isle(pipeline, 4) == []
+    pipeline.motor = _SiraliMotor(_yol("34ABC123", *_DURAN))
+    assert _hepsini_isle(pipeline, 4) == ["34 ABC 123"]
+
+
+def test_yonu_dogrulanan_gecis_sunucuya_bildirilir(monkeypatch, sahte_engine):
+    pipeline, istekler = _yonlu_pipeline(monkeypatch, "YON-11", _yol("34ABC123", *_YAKLASAN), yon_filtresi="yaklasan")
+    assert _hepsini_isle(pipeline, 4) == ["34 ABC 123"]
+    assert istekler[0][1]["yon_dogrulandi"] is True
+    icerde = {"x1": 40, "y1": 60, "x2": 70, "y2": 90}
+    pipeline, istekler = _yonlu_pipeline(monkeypatch, "YON-12", _yol("34ABC124", *_DURAN),
+                                         roi=icerde, yon_filtresi="yaklasan")
+    assert _hepsini_isle(pipeline, 4) == ["34 ABC 124"]
+    assert istekler[0][1]["yon_dogrulandi"] is False

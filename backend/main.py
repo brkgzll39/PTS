@@ -4805,7 +4805,8 @@ def _bilinen_plakaya_yakinlik_duzelt(db: Session, ham_plaka: str, guven_skoru: O
 # kameralar (ayrı KameraPipeline nesneleri, hatta ayrı süreçler) birbirinin
 # tespitlerinden habersizdir. Bu yüzden çapraz kamera kontrolü, TÜM
 # kameraların ortak gerçek kaynağı olan VERİTABANI seviyesinde yapılır.
-def _capraz_kamera_kisa_sureli_tekrar_mi(db: Session, plaka_no: str, kamera_id: str) -> Optional[models.Kayit]:
+def _capraz_kamera_kisa_sureli_tekrar_mi(db: Session, plaka_no: str, kamera_id: str,
+                                        ayni_yon: Optional[str] = None) -> Optional[models.Kayit]:
     """Aynı (normalize edilmiş) plaka, FARKLI bir kameradan, yapılandırılmış
     pencere içinde (varsayılan 180 sn = 3 dakika, bkz.
     `capraz_kamera_tekrar_penceresi_sn` sistem ayarı) zaten kaydedildiyse, o
@@ -4835,16 +4836,19 @@ def _capraz_kamera_kisa_sureli_tekrar_mi(db: Session, plaka_no: str, kamera_id: 
         return None
 
     esik_zaman = datetime.now() - timedelta(seconds=pencere_sn)
-    return (
-        db.query(models.Kayit)
-        .filter(
-            models.Kayit.plaka_no == plaka_no,
-            models.Kayit.kamera_id != kamera_id,
-            models.Kayit.tarih_saat >= esik_zaman,
-        )
-        .order_by(desc(models.Kayit.tarih_saat))
-        .first()
+    sorgu = db.query(models.Kayit).filter(
+        models.Kayit.plaka_no == plaka_no,
+        models.Kayit.kamera_id != kamera_id,
+        models.Kayit.tarih_saat >= esik_zaman,
     )
+    # `ayni_yon` (2026-10-14): kamera aracın KENDİSİNE doğru geldiğini
+    # görüntüden doğruladıysa (yön filtresi, bkz. camera_reader.py), başka
+    # kameradaki TERS yönlü kayıt bir yansıma değil gerçek bir geri dönüştür
+    # (saha: araç girip 50 sn sonra çıktı, çıkışı "tekrar" sayılıp
+    # atlanıyordu) -- yalnızca AYNI yöndeki kayıt tekrar sayılır.
+    if ayni_yon:
+        sorgu = sorgu.filter(models.Kayit.yon == ayni_yon)
+    return sorgu.order_by(desc(models.Kayit.tarih_saat)).first()
 
 
 # ================================================================
@@ -5025,7 +5029,8 @@ def _kayit_olustur_ve_bildir(db: Session, plaka_no: str, kamera_id: str, yon: st
                               farkli_okuma_sayisi: Optional[int] = None,
                               misafir_adi: Optional[str] = None,
                               harici_katkili: Optional[bool] = None,
-                              kamera_okumasi: Optional[str] = None):
+                              kamera_okumasi: Optional[str] = None,
+                              yon_dogrulandi: Optional[bool] = None):
     plaka_no = re.sub(r"[^A-Za-z0-9 ]", "", plaka_no).strip().upper() or "BILINMEYEN"
     kamera_id = _kamera_adini_kayit_icin_temizle(kamera_id)
 
@@ -5045,7 +5050,8 @@ def _kayit_olustur_ve_bildir(db: Session, plaka_no: str, kamera_id: str, yon: st
             plaka_no = duzeltilmis
 
     if not manuel_giris:
-        onceki = _capraz_kamera_kisa_sureli_tekrar_mi(db, plaka_no, kamera_id)
+        onceki = _capraz_kamera_kisa_sureli_tekrar_mi(db, plaka_no, kamera_id,
+                                                      ayni_yon=yon if yon_dogrulandi else None)
         if onceki is not None:
             # AYNI aracın tek bir fiziksel geçişi iki farklı kameranın görüş
             # alanına da girmiş olabilir (bkz. yukarıdaki modül notu) -- bunu
@@ -5593,6 +5599,9 @@ async def kayit_ekle_otomatik(
     harici_katkili: Optional[bool] = Form(None),
     # Kameranın kendi okuması kazanandan farklıysa -- bkz. models.Kayit.kamera_okumasi.
     kamera_okumasi: Optional[str] = Form(None),
+    # Aracın bu kameraya yön filtresine uygun hareket ettiği görüntüden
+    # doğrulandıysa -- bkz. _capraz_kamera_kisa_sureli_tekrar_mi(ayni_yon).
+    yon_dogrulandi: Optional[bool] = Form(None),
     gorsel: Optional[UploadFile] = File(None),
     x_pts_kamera_anahtari: Optional[str] = Header(None),
     db: Session = Depends(get_db),
@@ -5703,7 +5712,8 @@ async def kayit_ekle_otomatik(
             )
             return await run_in_threadpool(_kaydi_olustur_gorseli_koru, db, plaka_no, kamera_id, yon, guven_skoru, goruntu_yolu,
                                                dogrulama_kare_sayisi, farkli_okuma_sayisi,
-                                               harici_katkili=harici_katkili, kamera_okumasi=kamera_okumasi)
+                                               harici_katkili=harici_katkili, kamera_okumasi=kamera_okumasi,
+                                               yon_dogrulandi=yon_dogrulandi)
 
         if goruntu_yolu and os.path.isfile(goruntu_yolu):
             try:
@@ -5724,7 +5734,8 @@ async def kayit_ekle_otomatik(
 
     return await run_in_threadpool(_kaydi_olustur_gorseli_koru, db, plaka_no, kamera_id, yon, guven_skoru, goruntu_yolu,
                                        dogrulama_kare_sayisi, farkli_okuma_sayisi,
-                                       harici_katkili=harici_katkili, kamera_okumasi=kamera_okumasi)
+                                       harici_katkili=harici_katkili, kamera_okumasi=kamera_okumasi,
+                                       yon_dogrulandi=yon_dogrulandi)
 
 
 # Kameranın kendi okuması PTS kaydından birkaç saniye sonra gelebilir; bu
@@ -5826,7 +5837,8 @@ def _gorsel_yazma_hatasini_bildir(db: Session, kamera_id: str, plaka_no: str, ex
 def _kaydi_olustur_gorseli_koru(db: Session, plaka_no: str, kamera_id: str, yon: str,
                                 guven_skoru: Optional[float], goruntu_yolu: Optional[str],
                                 dogrulama_kare_sayisi: Optional[int], farkli_okuma_sayisi: Optional[int],
-                                harici_katkili: Optional[bool] = None, kamera_okumasi: Optional[str] = None):
+                                harici_katkili: Optional[bool] = None, kamera_okumasi: Optional[str] = None,
+                                yon_dogrulandi: Optional[bool] = None):
     """`_kayit_olustur_ve_bildir`'i çağırır; kayıt oluşturma bir istisnayla
     başarısız olursa (ör. veritabanı o an erişilemez) ve bu görsel hiçbir
     kayda BAĞLANMADIYSA diskteki dosyayı siler -- eskiden bu durumda dosya,
@@ -5837,7 +5849,8 @@ def _kaydi_olustur_gorseli_koru(db: Session, plaka_no: str, kamera_id: str, yon:
     try:
         return _kayit_olustur_ve_bildir(db, plaka_no, kamera_id, yon, guven_skoru, goruntu_yolu,
                                          dogrulama_kare_sayisi, farkli_okuma_sayisi=farkli_okuma_sayisi,
-                                         harici_katkili=harici_katkili, kamera_okumasi=kamera_okumasi)
+                                         harici_katkili=harici_katkili, kamera_okumasi=kamera_okumasi,
+                                         yon_dogrulandi=yon_dogrulandi)
     except Exception:
         if goruntu_yolu:
             try:

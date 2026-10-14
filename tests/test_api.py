@@ -7493,3 +7493,25 @@ def test_alarmlar_haric_tip_filtresi(client, yetkili_header):
     assert r.status_code == 200, r.text
     tipler = {a["alarm_tipi"] for a in r.json() if a["plaka_no"].startswith("34 HRC")}
     assert tipler == {"kara_liste"}
+
+
+def test_yonu_dogrulanan_ters_yonlu_gecis_capraz_kamera_tekrari_sayilmaz(client, yetkili_header):
+    """2026-10-14 saha: araç Lojman'dan girip 50 sn sonra diğer kameradan
+    çıktı; çıkış "çapraz kamera tekrarı" sayılıp atlanıyordu. Kamera aracın
+    kendisine yaklaştığını doğruladıysa (yon_dogrulandi) TERS yönlü önceki
+    kayıt tekrar sayılmaz; aynı yönlü kayıt ya da doğrulanmamış geçiş eskisi
+    gibi atlanır."""
+    def gonder(plaka, kamera, yon, dogrulandi=None):
+        veri = {"plaka_no": plaka, "kamera_id": kamera, "yon": yon, "guven_skoru": 0.99}
+        if dogrulandi is not None:
+            veri["yon_dogrulandi"] = dogrulandi
+        r = client.post("/kayitlar/otomatik", data=veri)
+        assert r.status_code == 200, r.text
+        return r.json()
+
+    assert "atlandi" not in gonder("34 CKT 101", "CKT-GIRIS", "giris")
+    assert gonder("34 CKT 101", "CKT-CIKIS", "cikis").get("atlandi") is True          # doğrulanmamış: eski davranış
+    assert "atlandi" not in gonder("34 CKT 101", "CKT-CIKIS", "cikis", dogrulandi=True)
+
+    assert "atlandi" not in gonder("34 CKT 102", "CKT-GIRIS", "giris")
+    assert gonder("34 CKT 102", "CKT-GIRIS-2", "giris", dogrulandi=True).get("atlandi") is True  # aynı yön

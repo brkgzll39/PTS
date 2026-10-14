@@ -299,6 +299,12 @@ HAREKET_YAKLASMA_ORANI = 1.15   # plaka genişliği en az bu kadar büyümeli...
 HAREKET_UZAKLASMA_ORANI = 1.05  # ...ya da en fazla bu kadar (uzaklaşan)
 HAREKET_KUCULME_ORANI = 0.87    # belirgin küçülme tek başına uzaklaşmadır
 HAREKET_DIKEY_ESIK = 0.03       # kare yüksekliğinin oranı olarak dikey hareket
+# Kameranın kendi (Dahua) okuması PTS'in gördüğünden birkaç saniye sonra
+# gelir; ters yönde giderken reddedilen aracın böyle gecikmeli, konumsuz
+# okuması bu süre içinde reddedilir. Daha uzun tutulmamalı: araç girip hemen
+# geri dönerse (2026-10-14 saha: "girip birden çıkması da gerekebilir")
+# çıkışı yutulmasın.
+TERS_YON_GECIKMELI_OKUMA_SN = 20.0
 
 # Dedektör ardı ardına hiçbir plaka adayı bulamazsa (bkz. _kareyi_isle), bunu en
 # fazla bu sıklıkta (saniye) özetleyen TEK bir log satırı yazılır. Amaç spam
@@ -472,6 +478,7 @@ class PlakaOyBirikimi:
             # harici okuma yoksa None. Kayıt "Kontrol gerekli" diye işaretlenir.
             "kamera_okumasi": self._kamera_okumasi_farki(secilen_plaka),
             "hareket_yonu": hareket_yonu_hesapla(self.konumlar),
+            "konum_sayisi": len(self.konumlar),
             "roi_icinde_goruldu": self.roi_icinde_goruldu,
             "harici_varyantlar": sorted(self._harici_katkili_varyantlar),
         }
@@ -1365,7 +1372,13 @@ class KameraPipeline:
                               # Kameranın kendi okuması kazanandan farklıysa
                               # (bkz. PlakaOyBirikimi.kazanan) -- kayıt panelde
                               # "Kontrol gerekli" diye işaretlenir.
-                              "kamera_okumasi": oturum.get("kamera_okumasi") or ""},
+                              "kamera_okumasi": oturum.get("kamera_okumasi") or "",
+                              # Aracın bu kameraya doğru (yön filtresine uygun)
+                              # hareket ettiği GÖRÜNTÜDEN doğrulandıysa: sunucu,
+                              # başka kameradaki TERS yönlü yakın kaydı yansıma
+                              # sanıp bu geçişi atlamaz (girip hemen çıkan araç).
+                              "yon_dogrulandi": bool(self.yon_filtresi and
+                                                     oturum.get("hareket_yonu") == self.yon_filtresi)},
                         files={"gorsel": f},
                         headers=_istek_basliklari,
                         timeout=5,
@@ -1424,12 +1437,16 @@ class KameraPipeline:
                         f"araçları kaydediyor (karşı şerit ya da diğer kameranın aracı)")
             if yon == self.yon_filtresi:
                 return None
-            # Yönü bilinmeyen bir oturum (tipik: yalnızca kameranın kendi
-            # okuması, konum yok) az önce ters yönde giderken reddedilen aracın
-            # plakasını taşıyorsa o da reddedilir.
-            esik = simdi - self._arac_ayrilma_suresi()
-            if any(self._ters_yon_plakalari.get(v, -1.0) >= esik for v in varyantlar):
-                return "aynı araç az önce ters yönde giderken görüldü"
+            # YALNIZCA kameranın kendi (konumsuz, gecikmeli) okumasından oluşan
+            # bir oturum, az önce ters yönde giderken reddedilen aracın
+            # plakasını taşıyorsa reddedilir. PTS'in kendisinin gördüğü
+            # (konumlu) ama yönü belirsiz geçişler ROI kuralına düşer --
+            # 2026-10-14 saha: girip hemen geri dönen aracın çıkışı bu kural
+            # yüzünden 60 sn boyunca yutuluyordu.
+            if not oturum.get("konum_sayisi"):
+                esik = simdi - TERS_YON_GECIKMELI_OKUMA_SN
+                if any(self._ters_yon_plakalari.get(v, -1.0) >= esik for v in varyantlar):
+                    return "aynı araç birkaç saniye önce ters yönde giderken görüldü (kameranın gecikmeli okuması)"
         if self.roi and not oturum.get("roi_icinde_goruldu", True):
             return "araç tespit alanının (ROI) dışında kaldı ve hareket yönü belirlenemedi"
         return None
