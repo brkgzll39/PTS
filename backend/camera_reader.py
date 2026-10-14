@@ -331,6 +331,27 @@ BOS_TESPIT_LOG_ARALIK_SN = 120
 # Yeni donanım kararı tahminle değil bu sayılarla verilsin.
 HIZ_OLCUM_LOG_ARALIK_SN = 60
 
+# HAREKET KAPISI (2026-10-14, hız ölçümü sonrası): sahada 4 kamera tek motoru
+# paylaşıyor ve motor (~90 ms/kare) neredeyse hep doluydu; üstelik döngü her
+# kareden sonra sabit 0.25 sn uyuyordu -- bir kamera motor ne kadar hızlı
+# olursa olsun en fazla ~2.8 kare/sn işleyebiliyordu. Artık:
+#   * görüntüde hareket olan ya da açık plaka oylaması olan kamera beklemeden
+#     (AKTIF_BEKLEME_SN) işlenir -- motorun boşta kalan kapasitesini kullanır;
+#   * hareketsiz (boş) kamera yalnızca BOSTA_TARAMA_ARALIK_SN'de bir plaka
+#     aranır (bariyerde hareketsiz duran araç da böylece kaçırılmaz); canlı
+#     önizleme ise eskisi gibi güncellenir.
+# PTS_HAREKET_KAPISI=0 eski davranışa döner.
+AKTIF_BEKLEME_SN = 0.02
+BOSTA_BEKLEME_SN = 0.25
+BOSTA_TARAMA_ARALIK_SN = 1.0
+HAREKET_PIKSEL_ESIGI = 25        # 0-255 gri seviye farkı
+HAREKET_ORAN_ESIGI = 0.002       # küçültülmüş karede değişen piksel oranı
+_HAREKET_BOYUT = (160, 90)
+
+
+def _hareket_kapisi_acik_mi() -> bool:
+    return os.environ.get("PTS_HAREKET_KAPISI", "1").strip().lower() not in ("0", "false", "hayir", "hayır", "kapali")
+
 # ------------------------------------------------------------------
 # HAM KARE TEŞHİS KAYDI (opsiyonel, varsayılan KAPALI)
 # ------------------------------------------------------------------
@@ -1166,10 +1187,7 @@ class KameraPipeline:
         # kameralar uzun süre görüntüsüz kalıyor, sonrasında da önizleme motor
         # hızında güncelleniyordu. Aynı JPEG kayıt fotoğrafı için de kullanılır
         # (ek kodlama yok).
-        _, buf = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 75])
-        jpeg_bytes = buf.tobytes()
-        with self._goruntu_kilit:
-            self._son_goruntu_jpeg = jpeg_bytes
+        jpeg_bytes = self._onizlemeyi_guncelle(frame)
 
         # GPU'ya (varsa DirectML/CUDA) aynı anda yalnızca TEK bir kameranın çıkarım
         # isteği gitmesini garanti eder — bkz. modül başındaki "PAYLAŞILAN ANPR
@@ -1480,6 +1498,43 @@ class KameraPipeline:
 
         self._plaka_hafizasini_buda()
         return gonderilenler
+
+    def _onizlemeyi_guncelle(self, frame) -> bytes:
+        _, buf = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 75])
+        jpeg_bytes = buf.tobytes()
+        with self._goruntu_kilit:
+            self._son_goruntu_jpeg = jpeg_bytes
+        return jpeg_bytes
+
+    def _hareket_var_mi(self, frame) -> bool:
+        """Bir önceki kontrol edilen kareye göre görüntüde hareket var mı?
+        Küçültülmüş gri karelerin farkına bakılır (ucuz: ~1 ms). İlk karede
+        ya da hata olursa True (güvenli taraf: işle)."""
+        try:
+            kucuk = cv2.GaussianBlur(cv2.resize(cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY), _HAREKET_BOYUT), (5, 5), 0)
+        except Exception:
+            return True
+        onceki = self.__dict__.get("_hareket_onceki")
+        self._hareket_onceki = kucuk
+        if onceki is None or onceki.shape != kucuk.shape:
+            return True
+        degisen = int(np.count_nonzero(cv2.absdiff(kucuk, onceki) > HAREKET_PIKSEL_ESIGI))
+        return degisen > HAREKET_ORAN_ESIGI * kucuk.size
+
+    def _kare_islenmeli_mi(self, frame, simdi: float) -> tuple:
+        """(motora_verilsin_mi, aktif_mi). Aktif: hareket var, açık plaka
+        oylaması var ya da kameranın kendi okuması bekliyor -- beklemeden
+        işlenir. Boşta: BOSTA_TARAMA_ARALIK_SN'de bir işlenir."""
+        if not _hareket_kapisi_acik_mi():
+            return True, False
+        aktif = (self._hareket_var_mi(frame)
+                 or self._oturum_takipcisi.acik_oturum_sayisi() > 0
+                 or bool(self._harici_okumalar))
+        son = self.__dict__.get("_son_tam_isleme", 0.0)
+        if aktif or simdi - son >= BOSTA_TARAMA_ARALIK_SN:
+            self._son_tam_isleme = simdi
+            return True, aktif
+        return False, False
 
     def _hiz_olcumu_ekle(self, bekleme_sn: float, cikarim_sn: float) -> None:
         o = self.__dict__.setdefault("_hiz_olcumu", {"bas": time.monotonic(), "kare": 0, "bekleme": 0.0, "cikarim": 0.0})
@@ -1859,18 +1914,27 @@ class KameraPipeline:
                 self._kare_guncellendi.clear()
                 with self._kare_kilit:
                     kare = self._son_kare
+                aktif = False
 
                 if kare is not None:
                     if self._yeniden_baglanma_sayisi:
                         logger.info("[%s] Bağlantı toparlandı.", self.kamera_id)
                     self._yeniden_baglanma_sayisi = 0
                     try:
-                        self._kareyi_isle(kare)
+                        isle, aktif = self._kare_islenmeli_mi(kare, time.monotonic())
+                        if isle:
+                            self._kareyi_isle(kare)
+                        else:
+                            self._onizlemeyi_guncelle(kare)   # boşta: yalnızca canlı önizleme
                     except Exception as exc:
                         logger.error("[%s] Kare işleme hatası: %s", self.kamera_id, exc)
 
-                # Tam akış → sadece ANPR frekansını sınırla, görüntü okuyucu thread'i yavaşlamıyor
-                time.sleep(0.25)
+                # Görüntü okuyucu thread'i bundan etkilenmez; yalnızca ANPR sıklığı
+                # (bkz. HAREKET KAPISI notu): aktif kamera beklemeden, boştaki yavaş.
+                if _hareket_kapisi_acik_mi():
+                    time.sleep(AKTIF_BEKLEME_SN if aktif else BOSTA_BEKLEME_SN)
+                else:
+                    time.sleep(BOSTA_BEKLEME_SN)
         except Exception as exc:
             logger.error("[%s] Pipeline döngüsü beklenmedik şekilde çöktü: %s", self.kamera_id, exc, exc_info=True)
             self.calisiyor = False

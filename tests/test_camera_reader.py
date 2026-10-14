@@ -1970,3 +1970,41 @@ def test_hiz_olcumu_loga_yazilir(monkeypatch, sahte_engine, caplog):
         pipeline._kareyi_isle(np.full((100, 100, 3), 128, dtype=np.uint8))
     satir = next(r.getMessage() for r in caplog.records if "Hız ölçümü" in r.getMessage())
     assert "[HIZ-1]" in satir and "kare/sn" in satir and "dedektör=Dml" in satir
+
+
+# ---------------------------------------------------------------------------
+# 2026-10-14: hareket kapısı -- boştaki kamera motoru meşgul etmesin, araç gelen
+# kamera beklemeden işlensin
+# ---------------------------------------------------------------------------
+
+def _kare_renk(deger):
+    return np.full((360, 640, 3), deger, dtype=np.uint8)
+
+
+def test_hareketsiz_kamera_saniyede_bir_islenir(monkeypatch, sahte_engine):
+    pipeline, _ = _istek_yakalayan_pipeline(monkeypatch, "KAPI-1")
+    sabit = _kare_renk(100)
+    assert pipeline._kare_islenmeli_mi(sabit, 100.0) == (True, True)     # ilk kare: güvenli taraf
+    assert pipeline._kare_islenmeli_mi(sabit, 100.3) == (False, False)   # hareket yok, 1 sn dolmadı
+    assert pipeline._kare_islenmeli_mi(sabit, 100.7) == (False, False)
+    assert pipeline._kare_islenmeli_mi(sabit, 101.1) == (True, False)    # 1 sn doldu: yine de bakılır
+
+
+def test_hareket_ya_da_acik_oturum_varsa_hemen_islenir(monkeypatch, sahte_engine):
+    pipeline, _ = _istek_yakalayan_pipeline(monkeypatch, "KAPI-2")
+    sabit = _kare_renk(100)
+    pipeline._kare_islenmeli_mi(sabit, 100.0)
+    arac = sabit.copy()
+    arac[120:240, 200:440] = 230                                         # kadraja araç girdi
+    assert pipeline._kare_islenmeli_mi(arac, 100.2) == (True, True)
+    # Araç durdu (görüntü değişmiyor) ama plaka oylaması açık: hız düşmesin.
+    pipeline._oturum_takipcisi.guncelle("34 ABC 123", 0.95, 100.3)
+    assert pipeline._kare_islenmeli_mi(arac, 100.4) == (True, True)
+
+
+def test_hareket_kapisi_kapatilabilir(monkeypatch, sahte_engine):
+    monkeypatch.setenv("PTS_HAREKET_KAPISI", "0")
+    pipeline, _ = _istek_yakalayan_pipeline(monkeypatch, "KAPI-3")
+    sabit = _kare_renk(100)
+    for t in (100.0, 100.1, 100.2):
+        assert pipeline._kare_islenmeli_mi(sabit, t) == (True, False)
