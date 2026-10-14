@@ -571,3 +571,18 @@ def test_ulasilamayan_panel_her_turda_denenmez(monkeypatch, temiz_panel_durumu):
     assert led_panel.bekleme_yazisini_yenile_tik(1000.0) == 0
     durum = led_panel._durum({"host": "127.0.0.1", "port": k.port})
     assert durum.son_yazim == 1000.0  # bir sonraki deneme 60 sn sonra
+
+
+@pytest.mark.parametrize("plaka", ["34 MRU 013", "34 MRU 0133", "06 A 1234", "34MRU013"])
+def test_plaka_iki_satira_bolunmez(plaka):
+    """2026-10-14 saha: 64 px'lik panelde "34 MRU 013", "34 MRU" / "013"
+    diye ikiye bölünüyordu. Plaka tek satırda ve yazı kesilmeden çizilmeli."""
+    assert huidu.satirlari_duzenle([plaka]) == [plaka]
+    yanik = _yanik_satirlar(huidu.metin_bitmap([plaka]))
+    # Tek satır: yanan piksel satırları kesintisiz tek bir blok olmalı.
+    assert yanik == list(range(yanik[0], yanik[-1] + 1))
+    assert huidu._sigan_boyut(plaka, huidu.YUKSEKLIK, 20, 64) >= 8
+
+
+def test_tek_satira_hic_sigmayan_metin_yine_bolunur():
+    assert len(huidu.satirlari_duzenle(["HOS GELDINIZ SAYIN MISAFIRIMIZ"])) == 2

@@ -32,6 +32,7 @@ Onay (kart -> PC, 31 bayt):
 """
 import logging
 import os
+import re
 import socket
 import threading
 import time
@@ -191,13 +192,35 @@ def _genislik_dogrula(genislik: int) -> int:
     return genislik
 
 
+# Türk plakası ("34 MRU 013"): panelde ASLA iki satıra bölünmez.
+_PLAKA_DESENI = re.compile(r"^\d{2} ?[A-ZÇĞİÖŞÜ]{1,3} ?\d{2,4}$")
+
+
+def _sigan_boyut(metin: str, alan_yuksekligi: int, en_buyuk: int, genislik: int) -> int:
+    font = _font_sec(metin, alan_yuksekligi, en_buyuk, en_kucuk=6, genislik=genislik)
+    return font.size if font is not None else 0
+
+
 def satirlari_duzenle(satirlar: Sequence[str], genislik: int = VARSAYILAN_GORUNUR_GENISLIK) -> list:
-    """Boşları atar; tek satır 16 px yüksekliğe okunur boyutta (>= 10 pt) sığmıyorsa ikiye böler."""
+    """Boşları atar; tek satırı yalnızca ikiye bölününce DAHA BÜYÜK yazılabiliyorsa böler.
+
+    2026-10-14 (saha: 64 px'lik panelde "34 MRU 013" -> "34 MRU" / "013"):
+    eskiden tek satır 10 pt'ye sığmayınca hep bölünüyordu; oysa bölünen
+    satırlar 8'er px'e düştüğü için daha da küçük çiziliyordu. Plaka 9 pt'de
+    tek satıra sığıyor ve harf yüksekliği PERSONEL yazısıyla aynı (7 px).
+    Plakalar hiç bölünmez."""
     genislik = _genislik_dogrula(genislik)
     temiz = [s.strip() for s in satirlar if s and s.strip()][:2]
-    if len(temiz) == 1 and _font_sec(temiz[0], YUKSEKLIK, en_buyuk=20, en_kucuk=10, genislik=genislik) is None:
-        return _ikiye_bol(temiz[0])
-    return temiz
+    if len(temiz) != 1 or _PLAKA_DESENI.match(temiz[0].upper()):
+        return temiz
+    tek = _sigan_boyut(temiz[0], YUKSEKLIK, 20, genislik)
+    if tek >= 10:
+        return temiz
+    parcalar = _ikiye_bol(temiz[0])
+    if len(parcalar) < 2:
+        return temiz
+    iki = min(_sigan_boyut(p, YUKSEKLIK // 2, 10, genislik) for p in parcalar)
+    return parcalar if iki > tek or tek == 0 else temiz
 
 
 def metin_bitmap(satirlar: Sequence[str], genislik: int = VARSAYILAN_GORUNUR_GENISLIK) -> bytes:
