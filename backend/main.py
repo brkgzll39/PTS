@@ -2919,8 +2919,17 @@ def gorsel_getir(dosya_adi: str, kucuk: bool = False, _: models.Kullanici = Depe
     # tarayıcının oturum boyunca (1 saat) önbelleğe almasına izin veriyoruz:
     # tablo her yeni geçişte yeniden çizildiğinde aynı görseller tekrar
     # indirilmesin. `private`: ara vekil sunucular saklamaz.
-    servis_yolu = (kucuk_gorsel.kucuk_gorsel_yolu(tam_yol) or tam_yol) if kucuk else tam_yol
-    return FileResponse(servis_yolu, media_type="image/jpeg", headers={"Cache-Control": "private, max-age=3600"})
+    basliklar = {"Cache-Control": "private, max-age=3600"}
+    if kucuk:
+        # 2026-10-14 (Windows saha hatası): küçük resim FileResponse ile
+        # servis edilince dosya yanıt GÖNDERİLİRKEN açılıyordu -- o an başka
+        # bir istek aynı küçük resmi yeniden yazıyorsa Windows "PermissionError"
+        # verip istek 500 ile düşüyordu. Küçük resim ~20 KB: burada (yeniden
+        # deneyerek) okunup doğrudan gönderilir; olmazsa orijinale düşülür.
+        veri = kucuk_gorsel.kucuk_gorsel_baytlari(tam_yol)
+        if veri is not None:
+            return Response(content=veri, media_type="image/jpeg", headers=basliklar)
+    return FileResponse(tam_yol, media_type="image/jpeg", headers=basliklar)
 
 
 @app.get("/")

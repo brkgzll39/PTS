@@ -84,3 +84,60 @@ def test_kucuk_gorseli_sil(tmp_path):
     kucuk_gorsel.kucuk_gorseli_sil(a)
     assert not os.path.exists(yol)
     kucuk_gorsel.kucuk_gorseli_sil(a)  # ikinci kez: hata vermemeli
+
+
+def _kilitli_open(kilitli_yol, kac_kez):
+    """`kilitli_yol` ilk `kac_kez` açılışta Windows'taki gibi PermissionError verir."""
+    import builtins
+    gercek = builtins.open
+    sayac = {"n": 0}
+
+    def sahte(yol, *a, **kw):
+        if str(yol) == str(kilitli_yol) and sayac["n"] < kac_kez:
+            sayac["n"] += 1
+            raise PermissionError(13, "Permission denied", str(yol))
+        return gercek(yol, *a, **kw)
+    return sahte, sayac
+
+
+def test_kilitli_kucuk_resim_yeniden_denenir(tmp_path, monkeypatch):
+    """2026-10-14 Windows saha hatası: küçük resim başka bir istek/antivirüs
+    tarafından o an kilitliyse okuma kısa bir beklemeyle yeniden denenir."""
+    kaynak = _kare(tmp_path / "39ADE811_1_ab.jpg")
+    yol = kucuk_gorsel.kucuk_gorsel_yolu(kaynak)
+    sahte, sayac = _kilitli_open(yol, 2)
+    monkeypatch.setattr("builtins.open", sahte)
+    veri = kucuk_gorsel.kucuk_gorsel_baytlari(kaynak)
+    assert sayac["n"] == 2
+    assert veri[:2] == b"\xff\xd8"
+
+
+def test_kucuk_resim_hic_okunamazsa_bellekte_uretilir(tmp_path, monkeypatch):
+    kaynak = _kare(tmp_path / "39ADE811_2_ab.jpg")
+    yol = kucuk_gorsel.kucuk_gorsel_yolu(kaynak)
+    sahte, _ = _kilitli_open(yol, 99)
+    monkeypatch.setattr("builtins.open", sahte)
+    monkeypatch.setattr(kucuk_gorsel.time, "sleep", lambda s: None)
+    veri = kucuk_gorsel.kucuk_gorsel_baytlari(kaynak)
+    assert veri and veri[:2] == b"\xff\xd8"
+
+
+def test_ayni_kucuk_resim_eszamanli_istekte_bir_kez_uretilir(tmp_path, monkeypatch):
+    import threading
+    kaynak = _kare(tmp_path / "a.jpg")
+    gercek = kucuk_gorsel._hizli_ac_ve_kucult
+    uretim = {"n": 0}
+
+    def yavas(*a, **kw):
+        uretim["n"] += 1
+        time.sleep(0.05)
+        return gercek(*a, **kw)
+    monkeypatch.setattr(kucuk_gorsel, "_hizli_ac_ve_kucult", yavas)
+    sonuclar = []
+    isler = [threading.Thread(target=lambda: sonuclar.append(kucuk_gorsel.kucuk_gorsel_yolu(kaynak))) for _ in range(5)]
+    for t in isler:
+        t.start()
+    for t in isler:
+        t.join()
+    assert uretim["n"] == 1
+    assert len(set(sonuclar)) == 1 and sonuclar[0]

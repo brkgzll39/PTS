@@ -33,6 +33,7 @@ import io
 import logging
 import os
 import tempfile
+import threading
 import time
 from typing import Optional
 
@@ -82,16 +83,36 @@ def bellekte_kucuk_jpeg(goruntu_yolu: Optional[str], maks_boyut: tuple, kalite: 
             kaynak = onbellek
     except OSError:
         pass
-    if not os.path.isfile(kaynak):
-        return None
-    try:
-        img = _hizli_ac_ve_kucult(kaynak, maks_boyut)
-        akis = io.BytesIO()
-        img.save(akis, format="JPEG", quality=kalite)
-        akis.seek(0)
-        return akis
-    except Exception:
-        return None
+    # Önbellekteki dosya okunamazsa (Windows'ta o an kilitli olabilir)
+    # orijinalden üretilir.
+    for aday in dict.fromkeys((kaynak, goruntu_yolu)):
+        if not os.path.isfile(aday):
+            continue
+        try:
+            img = _hizli_ac_ve_kucult(aday, maks_boyut)
+            akis = io.BytesIO()
+            img.save(akis, format="JPEG", quality=kalite)
+            akis.seek(0)
+            return akis
+        except Exception:
+            continue
+    return None
+
+
+# Aynı küçük resmi iki istek aynı anda üretmesin (2026-10-14, Windows saha
+# hatası): Son Geçişler, Kayıtlar ve canlı ekran aynı görseli aynı anda
+# isteyince ikisi de üretip os.replace ile yazıyordu; Windows, değiştirilmekte
+# olan dosyanın açılmasına izin vermediği için diğer isteğin okuması
+# "PermissionError: [Errno 13]" ile düşüyordu.
+_uretim_kilitleri: dict = {}
+_uretim_kilitleri_kilidi = threading.Lock()
+
+
+def _uretim_kilidi(hedef: str) -> threading.Lock:
+    with _uretim_kilitleri_kilidi:
+        if len(_uretim_kilitleri) > 2000:
+            _uretim_kilitleri.clear()
+        return _uretim_kilitleri.setdefault(hedef, threading.Lock())
 
 
 def kucuk_gorsel_yolu(goruntu_yolu: Optional[str], maks_boyut: tuple = VARSAYILAN_MAKS_BOYUT,
@@ -100,6 +121,11 @@ def kucuk_gorsel_yolu(goruntu_yolu: Optional[str], maks_boyut: tuple = VARSAYILA
     eskiyse) üretip atomik olarak yazar. Üretilemezse `None`."""
     if not goruntu_yolu or not os.path.isfile(goruntu_yolu):
         return None
+    with _uretim_kilidi(_kucuk_yolu(goruntu_yolu)):
+        return _kucuk_gorsel_yolu_kilitli(goruntu_yolu, maks_boyut, kalite)
+
+
+def _kucuk_gorsel_yolu_kilitli(goruntu_yolu: str, maks_boyut: tuple, kalite: int) -> Optional[str]:
     hedef = _kucuk_yolu(goruntu_yolu)
     try:
         if os.path.isfile(hedef) and os.path.getmtime(hedef) >= os.path.getmtime(goruntu_yolu):
@@ -126,6 +152,23 @@ def kucuk_gorsel_yolu(goruntu_yolu: Optional[str], maks_boyut: tuple = VARSAYILA
     except Exception as exc:
         logger.warning("Küçük resim üretilemedi (%s): %s", os.path.basename(goruntu_yolu), exc)
         return None
+
+
+def kucuk_gorsel_baytlari(goruntu_yolu: Optional[str], maks_boyut: tuple = VARSAYILAN_MAKS_BOYUT,
+                          kalite: int = VARSAYILAN_KALITE, deneme: int = 3) -> Optional[bytes]:
+    """Küçük resmin baytlarını döner (önbellekten; okunamazsa bellekte
+    üreterek). Windows'ta dosya o an başka bir işlemce (antivirüs, başka bir
+    istek) kilitliyse kısa aralıklarla yeniden dener. Hiç olmazsa `None`."""
+    yol = kucuk_gorsel_yolu(goruntu_yolu, maks_boyut, kalite)
+    if yol:
+        for i in range(deneme):
+            try:
+                with open(yol, "rb") as f:
+                    return f.read()
+            except OSError:
+                time.sleep(0.05 * (i + 1))
+    akis = bellekte_kucuk_jpeg(goruntu_yolu, maks_boyut, kalite)
+    return akis.getvalue() if akis else None
 
 
 def kucuk_gorseli_sil(goruntu_yolu: Optional[str]) -> None:
