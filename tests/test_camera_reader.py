@@ -2008,3 +2008,13 @@ def test_hareket_kapisi_kapatilabilir(monkeypatch, sahte_engine):
     sabit = _kare_renk(100)
     for t in (100.0, 100.1, 100.2):
         assert pipeline._kare_islenmeli_mi(sabit, t) == (True, False)
+
+
+def test_varsayilan_api_url_ipv4_ve_pts_port(monkeypatch):
+    """2026-10-15: Windows'ta "localhost" önce IPv6 ::1'e gidip ~2 sn
+    bekletiyordu; kayıt adresi 127.0.0.1 olmalı ve PTS_PORT'a uymalı."""
+    from backend import camera_reader
+    monkeypatch.delenv("PTS_PORT", raising=False)
+    assert camera_reader.varsayilan_api_url() == "http://127.0.0.1:8000/kayitlar/otomatik"
+    monkeypatch.setenv("PTS_PORT", "9000")
+    assert camera_reader.varsayilan_api_url() == "http://127.0.0.1:9000/kayitlar/otomatik"

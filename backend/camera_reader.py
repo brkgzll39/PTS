@@ -898,8 +898,21 @@ def _kontrast_iyilestirmesi_uygula(frame):
         return frame
 
 
+def varsayilan_api_url() -> str:
+    """Kameranın kaydı gönderdiği yerel PTS adresi.
+
+    "localhost" DEĞİL 127.0.0.1 (2026-10-15 saha logu: her kayıt isteği
+    sabit ~2,1 sn sürüyordu). Windows "localhost"u önce IPv6 ::1'e çözer;
+    sunucu yalnızca IPv4'te (0.0.0.0) dinlediği için o bağlantı reddedilir ve
+    Windows reddedilen bağlantıyı ~2 sn yeniden denedikten sonra IPv4'e geçer.
+    Bu 2 sn, her geçişte LED tabelanın gecikmesine doğrudan ekleniyordu.
+    """
+    port = (os.getenv("PTS_PORT") or "8000").strip() or "8000"
+    return f"http://127.0.0.1:{port}/kayitlar/otomatik"
+
+
 class KameraPipeline:
-    def __init__(self, video_kaynagi: str, api_url: str = "http://localhost:8000/kayitlar/otomatik",
+    def __init__(self, video_kaynagi: str, api_url: Optional[str] = None,
                  kamera_id: str = "KAMERA-1", tekrar_gecikme_sn: int = 30, yon: str = "giris",
                  baglanti_zaman_asimi_sn: float = 8.0, donma_esigi_sn: float = 10.0,
                  min_guven_skoru: float = VARSAYILAN_MIN_GUVEN_SKORU,
@@ -911,7 +924,7 @@ class KameraPipeline:
                 "Kurulum: pip install \"fast-alpr[onnx]\" opencv-python requests"
             )
         self.video_kaynagi = video_kaynagi
-        self.api_url = api_url
+        self.api_url = api_url or varsayilan_api_url()
         self.kamera_id = kamera_id
         self.yon = yon
         self.tekrar_gecikme_sn = tekrar_gecikme_sn
@@ -1997,7 +2010,7 @@ class KlasorIzleyici:
 
     DESTEKLENEN_UZANTILAR = (".jpg", ".jpeg", ".jpe", ".png", ".bmp")
 
-    def __init__(self, kok_klasor: str, api_url: str = "http://localhost:8000/kayitlar/otomatik",
+    def __init__(self, kok_klasor: str, api_url: Optional[str] = None,
                  tarama_araligi_sn: float = 5.0):
         if not KUTUPHANELER_MEVCUT:
             raise RuntimeError(
@@ -2005,7 +2018,7 @@ class KlasorIzleyici:
                 "Kurulum: pip install \"fast-alpr[onnx]\" opencv-python requests"
             )
         self.kok_klasor = kok_klasor
-        self.api_url = api_url
+        self.api_url = api_url or varsayilan_api_url()
         self.tarama_araligi_sn = tarama_araligi_sn
         self.calisiyor = False
         self._thread: Optional[threading.Thread] = None
@@ -2133,7 +2146,7 @@ class KlasorIzleyici:
             time.sleep(self.tarama_araligi_sn)
 
 
-def tek_gorsel_test(gorsel_yolu: str, api_url: str = "http://localhost:8000/kayitlar/otomatik",
+def tek_gorsel_test(gorsel_yolu: str, api_url: Optional[str] = None,
                     kamera_id: str = "TEST-KAMERA", yon: str = "giris"):
     """Kamera/video olmadan tek bir görsel üzerinde pipeline'ı uçtan uca doğrular.
 
