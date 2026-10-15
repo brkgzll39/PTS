@@ -5033,12 +5033,17 @@ _OTOMATIK_OKUNDU_ALARM_TIPLERI = ("yetkisiz_arac", "suresi_dolmus")
 _led_yurutucu = ThreadPoolExecutor(max_workers=1, thread_name_prefix="led-gonderim")
 
 
-def _led_gonder_ve_kaydet(mesaj: str, satirlar: tuple, kamera_idleri: list) -> None:
+def _led_gonder_ve_kaydet(mesaj: str, satirlar: tuple, kamera_idleri: list, kuyruga_girme: float = None) -> None:
+    baslangic = time.monotonic()
     try:
         basarili = led_panel.led_mesaj_gonder(mesaj, satirlar=satirlar, kamera_idleri=kamera_idleri)
     except Exception:
         logger.exception("LED mesajı gönderilemedi: %s", mesaj)
         basarili = False
+    if kuyruga_girme is not None:
+        # Gecikme teşhisi: önceki LED gönderimi bitmeden gelen geçiş sırada bekler.
+        logger.info("LED gönderimi (%s): kuyrukta %.2f sn beklendi, gönderim %.2f sn",
+                    " / ".join(s for s in satirlar if s), baslangic - kuyruga_girme, time.monotonic() - baslangic)
     db = SessionLocal()
     try:
         db.add(models.LedMesaj(mesaj=mesaj, basarili=basarili))
@@ -5051,7 +5056,7 @@ def _led_gonder_ve_kaydet(mesaj: str, satirlar: tuple, kamera_idleri: list) -> N
 
 
 def _led_arka_planda_gonder(mesaj: str, satirlar: tuple, kamera_idleri: list) -> None:
-    _led_yurutucu.submit(_led_gonder_ve_kaydet, mesaj, satirlar, kamera_idleri)
+    _led_yurutucu.submit(_led_gonder_ve_kaydet, mesaj, satirlar, kamera_idleri, time.monotonic())
 
 
 def _led_kuyrugunu_bekle(zaman_asimi: float = 10.0) -> None:

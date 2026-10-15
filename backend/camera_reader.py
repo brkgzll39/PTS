@@ -527,6 +527,7 @@ class PlakaOyBirikimi:
             "roi_icinde_goruldu": self.roi_icinde_goruldu,
             "harici_varyantlar": sorted(self._harici_katkili_varyantlar),
             "erken_bildirilen": self.erken_bildirilen,
+            "ilk_gorulme": self.ilk_gorulme,
         }
 
     def erken_karar_verilebilir_mi(self) -> bool:
@@ -1425,6 +1426,7 @@ class KameraPipeline:
                 _kamera_anahtari = (os.getenv("PTS_KAMERA_ANAHTARI") or "").strip() or None
                 _istek_basliklari = {"X-PTS-Kamera-Anahtari": _kamera_anahtari} if _kamera_anahtari else {}
                 with open(gecici, "rb") as f:
+                    _gonderim_bas = time.monotonic()
                     yanit = requests.post(
                         self.api_url,
                         data={"plaka_no": plaka, "kamera_id": self.kamera_id,
@@ -1483,6 +1485,19 @@ class KameraPipeline:
                     )
                 else:
                     gonderilenler.append(plaka)
+                    # GECİKME TEŞHİSİ (2026-10-14, kullanıcı: "led panele plakalar hâlâ
+                    # biraz gecikmeli geliyor"): plaka ilk okunduktan karara kadar geçen
+                    # süre ve sunucunun kaydı oluşturma süresi. Tabelaya yazma süresi
+                    # ayrıca "Huidu panele yazıldı" satırında, kuyruk beklemesi
+                    # "LED gönderimi" satırında.
+                    logger.info(
+                        "[%s] Gecikme: %s plaka ilk okunduktan %.1f sn sonra kesinleşti (%s, %d kare); "
+                        "sunucu kaydı %.2f sn",
+                        self.kamera_id, plaka, max(0.0, simdi - oturum.get("ilk_gorulme", simdi)),
+                        "erken karar" if oturum.get("kapanma_nedeni") == "erken" else
+                        f"araç çıkınca ({oturum.get('kapanma_nedeni')})",
+                        oturum.get("toplam_kare_sayisi") or 0, time.monotonic() - _gonderim_bas,
+                    )
                     if oturum["farkli_okuma_sayisi"] > 1:
                         logger.info(
                             "[%s] Plaka %d farklı okumanın oydaşmasıyla kesinleşti: %s (güven=%.2f, toplam oy=%.2f)",
