@@ -4644,3 +4644,17 @@ gerek kalmadan, **Bölge Müdürlüğü vardiya çizelgesine** göre belirlenir
   kamera erişimi yalnızca Lojman kameraları (Kullanıcılar → kamera erişimi);
   bu hesap tüm Lojman geçişlerini görür, vardiyaya göre filtreleyebilir.
   Ana Nizamiye'de kısıtlamasız tek bir operatör hesabı tüm geçişleri görür.
+
+## Ağ güvenliği (2026-10-15)
+
+- **Panel internete açılmamalı.** Modemde/güvenlik duvarında 8000 ve 8787 için
+  port yönlendirme yapmayın. Dışarıdan erişim gerekiyorsa kurumun VPN'i
+  kullanılmalı. Bilgisayarın internete ÇIKABİLMESİ (güncelleme, Telegram
+  bildirimi) sorun değildir; sorun dışarıdan İÇERİ bağlantı kabul etmesidir.
+- `guvenlik_duvari.ps1` (yönetici PowerShell): panel portlarını yalnızca
+  `.env`'deki nizamiye bilgisayarlarına açar, portu herkese açan eski kuralları
+  (python.exe'ye verilen "erişime izin ver" kuralı dahil) devre dışı bırakır.
+  `-Kontrol` ile yalnızca durum raporu verir.
+- `PTS_KAMERA_ANAHTARI` boşsa `backend.sunucu` her açılışta rastgele üretir:
+  ağdaki başka bir cihaz `/kayitlar/otomatik`'e sahte plaka kaydı gönderemez.
+- Parolasız giriş IP listesi boşsa yalnızca sunucunun kendisinden açılır.

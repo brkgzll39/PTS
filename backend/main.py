@@ -2816,6 +2816,9 @@ def _otomatik_giris_portu() -> int:
     return _ortam_portu("PTS_OTOMATIK_GIRIS_PORTU", "8787")
 
 
+_YEREL_IPLER = frozenset({"127.0.0.1", "::1"})
+
+
 def _ip_listesi(ad: str) -> set:
     return {p.strip() for p in (os.environ.get(ad) or "").split(",") if p.strip()}
 
@@ -2874,7 +2877,12 @@ def otomatik_giris(request: Request, db: Session = Depends(get_db)):
         raise HTTPException(403, "Bu adreste otomatik giriş kapalı; kullanıcı adı ve parolayla giriş yapın")
     kullanici_adi, izinli_ipler, olustur = ayar
     ip_adresi = request.client.host if request.client else None
-    if izinli_ipler and ip_adresi not in izinli_ipler:
+    # GÜVENLİK (2026-10-15): izinli IP listesi BOŞSA parolasız giriş yalnızca
+    # sunucu bilgisayarın kendisinden açılır. Önceden boş liste "herkese
+    # açık" demekti -- .env'de IP satırı unutulursa ağdaki her bilgisayar
+    # parolasız girebiliyordu.
+    izinli = izinli_ipler or _YEREL_IPLER
+    if ip_adresi not in izinli:
         logger.warning("Otomatik giriş reddedildi: %s izinli bilgisayarlar arasında değil", ip_adresi)
         raise HTTPException(403, "Bu bilgisayardan otomatik giriş izni yok")
     kullanici = _otomatik_giris_hesabi(db, kullanici_adi, olustur)

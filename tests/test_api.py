@@ -7547,6 +7547,7 @@ def test_otomatik_giris_ana_porttan_kapali(client):
 def test_otomatik_giris_kendi_portundan_parolasiz_oturum_acar(client, yetkili_header, monkeypatch):
     monkeypatch.setenv("PTS_OTOMATIK_GIRIS_PORTU", "80")
     monkeypatch.setenv("PTS_OTOMATIK_GIRIS_KULLANICI", "lojman_kiosk")
+    monkeypatch.setenv("PTS_OTOMATIK_GIRIS_IPLERI", "testclient")   # TestClient'ın istemci adresi
     anahtar = lisans.uret("Kiosk Test", kamera_limiti=50, gun=30)
     assert client.post("/lisans/aktive-et", json={"anahtar": anahtar}, headers=yetkili_header).status_code == 200
     r = client.post("/kameralar", json={"ad": "Lojman Kiosk Kam", "rtsp_url": "rtsp://127.0.0.1:554/k", "yon": "giris"},
@@ -7583,6 +7584,11 @@ def test_otomatik_giris_ip_kisiti_ve_yonetici_hesabi_reddedilir(client, yetkili_
     assert client.post("/auth/otomatik-giris").status_code == 403   # TestClient IP'si listede değil
 
     monkeypatch.delenv("PTS_OTOMATIK_GIRIS_IPLERI")
+    monkeypatch.setenv("PTS_OTOMATIK_GIRIS_KULLANICI", "lojman_kiosk")
+    r = client.post("/auth/otomatik-giris")                            # boş liste: yalnızca sunucunun kendisi
+    assert r.status_code == 403 and "izni yok" in r.json()["detail"]
+
+    monkeypatch.setenv("PTS_OTOMATIK_GIRIS_IPLERI", "testclient")
     monkeypatch.setenv("PTS_OTOMATIK_GIRIS_KULLANICI", "admin")       # yönetici hesabı
     assert client.post("/auth/otomatik-giris").status_code == 403
 
@@ -7597,6 +7603,7 @@ def test_ana_port_otomatik_giris_yalnizca_ayarliysa_ve_var_olan_hesapla(client, 
     oluşturulmaz (yazım hatası sessizce yeni hesap açmasın)."""
     monkeypatch.setenv("PTS_PORT", "80")
     monkeypatch.setenv("PTS_OTOMATIK_GIRIS_PORTU", "8787")
+    monkeypatch.setenv("PTS_ANA_PORT_OTOMATIK_GIRIS_IPLERI", "testclient")
     assert client.post("/auth/otomatik-giris").status_code == 403          # ayarsız: kapalı
 
     monkeypatch.setenv("PTS_ANA_PORT_OTOMATIK_GIRIS_KULLANICI", "nizamiye_yok_boyle")

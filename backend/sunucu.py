@@ -20,6 +20,7 @@ import asyncio
 import contextlib
 import logging
 import os
+import secrets
 import signal
 import socket
 
@@ -64,6 +65,17 @@ def main() -> None:
     host = os.environ.get("PTS_HOST", "0.0.0.0").strip() or "0.0.0.0"
     ana_port = _port_ayari("PTS_PORT", 8000)
     otomatik_port = _port_ayari("PTS_OTOMATIK_GIRIS_PORTU", 8787)
+
+    # GÜVENLİK (2026-10-15): PTS_KAMERA_ANAHTARI .env'de yoksa bu süreç için
+    # rastgele bir anahtar üretilir. Kameralar (camera_reader.py) bu sürecin
+    # İÇİNDEN 127.0.0.1'e gönderdiği ve anahtarı aynı ortam değişkeninden
+    # okuduğu için hiçbir ayar gerekmez; ağdaki başka bir bilgisayar ise
+    # /kayitlar/otomatik'e sahte plaka kaydı (ve bariyer açma) gönderemez.
+    # .env'e değer yazılmışsa o kullanılır (dışarıdan gönderen bir sistem varsa).
+    if not (os.environ.get("PTS_KAMERA_ANAHTARI") or "").strip():
+        os.environ["PTS_KAMERA_ANAHTARI"] = secrets.token_urlsafe(32)
+        print("Kamera kayit anahtari bu calisma icin otomatik uretildi "
+              "(ag uzerinden sahte plaka kaydi engellendi).", flush=True)
 
     from backend.main import app
 

@@ -37,7 +37,7 @@ mkdir -p "$KAYNAK" "$ONBELLEK"
 echo "Çalışma klasörü: $CALISMA"
 
 echo "1/5 Proje dosyaları (git archive HEAD)..."
-git -C "$KOK" archive HEAD backend frontend calistir.bat kurulum.bat README.md .env.example \
+git -C "$KOK" archive HEAD backend frontend calistir.bat kurulum.bat guvenlik_duvari.ps1 README.md .env.example \
   | tar -x -C "$KAYNAK"
 # Toplu dosyalar Windows satır sonuyla (CRLF): LF'li .bat'larda cmd.exe'nin
 # goto/call etiketlerini yanlış bulduğu bilinen bir hata var.
