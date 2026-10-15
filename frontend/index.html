@@ -198,6 +198,7 @@
                 <option value="abone">Abone (Site Sakini)</option>
                 <option value="personel">Personel</option>
                 <option value="ziyaretci">Ziyaretçi</option>
+                <option value="vip">VIP (Bölge Müdürü)</option>
               </select>
             </div>
             <div class="mb-2">
@@ -394,10 +395,10 @@
         <div class="col-6">
           <label class="form-label small" for="duzenleKayitDurum">Durum</label>
           <select class="form-select" id="duzenleKayitDurum">
-            <option value="yetkili">Yetkili</option>
-            <option value="yetkisiz">Yetkisiz</option>
+            <option value="yetkili">Personel (tanımlı araç)</option>
+            <option value="yetkisiz">Ziyaretçi (tanımsız araç)</option>
             <option value="suresi_dolmus">Süresi Dolmuş</option>
-            <option value="ziyaretci_onayli">Ziyaretçi Girişi Onaylandı</option>
+            <option value="ziyaretci_onayli">Ziyaretçi (Onaylı)</option>
             <option value="kara_liste">Kara Liste</option>
             <option value="bilinmiyor">Bilinmiyor</option>
           </select>
@@ -1117,10 +1118,10 @@
               <label class="form-label small" for="filtreDurum">Yetki Durumu</label>
               <select class="form-select" id="filtreDurum">
                 <option value="">Tümü</option>
-                <option value="yetkili">Yetkili</option>
-                <option value="yetkisiz">Yetkisiz</option>
+                <option value="yetkili">Personel (tanımlı araç)</option>
+                <option value="yetkisiz">Ziyaretçi (tanımsız araç)</option>
                 <option value="suresi_dolmus">Süresi Dolmuş</option>
-                <option value="ziyaretci_onayli">Ziyaretçi Girişi Onaylandı</option>
+                <option value="ziyaretci_onayli">Ziyaretçi (Onaylı)</option>
                 <option value="kara_liste">Kara Liste</option>
               </select>
             </div>
@@ -1213,6 +1214,7 @@
                     <option value="abone">Abone (Site Sakini)</option>
                     <option value="personel">Personel</option>
                     <option value="ziyaretci">Ziyaretçi</option>
+                    <option value="vip">VIP (Bölge Müdürü)</option>
                   </select>
                 </div>
                 <div class="mb-2">
@@ -1279,6 +1281,7 @@
                 <button class="btn btn-sm btn-outline-secondary tip-filtre" data-tip="abone" onclick="kisiTipFiltrele('abone', this)">Abone</button>
                 <button class="btn btn-sm btn-outline-secondary tip-filtre" data-tip="personel" onclick="kisiTipFiltrele('personel', this)">Personel</button>
                 <button class="btn btn-sm btn-outline-secondary tip-filtre" data-tip="ziyaretci" onclick="kisiTipFiltrele('ziyaretci', this)">Ziyaretçi</button>
+                <button class="btn btn-sm btn-outline-secondary tip-filtre" data-tip="vip" onclick="kisiTipFiltrele('vip', this)">VIP</button>
               </div>
               <div class="input-group input-group-sm kisi-arama-grubu">
                 <span class="input-group-text"><i class="bi bi-search"></i></span>
@@ -1308,6 +1311,7 @@
                   <option value="abone">Abone</option>
                   <option value="personel">Personel</option>
                   <option value="ziyaretci">Ziyaretçi</option>
+                  <option value="vip">VIP (Bölge Müdürü)</option>
                 </select>
                 <button type="button" class="btn btn-sm btn-outline-danger" onclick="kisiTopluIslem('sil')" data-rol-min="yonetici" data-rol-davranis="gizle"><i class="bi bi-trash"></i> Seçilenleri sil</button>
                 <button type="button" class="btn btn-sm btn-link ms-auto" onclick="kisiSecimiTemizleVeYenile()">Seçimi temizle</button>

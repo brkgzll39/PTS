@@ -254,6 +254,7 @@ def test_suresi_dolmus_ziyaretci_dogru_isaretlenir(client, yetkili_header):
     ("personel", "34 LED 01", "PERSONEL"),
     ("ziyaretci", "34 LED 02", "ZİYARETÇİ"),   # tanımlı (süresi geçerli) ziyaretçi
     (None, "34 LED 03", "ZİYARETÇİ"),          # tanınmayan/yetkisiz araç
+    ("vip", "34 LED 04", "BÖLGE MÜDÜRÜ"),      # 2026-10-15: VIP listesi
 ])
 def test_led_panel_ust_satiri_personel_ziyaretci(client, yetkili_header, monkeypatch, kisi_tip, plaka, beklenen):
     """2026-10-12 kullanıcı isteği: panelde "HOŞ GELDİNİZ" yerine yetkili araçta
@@ -271,6 +272,21 @@ def test_led_panel_ust_satiri_personel_ziyaretci(client, yetkili_header, monkeyp
     assert r.status_code == 200, r.text
     pts_main._led_kuyrugunu_bekle()  # LED arka planda gönderiliyor
     assert gonderilen == [(beklenen, plaka.upper())]
+
+
+def test_vip_kisi_yetkili_sayilir_ve_tipi_kayda_yazilir(client, yetkili_header):
+    """2026-10-15: VIP (Bölge Müdürü) aracı tanımlı araç gibi geçer; panel
+    "Bölge Müdürü" yazabilsin diye kaydın kisi_tip_anlik'i "vip" olur."""
+    r = client.post("/kisiler", json={"ad_soyad": "Bölge Müdürü", "plaka_no": "06 VIP 01", "tip": "vip"},
+                    headers=yetkili_header)
+    assert r.status_code == 200, r.text
+    assert r.json()["tip"] == "vip"
+    r = client.post("/kayitlar", json={"plaka_no": "06 VIP 01", "kamera_id": "TEST", "yon": "giris"},
+                    headers=yetkili_header)
+    assert r.status_code == 200, r.text
+    assert r.json()["yetki_durumu"] == "yetkili"
+    assert r.json()["kisi_tip_anlik"] == "vip"
+    pts_main._led_kuyrugunu_bekle()
 
 
 def test_led_panele_kameranin_idsi_iletilir(client, yetkili_header, monkeypatch):

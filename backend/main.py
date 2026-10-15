@@ -4403,7 +4403,9 @@ def kisi_gecmis_kayitlarini_guncelle(
     return {"guncellenen_kayit_sayisi": guncellenen}
 
 
-_KISI_TIPLERI = ("abone", "personel", "ziyaretci")
+_KISI_TIPLERI = ("abone", "personel", "ziyaretci", "vip")
+# Yetkili geçişte LED panelin üst satırı (bkz. kayit akışı); listede olmayan tip PERSONEL.
+_LED_TIP_ETIKETI = {"ziyaretci": "ZİYARETÇİ", "vip": "BÖLGE MÜDÜRÜ"}
 # SQL Server tek sorguda en fazla ~2100 parametre kabul eder; uzun `IN (...)`
 # listeleri bu boyutta parçalara bölünür.
 _IN_PARCA_BOYUTU = 500
@@ -5244,10 +5246,11 @@ def _kayit_olustur_ve_bildir(db: Session, plaka_no: str, kamera_id: str, yon: st
         _son_not_kaydet(plaka_no, not_metni_temiz)
 
     # LED panelin üst satırı (2026-10-12 kullanıcı isteği): "HOŞ GELDİNİZ" yerine
-    # yetkili araçta PERSONEL (ziyaretçi olarak tanımlıysa ZİYARETÇİ), yetkisizde ZİYARETÇİ.
+    # yetkili araçta PERSONEL (ziyaretçi olarak tanımlıysa ZİYARETÇİ, VIP
+    # listesindeyse BÖLGE MÜDÜRÜ), yetkisizde ZİYARETÇİ.
     if yetki == "yetkili":
         mesaj = f"HOŞ GELDİNİZ {plaka_no.upper()}"
-        led_durum = "ZİYARETÇİ" if kisi_tip == "ziyaretci" else "PERSONEL"
+        led_durum = _LED_TIP_ETIKETI.get(kisi_tip, "PERSONEL")
     elif yetki == "suresi_dolmus":
         mesaj = f"ZİYARETÇİ SÜRESİ DOLDU: {plaka_no.upper()}"
         led_durum = "SÜRESİ DOLDU"
@@ -6990,6 +6993,8 @@ def _kayitlari_rapor_satirlari(kayitlar: list, db: Session) -> list:
         # gizlemek yerine ayrıca gösteriyoruz.
         if k.yetki_durumu == "kara_liste":
             arac_tipi = "Kara Liste"
+        elif kisi and kisi.tip == "vip":
+            arac_tipi = "Bölge Müdürü"
         elif kisi and kisi.tip == "personel":
             arac_tipi = kisi.daire_departman or "Tanımlı"
         elif kisi and kisi.tip == "abone":
@@ -7001,6 +7006,8 @@ def _kayitlari_rapor_satirlari(kayitlar: list, db: Session) -> list:
 
         if kisi and kisi.tip == "personel":
             daire = "PERSONEL"
+        elif kisi and kisi.tip == "vip":
+            daire = "BÖLGE MÜDÜRÜ"
         elif kisi:
             daire = kisi.daire_departman or ""
         else:
@@ -8803,7 +8810,7 @@ def sistem_ayarlarini_guncelle(yeni: dict = Body(...), db: Session = Depends(get
 #     çıkan araç dışarıda sayılır (son geçiş tüm kameralar üzerinden bulunur).
 _ICERIDE_SAYILAN_DURUMLAR = ("yetkili", "ziyaretci_onayli")
 _ONAYSIZ_GIRIS_SAAT = 24
-_KISI_TIP_ETIKETI = {"personel": "Personel", "abone": "Abone", "ziyaretci": "Ziyaretçi"}
+_KISI_TIP_ETIKETI = {"personel": "Personel", "abone": "Abone", "ziyaretci": "Ziyaretçi", "vip": "Bölge Müdürü"}
 
 
 def _iceride_durumu_hesapla(db: Session, simdi: Optional[datetime] = None) -> "tuple[list, list]":

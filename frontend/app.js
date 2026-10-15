@@ -506,9 +506,18 @@ function tarihFormatla(iso) {
   return d.toLocaleString("tr-TR", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" });
 }
 
-function durumRozeti(durum) {
-  const etiketler = { yetkili: "Yetkili", yetkisiz: "Yetkisiz", suresi_dolmus: "Süresi Dolmuş", bilinmiyor: "Bilinmiyor", kara_liste: "Kara Liste", ziyaretci_onayli: "Ziyaretçi Girişi Onaylandı" };
-  return `<span class="badge badge-${durum}">${etiketler[durum] || escapeHtml(durum)}</span>`;
+// 2026-10-15 kullanıcı isteği: "Yetkili/Yetkisiz" yerine araç kimin:
+// tanımlı araç Personel (ziyaretçi olarak tanımlıysa Ziyaretçi, VIP
+// listesindeyse Bölge Müdürü), tanımsız araç Ziyaretçi.
+function durumEtiketi(durum, kisiTip) {
+  if (durum === "yetkili") return kisiTip === "vip" ? "Bölge Müdürü" : kisiTip === "ziyaretci" ? "Ziyaretçi" : "Personel";
+  const etiketler = { yetkisiz: "Ziyaretçi", suresi_dolmus: "Süresi Dolmuş", bilinmiyor: "Bilinmiyor", kara_liste: "Kara Liste", ziyaretci_onayli: "Ziyaretçi (Onaylı)" };
+  return etiketler[durum] || durum;
+}
+
+function durumRozeti(durum, kisiTip) {
+  const sinif = durum === "yetkili" && kisiTip === "vip" ? "vip" : durum;
+  return `<span class="badge badge-${escapeHtml(sinif)}">${escapeHtml(durumEtiketi(durum, kisiTip))}</span>`;
 }
 
 function alarmTipiEtiketi(tip) {
@@ -528,7 +537,7 @@ function alarmTipiEtiketi(tip) {
 
 function tipRozeti(tip) {
   if (!tip) return '<span class="text-muted">-</span>';
-  const etiketler = { abone: "Abone", personel: "Personel", ziyaretci: "Ziyaretçi" };
+  const etiketler = { abone: "Abone", personel: "Personel", ziyaretci: "Ziyaretçi", vip: "Bölge Müdürü" };
   return `<span class="badge badge-${tip}">${etiketler[tip] || escapeHtml(tip)}</span>`;
 }
 
@@ -909,7 +918,7 @@ async function sakinPaneliYukle() {
         <td>${tarihFormatla(k.tarih_saat)}</td>
         <td>${escapeHtml(k.kamera_id)}</td>
         <td>${k.yon === "giris" ? "Giriş" : "Çıkış"}</td>
-        <td>${durumRozeti(k.yetki_durumu)}</td>
+        <td>${durumRozeti(k.yetki_durumu, k.kisi_tip_anlik)}</td>
       </tr>
     `).join("") || `<tr><td colspan="4" class="text-center text-muted py-3">Henüz geçiş kaydınız yok</td></tr>`;
   } catch (err) {
@@ -1309,7 +1318,7 @@ function _gecisKartiOlustur(k) {
   // parçalardan (isim, vardiya) kuruluyor.
   const altBilgiParcalari = [isimBos ? null : isim, k.vardiya_adi ? escapeHtml(k.vardiya_adi) : null].filter(Boolean);
   return `
-    <div class="gecis-karti durum-${escapeHtml(k.yetki_durumu)} ${yonSinifi}">
+    <div class="gecis-karti durum-${k.yetki_durumu === "yetkili" && k.kisi_tip_anlik === "vip" ? "vip" : escapeHtml(k.yetki_durumu)} ${yonSinifi}">
       <div class="gecis-karti-baslik">
         <span class="gecis-karti-kamera" title="${escapeHtml(k.kamera_id)}">${escapeHtml(k.kamera_id)} - ${yonEtiketi}</span>
         <button class="gecis-karti-not-btn" onclick="olayDetayAc(${k.id})" title="${k.not_metni ? "Not var, görmek için tıklayın" : "Detay / not ekle"}" aria-label="Detay ve not">
@@ -1320,7 +1329,7 @@ function _gecisKartiOlustur(k) {
         ${k.goruntu_yolu
           ? `<img class="gecis-karti-gorsel" data-goruntu-yolu="${escapeHtml(k.goruntu_yolu)}" role="button" tabindex="0" onclick="olayDetayAc(${k.id})" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();olayDetayAc(${k.id})}" alt="${escapeHtml(k.plaka_no)} geçiş görseli, detay ve not eklemek için tıklayın veya Enter'a basın">`
           : `<div class="gecis-karti-gorsel-yok"><i class="bi bi-camera-video-off"></i></div>`}
-        <span class="gecis-karti-durum-rozeti">${durumRozeti(k.yetki_durumu)}</span>
+        <span class="gecis-karti-durum-rozeti">${durumRozeti(k.yetki_durumu, k.kisi_tip_anlik)}</span>
         <button class="gecis-karti-alt-serit" onclick="olayDetayAc(${k.id})" title="Kaydı görüntüle">
           <span class="gecis-karti-plaka">${escapeHtml(k.plaka_no)}</span>
           <span class="gecis-karti-tarih">${tarihFormatla(k.tarih_saat)}</span>
@@ -1510,7 +1519,7 @@ async function olayDetayAc(id) {
   // Düzenle"/Ziyaretçi Girişi'nde girilebilir) gösteriliyor.
   document.getElementById("olayModalKisi").textContent = detay?.ad_soyad || kayit.misafir_adi || "Tanımsız araç";
   document.getElementById("olayModalDaire").textContent = detay?.daire_departman || "-";
-  document.getElementById("olayModalAracTipi").textContent = detay ? (detay.tip === "ziyaretci" ? "Ziyaretçi" : "Tanımlı") : (kayit.misafir_adi ? "Misafir" : "Tanımsız araç");
+  document.getElementById("olayModalAracTipi").textContent = detay ? (detay.tip === "ziyaretci" ? "Ziyaretçi" : detay.tip === "vip" ? "Bölge Müdürü" : "Tanımlı") : (kayit.misafir_adi ? "Misafir" : "Tanımsız araç");
   // 2026-09-22: kullanıcı isteği -- "OCR güven skoru gibi şeyleri görmeme
   // gerek yok, onların yerine Not yazınca not bilgisi eklensin". GÜVEN
   // SKORU/OCR DÜZELTMESİ alanları (operasyonel personel için anlamsız, teknik
@@ -2683,7 +2692,7 @@ function icerideCiz() {
   document.getElementById("icerideOnaysizSayi").textContent = v.onaysiz.length;
   document.getElementById("icerideOnaysizTablo").innerHTML = onaysiz.length ? onaysiz.map(a => `<tr ${satirAc(a)}>
       <td class="fw-bold text-nowrap">${escapeHtml(a.plaka_no)}</td>
-      <td>${durumRozeti(a.yetki_durumu)}</td>
+      <td>${durumRozeti(a.yetki_durumu, a.tip_kodu)}</td>
       <td class="text-nowrap">${escapeHtml(a.kamera_id)}</td>
       <td class="text-nowrap">${escapeHtml(_icerideGirisMetni(a.giris_saati))}</td>
       <td>${notHucre(a)}</td></tr>`).join("")
@@ -3078,7 +3087,7 @@ async function kayitlariYukle(sifirla = true) {
         <td>${tarihFormatla(k.tarih_saat)}</td>
         <td>${escapeHtml(k.kamera_id)}</td>
         <td>${k.yon === "giris" ? "Giriş" : "Çıkış"}</td>
-        <td>${durumRozeti(k.yetki_durumu)}</td>
+        <td>${durumRozeti(k.yetki_durumu, k.kisi_tip_anlik)}</td>
         <td>${tipRozeti(k.kisi_tip_anlik)}</td>
         <td class="small">${kayitIsimGoster(k)}</td>
         <td class="small">${k.surucu_adi ? escapeHtml(k.surucu_adi) : '<span class="text-muted">-</span>'}</td>
@@ -3427,7 +3436,7 @@ let aktifTipFiltre = "";
 function ziyaretciAlanGoster() {
   const tip = document.getElementById("kisiTip").value;
   document.getElementById("ziyaretciBitisAlani").classList.toggle("d-none", tip !== "ziyaretci");
-  document.getElementById("daireEtiket").textContent = tip === "personel" ? "Departman" : "Daire No";
+  document.getElementById("daireEtiket").textContent = tip === "personel" || tip === "vip" ? "Departman / Ünvan" : "Daire No";
 }
 
 function kisiTipFiltrele(tip, btn) {
@@ -3526,7 +3535,7 @@ function kisiTopluTipSecildi(secim) {
 async function kisiTopluIslem(islem, tip) {
   const idler = [..._kisiSecimi];
   if (!idler.length) return;
-  const tipEtiketi = { abone: "Abone", personel: "Personel", ziyaretci: "Ziyaretçi" };
+  const tipEtiketi = { abone: "Abone", personel: "Personel", ziyaretci: "Ziyaretçi", vip: "Bölge Müdürü" };
   let mesaj = `${idler.length} kişi `;
   mesaj += {
     aktif: "AKTİF yapılacak.",
@@ -3750,7 +3759,7 @@ async function kisiGecmisKayitlariGuncelle(id) {
   try {
     const sonuc = await apiCagir(`/kisiler/${id}/gecmis-kayitlari-guncelle`, { method: "POST" });
     if (sonuc.guncellenen_kayit_sayisi > 0) {
-      toastGoster(`${sonuc.guncellenen_kayit_sayisi} adet geçmiş kayıt bu kişiyle güncellendi (artık "Yetkili" görünecek).`, "basari");
+      toastGoster(`${sonuc.guncellenen_kayit_sayisi} adet geçmiş kayıt bu kişiyle güncellendi (artık "Personel" görünecek).`, "basari");
       panelYenile();
     } else {
       toastGoster("Bu kişiye ait güncellenecek geçmiş kayıt bulunamadı (zaten hepsi güncel ya da eşleşen kayıt yok).", "bilgi");
@@ -3774,7 +3783,7 @@ function kisiIceAktarmaSablonuIndir() {
 function duzenleZiyaretciAlanGoster() {
   const tip = document.getElementById("duzenleTip").value;
   document.getElementById("duzenleZiyaretciBitisAlani").classList.toggle("d-none", tip !== "ziyaretci");
-  document.getElementById("duzenleDaireEtiket").textContent = tip === "personel" ? "Departman" : "Daire No";
+  document.getElementById("duzenleDaireEtiket").textContent = tip === "personel" || tip === "vip" ? "Departman / Ünvan" : "Daire No";
 }
 
 // ================================================================
@@ -4225,7 +4234,7 @@ document.getElementById("testKayitForm").addEventListener("submit", async (e) =>
     });
     document.getElementById("testSonuc").innerHTML = `
       <div class="alert alert-info">
-        Kayıt oluşturuldu: <b>${escapeHtml(kayit.plaka_no)}</b> — Durum: ${durumRozeti(kayit.yetki_durumu)}
+        Kayıt oluşturuldu: <b>${escapeHtml(kayit.plaka_no)}</b> — Durum: ${durumRozeti(kayit.yetki_durumu, kayit.kisi_tip_anlik)}
       </div>`;
     document.getElementById("testKayitForm").reset();
     panelYenile();
@@ -4593,8 +4602,8 @@ function _gunlukGrafigCiz(gunluk) {
       labels: etiketler.map(g => g.slice(5)),
       datasets: [
         { label: "Toplam", data: toplam, backgroundColor: "#6ea8fe55", borderColor: "#6ea8fe", borderWidth: 1 },
-        { label: "Yetkili", data: yetkili, backgroundColor: "#75b79855", borderColor: "#75b798", borderWidth: 1 },
-        { label: "Yetkisiz/Engel", data: yetkisiz, backgroundColor: "#ea868f55", borderColor: "#ea868f", borderWidth: 1 },
+        { label: "Personel", data: yetkili, backgroundColor: "#75b79855", borderColor: "#75b798", borderWidth: 1 },
+        { label: "Ziyaretçi/Engel", data: yetkisiz, backgroundColor: "#ea868f55", borderColor: "#ea868f", borderWidth: 1 },
       ],
     },
     options: { responsive: true, plugins: { legend: { position: "top" } }, scales: { y: { beginAtZero: true, ticks: { precision: 0 } } } },
@@ -4608,7 +4617,7 @@ function _yetkiPieCiz(dagilim) {
   _yetkiPie = new Chart(ctx, {
     type: "doughnut",
     data: {
-      labels: ["Yetkili", "Yetkisiz", "Kara Liste", "Süresi Dolmuş"],
+      labels: ["Personel", "Ziyaretçi", "Kara Liste", "Süresi Dolmuş"],
       datasets: [{ data: [dagilim.yetkili, dagilim.yetkisiz, dagilim.kara_liste, dagilim.suresi_dolmus], backgroundColor: ["#75b798", "#ea868f", "#343a40", "#ffc107"] }],
     },
     options: { responsive: true, plugins: { legend: { position: "bottom" } } },
@@ -4641,7 +4650,7 @@ async function plakaAnalizAc(plaka) {
         <td>${tarihFormatla(k.tarih_saat)}</td>
         <td>${k.yon === "giris" ? "Giriş" : "Çıkış"}</td>
         <td>${escapeHtml(k.kamera_id)}</td>
-        <td>${durumRozeti(k.yetki_durumu)}</td>
+        <td>${durumRozeti(k.yetki_durumu, k.kisi_tip_anlik)}</td>
         <td class="small">${kayitIsimGoster(k)}</td>
         <td>${k.vardiya_adi ? `<span class="badge bg-info text-dark">${escapeHtml(k.vardiya_adi)}</span>` : '<span class="text-muted small">-</span>'}</td>
         <td>${dogrulamaRozeti(k.dogrulama_kare_sayisi, k.farkli_okuma_sayisi, k.kamera_okumasi)}</td>

@@ -5,7 +5,9 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 from datetime import datetime
 from typing import Literal, Optional, List
 
-GECERLI_TIPLER = ("abone", "personel", "ziyaretci")
+# "vip" (2026-10-15): Bölge Müdürü araçları -- geçişte panelde ve LED'de
+# "Bölge Müdürü" yazar.
+GECERLI_TIPLER = ("abone", "personel", "ziyaretci", "vip")
 # "sakin": bir Kişi kaydına bağlı, yalnızca kendi araç/geçmiş bilgisine
 # erişebilen öz-hizmet giriş hesabı (bkz. main.py::_personel_girisi_gerekli
 # ve /sakin/... uç noktaları, 2026-09-17 notu).
