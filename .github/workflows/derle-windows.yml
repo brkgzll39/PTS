@@ -1,0 +1,92 @@
+name: Derlenmis Windows paketi
+
+# 2026-10-20: müşteriye giden PTS'in kaynak kodsuz (Nuitka ile derlenmiş)
+# paketini Windows'ta üretir; çıktı "pts-derlenmis" artifact'i olarak yüklenir
+# ve installer/setup_olustur.sh ile kurulum programına dönüştürülür.
+#
+# Her push'ta ÇALIŞMAZ (derleme ~15-20 dk): commit mesajında [derle] geçmeli.
+# Açık lisans anahtarı henüz yoksa [derle-test] deneme paketi üretir (müşteriye
+# verilemez).
+on:
+  push:
+    branches: [main, "claude/**"]
+  workflow_dispatch: {}
+
+jobs:
+  derle:
+    if: github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[derle')
+    runs-on: windows-2022
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Paketler
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r backend/requirements-windows.txt
+          pip install nuitka==2.4.8 ordered-set==4.1.0 zstandard==0.23.0
+          pip install pytest==8.3.3 httpx==0.27.2 pdfplumber==0.11.9 beautifulsoup4==4.14.3
+
+      - name: Derle
+        shell: pwsh
+        env:
+          COMMIT_MESAJI: ${{ github.event.head_commit.message }}
+        run: |
+          $ek = @()
+          if ("$env:COMMIT_MESAJI".Contains("[derle-test]")) { $ek += "--test-anahtarsiz" }
+          python installer/derle_windows.py --cikti derlenmis @ek
+
+      - name: Kaynak dosya kalmadi mi
+        shell: pwsh
+        run: |
+          $py = Get-ChildItem -Recurse derlenmis -Include *.py | Where-Object Name -ne "pts_baslat.py"
+          if ($py) { $py | ForEach-Object FullName; exit 1 }
+          Get-ChildItem derlenmis | Format-Table Name, Length
+
+      - name: Derlenmis paketle sunucu ayaga kalkiyor mu
+        shell: pwsh
+        working-directory: derlenmis
+        env:
+          PTS_KAMERA_ANAHTARI: ci-anahtari
+        run: |
+          python -c "import backend, backend.main as m; print('BACKEND_DIR =', m.BACKEND_DIR); assert m.BACKEND_DIR.lower().endswith('derlenmis\\backend'), m.BACKEND_DIR; import backend.lisans as l; assert l.ESKI_LISANS_KABUL is False"
+          $p = Start-Process python -ArgumentList "pts_baslat.py" -PassThru -RedirectStandardOutput sunucu.log -RedirectStandardError sunucu.err
+          $tamam = $false
+          foreach ($i in 1..60) {
+            Start-Sleep 2
+            try { $r = Invoke-WebRequest http://127.0.0.1:8000/saglik -UseBasicParsing; if ($r.StatusCode -eq 200) { $tamam = $true; break } } catch {}
+          }
+          if ($tamam) {
+            (Invoke-WebRequest http://127.0.0.1:8000/ -UseBasicParsing).StatusCode
+            (Invoke-WebRequest http://127.0.0.1:8000/auth/durum -UseBasicParsing).Content
+            (Invoke-WebRequest http://127.0.0.1:8787/ -UseBasicParsing).StatusCode
+          }
+          Stop-Process -Id $p.Id -Force
+          Get-Content sunucu.log, sunucu.err -ErrorAction SilentlyContinue | Select-Object -Last 40
+          if (-not $tamam) { exit 1 }
+          Remove-Item -Recurse -Force veritabani, goruntuler, loglar, disa_aktarilanlar, sunucu.log, sunucu.err, .env, backend\auth_secret.key -ErrorAction SilentlyContinue
+
+      - name: Testler derlenmis modulle (bilgi amacli)
+        continue-on-error: true
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory test_derlenmis | Out-Null
+          Copy-Item -Recurse derlenmis\* test_derlenmis\
+          Copy-Item -Recurse tests test_derlenmis\tests
+          Copy-Item pytest.ini, conftest.py test_derlenmis\ -ErrorAction SilentlyContinue
+          cd test_derlenmis
+          python -m pytest tests -q -x -p no:cacheprovider 2>&1 | Select-Object -Last 40
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pts-derlenmis
+          path: derlenmis
+          retention-days: 7

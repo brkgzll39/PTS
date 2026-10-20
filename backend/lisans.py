@@ -21,8 +21,22 @@ import uuid
 from datetime import date, datetime, timedelta
 from typing import Optional
 
+from backend import ed25519
+
 VARSAYILAN_GELISTIRME_SECRET = "gelistirme-lisans-anahtari-degistir"
-LISANS_VERSIYONU = "PTS1"
+LISANS_VERSIYONU = "PTS1"          # eski: HMAC (doğrulayan anahtar = üreten anahtar)
+IMZALI_LISANS_VERSIYONU = "PTS2"   # 2026-10-20: Ed25519 açık anahtarlı imza
+
+# Lisans verenin Ed25519 AÇIK anahtarı (64 hex). Yalnızca doğrulama yapar;
+# bununla lisans ÜRETİLEMEZ. Özel anahtar lisans verenin bilgisayarında kalır
+# (bkz. araclar/lisans_araci.py). Boşsa PTS2 lisanslar kabul edilmez.
+ACIK_ANAHTAR_HEX = ""
+
+# Eski (PTS1/HMAC) lisanslar kabul edilsin mi? Kaynak koddan çalışan kurulumda
+# (lisans verenin kendi sistemi) şimdilik True. Müşteriye giden DERLENMİŞ
+# kurulumda derleme betiği bunu False yapar (bkz. installer/derle_windows.py):
+# müşteri .env'e kendi PTS_LICENSE_SECRET'ını yazıp PTS1 lisans üretemesin.
+ESKI_LISANS_KABUL = True
 
 logger = logging.getLogger("pts.lisans")
 _varsayilan_secret_uyarisi_yapildi = False
@@ -88,6 +102,12 @@ def cihaz_kodu() -> str:
 
 def uret(musteri: str, kamera_limiti: int, gun: int, cihaz_kodu_deger: Optional[str] = None) -> str:
     """İmzalı bir lisans anahtarı üretir (`PTS1.<govde>.<imza>` formatında)."""
+    govde = _payload_olustur(musteri, kamera_limiti, gun, cihaz_kodu_deger)
+    imza = _b64(hmac.new(secret_al().encode("utf-8"), govde.encode("ascii"), hashlib.sha256).digest())
+    return f"{LISANS_VERSIYONU}.{govde}.{imza}"
+
+
+def _payload_olustur(musteri: str, kamera_limiti: int, gun: int, cihaz_kodu_deger: Optional[str]) -> str:
     if kamera_limiti < 1 or gun < 1:
         raise ValueError("Kamera limiti ve gün sayısı 1 veya daha büyük olmalıdır")
     payload = {
@@ -98,9 +118,28 @@ def uret(musteri: str, kamera_limiti: int, gun: int, cihaz_kodu_deger: Optional[
         "baslangic_tarihi": date.today().isoformat(),
         "bitis_tarihi": (date.today() + timedelta(days=gun)).isoformat(),
     }
-    govde = _b64(json.dumps(payload, ensure_ascii=True, separators=(",", ":")).encode("utf-8"))
-    imza = _b64(hmac.new(secret_al().encode("utf-8"), govde.encode("ascii"), hashlib.sha256).digest())
-    return f"{LISANS_VERSIYONU}.{govde}.{imza}"
+    return _b64(json.dumps(payload, ensure_ascii=True, separators=(",", ":")).encode("utf-8"))
+
+
+def imzali_uret(ozel_anahtar: bytes, musteri: str, kamera_limiti: int, gun: int,
+                cihaz_kodu_deger: Optional[str] = None) -> str:
+    """Ed25519 ile imzalı lisans (`PTS2.<govde>.<imza>`). Yalnızca lisans
+    verenin bilgisayarında, özel anahtarla çalışır (bkz. araclar/lisans_araci.py)."""
+    govde = _payload_olustur(musteri, kamera_limiti, gun, cihaz_kodu_deger)
+    imza = ed25519.imzala(ozel_anahtar, f"{IMZALI_LISANS_VERSIYONU}.{govde}".encode("ascii"))
+    return f"{IMZALI_LISANS_VERSIYONU}.{govde}.{_b64(imza)}"
+
+
+def _imzali_dogrula(govde: str, imza: str) -> None:
+    if not ACIK_ANAHTAR_HEX:
+        raise LisansGecersiz("Bu PTS sürümünde lisans doğrulama anahtarı tanımlı değil")
+    try:
+        imza_baytlari = _b64_coz(imza)
+        acik = bytes.fromhex(ACIK_ANAHTAR_HEX)
+    except ValueError:
+        raise LisansGecersiz("Lisans anahtarı formatı geçersiz")
+    if not ed25519.dogrula(acik, f"{IMZALI_LISANS_VERSIYONU}.{govde}".encode("ascii"), imza_baytlari):
+        raise LisansGecersiz("Lisans imzası doğrulanamadı (anahtar değiştirilmiş veya başka bir lisans verene ait)")
 
 
 def coz(anahtar: str, beklenen_cihaz_kodu: Optional[str] = None) -> dict:
@@ -112,12 +151,16 @@ def coz(anahtar: str, beklenen_cihaz_kodu: Optional[str] = None) -> dict:
         versiyon, govde, imza = anahtar.strip().split(".", 2)
     except (ValueError, AttributeError):
         raise LisansGecersiz("Lisans anahtarı formatı geçersiz")
-    if versiyon != LISANS_VERSIYONU:
+    if versiyon == IMZALI_LISANS_VERSIYONU:
+        _imzali_dogrula(govde, imza)
+    elif versiyon == LISANS_VERSIYONU:
+        if not ESKI_LISANS_KABUL:
+            raise LisansGecersiz("Eski tip (PTS1) lisans bu sürümde geçersiz; yeni lisans anahtarı isteyin")
+        beklenen_imza = _b64(hmac.new(secret_al().encode("utf-8"), govde.encode("ascii"), hashlib.sha256).digest())
+        if not hmac.compare_digest(imza, beklenen_imza):
+            raise LisansGecersiz("Lisans imzası doğrulanamadı (anahtar değiştirilmiş veya yanlış secret ile üretilmiş)")
+    else:
         raise LisansGecersiz(f"Bilinmeyen lisans sürümü: {versiyon}")
-
-    beklenen_imza = _b64(hmac.new(secret_al().encode("utf-8"), govde.encode("ascii"), hashlib.sha256).digest())
-    if not hmac.compare_digest(imza, beklenen_imza):
-        raise LisansGecersiz("Lisans imzası doğrulanamadı (anahtar değiştirilmiş veya yanlış secret ile üretilmiş)")
 
     try:
         payload = json.loads(_b64_coz(govde))

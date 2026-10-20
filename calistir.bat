@@ -84,7 +84,9 @@ rem 2026-10-14: uvicorn dogrudan degil backend\sunucu.py ile baslatilir --
 rem ayni surec hem 8000 (kullanici adi/parola ile giris) hem 8787 (Lojman,
 rem parolasiz otomatik giris) portunu dinler. Portlar .env'deki PTS_PORT ve
 rem PTS_OTOMATIK_GIRIS_PORTU ile degistirilebilir (0 = otomatik giris kapali).
-".venv\Scripts\python.exe" -m backend.sunucu
+rem 2026-10-20: derlenmis kurulumda backend tek bir .pyd -- "-m backend.sunucu"
+rem calismaz; pts_baslat.py iki kurulumda da calisir.
+".venv\Scripts\python.exe" pts_baslat.py
 set "cikis_kodu=%errorlevel%"
 
 if "%cikis_kodu%" == "0" goto :son

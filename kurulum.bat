@@ -78,10 +78,13 @@ if errorlevel 1 (
     echo.
 )
 
-".venv\Scripts\python.exe" -m py_compile backend\main.py backend\models.py backend\schemas.py
-if errorlevel 1 (
-    echo HATA: Backend dogrulamasi basarisiz.
-    goto hata
+rem Derlenmis kurulumda .py yok (backend.*.pyd); dogrulama yalnizca kaynak kurulumda.
+if exist "backend\main.py" (
+    ".venv\Scripts\python.exe" -m py_compile backend\main.py backend\models.py backend\schemas.py
+    if errorlevel 1 (
+        echo HATA: Backend dogrulamasi basarisiz.
+        goto hata
+    )
 )
 
 rem ================================================================

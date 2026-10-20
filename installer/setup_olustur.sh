@@ -36,9 +36,21 @@ done
 mkdir -p "$KAYNAK" "$ONBELLEK"
 echo "Çalışma klasörü: $CALISMA"
 
-echo "1/5 Proje dosyaları (git archive HEAD)..."
-git -C "$KOK" archive HEAD backend frontend calistir.bat kurulum.bat guvenlik_duvari.ps1 README.md .env.example \
-  | tar -x -C "$KAYNAK"
+# 2026-10-20: MÜŞTERİ paketi derlenmiş koddan yapılır (kaynak kod girmez):
+# PTS_DERLENMIS=<GitHub Actions "pts-derlenmis" çıktısının klasörü>. Bu
+# değişken yoksa eski davranış (kaynak kodlu paket, yalnızca kendi kullanımınız).
+if [ -n "${PTS_DERLENMIS:-}" ]; then
+  echo "1/5 Derlenmiş paket: $PTS_DERLENMIS"
+  if find "$PTS_DERLENMIS" -name '*.py' ! -name pts_baslat.py | grep -q .; then
+    echo "HATA: derlenmiş pakette .py dosyası var" >&2; exit 1
+  fi
+  ls "$PTS_DERLENMIS"/backend.*.pyd >/dev/null || { echo "HATA: backend.*.pyd yok" >&2; exit 1; }
+  cp -r "$PTS_DERLENMIS"/. "$KAYNAK"/
+else
+  echo "1/5 Proje dosyaları (git archive HEAD) -- UYARI: KAYNAK KODLU paket, müşteriye vermeyin"
+  git -C "$KOK" archive HEAD backend frontend calistir.bat kurulum.bat guvenlik_duvari.ps1 pts_baslat.py README.md .env.example \
+    | tar -x -C "$KAYNAK"
+fi
 # Toplu dosyalar Windows satır sonuyla (CRLF): LF'li .bat'larda cmd.exe'nin
 # goto/call etiketlerini yanlış bulduğu bilinen bir hata var.
 for f in "$KAYNAK"/*.bat; do sed -i 's/\r$//; s/$/\r/' "$f"; done
@@ -46,7 +58,9 @@ cat > "$KAYNAK/KURULUM-NOTLARI.txt" <<'NOT'
 PTS - Plaka Tanima Sistemi
 ==========================
 
-Baslatma : Masaustundeki "PTS Baslat" (ya da C:\PTS\calistir.bat)
+Baslatma : PTS Windows acilisinda kendiliginden baslar (Gorev Zamanlayici,
+           "PTS" gorevi, SYSTEM hesabi). Elle baslatmak: yonetici komut
+           isteminde  schtasks /Run /TN PTS
 Panel    : Masaustundeki "PTS Paneli" ya da http://localhost:8000
            Diger bilgisayarlardan: http://<bu bilgisayarin IP adresi>:8000
 
@@ -57,6 +71,10 @@ Ilk acilis:
 
 Kameralar plaka okumuyorsa: "Microsoft Visual C++ 2015-2022 Redistributable
 (x64)" kurulu olmayabilir -- https://aka.ms/vs/17/release/vc_redist.x64.exe
+
+Guvenlik : Panel portlarini yalnizca izinli bilgisayarlara acmak icin
+           yonetici PowerShell'de C:\PTS\guvenlik_duvari.ps1 (-Kontrol ile rapor).
+           C:\PTS klasorune yalnizca Yoneticiler (yonetici olarak) erisir.
 
 Kaldirma veritabanini, goruntuleri ve ayarlari SILMEZ.
 NOT

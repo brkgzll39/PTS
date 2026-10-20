@@ -1,0 +1,22 @@
+﻿PTS - PLAKA TANIMA SİSTEMİ
+SON KULLANICI LİSANS SÖZLEŞMESİ
+
+Bu yazılımı kurarak veya kullanarak aşağıdaki koşulları kabul etmiş sayılırsınız. Kabul etmiyorsanız kurulumu iptal edin.
+
+1. Lisans. PTS yazılımının (programın, derlenmiş kodunun, arayüzünün, modellerinin ve belgelerinin) tüm hakları yazılımın sahibi Lisans Veren'e aittir. Size, yalnızca Lisans Veren'in verdiği lisans anahtarında belirtilen süre, kamera sayısı ve (varsa) cihaz için, devredilemez ve münhasır olmayan bir kullanım hakkı tanınır. Yazılım satılmamakta, kullanım için lisanslanmaktadır.
+
+2. Yasaklar. Aşağıdakiler açıkça yasaktır:
+   a) Yazılımın veya herhangi bir parçasının kopyalanması (yedekleme amaçlı kurulum kopyası hariç), çoğaltılması, kiralanması, satılması, dağıtılması veya üçüncü kişilere verilmesi;
+   b) Tersine mühendislik, kaynak koda dönüştürme (decompile), çözümleme (disassemble) veya bunlara yönelik herhangi bir girişim;
+   c) Yazılımın değiştirilmesi, türev eserler oluşturulması, lisans denetimlerinin veya teknik koruma önlemlerinin aşılması ya da devre dışı bırakılması;
+   d) Lisans anahtarının paylaşılması veya başka bir bilgisayarda kullanılması.
+
+3. Koruma önlemleri. Yazılım derlenmiş olarak ve erişimi kısıtlanmış bir klasöre kurulur. Bu önlemlerin aşılması 5846 sayılı Fikir ve Sanat Eserleri Kanunu ve ilgili mevzuat kapsamında hukuki ve cezai sorumluluk doğurur.
+
+4. Kişisel veriler. Yazılımın işlediği plaka, görüntü ve kişi bilgileri bakımından veri sorumlusu yazılımı kullanan kurumdur. 6698 sayılı Kişisel Verilerin Korunması Kanunu'na uygun kullanım kullanıcının sorumluluğundadır.
+
+5. Garanti ve sorumluluk. Yazılım "olduğu gibi" sağlanır. Plaka okuma, bariyer ve tabela işlevleri yardımcı niteliktedir; güvenlik görevlisinin denetiminin yerine geçmez. Lisans Veren, yürürlükteki mevzuatın izin verdiği ölçüde, yazılımın kullanımından doğan dolaylı zararlardan sorumlu değildir.
+
+6. Sona erme. Bu koşulların ihlali halinde lisans kendiliğinden sona erer; yazılımın kullanımı durdurulmalı ve tüm kopyaları silinmelidir.
+
+7. Uyuşmazlıklar. Bu sözleşmeye Türkiye Cumhuriyeti hukuku uygulanır.

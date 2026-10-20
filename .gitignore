@@ -23,3 +23,6 @@ disa_aktarilanlar/*
 goruntuler/*
 installer/output/
 loglar/*
+# Lisans verenin ÖZEL anahtarı -- asla depoya girmesin
+lisans_ozel_anahtar.key
+*.key
