@@ -17,5 +17,3 @@ Kullanıcı "ne kaldı" diye sorduğunda bu liste hatırlatılır.
   SQL Server 1433 kuralı kapatıldı mı; Telegram bot anahtarı iptal edildi mi.
 - [ ] Huidu tabela yazma süresi (~0,8 sn): iki bölgeyi tek bağlantıda gönderme --
   canlı panelde deneme gerektirir, kullanıcı onayıyla.
-- [ ] Panel arayüzü Bootstrap/Chart.js'i internetten (CDN) yüklüyor; internetsiz
-  müşteri kurulumunda arayüz bozulur -- kütüphaneleri pakete gömmek.

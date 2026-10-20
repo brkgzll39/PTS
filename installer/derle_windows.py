@@ -93,13 +93,16 @@ def frontend_hazirla(cikti: str) -> None:
     npx = shutil.which("npx") or shutil.which("npx.cmd")
     if not npx:
         raise SystemExit("HATA: npx (Node.js) bulunamadı")
-    for js in glob.glob(os.path.join(hedef, "**", "*.js"), recursive=True):
+    vendor = os.path.join(hedef, "vendor") + os.sep
+    kendi = lambda desen: [p for p in glob.glob(os.path.join(hedef, "**", desen), recursive=True)
+                           if not p.startswith(vendor)]  # kütüphaneler zaten küçük; lisans başlıkları kalsın
+    for js in kendi("*.js"):
         # Üst düzey fonksiyon adları KARIŞTIRILMAZ: index.html'deki onclick="..."
         # bunları adıyla çağırır. Yerel değişkenler ve yorumlar gider.
         _calistir([npx, "--yes", TERSER, js, "--compress", "--mangle", "--comments", "false", "-o", js])
-    for css in glob.glob(os.path.join(hedef, "**", "*.css"), recursive=True):
+    for css in kendi("*.css"):
         _css_html_yorumsuz(css, r"/\*.*?\*/")
-    for html in glob.glob(os.path.join(hedef, "**", "*.html"), recursive=True):
+    for html in kendi("*.html"):
         _css_html_yorumsuz(html, r"<!--.*?-->")
 
 

@@ -8,7 +8,7 @@
 // (ana sayfa kabuğu) bu SW'nin kapsamına girer; başka HİÇBİR istek yakalanmaz,
 // tarayıcı onu her zamanki gibi doğrudan sunucuya/ağa yönlendirir.
 
-const SURUM = "pts-shell-v1";
+const SURUM = "pts-shell-v2";
 const KABUK_DOSYALARI = [
   "/",
   "/static/style.css",
@@ -17,6 +17,12 @@ const KABUK_DOSYALARI = [
   "/static/img/tpao-logo.png",
   "/static/img/icon-192.png",
   "/static/img/icon-512.png",
+  "/static/vendor/bootstrap/bootstrap.min.css",
+  "/static/vendor/bootstrap/bootstrap.bundle.min.js",
+  "/static/vendor/bootstrap-icons/bootstrap-icons.min.css",
+  "/static/vendor/bootstrap-icons/fonts/bootstrap-icons.woff2",
+  "/static/vendor/ibm-plex-sans/ibm-plex-sans.css",
+  "/static/vendor/chart.js/chart.umd.min.js",
 ];
 
 self.addEventListener("install", (event) => {
