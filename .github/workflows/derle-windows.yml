@@ -17,6 +17,9 @@ jobs:
     if: github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[derle')
     runs-on: windows-2022
     timeout-minutes: 60
+    env:
+      PYTHONUTF8: "1"          # Windows konsolu (cp1252) Türkçe karakterde çöküyordu
+      PYTHONIOENCODING: utf-8
     steps:
       - uses: actions/checkout@v4
 

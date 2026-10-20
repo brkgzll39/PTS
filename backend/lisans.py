@@ -30,7 +30,7 @@ IMZALI_LISANS_VERSIYONU = "PTS2"   # 2026-10-20: Ed25519 açık anahtarlı imza
 # Lisans verenin Ed25519 AÇIK anahtarı (64 hex). Yalnızca doğrulama yapar;
 # bununla lisans ÜRETİLEMEZ. Özel anahtar lisans verenin bilgisayarında kalır
 # (bkz. araclar/lisans_araci.py). Boşsa PTS2 lisanslar kabul edilmez.
-ACIK_ANAHTAR_HEX = ""
+ACIK_ANAHTAR_HEX = "738500b7f97c53fc8dcfc0756e5136647dbe915368e9b24ea487aba92845f57b"
 
 # Eski (PTS1/HMAC) lisanslar kabul edilsin mi? Kaynak koddan çalışan kurulumda
 # (lisans verenin kendi sistemi) şimdilik True. Müşteriye giden DERLENMİŞ
