@@ -34,6 +34,9 @@ for arac in git makensis uv curl tar sha256sum; do
   command -v "$arac" >/dev/null || { echo "HATA: '$arac' bulunamadı" >&2; exit 1; }
 done
 mkdir -p "$KAYNAK" "$ONBELLEK"
+# 2026-10-20: betik GitHub Actions'ta Windows'ta (Git Bash) da çalışır; yerel
+# Windows programlarına (makensis, python) verilen yollar Windows biçiminde olmalı.
+yol() { if command -v cygpath >/dev/null 2>&1; then cygpath -w "$1"; else echo "$1"; fi; }
 echo "Çalışma klasörü: $CALISMA"
 
 # 2026-10-20: MÜŞTERİ paketi derlenmiş koddan yapılır (kaynak kod girmez):
@@ -101,7 +104,8 @@ mkdir -p "$SAHTE_HOME"
 FAST_ALPR_SURUM=$(grep -E '^fast-alpr==' "$KOK/backend/requirements-windows.txt" | cut -d= -f3)
 OCR_PAKET=$(grep -E '^fast-plate-ocr==' "$KOK/backend/requirements-windows.txt")
 OIM_PAKET=$(grep -E '^open-image-models==' "$KOK/backend/requirements-windows.txt")
-HOME="$SAHTE_HOME" uv run --no-project --python 3.12 \
+# Path.home(): Linux'ta HOME, Windows'ta USERPROFILE.
+HOME="$SAHTE_HOME" USERPROFILE="$(yol "$SAHTE_HOME")" uv run --no-project --python 3.12 \
   --with "fast-alpr[onnx]==${FAST_ALPR_SURUM}" --with "$OCR_PAKET" --with "$OIM_PAKET" -- python -c "
 from fast_alpr import ALPR
 ALPR(detector_model='$DEDEKTOR', ocr_model='$OCR')
@@ -112,6 +116,6 @@ cp -r "$SAHTE_HOME/.cache/open-image-models" "$SAHTE_HOME/.cache/fast-plate-ocr"
 echo "5/5 makensis..."
 SURUM="$(date +%Y.%m.%d)"
 mkdir -p "$(dirname "$CIKTI")"
-makensis -V2 -DKAYNAK="$KAYNAK" -DSURUM="$SURUM" -DCIKTI="$CIKTI" "$KOK/installer/PTS.nsi"
+makensis -V2 -DKAYNAK="$(yol "$KAYNAK")" -DSURUM="$SURUM" -DCIKTI="$(yol "$CIKTI")" "$(yol "$KOK/installer/PTS.nsi")"
 ls -la "$CIKTI"
 sha256sum "$CIKTI"

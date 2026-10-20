@@ -46,6 +46,8 @@ jobs:
           $ek = @()
           if ("$env:COMMIT_MESAJI".Contains("[derle-test]")) { $ek += "--test-anahtarsiz" }
           python installer/derle_windows.py --cikti derlenmis @ek
+          # Kurulum programı, sunucu denemesi dosya üretmeden ÖNCEKİ temiz kopyadan yapılır.
+          Copy-Item -Recurse derlenmis derlenmis_temiz
 
       - name: Kaynak dosya kalmadi mi
         shell: pwsh
@@ -88,8 +90,18 @@ jobs:
           cd test_derlenmis
           python -m pytest tests -q -x -p no:cacheprovider 2>&1 | Select-Object -Last 40
 
+      - name: Kurulum programi (PTS-Kurulum.exe)
+        shell: bash
+        run: |
+          pip install uv==0.8.13
+          choco install nsis -y --no-progress
+          export PATH="/c/Program Files (x86)/NSIS:$PATH"
+          PTS_DERLENMIS="$PWD/derlenmis_temiz" PTS_SETUP_CALISMA="$RUNNER_TEMP/setup" \
+            bash installer/setup_olustur.sh "$PWD/cikti/PTS-Kurulum.exe"
+
       - uses: actions/upload-artifact@v4
         with:
-          name: pts-derlenmis
-          path: derlenmis
-          retention-days: 7
+          name: PTS-Kurulum
+          path: cikti/PTS-Kurulum.exe
+          compression-level: 0
+          retention-days: 30
