@@ -10,9 +10,8 @@ Kullanıcı "ne kaldı" diye sorduğunda bu liste hatırlatılır.
   üret → panelden etkinleştir → `ESKI_LISANS_KABUL = False` yap → `.env`'deki
   `PTS_LICENSE_SECRET` artık gereksiz. (Müşteriye giden derlenmiş pakette bu
   zaten kapalı.)
-- [ ] Lisans verenin açık anahtarını `backend/lisans.py::ACIK_ANAHTAR_HEX`'e yaz
-  (kullanıcı `araclar/lisans_araci.py anahtar-olustur` çıktısını gönderecek);
-  sonra `[derle]` ile müşteri paketini derle.
+- [ ] Derlenmiş müşteri kurulumunu (Actions "PTS-Kurulum") boş bir Windows'ta uçtan uca dene:
+  kurulum, SYSTEM zamanlanmış görevi, klasör izinleri, lisans etkinleştirme.
 - [ ] Yönetici oturum süresi: "kullandıkça uzasın" mı, süre uzatma mı? (karar bekleniyor)
 - [ ] Güvenlik: `guvenlik_duvari.ps1 -EkIpler "<Tailscale IP'leri>"` uygulandı mı;
   SQL Server 1433 kuralı kapatıldı mı; Telegram bot anahtarı iptal edildi mi.
