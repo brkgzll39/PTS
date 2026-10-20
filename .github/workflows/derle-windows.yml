@@ -96,7 +96,7 @@ jobs:
           pip install uv==0.8.13
           choco install nsis -y --no-progress
           export PATH="/c/Program Files (x86)/NSIS:$PATH"
-          PTS_DERLENMIS="$PWD/derlenmis_temiz" PTS_SETUP_CALISMA="$RUNNER_TEMP/setup" \
+          PTS_DERLENMIS="$PWD/derlenmis_temiz" PTS_SETUP_CALISMA="$(cygpath -u "$RUNNER_TEMP")/setup" \
             bash installer/setup_olustur.sh "$PWD/cikti/PTS-Kurulum.exe"
 
       - uses: actions/upload-artifact@v4
