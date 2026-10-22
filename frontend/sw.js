@@ -8,11 +8,13 @@
 // (ana sayfa kabuğu) bu SW'nin kapsamına girer; başka HİÇBİR istek yakalanmaz,
 // tarayıcı onu her zamanki gibi doğrudan sunucuya/ağa yönlendirir.
 
-const SURUM = "pts-shell-v2";
+const SURUM = "pts-shell-v3";
 const KABUK_DOSYALARI = [
   "/",
   "/static/style.css",
   "/static/app.js",
+  "/static/kapi.js",
+  "/static/kapi.css",
   "/static/manifest.json",
   "/static/img/tpao-logo.png",
   "/static/img/icon-192.png",

@@ -4658,3 +4658,20 @@ gerek kalmadan, **Bölge Müdürlüğü vardiya çizelgesine** göre belirlenir
 - `PTS_KAMERA_ANAHTARI` boşsa `backend.sunucu` her açılışta rastgele üretir:
   ağdaki başka bir cihaz `/kayitlar/otomatik`'e sahte plaka kaydı gönderemez.
 - Parolasız giriş IP listesi boşsa yalnızca sunucunun kendisinden açılır.
+
+## Kapı Modu (2026-10-22)
+
+Kapıdaki görevli için sade ekran (`frontend/kapi.js`, `frontend/kapi.css`):
+**Kapı** (son geçen araç büyük kartta, son geçişler, tek düğmeyle not / plaka
+düzeltme), **İçeridekiler**, **Ara / Rapor** (plaka-isim-not araması, hazır tarih
+düğmeleri, Excel/PDF) ve **Nöbet Defteri**.
+
+- Operatör ve güvenlik hesapları (Lojman/PTS parolasız ekranları dahil) Kapı
+  Modu'yla, yönetici klasik panelle açılır. Üstteki **Gelişmiş** / **Kapı Modu**
+  düğmeleri görünümü değiştirir; tercih o tarayıcıda saklanır.
+- Not penceresinde tek alan vardır (isim de nota yazılır); sık notlar düğmedir.
+  Ziyaretçide "Kaydet ve Ziyaretçiyi Onayla" tek adımdır.
+- "Plaka Yanlış": düzeltilen plaka sahibine göre kayıt yeniden değerlendirilir
+  (`PATCH /kayitlar/{id}` `yeniden_degerlendir: true`).
+- `/kayitlar`, sayfa bilgisi ve Excel/PDF: `arama` (plaka/not/kişi adı) ve
+  `kim` (personel | ziyaretci | alt_isveren | vip) parametreleri.

@@ -6266,6 +6266,38 @@ def kayit_nizamiyeleri(db: Session = Depends(get_db),
             for anahtar, adlar in sorted(gruplar.items())]
 
 
+_KIM_FILTRELERI = ("personel", "ziyaretci", "alt_isveren", "vip")
+
+
+def _arama_ve_kim_filtresi(sorgu, arama: Optional[str], kim: Optional[str], db: Session):
+    """Kapı Modu "Ara / Rapor" (2026-10-22): `arama` plaka (boşluksuz da),
+    not, misafir adı ve kişi adında arar; `kim` geçişin kimin olduğunu süzer:
+    personel (yetkili, ziyaretçi/alt işveren/VIP olmayan), ziyaretci (tanımsız,
+    onaylı ya da süresi dolmuş ziyaretçi), alt_isveren, vip."""
+    K = models.Kayit
+    metin = (arama or "").strip()
+    if metin:
+        desen = f"%{metin}%"
+        sade = _plaka_normalize(metin)
+        kisi_idleri = db.query(models.Kisi.id).filter(models.Kisi.ad_soyad.ilike(desen))
+        kosullar = [K.not_metni.ilike(desen), K.misafir_adi.ilike(desen), K.kisi_id.in_(kisi_idleri)]
+        if sade:
+            kosullar.append(_plaka_normalize_sql(K.plaka_no).like(f"%{sade}%"))
+        sorgu = sorgu.filter(or_(*kosullar))
+    if kim:
+        if kim not in _KIM_FILTRELERI:
+            raise HTTPException(400, f"kim şunlardan biri olmalı: {', '.join(_KIM_FILTRELERI)}")
+        if kim == "personel":
+            sorgu = sorgu.filter(K.yetki_durumu == "yetkili",
+                                 or_(K.kisi_tip_anlik.is_(None), K.kisi_tip_anlik.notin_(("ziyaretci", "alt_isveren", "vip"))))
+        elif kim == "ziyaretci":
+            sorgu = sorgu.filter(or_(K.yetki_durumu.in_(("yetkisiz", "ziyaretci_onayli", "suresi_dolmus")),
+                                     and_(K.yetki_durumu == "yetkili", K.kisi_tip_anlik == "ziyaretci")))
+        else:
+            sorgu = sorgu.filter(K.yetki_durumu == "yetkili", K.kisi_tip_anlik == kim)
+    return sorgu
+
+
 @app.get("/kayitlar", response_model=List[schemas.KayitCevap])
 def kayitlari_listele(
     plaka: Optional[str] = None,
@@ -6281,10 +6313,13 @@ def kayitlari_listele(
     kullanici: models.Kullanici = Depends(_personel_girisi_gerekli),
     dogrulama: Optional[str] = None,
     nizamiye: Optional[str] = None,
+    arama: Optional[str] = None,
+    kim: Optional[str] = None,
 ):
     sorgu = db.query(models.Kayit)
     sorgu = _dogrulama_filtresi_uygula(sorgu, dogrulama)
     sorgu = _nizamiye_filtresi_uygula(sorgu, nizamiye, db)
+    sorgu = _arama_ve_kim_filtresi(sorgu, arama, kim, db)
     if plaka:
         sorgu = sorgu.filter(models.Kayit.plaka_no.ilike(f"%{plaka}%"))
     if yetki_durumu:
@@ -6358,11 +6393,14 @@ def kayitlar_sayfa_bilgisi(
     kullanici: models.Kullanici = Depends(_personel_girisi_gerekli),
     dogrulama: Optional[str] = None,
     nizamiye: Optional[str] = None,
+    arama: Optional[str] = None,
+    kim: Optional[str] = None,
 ):
     """Sayfalama için toplam kayıt sayısını döndürür."""
     sorgu = db.query(models.Kayit)
     sorgu = _dogrulama_filtresi_uygula(sorgu, dogrulama)
     sorgu = _nizamiye_filtresi_uygula(sorgu, nizamiye, db)
+    sorgu = _arama_ve_kim_filtresi(sorgu, arama, kim, db)
     if plaka:
         sorgu = sorgu.filter(models.Kayit.plaka_no.ilike(f"%{plaka}%"))
     if yetki_durumu:
@@ -6503,6 +6541,11 @@ def kayit_duzenle(
         if yeni_plaka != kayit.plaka_no:
             kayit.plaka_no = yeni_plaka
             degisti = True
+            if veri.yeniden_degerlendir:
+                yetki, kisi_id, kisi_tip = _plaka_yetki_kontrol(db, yeni_plaka, referans_zaman=kayit.tarih_saat)
+                kayit.yetki_durumu, kayit.kisi_id, kayit.kisi_tip_anlik = yetki, kisi_id, kisi_tip
+                if not (kayit.not_metni or "").strip() and kisi_id is not None:
+                    kayit.not_metni = _kisinin_otomatik_notu(db, kisi_id)
 
     if veri.yon is not None:
         if veri.yon not in ("giris", "cikis"):
@@ -7258,6 +7301,7 @@ def kayitlari_excel_indir(
     plaka: Optional[str] = None, baslangic: Optional[str] = None,
     bitis: Optional[str] = None, vardiya_adi: Optional[str] = None,
     yetki_durumu: Optional[str] = None, dogrulama: Optional[str] = None, nizamiye: Optional[str] = None,
+    arama: Optional[str] = None, kim: Optional[str] = None,
     db: Session = Depends(get_db),
     kullanici: models.Kullanici = Depends(_personel_girisi_gerekli),
 ):
@@ -7294,7 +7338,7 @@ def kayitlari_excel_indir(
             plaka=plaka, baslangic=baslangic, bitis=bitis, yetki_durumu=yetki_durumu or None,
             kamera_id=None, yon=None, vardiya_adi=vardiya_adi,
             limit=5000, offset=0, db=db, kullanici=kullanici, dogrulama=dogrulama or None,
-            nizamiye=nizamiye or None,
+            nizamiye=nizamiye or None, arama=arama or None, kim=kim or None,
         )
         satirlar = _kayitlari_rapor_satirlari(kayitlar, db)
         dosya_yolu = _gecici_rapor_yolu("pts_kayitlar", "xlsx")
@@ -7308,6 +7352,7 @@ def kayitlari_pdf_indir(
     plaka: Optional[str] = None, baslangic: Optional[str] = None,
     bitis: Optional[str] = None, vardiya_adi: Optional[str] = None,
     yetki_durumu: Optional[str] = None, dogrulama: Optional[str] = None, nizamiye: Optional[str] = None,
+    arama: Optional[str] = None, kim: Optional[str] = None,
     db: Session = Depends(get_db),
     kullanici: models.Kullanici = Depends(_personel_girisi_gerekli),
 ):
@@ -7320,7 +7365,7 @@ def kayitlari_pdf_indir(
             plaka=plaka, baslangic=baslangic, bitis=bitis, yetki_durumu=yetki_durumu or None,
             kamera_id=None, yon=None, vardiya_adi=vardiya_adi,
             limit=2000, offset=0, db=db, kullanici=kullanici, dogrulama=dogrulama or None,
-            nizamiye=nizamiye or None,
+            nizamiye=nizamiye or None, arama=arama or None, kim=kim or None,
         )
         satirlar = _kayitlari_rapor_satirlari(kayitlar, db)
         tarih_araligi_metni = _rapor_tarih_araligi_metni(baslangic, bitis, kayitlar)

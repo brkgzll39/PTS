@@ -516,6 +516,9 @@ class KayitDuzenle(BaseModel):
     kisi_id_temizle: bool = False
     not_metni: Optional[str] = None
     misafir_adi: Optional[str] = Field(None, max_length=100)
+    # Kapı Modu "Plaka Yanlış" (2026-10-22): plaka düzeltilince kayıt yeni
+    # plakanın sahibine göre (personel/ziyaretçi/kara liste) yeniden değerlendirilir.
+    yeniden_degerlendir: bool = False
 
     @field_validator("plaka_no")
     @classmethod

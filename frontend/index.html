@@ -9,6 +9,7 @@
 <link href="/static/vendor/bootstrap-icons/bootstrap-icons.min.css" rel="stylesheet">
 <link href="/static/vendor/ibm-plex-sans/ibm-plex-sans.css" rel="stylesheet">
 <link href="/static/style.css" rel="stylesheet">
+<link href="/static/kapi.css" rel="stylesheet">
 <link rel="manifest" href="/static/manifest.json">
 <link rel="apple-touch-icon" href="/static/img/apple-touch-icon.png">
 <link rel="icon" type="image/png" sizes="192x192" href="/static/img/icon-192.png">
@@ -643,6 +644,7 @@
   <span class="badge bg-info text-dark me-2 d-none" id="cizelgeVardiyaRozet" title="Vardiya çizelgesine göre şu an nöbette olan vardiya"></span>
   <span class="text-white-50 small d-none d-md-inline me-3"><span id="oturumKullanici"></span> <span id="saatGosterge"></span></span>
   <button id="farkliKullaniciButonu" class="btn btn-sm btn-outline-light d-none" onclick="farkliKullaniciylaGiris()" title="Bu bilgisayarda başka bir hesapla (kullanıcı adı ve parolayla) giriş yap"><i class="bi bi-person-gear"></i> Farklı kullanıcı</button>
+  <button class="btn btn-sm btn-outline-light me-2" onclick="gorunumDegistir('kapi')" title="Görevliler için sade ekran"><i class="bi bi-door-open"></i> Kapı Modu</button>
   <button id="cikisButonu" class="btn btn-sm btn-outline-light" onclick="oturumKapat()" title="Çıkış yap"><i class="bi bi-box-arrow-right"></i> Çıkış</button>
 </nav>
 
@@ -716,6 +718,123 @@
     </div>
   </div>
   <footer class="pts-footer">TÜRKİYE PETROLLERİ ANONİM ORTAKLIĞI — PTS Sistemi © 2026. Tüm hakları saklıdır.</footer>
+</div>
+
+<!-- ============================================================
+     KAPI MODU (2026-10-22) -- görevli için sade ekran, bkz. kapi.js / kapi.css
+     ============================================================ -->
+<div id="kapiModu" class="d-none">
+  <div class="kapi-ust">
+    <div class="kapi-logo"><img src="/static/img/tpao-logo.png" alt="TPAO"></div>
+    <div class="kapi-sekmeler" role="tablist">
+      <button class="kapi-sekme aktif" data-kapi-sekme="kapi"><i class="bi bi-door-open"></i> Kapı</button>
+      <button class="kapi-sekme" data-kapi-sekme="iceride"><i class="bi bi-car-front"></i> İçeridekiler <span class="sayi d-none" id="kapiIcerideSayi"></span></button>
+      <button class="kapi-sekme" data-kapi-sekme="ara"><i class="bi bi-search"></i> Ara / Rapor</button>
+      <button class="kapi-sekme" data-kapi-sekme="nobet"><i class="bi bi-journal-text"></i> Nöbet Defteri <span class="sayi d-none nobet-rozet"></span></button>
+    </div>
+    <span class="kapi-vardiya d-none" id="kapiVardiya"></span>
+    <div class="kapi-sag"><b id="kapiKullanici"></b><br><span id="kapiSaat"></span></div>
+    <button class="kapi-kucuk-dugme" onclick="gorunumDegistir('klasik')" title="Tüm menülerin olduğu klasik panel"><i class="bi bi-grid-3x3-gap"></i> Gelişmiş</button>
+    <button class="kapi-kucuk-dugme d-none" id="kapiFarkliKullanici" onclick="farkliKullaniciylaGiris()" title="Başka bir hesapla giriş"><i class="bi bi-person-gear"></i></button>
+    <button class="kapi-kucuk-dugme" id="kapiCikis" onclick="oturumKapat()" title="Çıkış"><i class="bi bi-box-arrow-right"></i></button>
+  </div>
+
+  <div class="kapi-icerik" id="kapiIcerik">
+    <!-- Kapı -->
+    <div id="kapiSekme_kapi">
+      <div class="kapi-izgara">
+        <div class="kapi-kart kapi-son" id="kapiSonKart"></div>
+        <div class="kapi-kart kapi-liste">
+          <div class="kapi-baslik">Son geçişler</div>
+          <div class="kapi-liste-satirlar" id="kapiListe"></div>
+          <label class="kapi-ara-kutu"><i class="bi bi-search"></i><input id="kapiListeAra" type="search" placeholder="Plaka yazın: “34 MRU”…" autocomplete="off"></label>
+        </div>
+      </div>
+    </div>
+
+    <!-- İçeridekiler -->
+    <div id="kapiSekme_iceride" class="d-none">
+      <div class="kapi-ozet" id="kapiOzet"></div>
+      <div class="kapi-kart kapi-tablo">
+        <div class="kapi-tbas"><span>Plaka</span><span>Kim / Not</span><span>Tür</span><span>Girdi</span><span>İçeride</span></div>
+        <div id="kapiIcerideTablo"></div>
+      </div>
+      <div id="kapiOnaysizBolum" class="d-none">
+        <div class="kapi-alt-baslik"><i class="bi bi-hourglass-split"></i> Onay bekleyen girişler (son 24 saat) <span class="kapi-rozet kr-ziyaretci" id="kapiOnaysizSayi"></span></div>
+        <div class="kapi-kart kapi-tablo"><div id="kapiOnaysizTablo"></div></div>
+      </div>
+    </div>
+
+    <!-- Ara / Rapor -->
+    <div id="kapiSekme_ara" class="d-none">
+      <div class="kapi-kart kapi-filtre">
+        <label class="kapi-arama"><i class="bi bi-search"></i><input id="kapiAramaMetin" type="search" placeholder="Plaka, isim ya da not yazın" autocomplete="off"></label>
+        <div class="kapi-filtre-satir" id="kapiAramaTarihler">
+          <span class="kapi-etiket">Tarih</span>
+          <button type="button" class="kapi-secim secili" data-kapi-tarih="bugun">Bugün</button>
+          <button type="button" class="kapi-secim" data-kapi-tarih="dun">Dün + Bugün</button>
+          <button type="button" class="kapi-secim" data-kapi-tarih="hafta">Bu hafta</button>
+          <button type="button" class="kapi-secim" data-kapi-tarih="ay">Bu ay</button>
+          <button type="button" class="kapi-secim" data-kapi-tarih="sec"><i class="bi bi-calendar3"></i> Tarih seç</button>
+          <span class="d-none" id="kapiTarihSecimi"><input type="date" class="kapi-tarih-giris" id="kapiTarihBas" aria-label="Başlangıç"> – <input type="date" class="kapi-tarih-giris" id="kapiTarihBit" aria-label="Bitiş"></span>
+        </div>
+        <div class="kapi-filtre-satir">
+          <span class="kapi-etiket">Kapı</span><span id="kapiAramaKapilar" class="d-flex flex-wrap gap-2"></span>
+        </div>
+        <div class="kapi-filtre-satir" id="kapiAramaKimler">
+          <span class="kapi-etiket">Kim</span>
+          <button type="button" class="kapi-secim secili" data-kapi-kim="">Hepsi</button>
+          <button type="button" class="kapi-secim" data-kapi-kim="personel">Personel</button>
+          <button type="button" class="kapi-secim" data-kapi-kim="ziyaretci">Ziyaretçi</button>
+          <button type="button" class="kapi-secim" data-kapi-kim="alt_isveren">Alt İşveren</button>
+          <div class="kapi-indir">
+            <button class="kapi-dugme kd-excel" id="kapiExcelBtn" onclick="kapiIndir('excel')"><i class="bi bi-file-earmark-excel"></i> Excel indir</button>
+            <button class="kapi-dugme kd-pdf" id="kapiPdfBtn" onclick="kapiIndir('pdf')"><i class="bi bi-file-earmark-pdf"></i> PDF indir</button>
+          </div>
+        </div>
+      </div>
+      <div class="kapi-kart kapi-tablo">
+        <div class="kapi-sonuc" id="kapiAramaOzet"></div>
+        <div class="kapi-rtbas"><span>Saat</span><span>Plaka</span><span>Kim / Not</span><span>Tür</span><span>Kapı</span></div>
+        <div id="kapiAramaTablo"></div>
+        <button class="kapi-dugme kd-acik kapi-daha d-none" id="kapiAramaDaha" onclick="kapiAramaDahaFazla()">Daha fazla göster</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Not penceresi -->
+  <div class="kapi-perde d-none" id="kapiNotPencere">
+    <div class="kapi-pencere" role="dialog" aria-modal="true" aria-label="Not ekle">
+      <div class="bas"><span id="kapiNotBas" class="d-flex align-items-center gap-3 flex-wrap"></span><button class="kapat" onclick="kapiPencereKapat()" aria-label="Kapat"><i class="bi bi-x-lg"></i></button></div>
+      <div class="alt-bilgi" id="kapiNotAlt"></div>
+      <div class="kapi-uyari d-none" id="kapiNotUyari"><i class="bi bi-slash-circle"></i> Bu araç KARA LİSTEDE.</div>
+      <h3>Bir dokunuşla seç</h3>
+      <div class="kapi-cipler" id="kapiNotCipler"></div>
+      <h3>Not (isim de buraya yazılır)</h3>
+      <textarea class="kapi-alan" id="kapiNotAlani" maxlength="500" placeholder="Örn. Kargo — Yurtiçi, sürücü Ahmet Yılmaz"></textarea>
+      <div class="kapi-yardim">Seçtiğiniz düğme nota eklenir; dilerseniz yanına açıklama yazın.</div>
+      <div class="kapi-dugmeler">
+        <button class="kapi-dugme kd-yesil d-none" id="kapiNotOnayla" style="flex:2" onclick="kapiNotKaydet(true)"><i class="bi bi-check2-circle"></i> Kaydet ve Ziyaretçiyi Onayla</button>
+        <button class="kapi-dugme kd-ana" id="kapiNotKaydet" onclick="kapiNotKaydet(false)">Kaydet</button>
+        <button class="kapi-dugme kd-acik" onclick="kapiPencereKapat()">Vazgeç</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Plaka düzelt penceresi -->
+  <div class="kapi-perde d-none" id="kapiPlakaPencere">
+    <div class="kapi-pencere" style="width: 620px" role="dialog" aria-modal="true" aria-label="Plakayı düzelt">
+      <div class="bas"><h3 class="m-0" style="font-size:20px">Kamera yanlış okudu</h3><button class="kapat" onclick="kapiPencereKapat()" aria-label="Kapat"><i class="bi bi-x-lg"></i></button></div>
+      <div class="alt-bilgi">Okunan: <span id="kapiPlakaEski" style="font-size:24px"></span></div>
+      <h3>Doğru plaka</h3>
+      <input type="text" class="kapi-alan tek" id="kapiPlakaYeni" maxlength="15" autocomplete="off" placeholder="34 ABC 123">
+      <div class="kapi-yardim">Kaydedince araç sahibine göre (personel, ziyaretçi…) yeniden değerlendirilir.</div>
+      <div class="kapi-dugmeler">
+        <button class="kapi-dugme kd-ana" id="kapiPlakaKaydetBtn" style="flex:2" onclick="kapiPlakaKaydet()"><i class="bi bi-check2"></i> Düzelt</button>
+        <button class="kapi-dugme kd-acik" onclick="kapiPencereKapat()">Vazgeç</button>
+      </div>
+    </div>
+  </div>
 </div>
 
 <div class="app-layout">
@@ -2218,5 +2337,6 @@
 <script src="/static/vendor/bootstrap/bootstrap.bundle.min.js"></script>
 <script src="/static/vendor/chart.js/chart.umd.min.js"></script>
 <script src="/static/app.js"></script>
+<script src="/static/kapi.js"></script>
 </body>
 </html>

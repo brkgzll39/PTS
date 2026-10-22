@@ -851,6 +851,9 @@ function authBasarili(kullanici) {
   _pwaKisaYolunuUygula();
   _nobetDefteriniBaslat();
   _cizelgeBaslat();
+  // Kapı Modu (2026-10-22, bkz. kapi.js): görevlinin sade ekranı. Klasik panel
+  // arkada yüklü kalır (Nöbet Defteri, canlı bildirim, okunmamış not penceresi).
+  if (typeof kapiModuAcilsinMi === "function" && kapiModuAcilsinMi()) kapiModunuBaslat(kullanici);
 }
 
 async function uygulamaVerileriniYukle() {
@@ -4509,6 +4512,8 @@ function _sseBaslatFetch(token) {
 function _sseKayitAl(kayit) {
   sonKayitlarCache.unshift(kayit);
   if (sonKayitlarCache.length > 500) sonKayitlarCache.pop();
+  const kapiModu = document.body.classList.contains("kapi-modu");
+  if (kapiModu && typeof kapiYeniKayit === "function") kapiYeniKayit(kayit);
 
   const tip = kayit.yetki_durumu === "yetkili" ? "basari"
     : kayit.yetki_durumu === "kara_liste" ? "kara"
@@ -4518,7 +4523,8 @@ function _sseKayitAl(kayit) {
   // de olduğu gibi direkt olarak onun üstüne tıklayıp not ve onay ekranının
   // açılmasını istiyorum" -- "Son Geçişler" panelindeki satırların davranışı
   // (olayDetayAc(id)) burada da aynen uygulanıyor.
-  toastGoster(`${kayit.plaka_no} · ${yon} · ${kayit.kamera_id}`, tip, () => olayDetayAc(kayit.id));
+  // Kapı Modu'nda yeni geçiş zaten büyük kartta görünür; ayrıca bildirim balonu çıkmaz.
+  if (!kapiModu) toastGoster(`${kayit.plaka_no} · ${yon} · ${kayit.kamera_id}`, tip, () => olayDetayAc(kayit.id));
 
   // Panel'deki canlı olay listesini anlık güncelle (sıfır gecikmeli ilk his)
   const canliOlaylar = document.getElementById("canliOlaylar");

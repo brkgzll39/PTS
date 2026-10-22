@@ -7917,3 +7917,48 @@ def test_rapor_dosya_adi_filtrelenen_tarihlerden(client, yetkili_header):
                    headers=yetkili_header)
     assert r.status_code == 200, r.text
     assert "21.10.2026 kayıt.pdf" in unquote(r.headers["content-disposition"])
+
+
+def test_kayitlar_arama_ve_kim_filtresi(client, yetkili_header):
+    """2026-10-22 Kapı Modu "Ara / Rapor": arama plaka (boşluksuz), not ve kişi
+    adında; kim = personel / ziyaretci / alt_isveren."""
+    for k in ({"ad_soyad": "Arama Personel", "plaka_no": "34 QKP 01", "tip": "personel"},
+              {"ad_soyad": "Arama Firma", "plaka_no": "34 QKA 02", "tip": "alt_isveren", "daire_departman": "Garson"}):
+        assert client.post("/kisiler", json=k, headers=yetkili_header).status_code == 200
+    for plaka, notu in (("34 QKP 01", None), ("34 QKA 02", None), ("34 QKZ 03", "aramakargo teslim")):
+        r = client.post("/kayitlar", json={"plaka_no": plaka, "kamera_id": "TEST", "yon": "giris",
+                                           **({"not_metni": notu} if notu else {})}, headers=yetkili_header)
+        assert r.status_code == 200, r.text
+    pts_main._led_kuyrugunu_bekle()
+
+    def plakalar(**p):
+        r = client.get("/kayitlar", params={"limit": 500, **p}, headers=yetkili_header)
+        assert r.status_code == 200, r.text
+        return {k["plaka_no"] for k in r.json() if k["plaka_no"].startswith("34 QK")}
+
+    assert plakalar(arama="34QKP01") == {"34 QKP 01"}                 # boşluksuz plaka
+    assert plakalar(arama="aramakargo") == {"34 QKZ 03"}               # not
+    assert plakalar(arama="Arama Firma") == {"34 QKA 02"}              # kişi adı
+    assert plakalar(arama="34 QK", kim="personel") == {"34 QKP 01"}
+    assert plakalar(arama="34 QK", kim="alt_isveren") == {"34 QKA 02"}
+    assert plakalar(arama="34 QK", kim="ziyaretci") == {"34 QKZ 03"}
+    sayi = client.get("/kayitlar/sayfa-bilgisi", params={"arama": "34 QK", "kim": "alt_isveren"}, headers=yetkili_header).json()
+    assert sayi["toplam"] == 1
+    assert client.get("/kayitlar", params={"kim": "yanlis"}, headers=yetkili_header).status_code == 400
+    r = client.get("/disa-aktar/excel/kayitlar", params={"arama": "34 QK", "kim": "personel"}, headers=yetkili_header)
+    assert r.status_code == 200
+
+
+def test_plaka_duzeltme_yeniden_degerlendirir(client, yetkili_header):
+    """2026-10-22 Kapı Modu "Plaka Yanlış": düzeltilen plaka sahibine göre kayıt
+    yeniden değerlendirilir ve kişinin otomatik notu yazılır."""
+    assert client.post("/kisiler", json={"ad_soyad": "Düzeltme Servis", "plaka_no": "34 DZT 10", "tip": "alt_isveren",
+                                         "otomatik_not": "Servis"}, headers=yetkili_header).status_code == 200
+    r = client.post("/kayitlar", json={"plaka_no": "34 DZT 18", "kamera_id": "TEST", "yon": "giris"}, headers=yetkili_header)
+    assert r.json()["yetki_durumu"] == "yetkisiz"
+    pts_main._led_kuyrugunu_bekle()
+    r = client.patch(f"/kayitlar/{r.json()['id']}", json={"plaka_no": "34 DZT 10", "yeniden_degerlendir": True},
+                     headers=yetkili_header)
+    assert r.status_code == 200, r.text
+    v = r.json()
+    assert (v["plaka_no"], v["yetki_durumu"], v["kisi_tip_anlik"], v["not_metni"]) == ("34 DZT 10", "yetkili", "alt_isveren", "Servis")
