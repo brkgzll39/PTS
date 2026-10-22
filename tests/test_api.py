@@ -7904,3 +7904,16 @@ def test_alt_isveren_gorevi_kayitlarda_ve_iceride_gorunur(client, yetkili_header
     pts_main._led_kuyrugunu_bekle()
     kayitlar = client.get("/kayitlar", params={"plaka": "BHC"}, headers=yetkili_header).json()
     assert kayitlar and kayitlar[0]["kisi_departman"] == "Bahçivan" and kayitlar[0]["kisi_tip_anlik"] == "alt_isveren"
+
+
+def test_rapor_dosya_adi_filtrelenen_tarihlerden(client, yetkili_header):
+    """2026-10-22: Excel/PDF dosya adı filtrelenen tarihler ("21.10.2026-22.10.2026 kayıt.xlsx")."""
+    from urllib.parse import unquote
+    r = client.get("/disa-aktar/excel/kayitlar", params={"baslangic": "2026-10-21", "bitis": "2026-10-22"},
+                   headers=yetkili_header)
+    assert r.status_code == 200, r.text
+    assert "21.10.2026-22.10.2026 kayıt.xlsx" in unquote(r.headers["content-disposition"])
+    r = client.get("/disa-aktar/pdf/kayitlar", params={"baslangic": "2026-10-21", "bitis": "2026-10-21"},
+                   headers=yetkili_header)
+    assert r.status_code == 200, r.text
+    assert "21.10.2026 kayıt.pdf" in unquote(r.headers["content-disposition"])

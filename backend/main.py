@@ -7183,6 +7183,33 @@ def _gecici_rapor_yolu(on_ek: str, uzanti: str) -> str:
     return os.path.join(DISA_AKTAR_KLASORU, f"{on_ek}_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:8]}.{uzanti}")
 
 
+def _rapor_dosya_adi(baslangic: Optional[str], bitis: Optional[str], kayitlar: list,
+                     nizamiye: Optional[str], uzanti: str, db: Session) -> str:
+    """İndirilen raporun adı: filtrelenen tarihler (2026-10-22 kullanıcı isteği:
+    "21.10.2026-22.10.2026 kayıt gibi"). Tarih filtresi yoksa raporun içindeki
+    kayıtların en eski/en yeni günü kullanılır; tek günse tek tarih yazılır.
+    Saat yazılmaz (Windows dosya adında ':' kullanılamaz)."""
+    tarihler = [k.tarih_saat for k in kayitlar if getattr(k, "tarih_saat", None)]
+
+    def gun(deger, ad, varsayilan):
+        if deger:
+            try:
+                return _iso_tarih_parametresini_coz(deger, ad).strftime("%d.%m.%Y")
+            except HTTPException:
+                pass
+        return varsayilan.strftime("%d.%m.%Y") if varsayilan else None
+
+    ilk = gun(baslangic, "baslangic", min(tarihler) if tarihler else None)
+    son = gun(bitis, "bitis", max(tarihler) if tarihler else None)
+    if ilk and son and ilk != son:
+        aralik = f"{ilk}-{son}"
+    else:
+        aralik = ilk or son or datetime.now().strftime("%d.%m.%Y")
+    ek = f" {_nizamiye_basligi(nizamiye, db)}" if nizamiye else ""
+    ad = re.sub(r'[\\/:*?"<>|]', "", f"{aralik}{ek} kayıt").strip()
+    return f"{ad}.{uzanti}"
+
+
 def _indirip_sil(dosya_yolu: str, dosya_adi: str, media_type: str) -> FileResponse:
     """Dosyayı indirir ve yanıt gönderildikten SONRA diskten siler."""
     return FileResponse(
@@ -7273,7 +7300,7 @@ def kayitlari_excel_indir(
         dosya_yolu = _gecici_rapor_yolu("pts_kayitlar", "xlsx")
         _raporu_uret(excel_export.kayitlar_excel_olustur, satirlar, dosya_yolu,
                      nizamiyeler=_tanimli_nizamiyeler())
-    return _indirip_sil(dosya_yolu, "pts_kayitlari.xlsx", _XLSX_MEDIA)
+    return _indirip_sil(dosya_yolu, _rapor_dosya_adi(baslangic, bitis, kayitlar, nizamiye, "xlsx", db), _XLSX_MEDIA)
 
 
 @app.get("/disa-aktar/pdf/kayitlar")
@@ -7301,7 +7328,7 @@ def kayitlari_pdf_indir(
         baslik = f"GEÇİŞ RAPORU - {_nizamiye_basligi(nizamiye, db)}" if nizamiye else "GEÇİŞ RAPORU"
         _raporu_uret(pdf_export.kayitlar_pdf_olustur, satirlar, dosya_yolu,
                      tarih_araligi_metni=tarih_araligi_metni, baslik=baslik)
-    return _indirip_sil(dosya_yolu, "pts_kayitlari.pdf", "application/pdf")
+    return _indirip_sil(dosya_yolu, _rapor_dosya_adi(baslangic, bitis, kayitlar, nizamiye, "pdf", db), "application/pdf")
 
 
 @app.get("/disa-aktar/pdf/kayit/{kayit_id}")

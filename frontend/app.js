@@ -3143,6 +3143,18 @@ function sayfaDegistir(delta) {
 // filtreye uyan TÜM kayıtlarla (üst sınıra kadar) üretilir.
 let _disaAktarmaSuruyor = false;
 
+// Content-Disposition'dan dosya adı. Türkçe karakterli adlar (ör. "21.10.2026 kayıt.xlsx",
+// 2026-10-22) RFC 5987 biçiminde gelir: filename*=utf-8''...
+function _indirmeDosyaAdi(cevap, varsayilan) {
+  const baslik = cevap.headers.get("Content-Disposition") || "";
+  const utf = baslik.match(/filename\*=(?:utf-8|UTF-8)''([^;]+)/);
+  if (utf) {
+    try { return decodeURIComponent(utf[1].trim()); } catch { /* düz ada düş */ }
+  }
+  const duz = baslik.match(/filename="?([^";]+)"?/i);
+  return duz ? duz[1] : varsayilan;
+}
+
 async function disaAktar(tur) {
   if (_disaAktarmaSuruyor) {
     toastGoster("Bir rapor zaten hazırlanıyor, lütfen bekleyin.", "bilgi");
@@ -3168,8 +3180,7 @@ async function disaAktar(tur) {
     }
     const blob = await cevap.blob();
     let dosyaAdi = tur === "pdf" ? "pts_kayitlari.pdf" : "pts_kayitlari.xlsx";
-    const eslesme = (cevap.headers.get("Content-Disposition") || "").match(/filename="?([^";]+)"?/i);
-    if (eslesme) dosyaAdi = eslesme[1];
+    dosyaAdi = _indirmeDosyaAdi(cevap, dosyaAdi);
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
