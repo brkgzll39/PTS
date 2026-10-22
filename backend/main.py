@@ -237,6 +237,9 @@ def _veritabani_migrasyon() -> None:
         # koşulsuz çalıştırılıyor (WHERE koşulu sayesinde etkisiz/idempotent --
         # düzeltilecek satır kalmadıysa hiçbir şey değiştirmez).
         "UPDATE plaka_kayitlari SET manuel_giris = 0 WHERE manuel_giris IS NULL",
+        # "Otomatik not" (2026-10-22) -- bkz. models.Kisi.otomatik_not. Türkçe
+        # karakter (İ, Ş...) için SQL Server'da NVARCHAR.
+        f"ALTER TABLE kisiler ADD {col_kw}otomatik_not {'VARCHAR(100)' if sqlite_mod else 'NVARCHAR(100)'}",
     ]
     with engine.connect() as conn:
         for sql in adimlar:
@@ -5136,6 +5139,12 @@ def _ayni_gun_onceki_not(db: Session, plaka_no: str, simdi: Optional[datetime] =
     return (son[0] or "").strip() or None
 
 
+def _kisinin_otomatik_notu(db: Session, kisi_id: int) -> Optional[str]:
+    """Kişide tanımlı otomatik not (bkz. models.Kisi.otomatik_not); yoksa None."""
+    deger = db.query(models.Kisi.otomatik_not).filter(models.Kisi.id == kisi_id).scalar()
+    return (deger or "").strip() or None
+
+
 def _kamera_okumasi_farki(plaka_no: str, kamera_okumasi: Optional[str]) -> Optional[str]:
     """Kameranın kendi okuması kaydedilen plakadan FARKLIYSA saklanacak metin
     (bkz. models.Kayit.kamera_okumasi); aynıysa (ör. bilinen plaka düzeltmesi
@@ -5211,6 +5220,11 @@ def _kayit_olustur_ve_bildir(db: Session, plaka_no: str, kamera_id: str, yon: st
     # önerilerek dolar ve görevli bilerek boş bırakmış olabilir.
     if not_metni_temiz is None and not manuel_giris:
         not_metni_temiz = _ayni_gun_onceki_not(db, plaka_no)
+    # 2026-10-22 kullanıcı isteği: TPIC / personel servisi araçlarında görevli
+    # her geçişte "TPIC" / "Servis" yazıyordu. Kişide "otomatik not" tanımlıysa
+    # ve kayıt notsuzsa o yazılır (görevlinin elle girdiği kayıtta da).
+    if not_metni_temiz is None and kisi_id is not None:
+        not_metni_temiz = _kisinin_otomatik_notu(db, kisi_id)
     misafir_adi_temiz = (misafir_adi or "").strip() or None
     # Arvento entegrasyonu (2026-09-23): "o araç plaka tanıma sisteminden
     # geçiş yaptığında direkt olarak aracı kullanan personel ismi ona göre

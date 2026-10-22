@@ -165,6 +165,9 @@ class Kisi(Base):
     telefon = Column(String(20))
     daire_departman = Column(String(50))
     aciklama = Column(Text)
+    # 2026-10-22: bu kişinin aracı geçtiğinde kaydın notu boşsa otomatik yazılan
+    # not (ör. "TPIC", "Servis") -- görevli her geçişte elle yazmasın.
+    otomatik_not = Column(String(100), nullable=True)
     aktif = Column(Boolean, default=True)
     baslangic_tarihi = Column(DateTime, default=datetime.now)
     bitis_tarihi = Column(DateTime, nullable=True)

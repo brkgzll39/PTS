@@ -289,6 +289,7 @@ class KisiOlustur(BaseModel):
     telefon: Optional[str] = Field(None, max_length=20)
     daire_departman: Optional[str] = Field(None, max_length=50)
     aciklama: Optional[str] = None
+    otomatik_not: Optional[str] = Field(None, max_length=100)
     bitis_tarihi: Optional[datetime] = None
     giris_saati_baslangic: Optional[str] = Field(None, pattern=r"^\d{2}:\d{2}$")
     giris_saati_bitis: Optional[str] = Field(None, pattern=r"^\d{2}:\d{2}$")
@@ -314,6 +315,7 @@ class KisiGuncelle(BaseModel):
     telefon: Optional[str] = Field(None, max_length=20)
     daire_departman: Optional[str] = Field(None, max_length=50)
     aciklama: Optional[str] = None
+    otomatik_not: Optional[str] = Field(None, max_length=100)
     aktif: Optional[bool] = None
     bitis_tarihi: Optional[datetime] = None
     giris_saati_baslangic: Optional[str] = Field(None, pattern=r"^\d{2}:\d{2}$")
@@ -341,6 +343,7 @@ class KisiCevap(BaseModel):
     telefon: Optional[str] = None
     daire_departman: Optional[str] = None
     aciklama: Optional[str] = None
+    otomatik_not: Optional[str] = None
     aktif: bool
     baslangic_tarihi: Optional[datetime] = None
     bitis_tarihi: Optional[datetime] = None

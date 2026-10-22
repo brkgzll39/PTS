@@ -3687,6 +3687,7 @@ document.getElementById("kisiForm").addEventListener("submit", async (e) => {
     telefon: document.getElementById("kisiTelefon").value || null,
     daire_departman: document.getElementById("kisiDaire").value || null,
     aciklama: document.getElementById("kisiAciklama").value || null,
+    otomatik_not: document.getElementById("kisiOtomatikNot").value.trim() || null,
     bitis_tarihi: document.getElementById("kisiBitisTarihi").value || null,
     giris_saati_baslangic: document.getElementById("kisiSaatBaslangic").value || null,
     giris_saati_bitis: document.getElementById("kisiSaatBitis").value || null,
@@ -3819,6 +3820,7 @@ async function kisiDuzenleAc(id) {
   document.getElementById("duzenleTelefon").value = kisi.telefon || "";
   document.getElementById("duzenleDaire").value = kisi.daire_departman || "";
   document.getElementById("duzenleAciklama").value = kisi.aciklama || "";
+  document.getElementById("duzenleOtomatikNot").value = kisi.otomatik_not || "";
   document.getElementById("duzenleBitisTarihi").value = kisi.bitis_tarihi ? kisi.bitis_tarihi.slice(0, 16) : "";
   document.getElementById("duzenleSaatBaslangic").value = kisi.giris_saati_baslangic || "";
   document.getElementById("duzenleSaatBitis").value = kisi.giris_saati_bitis || "";
@@ -4040,6 +4042,7 @@ document.getElementById("kisiDuzenleForm").addEventListener("submit", async (e) 
     telefon: document.getElementById("duzenleTelefon").value || null,
     daire_departman: document.getElementById("duzenleDaire").value || null,
     aciklama: document.getElementById("duzenleAciklama").value || null,
+    otomatik_not: document.getElementById("duzenleOtomatikNot").value.trim() || null,
     bitis_tarihi: document.getElementById("duzenleBitisTarihi").value || null,
     giris_saati_baslangic: document.getElementById("duzenleSaatBaslangic").value || null,
     giris_saati_bitis: document.getElementById("duzenleSaatBitis").value || null,

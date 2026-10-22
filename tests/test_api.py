@@ -7768,3 +7768,78 @@ def test_vardiya_oturumu_olan_kullanici_silinebilir_bagli_satirlar_temizlenir(cl
             assert db.query(tablo).filter(tablo.kullanici_id == hid).count() == 0, tablo.__name__
     finally:
         db.close()
+
+
+def test_kisinin_otomatik_notu_yeni_gecise_yazilir(client, yetkili_header):
+    """2026-10-22: kişide "otomatik not" varsa, notsuz gelen geçişin notu o olur;
+    görevlinin yazdığı not ise korunur."""
+    r = client.post("/kisiler", json={"ad_soyad": "Servis Deneme", "plaka_no": "34 OTN 01", "tip": "personel",
+                                      "otomatik_not": "Servis"}, headers=yetkili_header)
+    assert r.status_code == 200, r.text
+    assert r.json()["otomatik_not"] == "Servis"
+    r = client.post("/kayitlar", json={"plaka_no": "34 OTN 01", "kamera_id": "TEST", "yon": "giris"},
+                    headers=yetkili_header)
+    assert r.status_code == 200, r.text
+    assert r.json()["not_metni"] == "Servis"
+    r = client.post("/kayitlar", json={"plaka_no": "34 OTN 01", "kamera_id": "TEST", "yon": "cikis",
+                                       "not_metni": "Şoför değişti"}, headers=yetkili_header)
+    assert r.json()["not_metni"] == "Şoför değişti"
+    pts_main._led_kuyrugunu_bekle()
+
+
+def test_not_kisilere_aktar_tpic_ve_servis(client, yetkili_header, capsys):
+    """2026-10-22: backend/not_kisilere_aktar.py -- notlarında TPIC / Servis geçen
+    araçları "TPIC" / "Servis" kişilerine ekler; önce yalnızca rapor verir."""
+    from backend import not_kisilere_aktar as na, models as M
+    from backend.database import SessionLocal
+    r = client.post("/kisiler", json={"ad_soyad": "Ahmet Şoför", "plaka_no": "34 SRV 002", "tip": "personel"},
+                    headers=yetkili_header)
+    assert r.status_code == 200, r.text
+    ahmet_id = r.json()["id"]
+    db = SessionLocal()
+    try:
+        for plaka, notu in (("34 TPC 001", "TPIC"), ("34 TPC 001", "tpıc personel"), ("34 TPC 002", "TPİC"),
+                            ("34 SRV 001", "Personel servisi"), ("34 SRV 002", "SERVİS"),
+                            ("34 TPC 003", "teknik servis"), ("XX", "servis"), ("34 YOK 001", "misafir")):
+            db.add(M.Kayit(plaka_no=plaka, kamera_id="TEST", yon="giris", yetki_durumu="yetkisiz", not_metni=notu))
+        db.commit()
+    finally:
+        db.close()
+
+    assert na.notun_grubu("Tpic aracı") == "TPIC" and na.notun_grubu("T.P.İ.C") == "TPIC"
+    assert na.notun_grubu("PERSONEL SERVİSİ") == "SERVIS" and na.notun_grubu("misafir") is None
+
+    secim = ["--haric", "34 TPC 003"]
+    assert na.main(secim) == 0
+    cikti = capsys.readouterr().out
+    assert "34 TPC 001" in cikti and "hiçbir şey değiştirilmedi" in cikti and "Ahmet Şoför" in cikti
+    db = SessionLocal()
+    try:
+        assert db.query(M.Kisi).filter(M.Kisi.ad_soyad == "TPIC").count() == 0
+    finally:
+        db.close()
+
+    assert na.main(secim + ["--uygula", "--evet"]) == 0
+    db = SessionLocal()
+    try:
+        tpic = db.query(M.Kisi).filter(M.Kisi.ad_soyad == "TPIC").one()
+        servis = db.query(M.Kisi).filter(M.Kisi.ad_soyad == "Servis").one()
+        assert tpic.otomatik_not == "TPIC" and tpic.tip == "personel" and servis.otomatik_not == "Servis"
+        tpic_plakalar = {tpic.plaka_no} | {p.plaka_no for p in db.query(M.KisiPlaka).filter(M.KisiPlaka.kisi_id == tpic.id)}
+        assert tpic_plakalar == {"34 TPC 001", "34 TPC 002"}
+        assert servis.plaka_no == "34 SRV 001"
+        assert db.get(M.Kisi, ahmet_id).otomatik_not == "Servis"            # başka kişide: araç taşınmadı
+        assert db.query(M.KisiPlaka).filter(M.KisiPlaka.plaka_no == "34 SRV 002").count() == 0
+        assert db.query(M.Kisi).filter(M.Kisi.plaka_no == "34 TPC 003").count() == 0   # --haric
+        gecmis = db.query(M.Kayit).filter(M.Kayit.plaka_no == "34 TPC 001").all()
+        assert all(k.yetki_durumu == "yetkili" and k.kisi_id == tpic.id for k in gecmis)
+    finally:
+        db.close()
+
+    assert na.main(secim + ["--uygula", "--evet"]) == 0                  # ikinci kez: değişiklik yok
+    db = SessionLocal()
+    try:
+        assert db.query(M.Kisi).filter(M.Kisi.ad_soyad == "TPIC").count() == 1
+        assert db.query(M.KisiPlaka).filter(M.KisiPlaka.plaka_no == "34 TPC 002").count() == 1
+    finally:
+        db.close()
