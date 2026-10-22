@@ -509,15 +509,17 @@ function tarihFormatla(iso) {
 // 2026-10-15 kullanıcı isteği: "Yetkili/Yetkisiz" yerine araç kimin:
 // tanımlı araç Personel (ziyaretçi olarak tanımlıysa Ziyaretçi, VIP
 // listesindeyse Bölge Müdürü), tanımsız araç Ziyaretçi.
-function durumEtiketi(durum, kisiTip) {
-  if (durum === "yetkili") return kisiTip === "vip" ? "Bölge Müdürü" : kisiTip === "alt_isveren" ? "Alt İşveren" : kisiTip === "ziyaretci" ? "Ziyaretçi" : "Personel";
+function durumEtiketi(durum, kisiTip, departman) {
+  // Alt işveren görevi (Bahçivan, Temizlik İşleri, Garson, TPIC...) 2026-10-22.
+  if (durum === "yetkili" && kisiTip === "alt_isveren") return departman ? `Alt İşveren · ${departman}` : "Alt İşveren";
+  if (durum === "yetkili") return kisiTip === "vip" ? "Bölge Müdürü" : kisiTip === "ziyaretci" ? "Ziyaretçi" : "Personel";
   const etiketler = { yetkisiz: "Ziyaretçi", suresi_dolmus: "Süresi Dolmuş", bilinmiyor: "Bilinmiyor", kara_liste: "Kara Liste", ziyaretci_onayli: "Ziyaretçi (Onaylı)" };
   return etiketler[durum] || durum;
 }
 
-function durumRozeti(durum, kisiTip) {
+function durumRozeti(durum, kisiTip, departman) {
   const sinif = durum === "yetkili" && (kisiTip === "vip" || kisiTip === "alt_isveren") ? kisiTip : durum;
-  return `<span class="badge badge-${escapeHtml(sinif)}">${escapeHtml(durumEtiketi(durum, kisiTip))}</span>`;
+  return `<span class="badge badge-${escapeHtml(sinif)}">${escapeHtml(durumEtiketi(durum, kisiTip, departman))}</span>`;
 }
 
 function alarmTipiEtiketi(tip) {
@@ -922,7 +924,7 @@ async function sakinPaneliYukle() {
         <td>${tarihFormatla(k.tarih_saat)}</td>
         <td>${escapeHtml(k.kamera_id)}</td>
         <td>${k.yon === "giris" ? "Giriş" : "Çıkış"}</td>
-        <td>${durumRozeti(k.yetki_durumu, k.kisi_tip_anlik)}</td>
+        <td>${durumRozeti(k.yetki_durumu, k.kisi_tip_anlik, k.kisi_departman)}</td>
       </tr>
     `).join("") || `<tr><td colspan="4" class="text-center text-muted py-3">Henüz geçiş kaydınız yok</td></tr>`;
   } catch (err) {
@@ -1333,7 +1335,7 @@ function _gecisKartiOlustur(k) {
         ${k.goruntu_yolu
           ? `<img class="gecis-karti-gorsel" data-goruntu-yolu="${escapeHtml(k.goruntu_yolu)}" role="button" tabindex="0" onclick="olayDetayAc(${k.id})" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();olayDetayAc(${k.id})}" alt="${escapeHtml(k.plaka_no)} geçiş görseli, detay ve not eklemek için tıklayın veya Enter'a basın">`
           : `<div class="gecis-karti-gorsel-yok"><i class="bi bi-camera-video-off"></i></div>`}
-        <span class="gecis-karti-durum-rozeti">${durumRozeti(k.yetki_durumu, k.kisi_tip_anlik)}</span>
+        <span class="gecis-karti-durum-rozeti">${durumRozeti(k.yetki_durumu, k.kisi_tip_anlik, k.kisi_departman)}</span>
         <button class="gecis-karti-alt-serit" onclick="olayDetayAc(${k.id})" title="Kaydı görüntüle">
           <span class="gecis-karti-plaka">${escapeHtml(k.plaka_no)}</span>
           <span class="gecis-karti-tarih">${tarihFormatla(k.tarih_saat)}</span>
@@ -2696,7 +2698,7 @@ function icerideCiz() {
   document.getElementById("icerideOnaysizSayi").textContent = v.onaysiz.length;
   document.getElementById("icerideOnaysizTablo").innerHTML = onaysiz.length ? onaysiz.map(a => `<tr ${satirAc(a)}>
       <td class="fw-bold text-nowrap">${escapeHtml(a.plaka_no)}</td>
-      <td>${durumRozeti(a.yetki_durumu, a.tip_kodu)}</td>
+      <td>${durumRozeti(a.yetki_durumu, a.tip_kodu, a.departman)}</td>
       <td class="text-nowrap">${escapeHtml(a.kamera_id)}</td>
       <td class="text-nowrap">${escapeHtml(_icerideGirisMetni(a.giris_saati))}</td>
       <td>${notHucre(a)}</td></tr>`).join("")
@@ -3091,7 +3093,7 @@ async function kayitlariYukle(sifirla = true) {
         <td>${tarihFormatla(k.tarih_saat)}</td>
         <td>${escapeHtml(k.kamera_id)}</td>
         <td>${k.yon === "giris" ? "Giriş" : "Çıkış"}</td>
-        <td>${durumRozeti(k.yetki_durumu, k.kisi_tip_anlik)}</td>
+        <td>${durumRozeti(k.yetki_durumu, k.kisi_tip_anlik, k.kisi_departman)}</td>
         <td>${tipRozeti(k.kisi_tip_anlik)}</td>
         <td class="small">${kayitIsimGoster(k)}</td>
         <td class="small">${k.surucu_adi ? escapeHtml(k.surucu_adi) : '<span class="text-muted">-</span>'}</td>
@@ -3437,10 +3439,23 @@ function analizAcikSeAyniPlakayiYenile() {
 
 let aktifTipFiltre = "";
 
+// 2026-10-22: alt işverende departman alanı görev seçimi olur (listeden seçilir,
+// listede olmayan da yazılabilir).
+function _altIsverenGorevListesi() {
+  for (const [tipId, girdiId] of [["kisiTip", "kisiDaire"], ["duzenleTip", "duzenleDaire"]]) {
+    const tip = document.getElementById(tipId)?.value;
+    const girdi = document.getElementById(girdiId);
+    if (!girdi) continue;
+    if (tip === "alt_isveren") girdi.setAttribute("list", "altIsverenGorevleri");
+    else girdi.removeAttribute("list");
+  }
+}
+
 function ziyaretciAlanGoster() {
   const tip = document.getElementById("kisiTip").value;
   document.getElementById("ziyaretciBitisAlani").classList.toggle("d-none", tip !== "ziyaretci");
-  document.getElementById("daireEtiket").textContent = tip === "personel" || tip === "vip" ? "Departman / Ünvan" : tip === "alt_isveren" ? "Firma" : "Daire No";
+  document.getElementById("daireEtiket").textContent = tip === "personel" || tip === "vip" ? "Departman / Ünvan" : tip === "alt_isveren" ? "Görev / Firma" : "Daire No";
+  _altIsverenGorevListesi(tip);
 }
 
 function kisiTipFiltrele(tip, btn) {
@@ -3796,7 +3811,8 @@ function kisiIceAktarmaSablonuIndir() {
 function duzenleZiyaretciAlanGoster() {
   const tip = document.getElementById("duzenleTip").value;
   document.getElementById("duzenleZiyaretciBitisAlani").classList.toggle("d-none", tip !== "ziyaretci");
-  document.getElementById("duzenleDaireEtiket").textContent = tip === "personel" || tip === "vip" ? "Departman / Ünvan" : tip === "alt_isveren" ? "Firma" : "Daire No";
+  document.getElementById("duzenleDaireEtiket").textContent = tip === "personel" || tip === "vip" ? "Departman / Ünvan" : tip === "alt_isveren" ? "Görev / Firma" : "Daire No";
+  _altIsverenGorevListesi(tip);
 }
 
 // ================================================================
@@ -4249,7 +4265,7 @@ document.getElementById("testKayitForm").addEventListener("submit", async (e) =>
     });
     document.getElementById("testSonuc").innerHTML = `
       <div class="alert alert-info">
-        Kayıt oluşturuldu: <b>${escapeHtml(kayit.plaka_no)}</b> — Durum: ${durumRozeti(kayit.yetki_durumu, kayit.kisi_tip_anlik)}
+        Kayıt oluşturuldu: <b>${escapeHtml(kayit.plaka_no)}</b> — Durum: ${durumRozeti(kayit.yetki_durumu, kayit.kisi_tip_anlik, kayit.kisi_departman)}
       </div>`;
     document.getElementById("testKayitForm").reset();
     panelYenile();
@@ -4665,7 +4681,7 @@ async function plakaAnalizAc(plaka) {
         <td>${tarihFormatla(k.tarih_saat)}</td>
         <td>${k.yon === "giris" ? "Giriş" : "Çıkış"}</td>
         <td>${escapeHtml(k.kamera_id)}</td>
-        <td>${durumRozeti(k.yetki_durumu, k.kisi_tip_anlik)}</td>
+        <td>${durumRozeti(k.yetki_durumu, k.kisi_tip_anlik, k.kisi_departman)}</td>
         <td class="small">${kayitIsimGoster(k)}</td>
         <td>${k.vardiya_adi ? `<span class="badge bg-info text-dark">${escapeHtml(k.vardiya_adi)}</span>` : '<span class="text-muted small">-</span>'}</td>
         <td>${dogrulamaRozeti(k.dogrulama_kare_sayisi, k.farkli_okuma_sayisi, k.kamera_okumasi)}</td>

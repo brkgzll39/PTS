@@ -7890,3 +7890,17 @@ def test_gecmis_yeniden_bagla_onizleme_kisi_kisi_doker(client, yetkili_header):
     satir = next(a for a in v["ayrinti"] if a["ad_soyad"] == "Döküm Kişi")
     assert satir["baglanacak"] == 3 and satir["plakalar"] == ["34 YBD 001"] and satir["tip"] == "personel"
     assert sum(a["baglanacak"] for a in v["ayrinti"]) == v["baglanan_kayit"]
+
+
+def test_alt_isveren_gorevi_kayitlarda_ve_iceride_gorunur(client, yetkili_header):
+    """2026-10-22: alt işveren görevi (Bahçivan, Temizlik İşleri, Garson...) kişinin
+    departman alanında tutulur; kayıt listesinde kisi_departman olarak gelir."""
+    r = client.post("/kisiler", json={"ad_soyad": "Bahçe Ekibi", "plaka_no": "34 BHC 01", "tip": "alt_isveren",
+                                      "daire_departman": "Bahçivan"}, headers=yetkili_header)
+    assert r.status_code == 200, r.text
+    r = client.post("/kayitlar", json={"plaka_no": "34 BHC 01", "kamera_id": "TEST", "yon": "giris"},
+                    headers=yetkili_header)
+    assert r.status_code == 200, r.text
+    pts_main._led_kuyrugunu_bekle()
+    kayitlar = client.get("/kayitlar", params={"plaka": "BHC"}, headers=yetkili_header).json()
+    assert kayitlar and kayitlar[0]["kisi_departman"] == "Bahçivan" and kayitlar[0]["kisi_tip_anlik"] == "alt_isveren"

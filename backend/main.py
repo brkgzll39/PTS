@@ -2459,14 +2459,20 @@ def _kayitlara_kisi_adini_ekle(kayitlar: list, db: Session) -> None:
     if not kisi_idler:
         for k in kayitlar:
             k.kisi_adi = None
+            k.kisi_departman = None
         return
-    adlar = dict(
-        db.query(models.Kisi.id, models.Kisi.ad_soyad)
+    # 2026-10-22: alt işveren görevi (Bahçivan, Temizlik İşleri, Garson, TPIC...)
+    # panelde "Alt İşveren · Bahçivan" diye gösterilsin diye departman da eklenir.
+    bilgiler = {
+        kid: (ad, departman)
+        for kid, ad, departman in db.query(models.Kisi.id, models.Kisi.ad_soyad, models.Kisi.daire_departman)
         .filter(models.Kisi.id.in_(kisi_idler))
         .all()
-    )
+    }
     for k in kayitlar:
-        k.kisi_adi = adlar.get(k.kisi_id)
+        ad, departman = bilgiler.get(k.kisi_id, (None, None))
+        k.kisi_adi = ad
+        k.kisi_departman = departman
 
 
 def _kayitlarin_vardiya_adlarini_ekle(kayitlar: list, db: Session) -> None:
@@ -8895,6 +8901,8 @@ def _iceride_satiri(k: models.Kayit, kisi: Optional[models.Kisi], simdi: datetim
     if kisi is not None:
         kim = kisi.ad_soyad + (f" – {kisi.daire_departman}" if kisi.daire_departman else "")
         tip = _KISI_TIP_ETIKETI.get(kisi.tip, kisi.tip)
+        if kisi.tip == "alt_isveren" and kisi.daire_departman:
+            tip = f"{tip} · {kisi.daire_departman}"
     else:
         kim = k.misafir_adi or ""
         tip = "Ziyaretçi" if ziyaretci else ""
@@ -8915,6 +8923,7 @@ def _iceride_satiri(k: models.Kayit, kisi: Optional[models.Kisi], simdi: datetim
         "kim": kim,
         "tip": tip,
         "tip_kodu": kisi.tip if kisi is not None else ("ziyaretci" if ziyaretci else None),
+        "departman": kisi.daire_departman if kisi is not None else None,
         "ziyaretci": ziyaretci,
         "not_metni": k.not_metni,
         "sure_dk": int(sure_sn // 60),

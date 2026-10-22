@@ -449,6 +449,7 @@ class KayitCevap(BaseModel):
     # seçtim fakat herhangi bir yerde gözükmüyor" -- bu bir ORM sütunu
     # DEĞİLDİR, bkz. main.py::_kayitlara_kisi_adini_ekle'nin docstring'i.
     kisi_adi: Optional[str] = None
+    kisi_departman: Optional[str] = None   # 2026-10-22: alt işveren görevi için
     dogrulama_kare_sayisi: Optional[int] = None
     farkli_okuma_sayisi: Optional[int] = None
     not_metni: Optional[str] = None
