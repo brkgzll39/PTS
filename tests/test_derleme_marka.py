@@ -71,3 +71,18 @@ def test_marka_kopyalama(tmp_path):
     derle.marka_kopyala(str(cikti), str(musteri))
     assert json.loads((cikti / "marka.json").read_text(encoding="utf-8"))["kurum_adi"] == "ACME"
     assert (cikti / "logo.png").read_bytes() == b"png"
+
+
+def test_musteri_klasorleri_gecerli():
+    """musteriler/<ad>/: marka.json yalnız bilinen alanlar, logo dosyası mevcut."""
+    import sys
+    sys.path.insert(0, KOK)
+    from backend import marka
+    klasorler = [k for k in glob.glob(os.path.join(KOK, "musteriler", "*")) if os.path.isdir(k)]
+    assert klasorler
+    for klasor in klasorler:
+        with open(os.path.join(klasor, "marka.json"), encoding="utf-8") as f:
+            ayar = json.load(f)
+        assert set(ayar) <= set(marka.VARSAYILAN), (klasor, set(ayar) - set(marka.VARSAYILAN))
+        if ayar.get("logo_dosyasi"):
+            assert os.path.isfile(os.path.join(klasor, ayar["logo_dosyasi"])), klasor
