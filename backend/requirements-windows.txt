@@ -12,13 +12,16 @@
 # opencv-python BİLİNÇLİ OLARAK YOK: fast-alpr opencv-python-headless'a
 # bağımlı; ikisi aynı "cv2" klasörüne kurulup birbirinin üzerine yazar.
 # PTS pencere açmadığı için (imshow vb. yok) headless yeterlidir.
+# cryptography (+cffi, pycparser): HTTPS sertifikası üretimi, 2026-10-22 (backend/sertifika_olustur.py)
 annotated-types==0.8.0
 anyio==4.15.1
 certifi==2026.7.22
+cffi==1.17.1
 chardet==7.6.0
 charset-normalizer==3.5.2
 click==8.5.0
 colorama==0.4.6
+cryptography==44.0.2
 et-xmlfile==2.0.0
 fast-alpr==0.4.0
 fast-plate-ocr==1.1.0
@@ -38,6 +41,7 @@ openpyxl==3.1.5
 packaging==26.3
 pillow==11.0.0
 protobuf==7.36.2
+pycparser==2.22
 pydantic==2.9.2
 pydantic-core==2.23.4
 pygments==2.21.0

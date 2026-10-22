@@ -26,3 +26,5 @@ loglar/*
 # Lisans verenin ÖZEL anahtarı -- asla depoya girmesin
 lisans_ozel_anahtar.key
 *.key
+# HTTPS sertifikaları (2026-10-22) -- özel anahtarlar içerir
+sertifika/

@@ -37,6 +37,24 @@ def _port_ayari(ad: str, varsayilan: int) -> int:
         return varsayilan
 
 
+def https_ayari() -> dict:
+    """PTS_HTTPS=1 ise {"ssl_certfile", "ssl_keyfile"}; değilse {}.
+
+    2026-10-22: http:// panelde Chrome/Edge Excel indirmesini "güvenli olmayan
+    indirme" diye engelliyor. Sertifika backend/sertifika_olustur.py ile üretilir
+    (varsayılan yer: <proje>/sertifika/sunucu.crt ve sunucu.key)."""
+    if (os.environ.get("PTS_HTTPS") or "").strip().lower() not in ("1", "true", "evet", "on"):
+        return {}
+    kok = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    crt = (os.environ.get("PTS_HTTPS_SERTIFIKA") or "").strip() or os.path.join(kok, "sertifika", "sunucu.crt")
+    key = (os.environ.get("PTS_HTTPS_ANAHTAR") or "").strip() or os.path.join(kok, "sertifika", "sunucu.key")
+    eksik = [y for y in (crt, key) if not os.path.isfile(y)]
+    if eksik:
+        raise SystemExit("PTS_HTTPS=1 ama sertifika bulunamadı: " + ", ".join(eksik)
+                         + " -- önce: python -m backend.sertifika_olustur")
+    return {"ssl_certfile": crt, "ssl_keyfile": key}
+
+
 def _port_bos_mu(host: str, port: int) -> bool:
     s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     try:
@@ -77,15 +95,28 @@ def main() -> None:
         print("Kamera kayit anahtari bu calisma icin otomatik uretildi "
               "(ag uzerinden sahte plaka kaydi engellendi).", flush=True)
 
+    ssl = https_ayari()
+    sema = "https" if ssl else "http"
+    ic_port = _port_ayari("PTS_IC_PORT", 8001)
+    if ssl:
+        # Kameralar (aynı süreç) kayıtlarını sertifikasız, yalnızca bu
+        # bilgisayardan erişilebilen bir HTTP kapısına gönderir.
+        os.environ["PTS_KAMERA_API_URL"] = f"http://127.0.0.1:{ic_port}/kayitlar/otomatik"
+
     from backend.main import app
 
-    sunucular = [_Sunucu(uvicorn.Config(app, host=host, port=ana_port, lifespan="on"))]
+    sunucular = [_Sunucu(uvicorn.Config(app, host=host, port=ana_port, lifespan="on", **ssl))]
+    print(f"PTS paneli: {sema}://<bu bilgisayar>:{ana_port}", flush=True)
+    if ssl:
+        if not _port_bos_mu("127.0.0.1", ic_port):
+            raise SystemExit(f"Kamera iç portu {ic_port} dolu -- .env'de PTS_IC_PORT ile değiştirin.")
+        sunucular.append(_Sunucu(uvicorn.Config(app, host="127.0.0.1", port=ic_port, lifespan="off")))
     if otomatik_port and otomatik_port != ana_port:
         # Otomatik giriş portu doluysa ana panel yine açılsın (uvicorn bağlanamazsa
         # tüm süreci kapatır).
         if _port_bos_mu(host, otomatik_port):
-            sunucular.append(_Sunucu(uvicorn.Config(app, host=host, port=otomatik_port, lifespan="off")))
-            print(f"Otomatik giris (parolasiz) paneli: http://<bu bilgisayar>:{otomatik_port}", flush=True)
+            sunucular.append(_Sunucu(uvicorn.Config(app, host=host, port=otomatik_port, lifespan="off", **ssl)))
+            print(f"Otomatik giris (parolasiz) paneli: {sema}://<bu bilgisayar>:{otomatik_port}", flush=True)
         else:
             print(f"UYARI: {otomatik_port} portu dolu -- otomatik giris paneli ACILMADI, "
                   f"ana panel {ana_port} portunda calismaya devam ediyor.", flush=True)

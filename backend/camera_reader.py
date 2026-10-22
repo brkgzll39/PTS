@@ -907,6 +907,11 @@ def varsayilan_api_url() -> str:
     Windows reddedilen bağlantıyı ~2 sn yeniden denedikten sonra IPv4'e geçer.
     Bu 2 sn, her geçişte LED tabelanın gecikmesine doğrudan ekleniyordu.
     """
+    # HTTPS açıkken (2026-10-22) sunucu kameralar için yalnızca 127.0.0.1'de
+    # dinleyen ayrı bir HTTP kapısı açar ve adresini buraya bildirir (bkz. sunucu.py).
+    ozel = (os.getenv("PTS_KAMERA_API_URL") or "").strip()
+    if ozel:
+        return ozel
     port = (os.getenv("PTS_PORT") or "8000").strip() or "8000"
     return f"http://127.0.0.1:{port}/kayitlar/otomatik"
 
