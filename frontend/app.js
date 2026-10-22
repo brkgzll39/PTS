@@ -1593,7 +1593,6 @@ async function _ziyaretciGirisiKutusunuAyarla(kayit) {
   const kutu = document.getElementById("ziyaretciGirisiKutusu");
   const zatenOnayli = kayit.yetki_durumu === "yetkili" || kayit.yetki_durumu === "ziyaretci_onayli";
   document.getElementById("ziyaretciGirisiSonuc").textContent = "";
-  document.getElementById("olayModalMisafirAdi").value = "";
   document.getElementById("olayModalZiyaretciNot").value = "";
   if (zatenOnayli || !rolYeterli("operatör")) {
     kutu.classList.add("d-none");
@@ -1617,8 +1616,6 @@ async function _ziyaretciGirisiKutusunuAyarla(kayit) {
     sonuc.textContent = "İşleniyor...";
     try {
       const govde = { yetki_durumu: "ziyaretci_onayli" };
-      const misafirAdi = document.getElementById("olayModalMisafirAdi").value.trim();
-      if (misafirAdi) govde.misafir_adi = misafirAdi;
       const notMetni = document.getElementById("olayModalZiyaretciNot").value.trim();
       if (notMetni) govde.not_metni = notMetni;
       const guncelKayit = await apiCagir(`/kayitlar/${kayit.id}`, {
@@ -2174,7 +2171,6 @@ async function kameraRoiKaldir() {
 // "Ziyaretçi Girişi" notu).
 async function ziyaretciBilgileriAc() {
   document.getElementById("zbPlaka").value = "";
-  document.getElementById("zbMisafirAdi").value = "";
   document.getElementById("zbNot").value = "";
   document.getElementById("zbSonuc").textContent = "";
   const kisiSecim = document.getElementById("zbKisiSecim");
@@ -2228,7 +2224,6 @@ async function ziyaretciBilgileriKaydet() {
   const yon = secilenSecenek.dataset.yon || "giris";
   const kameraId = secilenSecenek.dataset.kameraId || "PANEL-ZIYARETCI";
   const kisiId = document.getElementById("zbKisiSecim").value;
-  const misafirAdi = document.getElementById("zbMisafirAdi").value.trim();
   const notMetni = document.getElementById("zbNot").value.trim();
 
   const btn = document.getElementById("zbKaydetBtn");
@@ -2237,7 +2232,7 @@ async function ziyaretciBilgileriKaydet() {
   try {
     const kayit = await apiCagir("/kayitlar", {
       method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ plaka_no: plaka, kamera_id: kameraId, yon, misafir_adi: misafirAdi || null, not_metni: notMetni || null }),
+      body: JSON.stringify({ plaka_no: plaka, kamera_id: kameraId, yon, not_metni: notMetni || null }),
     });
     const govde = { yetki_durumu: "ziyaretci_onayli" };
     if (kisiId) govde.kisi_id = Number(kisiId);
@@ -3330,7 +3325,6 @@ async function kayitDuzenleAc(id) {
   document.getElementById("duzenleKayitPlaka").value = kayit.plaka_no;
   document.getElementById("duzenleKayitYon").value = kayit.yon;
   document.getElementById("duzenleKayitDurum").value = kayit.yetki_durumu;
-  document.getElementById("duzenleKayitMisafirAdi").value = kayit.misafir_adi || "";
   // Yukarıdaki iki `.value =` ataması olay tetiklemediği için başlık/rozet
   // burada elle senkronize edilir (bkz. _duzenlePlakaBaslikGuncelle/
   // _duzenleDurumRozetiGuncelle'nin tanımındaki not).
@@ -3389,7 +3383,6 @@ document.getElementById("kayitDuzenleForm")?.addEventListener("submit", async (e
     plaka_no: document.getElementById("duzenleKayitPlaka").value,
     yon: document.getElementById("duzenleKayitYon").value,
     yetki_durumu: document.getElementById("duzenleKayitDurum").value,
-    misafir_adi: document.getElementById("duzenleKayitMisafirAdi").value || null,
     not_metni: document.getElementById("duzenleKayitNot").value || null,
   };
   const btn = e.target.querySelector('button[type="submit"]');
@@ -4732,10 +4725,6 @@ async function plakaAnalizAc(plaka) {
               </select>
             </div>
             <div class="col">
-              <label class="form-label small mb-0">Misafir Adı Soyadı (opsiyonel)</label>
-              <input type="text" id="analizManuelMisafirAdi" class="form-control form-control-sm" maxlength="100" placeholder="Örn. Ahmet Yılmaz">
-            </div>
-            <div class="col">
               <label class="form-label small mb-0">Not</label>
               <input type="text" id="analizManuelNot" class="form-control form-control-sm" value="${escapeHtml(v.son_not_onerisi || "")}" placeholder="örn. teslimat aracı, güvenlik onayıyla alındı" maxlength="500">
             </div>
@@ -4763,7 +4752,6 @@ async function plakaAnalizAc(plaka) {
             plaka_no: v.plaka_no,
             kamera_id: "PANEL-MANUEL",
             yon: document.getElementById("analizManuelYon").value,
-            misafir_adi: document.getElementById("analizManuelMisafirAdi").value || null,
             not_metni: document.getElementById("analizManuelNot").value || null,
           }),
         });

@@ -142,7 +142,6 @@
              yapabilir -- yalnızca BU hızlı onay kutusundan kaldırıldı. -->
         <!-- 2026-09-22 kullanıcı isteği: yukarıda kişiye bağlanamayan bir
              misafirin adını da kaydedebilmek için (bkz. models.Kayit.misafir_adi). -->
-        <input type="text" class="form-control form-control-sm mb-2" id="olayModalMisafirAdi" placeholder="Misafir adı soyadı (sistemde kayıtlı değilse)" maxlength="100">
         <input type="text" class="form-control form-control-sm mb-2" id="olayModalZiyaretciNot" placeholder="Not (örn. kargo, teslimat)" maxlength="500">
         <button type="button" class="btn btn-sm btn-success" id="ziyaretciGirisiBtn"><i class="bi bi-person-check-fill"></i> Ziyaretçi Girişi Onayla</button>
         <div id="ziyaretciGirisiSonuc" class="small mt-1"></div>
@@ -417,10 +416,9 @@
            eşleştirme yapmanın panelden kaldırılması, backend'deki eşleştirme
            özelliğinin kendisi (main.py::kayit_duzenle, hâlâ olayDetayAc/
            kişiler ekranından erişilebilir) kaldırılmadı. -->
-      <div class="mb-2">
-        <label class="form-label small" for="duzenleKayitMisafirAdi">Misafir Adı Soyadı (sistemde kayıtlı değilse)</label>
-        <input type="text" class="form-control" id="duzenleKayitMisafirAdi" maxlength="100" placeholder="Örn. Ahmet Yılmaz">
-      </div>
+      <!-- 2026-10-22 kullanıcı isteği: "Misafir Adı Soyadı" alanı kaldırıldı --
+           görevliler not ile karıştırıyordu (isim nota, not isme yazılıyordu).
+           Ad gerekiyorsa not alanına yazılır; eski kayıtlardaki misafir adı korunur. -->
       <div class="mb-2">
         <label class="form-label small d-block">Hızlı Not Şablonları</label>
         <!-- 2026-09-26 kullanıcı isteği: tekrar tekrar elle yazılan tipik notları
@@ -533,10 +531,6 @@
       </div>
       <!-- 2026-09-22 kullanıcı isteği: yukarıdaki kişiye bağlanamayan bir
            misafirin adını da kaydedebilmek için (bkz. models.Kayit.misafir_adi). -->
-      <div class="mb-2">
-        <label class="form-label small" for="zbMisafirAdi">Misafir Adı Soyadı (sistemde kayıtlı değilse)</label>
-        <input type="text" class="form-control" id="zbMisafirAdi" maxlength="100" placeholder="Örn. Ahmet Yılmaz">
-      </div>
       <div class="mb-2">
         <label class="form-label small" for="zbNot">Not</label>
         <textarea class="form-control" id="zbNot" rows="2" placeholder="örn. kargo, misafir, teslimat" maxlength="500"></textarea>
