@@ -15,10 +15,16 @@ kodların hiçbirine erişimi olmaması gerekiyor".
 Windows'ta çalışır (GitHub Actions: .github/workflows/derle-windows.yml);
 Nuitka ve MSVC gerekir, terser için Node.js (npx).
 
+  * Marka (2026-10-23): pakete her zaman bir marka.json girer (--marka ile
+    verilen müşteri klasöründen; verilmezse kurumsuz "{}") ve frontend'den
+    TPAO adı/logosu/iletişim bilgisi silinir. İz kalırsa derleme durur.
+
 Kullanım: python installer/derle_windows.py --cikti derlenmis [--test-anahtarsiz]
+          [--marka musteriler/acme]   (klasörde marka.json + logo dosyası)
 """
 import argparse
 import glob
+import json
 import os
 import re
 import shutil
@@ -106,10 +112,79 @@ def frontend_hazirla(cikti: str) -> None:
         _css_html_yorumsuz(html, r"<!--.*?-->")
 
 
+# Müşteri paketinin frontend'inde TPAO'ya ait metinlerin yerine geçenler.
+# Asıl değerler açılışta /marka'dan (marka.json) gelir; bunlar yalnız ilk
+# boyamada ve JavaScript'siz görünümde kalır.
+_TPAO_DEGISIMLERI = [
+    ("/static/img/tpao-logo.png", "/marka/logo"),
+    ("TÜRKİYE PETROLLERİ ANONİM ORTAKLIĞI", "PLAKA TANIMA SİSTEMİ"),
+    ("Türkiye Petrolleri Anonim Ortaklığı", "PTS"),
+    ('alt="TPAO"', 'alt="PTS"'),
+    ("TPAO - Plaka Tanıma Sistemi", "PTS - Plaka Tanıma Sistemi"),
+    ("TPAO PTS", "PTS"),
+    ('href="tel:+905372102313"', 'href="tel:"'),
+    ("0537 210 2313", ""),
+    ("0288 427 4864", ""),
+    ("mailto:bguzelel@tpao.gov.tr", "mailto:"),
+    ("bguzelel@tpao.gov.tr", ""),
+    ('placeholder="T.P.A.O."', 'placeholder="HOŞ GELDİNİZ"'),
+    ('placeholder="TRAKYA"', 'placeholder=""'),
+]
+_TPAO_IZI = re.compile(r"TPAO|tpao|T\.P\.A\.O|PETROLLER|Petroller|TRAKYA|Trakya|0537 210|bguzelel")
+
+
+def tpao_izlerini_temizle(frontend_dizini: str) -> None:
+    """Müşteri paketinin frontend'inden TPAO'ya ait ad/logo/iletişim bilgisini
+    siler; iz kalırsa SystemExit (yanlışlıkla başka kuruma gitmesin)."""
+    logo = os.path.join(frontend_dizini, "img", "tpao-logo.png")
+    if os.path.exists(logo):
+        os.remove(logo)
+    vendor = os.path.join(frontend_dizini, "vendor") + os.sep
+    kalan = []
+    for yol in glob.glob(os.path.join(frontend_dizini, "**", "*"), recursive=True):
+        if yol.startswith(vendor) or not yol.endswith((".html", ".js", ".css", ".json")):
+            continue
+        with open(yol, encoding="utf-8") as f:
+            metin = f.read()
+        yeni = metin
+        for eski, karsilik in _TPAO_DEGISIMLERI:
+            yeni = yeni.replace(eski, karsilik)
+        if os.path.basename(yol) == "sw.js":
+            yeni = yeni.replace('"/marka/logo",', '"/static/img/pts-logo.svg",')
+        if yeni != metin:
+            with open(yol, "w", encoding="utf-8") as f:
+                f.write(yeni)
+        kalan += [f"{os.path.relpath(yol, frontend_dizini)}:{n}" for n, satir in enumerate(yeni.splitlines(), 1)
+                  if _TPAO_IZI.search(satir)]
+    if kalan:
+        raise SystemExit("HATA: müşteri paketinde TPAO izi kaldı: " + ", ".join(kalan[:20]))
+
+
+def marka_kopyala(cikti: str, marka_klasoru) -> None:
+    """Müşterinin marka.json'u (+ logo) pakete; yoksa kurumsuz "{}"."""
+    hedef = os.path.join(cikti, "marka.json")
+    if not marka_klasoru:
+        with open(hedef, "w", encoding="utf-8") as f:
+            f.write("{}\n")
+        return
+    kaynak = os.path.join(marka_klasoru, "marka.json")
+    if not os.path.isfile(kaynak):
+        raise SystemExit(f"HATA: {kaynak} yok")
+    with open(kaynak, encoding="utf-8") as f:
+        ayar = json.load(f)
+    shutil.copy2(kaynak, hedef)
+    if ayar.get("logo_dosyasi"):
+        logo = os.path.join(marka_klasoru, ayar["logo_dosyasi"])
+        if not os.path.isfile(logo):
+            raise SystemExit(f"HATA: logo dosyası yok: {logo}")
+        shutil.copy2(logo, os.path.join(cikti, ayar["logo_dosyasi"]))
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--cikti", required=True)
     ap.add_argument("--test-anahtarsiz", action="store_true")
+    ap.add_argument("--marka", help="müşteri klasörü (marka.json + logo); verilmezse kurumsuz")
     args = ap.parse_args(argv)
     cikti = os.path.abspath(args.cikti)
     if os.path.exists(cikti):
@@ -117,6 +192,8 @@ def main(argv=None) -> int:
     os.makedirs(cikti)
     backend_derle(cikti, args.test_anahtarsiz)
     frontend_hazirla(cikti)
+    tpao_izlerini_temizle(os.path.join(cikti, "frontend"))
+    marka_kopyala(cikti, args.marka)
     for ad in KOK_DOSYALARI:
         shutil.copy2(os.path.join(KOK, ad), cikti)
     kalan = [p for p in glob.glob(os.path.join(cikti, "**", "*.py"), recursive=True)

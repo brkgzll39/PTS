@@ -22,5 +22,9 @@ Kullanıcı "ne kaldı" diye sorduğunda bu liste hatırlatılır.
   yalnız 127.0.0.1'de dinlemesi yeterli (karar bekleniyor, 2026-10-23).
 - [ ] **KVKK saklama süresini** kurum belirleyip Sistem ayarlarına girmeli
   (`kayit_anonimlestirme_gun`, şu an 0 = kapalı).
+- [ ] **Ürünleştirme** (2026-10-23, altyapı hazır ve kapalı -- bkz. URUNLESTIRME.md):
+  satıştan önce hukuki kontrol listesi (yazılım sahipliği FSEK md.18, YOLOv9 model
+  lisansı, KVKK sözleşmeleri); sonra ilk açılış sihirbazı ve kapalı modül sekmelerinin
+  gizlenmesi.
 - [ ] Huidu tabela yazma süresi (~0,8 sn): iki bölgeyi tek bağlantıda gönderme --
   canlı panelde deneme gerektirir, kullanıcı onayıyla.

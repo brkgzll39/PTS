@@ -10,7 +10,12 @@ name: Derlenmis Windows paketi
 on:
   push:
     branches: [main, "claude/**"]
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      marka:
+        description: "Müşteri marka klasörü (marka.json + logo; ör. musteriler/acme). Boş = kurumsuz paket"
+        required: false
+        default: ""
 
 jobs:
   derle:
@@ -42,9 +47,11 @@ jobs:
         shell: pwsh
         env:
           COMMIT_MESAJI: ${{ github.event.head_commit.message }}
+          MARKA: ${{ github.event.inputs.marka }}
         run: |
           $ek = @()
           if ("$env:COMMIT_MESAJI".Contains("[derle-test]")) { $ek += "--test-anahtarsiz" }
+          if ("$env:MARKA") { $ek += @("--marka", "$env:MARKA") }
           python installer/derle_windows.py --cikti derlenmis @ek
           # Kurulum programı, sunucu denemesi dosya üretmeden ÖNCEKİ temiz kopyadan yapılır.
           Copy-Item -Recurse derlenmis derlenmis_temiz
