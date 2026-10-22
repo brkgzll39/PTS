@@ -28,6 +28,8 @@ param(
 # Windows PowerShell 5.1'de "Stop", git'in stderr'e yazdigi normal ilerleme
 # mesajlarini bile hata sayar; hatalar asagida $LASTEXITCODE ile denetlenir.
 $ErrorActionPreference = "Continue"
+# git/python UTF-8 yazar; Turkce karakterli ciktilar (commit basliklari) dogru okunsun.
+try { [Console]::OutputEncoding = [Text.Encoding]::UTF8 } catch { }
 $klasor = Split-Path -Parent $MyInvocation.MyCommand.Path
 Set-Location $klasor
 
@@ -58,12 +60,50 @@ if (-not $Yama) {
 }
 if (-not (Test-Path $Yama)) { Hata "Yama dosyasi bulunamadi: $Yama"; exit 1 }
 $yamaBilgi = Get-Item $Yama
-$basliklar = @(Select-String -Path $Yama -Pattern "^Subject: " -Encoding UTF8 |
-    ForEach-Object { $_.Line.Substring(9) -replace '^\[PATCH[^\]]*\]\s*', '' })
+# git format-patch Turkce basliklari "=?UTF-8?q?...?=" diye kodlar ve uzun
+# basliklari alt satira boler (2026-10-23: basliklar okunmuyordu).
+function KonuCoz([string]$s) {
+    $s = [regex]::Replace($s, '\?=\s+(?==\?)', '?=')   # art arda kodlu parcalar arasindaki bosluk
+    return [regex]::Replace($s, '=\?([^?]+)\?([QqBb])\?([^?]*)\?=', {
+        param($m)
+        $kodlama = [Text.Encoding]::GetEncoding($m.Groups[1].Value)
+        $veri = $m.Groups[3].Value
+        if ($m.Groups[2].Value -eq "B" -or $m.Groups[2].Value -eq "b") {
+            return $kodlama.GetString([Convert]::FromBase64String($veri))
+        }
+        $bayt = New-Object System.Collections.Generic.List[byte]
+        for ($i = 0; $i -lt $veri.Length; $i++) {
+            $c = $veri[$i]
+            if ($c -eq "_") { $bayt.Add(32) }
+            elseif ($c -eq "=" -and $i + 2 -lt $veri.Length) { $bayt.Add([Convert]::ToByte($veri.Substring($i + 1, 2), 16)); $i += 2 }
+            else { $bayt.Add([byte][char]$c) }
+        }
+        return $kodlama.GetString($bayt.ToArray())
+    })
+}
+$basliklar = @()
+$yamaSatirlari = @(Get-Content -Path $Yama -Encoding UTF8)
+for ($i = 0; $i -lt $yamaSatirlari.Count; $i++) {
+    if (-not $yamaSatirlari[$i].StartsWith("Subject: ")) { continue }
+    $konu = $yamaSatirlari[$i].Substring(9)
+    while ($i + 1 -lt $yamaSatirlari.Count -and $yamaSatirlari[$i + 1] -match '^[ \t]') { $i++; $konu += $yamaSatirlari[$i] }
+    $basliklar += ((KonuCoz $konu) -replace '^\[PATCH[^\]]*\]\s*', '')
+}
 
 Adim "Uygulanacak guncelleme"
 Write-Host ("Dosya : {0}  ({1:dd.MM.yyyy HH:mm})" -f $yamaBilgi.FullName, $yamaBilgi.LastWriteTime)
 foreach ($b in $basliklar) { Write-Host "  - $b" }
+
+# Zaten uygulanmis mi? git am basliklari aynen korur; dosya disarida
+# birakilarak uygulanmis yamalar (ters kontrol tutmaz) de boylece taninir.
+$gecmis = @(& git log -n 500 --format=%s)
+$eksik = @($basliklar | Where-Object { $gecmis -notcontains $_ })
+& git apply -R --check $Yama 2>$null
+if ($basliklar.Count -gt 0 -and ($eksik.Count -eq 0 -or $LASTEXITCODE -eq 0)) {
+    Write-Host ""
+    Write-Host "Bu yama zaten uygulanmis; yapilacak bir sey yok." -ForegroundColor Green
+    exit 0
+}
 if (-not $Evet) {
     $onay = Read-Host "Devam etmek icin E yazin"
     if ($onay -ne "E" -and $onay -ne "e") { Write-Host "Iptal edildi."; exit 1 }
@@ -76,6 +116,7 @@ if (Test-Path (Join-Path $klasor ".git\rebase-apply")) {
 }
 $eskiHead = (& git rev-parse HEAD).Trim()
 $stashlandi = $false
+$servisYenidenBaslatildi = $false
 $yerel = & git status --porcelain --untracked-files=no
 if ($yerel) {
     Adim "Yerel degisiklikler kenara aliniyor (git stash)"
@@ -130,7 +171,8 @@ function GeriAl([string]$neden) {
     Hata $neden
     Adim "Kod eski haline donduruluyor"
     if (Test-Path (Join-Path $klasor ".git\rebase-apply")) { GitCalistir am --abort | Out-Null }
-    if (((& git rev-parse HEAD).Trim()) -ne $eskiHead) {
+    $kodDegisti = ((& git rev-parse HEAD).Trim()) -ne $eskiHead
+    if ($kodDegisti) {
         # Yerel degisiklikler bu noktada geri getirilmis olabilir; reset --hard
         # onlari silmesin diye once tekrar kenara alinir.
         if (-not $script:stashlandi -and (& git status --porcelain --untracked-files=no)) {
@@ -140,9 +182,13 @@ function GeriAl([string]$neden) {
         GitCalistir reset --hard $eskiHead | Out-Null
     }
     YerelDegisiklikleriGeriGetir
-    ServisiYenidenBaslat | Out-Null
-    if (SaglikliMi) { Write-Host "Eski surum calisiyor. Guncelleme UYGULANMADI." -ForegroundColor Yellow }
-    else { Hata "Eski surum de saglik kontrolunden gecmedi; loglar\pts.log dosyasini kontrol edin." }
+    if (-not $kodDegisti -and -not $script:servisYenidenBaslatildi) {
+        Write-Host "Kod degismedi; PTS calismaya devam ediyor. Guncelleme UYGULANMADI." -ForegroundColor Yellow
+    } else {
+        ServisiYenidenBaslat | Out-Null
+        if (SaglikliMi) { Write-Host "Eski surum calisiyor. Guncelleme UYGULANMADI." -ForegroundColor Yellow }
+        else { Hata "Eski surum de saglik kontrolunden gecmedi; loglar\pts.log dosyasini kontrol edin." }
+    }
     if ($script:yedekYolu) { Write-Host "Guncelleme oncesi veritabani yedegi: $script:yedekYolu" }
     exit 1
 }
@@ -178,6 +224,7 @@ YerelDegisiklikleriGeriGetir
 
 # ---------------------------------------------------------------- yeniden baslat + dogrula
 Adim "PTS yeniden baslatiliyor"
+$servisYenidenBaslatildi = $true
 if (-not (ServisiYenidenBaslat)) { GeriAl "Servis yeniden baslatilamadi." }
 if (-not (SaglikliMi)) { GeriAl "Yeni surum saglik kontrolunden gecmedi." }
 
