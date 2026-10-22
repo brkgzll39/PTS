@@ -161,3 +161,73 @@ body.kapi-nobet .app-main { max-width: 1400px; margin: 0 auto; }
   .kapi-cipler { grid-template-columns: repeat(2, 1fr); }
   .kapi-ozet { grid-template-columns: repeat(2, 1fr); }
 }
+
+/* Telefon (2026-10-22): menü ekranın altında sabit sekme çubuğu olur, kartlar
+   tek sütun akar, pencereler tam ekran açılır. */
+@media (max-width: 768px) {
+  #kapiModu .kapi-ust {
+    position: fixed; top: auto; bottom: 0; left: 0; right: 0; z-index: 30;
+    min-height: 64px; padding: 6px 6px calc(6px + env(safe-area-inset-bottom)); gap: 4px;
+    flex-wrap: nowrap; justify-content: space-between; border-top: 1px solid rgba(255,255,255,.14);
+  }
+  #kapiModu .kapi-logo, #kapiModu .kapi-vardiya, #kapiModu .kapi-sag, #kapiModu .kapi-kucuk-dugme#kapiFarkliKullanici { display: none; }
+  #kapiModu .kapi-sekmeler { flex: 1; justify-content: space-around; flex-wrap: nowrap; gap: 2px; }
+  #kapiModu .kapi-sekme {
+    flex: 1; min-width: 0; flex-direction: column; justify-content: center; gap: 3px;
+    font-size: 12px; padding: 6px 2px; border-radius: 12px; position: relative;
+  }
+  #kapiModu .kapi-sekme i { font-size: 21px; }
+  #kapiModu .kapi-sekme .sayi { position: absolute; top: 2px; right: 8px; font-size: 10px; padding: 0 6px; }
+  #kapiModu .kapi-kucuk-dugme { font-size: 0; padding: 8px 10px; flex-shrink: 0; }
+  #kapiModu .kapi-kucuk-dugme i { font-size: 18px; }
+  #kapiModu .kapi-icerik { padding: 10px 10px 100px; }
+
+  .kapi-izgara { grid-template-columns: 1fr; gap: 12px; }
+  .kapi-son { padding: 14px; gap: 12px; }
+  .kapi-goruntu { height: 210px; font-size: 56px; border-radius: 12px; }
+  .kapi-bilgi { gap: 12px; }
+  .kapi-bilgi .kapi-plaka { font-size: 30px; }
+  .kapi-kim .ad { font-size: 22px; }
+  .kapi-ayrinti { gap: 12px; font-size: 16px; }
+  .kapi-not { font-size: 16px; }
+  .kapi-dugmeler { flex-direction: column; gap: 10px; }
+  .kapi-dugmeler .kapi-dugme { flex: none; width: 100%; }
+  .kapi-dugme { min-height: 60px; font-size: 20px; }
+
+  .kapi-liste { max-height: none; }
+  .kapi-liste-satirlar { overflow: visible; }
+  .kapi-satir { grid-template-columns: 6px minmax(0, 1fr) auto; padding-right: 12px; gap: 10px; }
+  .kapi-satir .kapi-plaka { font-size: 16px; }
+  .kapi-satir .sag2 { font-size: 13px; }
+  .kapi-satir .sag2 .saat { font-size: 16px; }
+
+  .kapi-ozet { grid-template-columns: 1fr 1fr; gap: 10px; }
+  .kapi-kutu { padding: 12px 14px; }
+  .kapi-kutu .sayi { font-size: 32px; }
+  .kapi-kutu .ad { font-size: 14px; }
+  .kapi-tbas, .kapi-rtbas { display: none; }
+  .kapi-tsat, .kapi-rtsat { grid-template-columns: 1fr; gap: 6px; padding: 12px 14px; min-height: 0; font-size: 16px; }
+  .kapi-tsat .kapi-plaka, .kapi-rtsat .kapi-plaka { font-size: 18px; }
+  .kapi-tsat .kapi-rozet, .kapi-rtsat .kapi-rozet { font-size: 14px; }
+  .kapi-alt-baslik { font-size: 16px; margin: 18px 0 10px; }
+  .kapi-kart { border-radius: 14px; }
+
+  .kapi-filtre { padding: 14px; }
+  .kapi-arama { font-size: 18px; padding: 4px 12px; }
+  .kapi-arama input { font-size: 18px; }
+  .kapi-filtre-satir { gap: 8px; }
+  .kapi-secim, .kapi-cip { font-size: 15px; padding: 8px 12px; }
+  .kapi-etiket { min-width: 0; width: 100%; font-size: 14px; }
+  .kapi-indir { margin-left: 0; width: 100%; }
+  .kapi-indir .kapi-dugme { flex: 1; min-height: 52px; font-size: 17px; }
+  .kapi-sonuc { font-size: 14px; padding: 12px 14px; }
+
+  .kapi-perde { padding: 0; align-items: stretch; }
+  .kapi-pencere, #kapiPlakaPencere .kapi-pencere { width: 100%; height: 100%; max-height: none; border-radius: 0; padding: 18px 16px 24px; }
+  .kapi-pencere .bas .kapi-plaka { font-size: 28px; }
+  .kapi-cipler { grid-template-columns: 1fr 1fr; gap: 8px; }
+  .kapi-cip { min-height: 56px; font-size: 16px; }
+  .kapi-alan { font-size: 18px; }
+  .kapi-alan.tek { font-size: 24px; }
+  .kapi-pencere .kapi-dugmeler { margin-top: 16px; }
+}
