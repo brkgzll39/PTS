@@ -15,5 +15,12 @@ Kullanıcı "ne kaldı" diye sorduğunda bu liste hatırlatılır.
 - [ ] Yönetici oturum süresi: "kullandıkça uzasın" mı, süre uzatma mı? (karar bekleniyor)
 - [ ] Güvenlik: `guvenlik_duvari.ps1 -EkIpler "<Tailscale IP'leri>"` uygulandı mı;
   SQL Server 1433 kuralı kapatıldı mı; Telegram bot anahtarı iptal edildi mi.
+- [ ] **Güvenlik görevlisinin kayıt görünürlüğü** (karar bekleniyor, 2026-10-23):
+  görevli yalnız giriş yaptığı andan sonraki geçişleri görüyor (23:28'de giren
+  23:00-23:28 arasını göremiyor). Öneri: vardiya çizelgesindeki başlangıçtan itibaren göster.
+- [ ] **SQL Server 1433** tüm ağ arayüzlerinde dinliyor; PTS aynı bilgisayardaysa
+  yalnız 127.0.0.1'de dinlemesi yeterli (karar bekleniyor, 2026-10-23).
+- [ ] **KVKK saklama süresini** kurum belirleyip Sistem ayarlarına girmeli
+  (`kayit_anonimlestirme_gun`, şu an 0 = kapalı).
 - [ ] Huidu tabela yazma süresi (~0,8 sn): iki bölgeyi tek bağlantıda gönderme --
   canlı panelde deneme gerektirir, kullanıcı onayıyla.

@@ -4675,3 +4675,28 @@ düğmeleri, Excel/PDF) ve **Nöbet Defteri**.
   (`PATCH /kayitlar/{id}` `yeniden_degerlendir: true`).
 - `/kayitlar`, sayfa bilgisi ve Excel/PDF: `arama` (plaka/not/kişi adı) ve
   `kim` (personel | ziyaretci | alt_isveren | vip) parametreleri.
+
+## Güncelleme, HTTPS, izleme, KVKK ve iki adımlı doğrulama (2026-10-23)
+
+- **Tek adımda güncelleme:** gönderilen `.patch` dosyasını İndirilenler'e kaydedip
+  proje klasöründe (yönetici PowerShell) `powershell -ExecutionPolicy Bypass -File .\guncelle.ps1`.
+  Betik yarım kalmış eski `git am`'i temizler, yerel değişiklikleri kenara alıp geri
+  getirir, veritabanı yedeği alır (`backend/guncelleme_yedegi.py`,
+  `pts_guncelleme_oncesi_*`), yamayı uygular, servisi yeniden başlatıp `/saglik`
+  ile doğrular; bir adım başarısızsa kodu eski haline döndürür.
+- **HTTPS:** aynı porta `http://` ile gelen istek `https://` adresine yönlendirilir
+  (eski kısayollar çalışır). Sertifika yetkilisi `/pts-ca.crt` adresinden ve giriş
+  ekranındaki bağlantıdan indirilir. `sertifika_olustur.py --ip X` otomatik bulunan ve
+  önceki sertifikadaki IP'leri korur. Sunucu sertifikası 398 gün geçerlidir; bitişe
+  30 gün kala `sertifika_bitiyor` alarmı ve bildirimi üretilir.
+- **`/saglik`:** `saglikli`, `uyarilar`, kamera (aktif/çalışan), son kayıt (dk), son
+  otomatik yedek (saat), disk (%), sertifika (gün). Oturum gerektirmez, yalnız sayı
+  döner. Dış izleme aracında `"saglikli":true` aranabilir.
+- **KVKK:** Sistem ayarlarında "KVKK: ... günden eski geçişlerin ... bilgisini sil"
+  (`kayit_anonimlestirme_gun`, 0 = kapalı, en az 30). Süreyi kurum belirler. Eski
+  geçişlerde plaka, kişi, not, misafir/sürücü adı ve görüntü silinir; tarih, kamera,
+  yön ve kişi tipi istatistik için kalır. Geri alınamaz.
+- **İki adımlı doğrulama:** Kullanıcılar → "İki Adımlı Doğrulama (hesabınız)". QR kodu
+  Google/Microsoft Authenticator ile okutup ilk kodu girin. Sonraki girişlerde parolaya
+  ek 6 haneli kod istenir. Telefon kaybolursa başka bir yönetici kullanıcı satırındaki
+  kalkan düğmesiyle sıfırlar.
