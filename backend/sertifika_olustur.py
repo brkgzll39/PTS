@@ -104,7 +104,7 @@ def olustur(klasor: str, ipler: list, adlar: list) -> dict:
         .issuer_name(ca_crt.subject).public_key(sunucu_key.public_key())
         .serial_number(x509.random_serial_number())
         .not_valid_before(simdi - datetime.timedelta(days=1))
-        .not_valid_after(simdi + datetime.timedelta(days=825))
+        .not_valid_after(simdi + datetime.timedelta(days=397))
         .add_extension(x509.SubjectAlternativeName(san), critical=False)
         .add_extension(x509.BasicConstraints(ca=False, path_length=None), critical=True)
         .add_extension(x509.ExtendedKeyUsage([ExtendedKeyUsageOID.SERVER_AUTH]), critical=False)
