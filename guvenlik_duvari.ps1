@@ -56,8 +56,10 @@ function Port([string]$ad, [int]$varsayilan) {
 $anaPort = Port "PTS_PORT" 8000
 $lojmanPort = Port "PTS_OTOMATIK_GIRIS_PORTU" 8787
 $ek = IpListesi $EkIpler
-$anaIpler = @(IpListesi $ayar["PTS_ANA_PORT_OTOMATIK_GIRIS_IPLERI"]) + $ek + @("127.0.0.1", "::1")
-$lojmanIpler = @(IpListesi $ayar["PTS_OTOMATIK_GIRIS_IPLERI"]) + $ek + @("127.0.0.1", "::1")
+# Yerel (127.0.0.1 / ::1) adresler eklenmez: geri döngü trafiği güvenlik duvarından
+# geçmez ve Windows bu adresleri uzak adres olarak kabul etmez (2026-10-22 hatası).
+$anaIpler = @(IpListesi $ayar["PTS_ANA_PORT_OTOMATIK_GIRIS_IPLERI"]) + $ek | Where-Object { $_ -notmatch '^(127\.|::1$)' }
+$lojmanIpler = @(IpListesi $ayar["PTS_OTOMATIK_GIRIS_IPLERI"]) + $ek | Where-Object { $_ -notmatch '^(127\.|::1$)' }
 $anaIpler = @($anaIpler | Select-Object -Unique)
 $lojmanIpler = @($lojmanIpler | Select-Object -Unique)
 
