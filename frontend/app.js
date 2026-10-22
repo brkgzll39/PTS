@@ -979,6 +979,8 @@ async function authFormGonder(e) {
   const form = e.target;
   const sonuc = document.getElementById("authSonuc");
   const govde = { kullanici_adi: document.getElementById("authKullanici").value, parola: document.getElementById("authParola").value };
+  const kodAlani = document.getElementById("authKodAlani");
+  if (kodAlani && !kodAlani.classList.contains("d-none")) govde.kod = document.getElementById("authKod").value;
   try {
     const yol = form.dataset.ilkKurulum === "true" ? "/auth/ilk-yonetici" : "/auth/giris";
     const cevap = await apiCagir(yol, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(govde) });
@@ -1011,7 +1013,18 @@ async function authFormGonder(e) {
       }
       authBasarili(kullanici);
     }
-  } catch (err) { sonuc.className = "small mt-3 text-danger"; sonuc.textContent = err.message; }
+  } catch (err) {
+    // İki adımlı doğrulama (2026-10-23): parola doğru, kod isteniyor.
+    if (err.message === "İki adımlı doğrulama kodu gerekli" && kodAlani) {
+      kodAlani.classList.remove("d-none");
+      document.getElementById("authKod").focus();
+      sonuc.className = "small mt-3 text-primary";
+      sonuc.textContent = "Telefonunuzdaki doğrulama uygulamasında görünen 6 haneli kodu girin.";
+      return;
+    }
+    if (kodAlani && !kodAlani.classList.contains("d-none")) document.getElementById("authKod").value = "";
+    sonuc.className = "small mt-3 text-danger"; sonuc.textContent = err.message;
+  }
 }
 
 // ---------------------- PANEL (DASHBOARD) ----------------------
@@ -3693,7 +3706,7 @@ async function kisileriYukle() {
       <td>${tipRozeti(k.tip)}</td>
       <td>${escapeHtml(k.telefon) || "-"}</td>
       <td>${escapeHtml(k.daire_departman) || "-"}</td>
-      <td>${k.aktif ? '<span class="badge bg-success">Aktif</span>' : '<span class="badge bg-secondary">Pasif</span>'}</td>
+      <td>${k.aktif ? '<span class="badge bg-success">Aktif</span>' : '<span class="badge bg-secondary">Pasif</span>'}${k.totp_aktif ? ' <span class="badge bg-dark" title="İki adımlı doğrulama açık"><i class="bi bi-shield-lock-fill"></i> 2FA</span>' : ""}</td>
       <td class="small">${k.ilk_gecis ? tarihFormatla(k.ilk_gecis) : '<span class="text-muted">-</span>'}</td>
       <td class="small">${k.son_gecis ? tarihFormatla(k.son_gecis) : '<span class="text-muted">-</span>'}</td>
       <td class="small">${sonNot}</td>
@@ -5178,14 +5191,89 @@ async function kullanicilariYukle() {
         <button class="btn btn-sm btn-outline-primary" onclick="kullaniciDuzenleAc(${k.id})" title="Düzenle"><i class="bi bi-pencil"></i></button>
         <button class="btn btn-sm btn-outline-secondary ms-1" onclick="kullaniciDurumDegistir(${k.id}, ${!k.aktif})" title="${k.aktif ? "Pasif yap" : "Aktif yap"}"><i class="bi bi-toggle2-on"></i></button>
         <button class="btn btn-sm btn-outline-danger ms-1" onclick="kullaniciSil(${k.id})" title="Sil"><i class="bi bi-trash"></i></button>
+        ${k.totp_aktif && k.kullanici_adi !== document.getElementById("oturumKullanici").textContent ? `<button class="btn btn-sm btn-outline-dark ms-1" onclick="ikiAdimSifirla(${k.id})" title="İki adımlı doğrulamayı sıfırla (telefon kaybolduysa)"><i class="bi bi-shield-x"></i></button>` : ""}
         ` : '<span class="text-muted small">-</span>'}
       </td>
     </tr>`;
     }).join("") || `<tr><td colspan="8" class="text-center text-muted py-3">Kullanıcı bulunamadı</td></tr>`;
+    ikiAdimKartiYukle();
   } catch (e) {
     const el = document.getElementById("kullanicilarTablo");
     if (el) el.innerHTML = `<tr><td colspan="8" class="text-center text-muted py-3">Bu sekmeyi sadece yönetici görebilir</td></tr>`;
   }
+}
+
+// ================================================================
+// İKİ ADIMLI DOĞRULAMA (2026-10-23) -- bkz. main.py /auth/iki-adim/*.
+// ================================================================
+async function ikiAdimKartiYukle() {
+  const el = document.getElementById("ikiAdimKart");
+  if (!el || !rolYeterli("yonetici")) return;
+  let ben;
+  try { ben = await apiCagir("/auth/me"); } catch (e) { el.textContent = e.message; return; }
+  if (ben.totp_aktif) {
+    el.innerHTML = `<p class="small mb-2"><span class="badge bg-success"><i class="bi bi-check-circle"></i> Açık</span>
+      Girişte parolaya ek olarak telefondaki 6 haneli kod isteniyor.</p>
+      <div class="mb-2"><input type="password" class="form-control form-control-sm" id="ikiAdimKapatParola" placeholder="Parolanız" autocomplete="current-password"></div>
+      <div class="mb-2"><input class="form-control form-control-sm" id="ikiAdimKapatKod" placeholder="Güncel 6 haneli kod" inputmode="numeric" maxlength="6"></div>
+      <button class="btn btn-sm btn-outline-danger w-100" onclick="ikiAdimKapat()"><i class="bi bi-shield-x"></i> Kapat</button>`;
+  } else {
+    el.innerHTML = `<p class="small text-muted mb-2">Parolanız ele geçirilse bile telefonunuz olmadan girilemesin.
+      Telefona Google Authenticator ya da Microsoft Authenticator kurun, sonra başlatın.</p>
+      <button class="btn btn-sm btn-primary w-100" onclick="ikiAdimKurulumBaslat()"><i class="bi bi-qr-code"></i> Kurulumu başlat</button>`;
+  }
+}
+
+async function ikiAdimKurulumBaslat() {
+  const el = document.getElementById("ikiAdimKart");
+  let k;
+  try { k = await apiCagir("/auth/iki-adim/kurulum", { method: "POST" }); } catch (e) { toastGoster(e.message, "hata"); return; }
+  let qrHtml = "";
+  if (typeof qrcode === "function") {
+    const qr = qrcode(0, "M");
+    qr.addData(k.uri);
+    qr.make();
+    qrHtml = `<div class="text-center bg-white p-2 rounded mb-2">${qr.createSvgTag({ cellSize: 4, margin: 2 })}</div>`;
+  }
+  el.innerHTML = `<ol class="small ps-3 mb-2">
+      <li>Doğrulama uygulamasında "+" → "QR kodu tara" deyip aşağıdaki kodu okutun.</li>
+      <li>Uygulamada görünen 6 haneli kodu yazıp "Etkinleştir"e basın.</li></ol>
+    ${qrHtml}
+    <div class="small text-muted mb-2">QR okutulamıyorsa anahtarı elle girin:<br><code class="user-select-all">${escapeHtml(k.gizli.replace(/(.{4})/g, "$1 ").trim())}</code></div>
+    <div class="input-group input-group-sm">
+      <input class="form-control" id="ikiAdimKod" placeholder="6 haneli kod" inputmode="numeric" maxlength="6" autocomplete="one-time-code">
+      <button class="btn btn-success" onclick="ikiAdimEtkinlestir()"><i class="bi bi-shield-check"></i> Etkinleştir</button>
+    </div>`;
+  document.getElementById("ikiAdimKod").focus();
+}
+
+async function ikiAdimEtkinlestir() {
+  const kod = document.getElementById("ikiAdimKod").value;
+  try {
+    await apiCagir("/auth/iki-adim/etkinlestir", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ kod }) });
+    toastGoster("İki adımlı doğrulama açıldı. Bir sonraki girişte kod istenecek.", "basari");
+    kullanicilariYukle();
+  } catch (e) { toastGoster(e.message, "hata"); }
+}
+
+async function ikiAdimKapat() {
+  const parola = document.getElementById("ikiAdimKapatParola").value;
+  const kod = document.getElementById("ikiAdimKapatKod").value;
+  try {
+    await apiCagir("/auth/iki-adim/kapat", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ parola, kod }) });
+    toastGoster("İki adımlı doğrulama kapatıldı.", "basari");
+    kullanicilariYukle();
+  } catch (e) { toastGoster(e.message, "hata"); }
+}
+
+async function ikiAdimSifirla(id) {
+  const ad = (_kullanicilarCache.find(k => k.id === id) || {}).kullanici_adi || `#${id}`;
+  if (!(await onayAl(`"${ad}" hesabının iki adımlı doğrulaması kapatılsın mı? (Telefonu kaybolduysa kullanın; kişi tekrar kurabilir.)`))) return;
+  try {
+    await apiCagir(`/kullanicilar/${id}/iki-adim-sifirla`, { method: "POST" });
+    toastGoster(`${ad}: iki adımlı doğrulama sıfırlandı.`, "basari");
+    kullanicilariYukle();
+  } catch (e) { toastGoster(e.message, "hata"); }
 }
 
 // ================================================================

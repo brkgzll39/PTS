@@ -71,6 +71,11 @@ class Kullanici(Base):
     # (bkz. _veritabani_migrasyon, kisi_id ile AYNI desen) DB seviyesinde bir
     # kısıtlama yok.
     vardiya_adi = Column(String(20), nullable=True)
+    # İKİ ADIMLI DOĞRULAMA (2026-10-23) -- bkz. backend/totp.py. totp_gizli
+    # kurulum başlayınca yazılır; totp_aktif ancak uygulamadan okunan ilk kod
+    # doğrulanınca True olur. Aktifken girişte parolaya ek 6 haneli kod istenir.
+    totp_gizli = Column(String(64), nullable=True)
+    totp_aktif = Column(Boolean, default=False)
     olusturma_tarihi = Column(DateTime, default=datetime.now)
 
 

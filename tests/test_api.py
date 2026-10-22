@@ -8057,3 +8057,46 @@ def test_kvkk_eski_gecislerin_kisisel_verisi_silinir_istatistik_kalir(client):
         assert pts_main._kayitlari_anonimlestir(0, db) == 0     # kapalı
     finally:
         db.close()
+
+
+# ------------------------------------------------------------------
+# İki adımlı doğrulama (2026-10-23)
+# ------------------------------------------------------------------
+def test_iki_adimli_dogrulama_kurulum_giris_ve_sifirlama(client, admin_header):
+    from backend import totp
+    r = client.post("/kullanicilar", json={"kullanici_adi": "ikiadim", "parola": "GucluParola123!", "rol": "yonetici"},
+                    headers=admin_header)
+    assert r.status_code == 200, r.text
+    hedef_id = r.json()["id"]
+    giris = lambda **ek: client.post("/auth/giris", json={"kullanici_adi": "ikiadim", "parola": "GucluParola123!", **ek})
+    h = {"Authorization": f"Bearer {giris().json()['token']}"}
+
+    kurulum = client.post("/auth/iki-adim/kurulum", headers=h).json()
+    gizli = kurulum["gizli"]
+    assert kurulum["uri"].startswith("otpauth://totp/PTS:ikiadim?secret=" + gizli)
+    assert client.post("/auth/iki-adim/etkinlestir", json={"kod": "000000"}, headers=h).status_code == 400
+    r = client.post("/auth/iki-adim/etkinlestir", json={"kod": totp.kod(gizli)}, headers=h)
+    assert r.status_code == 200 and r.json()["totp_aktif"] is True
+
+    # Parola doğru ama kod yok -> arayüz kod alanını açsın.
+    r = giris()
+    assert r.status_code == 401 and r.json()["detail"] == pts_main.IKI_ADIM_GEREKLI_MESAJI
+    assert giris(kod="123456").status_code == 401
+    # Yanlış parola + doğru kod: parola mesajı (kodun varlığı bilgi sızdırmasın).
+    r = client.post("/auth/giris", json={"kullanici_adi": "ikiadim", "parola": "YanlisParola1", "kod": totp.kod(gizli)})
+    assert r.status_code == 401 and "parola" in r.json()["detail"].lower()
+    r = giris(kod=totp.kod(gizli, time.time() + 30))
+    assert r.status_code == 200, r.text
+    # Aynı kod ikinci kez kullanılamaz.
+    assert giris(kod=totp.kod(gizli, time.time() + 30)).status_code == 401
+
+    # Kendi hesabını sıfırlayamaz; başka yönetici sıfırlar.
+    assert client.post(f"/kullanicilar/{hedef_id}/iki-adim-sifirla", headers=h).status_code == 400
+    r = client.post(f"/kullanicilar/{hedef_id}/iki-adim-sifirla", headers=admin_header)
+    assert r.status_code == 200 and r.json()["totp_aktif"] is False
+    pts_main._basarisiz_girisler.pop("ikiadim", None)
+    assert giris().status_code == 200
+
+
+def test_iki_adim_kurulumu_yalniz_yoneticiye_acik(client, izleyici_header):
+    assert client.post("/auth/iki-adim/kurulum", headers=izleyici_header).status_code == 403

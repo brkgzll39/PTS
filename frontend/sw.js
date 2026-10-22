@@ -8,7 +8,7 @@
 // (ana sayfa kabuğu) bu SW'nin kapsamına girer; başka HİÇBİR istek yakalanmaz,
 // tarayıcı onu her zamanki gibi doğrudan sunucuya/ağa yönlendirir.
 
-const SURUM = "pts-shell-v5";
+const SURUM = "pts-shell-v6";
 const KABUK_DOSYALARI = [
   "/",
   "/static/style.css",
@@ -25,6 +25,7 @@ const KABUK_DOSYALARI = [
   "/static/vendor/bootstrap-icons/fonts/bootstrap-icons.woff2",
   "/static/vendor/ibm-plex-sans/ibm-plex-sans.css",
   "/static/vendor/chart.js/chart.umd.min.js",
+  "/static/vendor/qrcode-generator/qrcode.js",
 ];
 
 self.addEventListener("install", (event) => {

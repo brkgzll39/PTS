@@ -113,6 +113,13 @@
           <input type="password" class="form-control" id="authParola" autocomplete="current-password" minlength="8" required>
         </div>
       </div>
+      <div class="mb-3 d-none" id="authKodAlani">
+        <label class="form-label small" for="authKod">Doğrulama kodu (telefondaki uygulamadan)</label>
+        <div class="input-group">
+          <span class="input-group-text"><i class="bi bi-shield-lock-fill"></i></span>
+          <input class="form-control" id="authKod" inputmode="numeric" autocomplete="one-time-code" maxlength="6" pattern="[0-9 ]*">
+        </div>
+      </div>
       <button class="btn btn-primary w-100" type="submit"><i class="bi bi-box-arrow-in-right"></i> <span id="authButon">Giriş yap</span></button>
       <div id="authSonuc" class="small mt-3"></div>
       <div class="small text-muted mt-3 text-center"><i class="bi bi-shield-lock"></i> Tarayıcı "Güvenli değil" diyorsa <a href="/pts-ca.crt" download>PTS sertifikasını indirip</a> bu cihaza kurun.</div>
@@ -1954,6 +1961,11 @@
               <div id="kullaniciSonuc" class="small mt-2"></div>
             </div>
           </div>
+          <!-- İki adımlı doğrulama (2026-10-23) -- bkz. app.js::ikiAdimKartiYukle, main.py /auth/iki-adim/*. -->
+          <div class="card mt-3" data-rol-min="yonetici">
+            <div class="card-header"><i class="bi bi-shield-lock-fill me-1"></i>İki Adımlı Doğrulama (hesabınız)</div>
+            <div class="card-body" id="ikiAdimKart"><div class="text-muted small">Yükleniyor...</div></div>
+          </div>
         </div>
         <div class="col-lg-8">
           <div class="card">
@@ -2338,6 +2350,7 @@
 
 <script src="/static/vendor/bootstrap/bootstrap.bundle.min.js"></script>
 <script src="/static/vendor/chart.js/chart.umd.min.js"></script>
+<script src="/static/vendor/qrcode-generator/qrcode.js"></script>
 <script src="/static/app.js"></script>
 <script src="/static/kapi.js"></script>
 </body>

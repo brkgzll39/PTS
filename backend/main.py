@@ -93,6 +93,7 @@ from backend import pdf_export
 from backend import led_panel
 from backend import vardiya_cizelgesi
 from backend import lisans as lisans_modulu
+from backend import totp
 from backend.vardiya_eslestirme import kayitlari_oturumlarla_eslestir
 from backend import kucuk_gorsel
 from backend import telegram_bildirim
@@ -237,6 +238,10 @@ def _veritabani_migrasyon() -> None:
         # koşulsuz çalıştırılıyor (WHERE koşulu sayesinde etkisiz/idempotent --
         # düzeltilecek satır kalmadıysa hiçbir şey değiştirmez).
         "UPDATE plaka_kayitlari SET manuel_giris = 0 WHERE manuel_giris IS NULL",
+        # İki adımlı doğrulama (2026-10-23) -- bkz. models.Kullanici.totp_gizli.
+        f"ALTER TABLE kullanicilar ADD {col_kw}totp_gizli VARCHAR(64)",
+        f"ALTER TABLE kullanicilar ADD {col_kw}totp_aktif {bool_tip}{bit_sonu}",
+        "UPDATE kullanicilar SET totp_aktif = 0 WHERE totp_aktif IS NULL",
         # "Otomatik not" (2026-10-22) -- bkz. models.Kisi.otomatik_not. Türkçe
         # karakter (İ, Ş...) için SQL Server'da NVARCHAR.
         f"ALTER TABLE kisiler ADD {col_kw}otomatik_not {'VARCHAR(100)' if sqlite_mod else 'NVARCHAR(100)'}",
@@ -2849,6 +2854,88 @@ def auth_durumu(db: Session = Depends(get_db)):
     return {"kurulum_tamamlandi": db.query(models.Kullanici).count() > 0}
 
 
+# ================================================================
+# İKİ ADIMLI DOĞRULAMA (2026-10-23, kullanıcı onayı) -- bkz. backend/totp.py
+# ================================================================
+# Yönetici hesabı telefondaki doğrulama uygulamasıyla eşleştirilir; sonra
+# girişte parolaya ek 6 haneli kod istenir. Telefon kaybolursa başka bir
+# yönetici "Kullanıcılar" ekranından sıfırlar.
+IKI_ADIM_GEREKLI_MESAJI = "İki adımlı doğrulama kodu gerekli"
+_iki_adim_son_kod: dict = {}   # kullanici_id -> (kod, zaman): aynı kod ikinci kez kullanılamaz
+
+
+def _iki_adim_kodu_gecerli(kullanici: models.Kullanici, girilen: str) -> bool:
+    if not totp.dogrula(kullanici.totp_gizli or "", girilen):
+        return False
+    girilen = "".join(ch for ch in girilen if ch.isdigit())
+    onceki = _iki_adim_son_kod.get(kullanici.id)
+    if onceki and onceki[0] == girilen and time.time() - onceki[1] < 3 * totp.ADIM_SN:
+        return False   # yakalanıp tekrar gönderilen kod
+    _iki_adim_son_kod[kullanici.id] = (girilen, time.time())
+    return True
+
+
+@app.post("/auth/iki-adim/kurulum")
+def iki_adim_kurulum(kullanici: models.Kullanici = Depends(_personel_girisi_gerekli), db: Session = Depends(get_db)):
+    """Yeni anahtar üretir (henüz etkin değil); QR için otpauth adresi döner."""
+    _rol_dogrula(kullanici, ROL_YONETICI)
+    if kullanici.totp_aktif:
+        raise HTTPException(409, "İki adımlı doğrulama zaten açık; önce kapatın")
+    kullanici.totp_gizli = totp.gizli_uret()
+    db.commit()
+    return {"gizli": kullanici.totp_gizli, "uri": totp.otpauth_uri(kullanici.totp_gizli, kullanici.kullanici_adi)}
+
+
+@app.post("/auth/iki-adim/etkinlestir", response_model=schemas.KullaniciCevap)
+def iki_adim_etkinlestir(istek: schemas.IkiAdimKodIstegi, kullanici: models.Kullanici = Depends(_personel_girisi_gerekli),
+                         db: Session = Depends(get_db)):
+    _rol_dogrula(kullanici, ROL_YONETICI)
+    if kullanici.totp_aktif:
+        raise HTTPException(409, "İki adımlı doğrulama zaten açık")
+    if not kullanici.totp_gizli:
+        raise HTTPException(400, "Önce kurulumu başlatın")
+    if not _iki_adim_kodu_gecerli(kullanici, istek.kod):
+        raise HTTPException(400, "Kod doğrulanamadı. Telefonun saatinin doğru olduğundan emin olup yeni kodu girin.")
+    kullanici.totp_aktif = True
+    db.commit()
+    _denetim_kaydet(db, kullanici.kullanici_adi, "iki_adim_ac", kullanici.kullanici_adi)
+    db.refresh(kullanici)
+    return kullanici
+
+
+@app.post("/auth/iki-adim/kapat", response_model=schemas.KullaniciCevap)
+def iki_adim_kapat(istek: schemas.IkiAdimKapatIstegi, kullanici: models.Kullanici = Depends(_personel_girisi_gerekli),
+                   db: Session = Depends(get_db)):
+    if not kullanici.totp_aktif:
+        raise HTTPException(409, "İki adımlı doğrulama zaten kapalı")
+    if not _parola_dogrula(istek.parola, kullanici.parola_hash) or not _iki_adim_kodu_gecerli(kullanici, istek.kod):
+        raise HTTPException(400, "Parola ya da doğrulama kodu hatalı")
+    kullanici.totp_aktif, kullanici.totp_gizli = False, None
+    db.commit()
+    _denetim_kaydet(db, kullanici.kullanici_adi, "iki_adim_kapat", kullanici.kullanici_adi)
+    db.refresh(kullanici)
+    return kullanici
+
+
+@app.post("/kullanicilar/{kullanici_id}/iki-adim-sifirla", response_model=schemas.KullaniciCevap)
+def iki_adim_sifirla(kullanici_id: int, kullanici: models.Kullanici = Depends(_personel_girisi_gerekli),
+                     db: Session = Depends(get_db)):
+    """Telefonunu kaybeden bir hesabın iki adımlı doğrulamasını başka bir
+    yönetici kapatır. Kendi hesabı için kullanılamaz (kod gerektiren
+    /auth/iki-adim/kapat atlanmasın)."""
+    _rol_dogrula(kullanici, ROL_YONETICI)
+    hedef = db.get(models.Kullanici, kullanici_id)
+    if hedef is None:
+        raise HTTPException(404, "Kullanıcı bulunamadı")
+    if hedef.id == kullanici.id:
+        raise HTTPException(400, "Kendi hesabınız için 'İki adımlı doğrulamayı kapat' seçeneğini kullanın")
+    hedef.totp_aktif, hedef.totp_gizli = False, None
+    db.commit()
+    _denetim_kaydet(db, kullanici.kullanici_adi, "iki_adim_sifirla", hedef.kullanici_adi)
+    db.refresh(hedef)
+    return hedef
+
+
 @app.post("/auth/giris", dependencies=[Depends(_hiz_sinir_giris)])
 def giris_yap(istek: schemas.GirisIstegi, request: Request, db: Session = Depends(get_db)):
     kullanici_adi = istek.kullanici_adi.strip()
@@ -2863,6 +2950,16 @@ def giris_yap(istek: schemas.GirisIstegi, request: Request, db: Session = Depend
         _basarisiz_girisler[kullanici_adi] = (sayac, time.time() + _GIRIS_KILIT_SURESI_SN)
         logger.warning("Başarısız giriş denemesi (%d/%d): %s", sayac, _GIRIS_DENEME_LIMITI, kullanici_adi)
         raise HTTPException(401, "Kullanıcı adı veya parola hatalı")
+
+    if kullanici.totp_aktif:
+        if not (istek.kod or "").strip():
+            # Parola doğru; kod henüz sorulmadı -- arayüz kod alanını açar.
+            raise HTTPException(401, IKI_ADIM_GEREKLI_MESAJI)
+        if not _iki_adim_kodu_gecerli(kullanici, istek.kod):
+            sayac = _basarisiz_girisler.get(kullanici_adi, (0, 0.0))[0] + 1
+            _basarisiz_girisler[kullanici_adi] = (sayac, time.time() + _GIRIS_KILIT_SURESI_SN)
+            logger.warning("Hatalı iki adımlı doğrulama kodu (%d/%d): %s", sayac, _GIRIS_DENEME_LIMITI, kullanici_adi)
+            raise HTTPException(401, "Doğrulama kodu hatalı ya da süresi geçmiş")
 
     _basarisiz_girisler.pop(kullanici_adi, None)
     kullanici.son_giris = datetime.now()
@@ -2988,8 +3085,8 @@ def otomatik_giris(request: Request, db: Session = Depends(get_db)):
     kullanici = _otomatik_giris_hesabi(db, kullanici_adi, olustur)
     if not kullanici.aktif:
         raise HTTPException(403, "Otomatik giriş hesabı pasif")
-    if kullanici.rol in (ROL_YONETICI, ROL_SAKIN):
-        raise HTTPException(403, "Yönetici ve sakin hesapları parolasız açılamaz")
+    if kullanici.rol in (ROL_YONETICI, ROL_SAKIN) or kullanici.totp_aktif:
+        raise HTTPException(403, "Yönetici, sakin ve iki adımlı doğrulamalı hesaplar parolasız açılamaz")
     kullanici.son_giris = datetime.now()
     db.commit()
     _guvenlik_oturum_baslat(db, kullanici)
@@ -3175,7 +3272,8 @@ def sertifika_yetkilisi_indir():
     (2026-10-22: Gmail .crt ekini şüpheli bulup engelledi). iPhone Safari bu
     MIME türünü görünce profil yükleme akışını başlatır. Oturum gerektirmez:
     sertifika gizli değildir ve kurulmadan önce panele girilemeyebilir."""
-    yol = os.environ.get("PTS_HTTPS_CA") or os.path.join(PROJE_KOKU, "sertifika", "pts-ca.crt")
+    sunucu_crt = (os.environ.get("PTS_HTTPS_SERTIFIKA") or "").strip() or os.path.join(PROJE_KOKU, "sertifika", "sunucu.crt")
+    yol = os.environ.get("PTS_HTTPS_CA") or os.path.join(os.path.dirname(sunucu_crt), "pts-ca.crt")
     if not os.path.isfile(yol):
         raise HTTPException(status_code=404, detail="Sertifika yetkilisi henüz oluşturulmamış")
     return FileResponse(yol, media_type="application/x-x509-ca-cert", filename="pts-ca.crt",

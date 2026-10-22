@@ -98,6 +98,17 @@ class IlkYoneticiOlustur(BaseModel):
 class GirisIstegi(BaseModel):
     kullanici_adi: str
     parola: str
+    # İki adımlı doğrulama açık hesaplarda doğrulama uygulamasındaki 6 haneli kod.
+    kod: Optional[str] = None
+
+
+class IkiAdimKodIstegi(BaseModel):
+    kod: str
+
+
+class IkiAdimKapatIstegi(BaseModel):
+    parola: str
+    kod: str
 
 
 class LisansAktivasyonIstegi(BaseModel):
@@ -124,8 +135,14 @@ class KullaniciCevap(BaseModel):
     # taşıyan tüm hesapların vardiya oturumları görünürlük açısından
     # BİRLEŞİK sayılır.
     vardiya_adi: Optional[str] = None
+    totp_aktif: bool = False
 
     model_config = ConfigDict(from_attributes=True)
+
+    @field_validator("totp_aktif", mode="before")
+    @classmethod
+    def _totp_aktif_null(cls, v):
+        return bool(v)
 
     @field_validator("kamera_erisim_listesi", mode="before")
     @classmethod
