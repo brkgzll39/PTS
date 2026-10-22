@@ -5990,6 +5990,8 @@ async function sistemAyarlariYukle() {
     const satirlar = [
       { key: "supheli_esik", label: "Şüpheli araç eşiği (red/saat)", tip: "number" },
       { key: "goruntu_saklama_gun", label: "Görüntü saklama süresi (gün)", tip: "number" },
+      // KVKK (2026-10-23) -- bkz. main.py::_kayitlari_anonimlestir.
+      { key: "kayit_anonimlestirme_gun", label: "KVKK: bu kadar günden eski geçişlerin plaka/kişi/not bilgisini sil (0 = kapalı, en az 30; geri alınamaz)", tip: "number" },
       { key: "panel_yenileme_sn", label: "Panel yenileme aralığı (sn)", tip: "number" },
       { key: "min_tanima_guveni", label: "Min. OCR okuma güveni — oy birikimine giriş eşiği (0-1)", tip: "number", step: "0.05" },
       { key: "otomatik_kayit_min_guven_skoru", label: "Min. kayıt güven skoru — kayda düşme eşiği (0-1)", tip: "number", step: "0.01" },
@@ -6068,6 +6070,9 @@ async function sistemAyarlariYukle() {
       guncel.otomatik_yedek_klasoru = document.getElementById("ayar_otomatik_yedek_klasoru").value;
       guncel.mssql_yedek_klasoru = document.getElementById("ayar_mssql_yedek_klasoru").value;
       guncel.disk_izleme_aktif = document.getElementById("ayar_disk_izleme_aktif").checked;
+      const kvkkGun = guncel.kayit_anonimlestirme_gun;
+      if (kvkkGun > 0 && kvkkGun !== Number(ayarlar.kayit_anonimlestirme_gun || 0) &&
+          !confirm(`${kvkkGun} günden eski TÜM geçişlerin plaka, kişi, not ve görüntü bilgisi kalıcı olarak silinecek. Bu işlem geri alınamaz. Devam edilsin mi?`)) return;
       // DÜZELTME (2026-09-25): bu gönderim işleyicisinde try/catch YOKTU --
       // backend'in yeni ayar doğrulaması (Patch #100) geçersiz bir değeri
       // (ör. panel yenileme 1 sn) 400 ile reddettiğinde kullanıcı yalnızca

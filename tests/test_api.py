@@ -8015,3 +8015,45 @@ def test_plaka_duzeltme_yeniden_degerlendirir(client, yetkili_header):
     assert r.status_code == 200, r.text
     v = r.json()
     assert (v["plaka_no"], v["yetki_durumu"], v["kisi_tip_anlik"], v["not_metni"]) == ("34 DZT 10", "yetkili", "alt_isveren", "Servis")
+
+
+# ------------------------------------------------------------------
+# KVKK: geçiş kayıtlarının anonimleştirilmesi (2026-10-23)
+# ------------------------------------------------------------------
+def test_kvkk_anonimlestirme_suresi_dogrulanir(client, admin_header):
+    assert client.put("/sistem/ayarlar", json={"kayit_anonimlestirme_gun": 10}, headers=admin_header).status_code == 400
+    assert client.put("/sistem/ayarlar", json={"kayit_anonimlestirme_gun": 730}, headers=admin_header).status_code == 200
+    assert client.put("/sistem/ayarlar", json={"kayit_anonimlestirme_gun": 0}, headers=admin_header).status_code == 200
+
+
+def test_kvkk_eski_gecislerin_kisisel_verisi_silinir_istatistik_kalir(client):
+    from backend import models
+    db = pts_main.SessionLocal()
+    try:
+        eski_zaman = datetime.now() - timedelta(days=400)
+        eski = models.Kayit(plaka_no="34KVK001", tarih_saat=eski_zaman, kamera_id="Lojman1", yon="giris",
+                            not_metni="Kargo", misafir_adi="Ali Veli", surucu_adi="Ayşe", ham_plaka_metni="34KVK0O1",
+                            kisi_tip_anlik="ziyaretci", yetki_durumu="yetkisiz")
+        yeni = models.Kayit(plaka_no="34KVK002", tarih_saat=datetime.now() - timedelta(days=5), kamera_id="Lojman1",
+                            yon="cikis", not_metni="Kalmalı")
+        db.add_all([eski, yeni])
+        db.commit()
+        alarm = models.Alarm(kayit_id=eski.id, plaka_no="34KVK001", alarm_tipi="yetkisiz",
+                             mesaj="Yetkisiz araç: 34KVK001", tarih_saat=eski_zaman)
+        sistem = models.Alarm(plaka_no="SISTEM", alarm_tipi="disk_doluyor", mesaj="Disk doluyor", tarih_saat=eski_zaman)
+        db.add_all([alarm, sistem])
+        db.commit()
+
+        assert pts_main._kayitlari_anonimlestir(365, db) >= 1
+        db.expire_all()
+        assert eski.plaka_no == pts_main.KVKK_ANONIM_PLAKA
+        assert (eski.not_metni, eski.misafir_adi, eski.surucu_adi, eski.ham_plaka_metni, eski.kisi_id) == (None,) * 5
+        # İstatistik için gereken alanlar korunur.
+        assert (eski.kamera_id, eski.yon, eski.kisi_tip_anlik, eski.tarih_saat) == ("Lojman1", "giris", "ziyaretci", eski_zaman)
+        assert (yeni.plaka_no, yeni.not_metni) == ("34KVK002", "Kalmalı")
+        assert alarm.plaka_no == pts_main.KVKK_ANONIM_PLAKA and "34KVK001" not in alarm.mesaj
+        assert (sistem.plaka_no, sistem.mesaj) == ("SISTEM", "Disk doluyor")
+        assert pts_main._kayitlari_anonimlestir(365, db) == 0   # ikinci tur: yapılacak iş yok
+        assert pts_main._kayitlari_anonimlestir(0, db) == 0     # kapalı
+    finally:
+        db.close()

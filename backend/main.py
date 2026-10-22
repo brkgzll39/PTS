@@ -271,6 +271,9 @@ _VARSAYILAN_AYARLAR = {
     # işaretlenir -- bkz. _gecis_alarmlarini_otomatik_okundu_isaretle.
     "alarm_otomatik_okundu": True,
     "goruntu_saklama_gun": 30,   # görüntü saklama süresi (gün)
+    # KVKK (2026-10-23): bu kadar günden eski geçişlerin kişisel verisi silinir
+    # (bkz. _kayitlari_anonimlestir). 0 = kapalı; süreyi kurum belirler.
+    "kayit_anonimlestirme_gun": 0,
     # AYNI KAMERANIN kendi tekrarını bastırma gecikmesi (sn) -- örn. bir araç
     # bariyer önünde birkaç saniye beklerse, aynı pipeline aynı plakayı tekrar
     # tekrar "yeni bir geçiş" olarak bildirmesin diye (bkz.
@@ -604,6 +607,18 @@ def _goruntu_temizlik_bir_tur() -> None:
                     "Görüntü temizliği (otomatik): %d dosya silindi (>%d gün, sınır: %s)",
                     silinen, gun, sinir.isoformat(),
                 )
+        finally:
+            db.close()
+    try:
+        kvkk_gun = int(_sistem_ayarlari_oku().get("kayit_anonimlestirme_gun") or 0)
+    except (TypeError, ValueError):
+        kvkk_gun = 0
+    if kvkk_gun > 0:
+        db = SessionLocal()
+        try:
+            adet = _kayitlari_anonimlestir(kvkk_gun, db)
+            if adet:
+                logger.info("KVKK: %d geçiş kaydı anonimleştirildi (>%d gün)", adet, kvkk_gun)
         finally:
             db.close()
     # Orijinali silinmiş (saklama süresi, kayıt silme, düşük güven
@@ -8963,6 +8978,15 @@ def _ayar_int_dogrula(v, min_deger: Optional[int] = None, max_deger: Optional[in
     return n
 
 
+def _anonimlestirme_gunu_dogrula(v) -> int:
+    """0 (kapalı) ya da 30-3650 gün: geri alınamaz bir silme olduğu için
+    yanlışlıkla "1" yazılıp tüm geçmişin bir gecede silinmesi engellenir."""
+    n = _ayar_int_dogrula(v, 0, 3650)
+    if 0 < n < 30:
+        raise HTTPException(400, f"0 (kapalı) ya da en az 30 olmalı, alınan değer: {n}")
+    return n
+
+
 def _ayar_float_dogrula(v, min_deger: float = 0.0, max_deger: float = 1.0) -> float:
     if isinstance(v, bool):
         raise HTTPException(400, f"Sayısal bir değer olmalı, alınan değer: {v!r}")
@@ -9025,6 +9049,7 @@ _AYAR_DOGRULAYICILAR = {
     "supheli_esik": lambda v: _ayar_int_dogrula(v, 0, 1000),
     "alarm_otomatik_okundu": _ayar_bool_dogrula,
     "goruntu_saklama_gun": lambda v: _ayar_int_dogrula(v, 0, None),
+    "kayit_anonimlestirme_gun": lambda v: _anonimlestirme_gunu_dogrula(v),
     "tekrar_gecikme_sn": lambda v: _ayar_int_dogrula(v, 0, 3600),
     "capraz_kamera_tekrar_penceresi_sn": lambda v: _ayar_int_dogrula(v, None, None),
     "auto_bariyer_giris": _ayar_bool_dogrula,
@@ -9464,6 +9489,50 @@ def _goruntu_temizle_calistir(gun: int, db: Session) -> tuple[int, "datetime"]:
             pass
     db.commit()
     return silinen, sinir
+
+
+# ================================================================
+# KVKK: GEÇİŞ KAYITLARINI ANONİMLEŞTİRME (2026-10-23, kullanıcı onayı)
+# ================================================================
+# Görüntüler goruntu_saklama_gun sonra siliniyordu ama geçiş kayıtları
+# (plaka, kişi, not, misafir/sürücü adı) süresiz tutuluyordu. KVKK kişisel
+# verinin amaç için gereken süreden uzun tutulmamasını ister. Kayıt
+# SİLİNMEZ (sayısal istatistik -- gün/kamera/yön/kişi tipi -- korunur);
+# yalnızca kişiyi belirleyen alanlar temizlenir. Geri alınamaz.
+KVKK_ANONIM_PLAKA = "ANONIM"
+_SISTEM_ALARM_TIPLERI = ("kamera_arizasi", "disk_hatasi", "disk_doluyor", "yedek_bozuk", "yedek_hatasi",
+                         "sertifika_bitiyor")
+
+
+def _kayitlari_anonimlestir(gun: int, db: Session, parca: int = 1000) -> int:
+    """`gun`'dan eski geçişlerin kişisel verisini siler; anonimleştirilen
+    kayıt sayısını döner. Uzun bir kilit tutmamak için parça parça işler."""
+    if gun <= 0:
+        return 0
+    sinir = datetime.now() - timedelta(days=gun)
+    _goruntu_temizle_calistir(gun, db)   # plaka görüntüden de okunur
+    toplam = 0
+    while True:
+        idler = [i for (i,) in db.query(models.Kayit.id).filter(
+            models.Kayit.tarih_saat < sinir, models.Kayit.plaka_no != KVKK_ANONIM_PLAKA,
+        ).limit(parca).all()]
+        if not idler:
+            break
+        db.query(models.Kayit).filter(models.Kayit.id.in_(idler)).update({
+            models.Kayit.plaka_no: KVKK_ANONIM_PLAKA, models.Kayit.ham_plaka_metni: None,
+            models.Kayit.kamera_okumasi: None, models.Kayit.kisi_id: None, models.Kayit.not_metni: None,
+            models.Kayit.misafir_adi: None, models.Kayit.surucu_adi: None, models.Kayit.goruntu_yolu: None,
+        }, synchronize_session=False)
+        db.commit()
+        toplam += len(idler)
+    db.query(models.Alarm).filter(
+        models.Alarm.tarih_saat < sinir,
+        models.Alarm.plaka_no.notin_(("SISTEM", KVKK_ANONIM_PLAKA)),
+        models.Alarm.alarm_tipi.notin_(_SISTEM_ALARM_TIPLERI),
+    ).update({models.Alarm.plaka_no: KVKK_ANONIM_PLAKA,
+              models.Alarm.mesaj: "KVKK saklama süresi doldu; kişisel veri silindi"}, synchronize_session=False)
+    db.commit()
+    return toplam
 
 
 @app.post("/sistem/goruntu-temizle")
