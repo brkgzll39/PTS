@@ -3077,6 +3077,20 @@ def servis_calisani():
     )
 
 
+@app.get("/pts-ca.crt")
+def sertifika_yetkilisi_indir():
+    """PTS'in yerel sertifika yetkilisini (yalnızca AÇIK sertifika; anahtar
+    asla) indirir -- telefona/bilgisayara kurmak için e-posta/USB gerekmesin
+    (2026-10-22: Gmail .crt ekini şüpheli bulup engelledi). iPhone Safari bu
+    MIME türünü görünce profil yükleme akışını başlatır. Oturum gerektirmez:
+    sertifika gizli değildir ve kurulmadan önce panele girilemeyebilir."""
+    yol = os.environ.get("PTS_HTTPS_CA") or os.path.join(PROJE_KOKU, "sertifika", "pts-ca.crt")
+    if not os.path.isfile(yol):
+        raise HTTPException(status_code=404, detail="Sertifika yetkilisi henüz oluşturulmamış")
+    return FileResponse(yol, media_type="application/x-x509-ca-cert", filename="pts-ca.crt",
+                        headers={"Cache-Control": "no-cache"})
+
+
 @app.get("/saglik")
 def saglik_kontrolu(db: Session = Depends(get_db)):
     """İzleme/servis denetleyicileri için basit sağlık kontrolü uç noktası."""

@@ -73,6 +73,7 @@ body.kapi-nobet .app-main { max-width: 1400px; margin: 0 auto; }
 .kapi-ayrinti b { color: var(--k-metin); }
 .kapi-not { background: #fff8e6; border: 2px dashed #f2c14e; border-radius: 12px; padding: 12px 16px; font-size: 19px; display: flex; gap: 10px; align-items: center; }
 .kapi-not.dolu { border-style: solid; background: #fffbea; }
+.kapi-eski-uyari { background: #e8f0fe; color: #1d4ed8; border-radius: 10px; padding: 8px 14px; font-size: 16px; font-weight: 600; display: flex; gap: 8px; align-items: center; }
 .kapi-dugmeler { display: flex; gap: 14px; }
 .kapi-dugmeler .kapi-dugme { flex: 1; }
 .kapi-bos { color: var(--k-soluk); font-size: 20px; text-align: center; padding: 80px 20px; }

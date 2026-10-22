@@ -13,9 +13,15 @@ KULLANIM (proje klasöründen, PowerShell):
   .venv\\Scripts\\python.exe -m backend.sertifika_olustur
       sertifika\\ klasörüne pts-ca.crt (dağıtılacak), sunucu.crt, sunucu.key
       (GİZLİ) ve CA anahtarı yazar. Sunucunun IP'leri otomatik bulunur.
-  --ip 172.17.1.254 --ip 100.64.0.5     IP'leri elle ver (tekrarlanabilir;
-                                        Tailscale IP'sini de ekleyin)
+  --ip 100.64.0.5                       otomatik bulunamayan ek IP (tekrarlanabilir;
+                                        ör. Tailscale IP'si)
   --ad pts.kurum.local                  ek alan adı (tekrarlanabilir)
+
+Yeni sertifika; otomatik bulunan IP'leri, --ip/--ad ile verilenleri VE önceki
+sunucu sertifikasındaki tüm IP/adları birlikte içerir. 2026-10-22: --ip
+eskiden otomatik bulunan IP'lerin YERİNE geçiyordu; yalnızca Tailscale IP'siyle
+yenilenen sertifikada LAN IP'si (172.17.1.254) kalmadı ve ağdaki tüm
+bilgisayarlar sertifika hatası aldı.
 
 Sunucu sertifikası yenilenirken CA KORUNUR (bilgisayarlara yeniden yüklemek
 gerekmez). .env'e PTS_HTTPS=1 yazıp PTS'i yeniden başlatınca panel HTTPS olur.
@@ -46,6 +52,20 @@ def _yerel_ipler() -> list:
     except OSError:
         pass
     return sorted(ip for ip in ipler if not ip.startswith("169.254."))
+
+
+def _onceki_adlar(klasor: str) -> tuple:
+    """Mevcut sunucu.crt'deki (IP'ler, alan adları); dosya yoksa/okunamazsa boş."""
+    from cryptography import x509
+
+    try:
+        with open(os.path.join(klasor, "sunucu.crt"), "rb") as f:
+            crt = x509.load_pem_x509_certificate(f.read())
+        san = crt.extensions.get_extension_for_class(x509.SubjectAlternativeName).value
+    except (OSError, ValueError, x509.ExtensionNotFound):
+        return [], []
+    return ([str(ip) for ip in san.get_values_for_type(x509.IPAddress)],
+            san.get_values_for_type(x509.DNSName))
 
 
 def _yaz(yol: str, veri: bytes, gizli: bool = False) -> None:
@@ -129,10 +149,12 @@ def main(argv=None) -> int:
         print("HATA: 'cryptography' paketi kurulu değil. Kurmak için:\n"
               "  .venv\\Scripts\\python.exe -m pip install cryptography")
         return 2
-    ipler = sorted(set(args.ip) | {"127.0.0.1"}) if args.ip else _yerel_ipler()
-    for ip in ipler:
+    for ip in args.ip:
         ipaddress.ip_address(ip)  # hatalı IP'de hemen dur
-    adlar = sorted(set(args.ad) | {"localhost", socket.gethostname()})
+    onceki_ipler, onceki_adlar = _onceki_adlar(args.klasor)
+    ipler = sorted(set(args.ip) | set(_yerel_ipler()) | set(onceki_ipler),
+                   key=lambda ip: (ipaddress.ip_address(ip).version, ipaddress.ip_address(ip)))
+    adlar = sorted(set(args.ad) | set(onceki_adlar) | {"localhost", socket.gethostname()})
     sonuc = olustur(args.klasor, ipler, adlar)
     print("Sertifika hazır:", args.klasor)
     print("  IP'ler :", ", ".join(ipler))
@@ -147,6 +169,8 @@ def main(argv=None) -> int:
     print(f"  1) {sonuc['ca']} dosyasını o bilgisayara kopyalayın")
     print("  2) PowerShell (yönetici GEREKMEZ):  certutil -user -addstore Root pts-ca.crt")
     print("     çıkan güvenlik sorusuna Evet deyin, tarayıcıyı kapatıp açın.")
+    print("  Telefon/tablet: https://<sunucu IP>:8000/pts-ca.crt adresinden indirip kurun")
+    print("     (iPhone: Ayarlar > Genel > Hakkında > Sertifika Güven Ayarları'ndan da açın).")
     print()
     print("Ardından .env dosyasına  PTS_HTTPS=1  satırını ekleyip:  Restart-Service PTS")
     print("Panel adresi: https://<sunucu IP>:8000 (ve Lojman https://<sunucu IP>:8787)")

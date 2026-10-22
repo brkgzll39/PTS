@@ -123,6 +123,17 @@ def test_saglik_kontrolu(client):
     assert r.status_code == 200
 
 
+def test_sertifika_yetkilisi_oturumsuz_indirilir(client, monkeypatch, tmp_path):
+    monkeypatch.setenv("PTS_HTTPS_CA", str(tmp_path / "yok.crt"))
+    assert client.get("/pts-ca.crt").status_code == 404
+    (tmp_path / "pts-ca.crt").write_text("-----BEGIN CERTIFICATE-----\nx\n-----END CERTIFICATE-----\n")
+    monkeypatch.setenv("PTS_HTTPS_CA", str(tmp_path / "pts-ca.crt"))
+    r = client.get("/pts-ca.crt")
+    assert r.status_code == 200
+    assert r.headers["content-type"] == "application/x-x509-ca-cert"
+    assert "BEGIN CERTIFICATE" in r.text
+
+
 # ------------------------------------------------------------------
 # Kimlik doğrulama
 # ------------------------------------------------------------------

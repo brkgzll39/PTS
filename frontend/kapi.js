@@ -129,6 +129,14 @@ function _kapiTarihSaat(iso) {
   return `${String(d.getDate()).padStart(2, "0")}.${String(d.getMonth() + 1).padStart(2, "0")} · ${_kapiSaat(iso)}`;
 }
 
+function _kapiBugunMu(iso) { return new Date(iso).toDateString() === new Date().toDateString(); }
+
+// Bugünkü geçişte yalnız saat; daha eskisinde tarih de yazılır -- 2026-10-22:
+// güvenlik hesabı yalnız kendi vardiya oturumlarındaki kayıtları görür; yeni
+// girişte liste 8 gün önceki aynı vardiyanın kayıtlarını saatle (23:22)
+// gösterince görevli onları bu gecenin geçişleri sandı.
+function _kapiZaman(iso) { return _kapiBugunMu(iso) ? _kapiSaat(iso) : _kapiTarihSaat(iso); }
+
 function _kapiNeKadarOnce(iso) {
   const dk = Math.max(0, Math.round((Date.now() - new Date(iso).getTime()) / 60000));
   if (dk < 1) return "az önce";
@@ -201,12 +209,13 @@ function _kapiCiz() {
     const not = (k.not_metni || "").trim();
     kart.innerHTML = `
       <div class="ust-satir"><span class="kapi-baslik">${_kapiSeciliId === null ? "Son geçen araç" : "Seçilen geçiş"}</span><span class="kapi-canli">Canlı</span></div>
+      ${_kapiSeciliId === null && !_kapiBugunMu(k.tarih_saat) ? `<div class="kapi-eski-uyari"><i class="bi bi-info-circle"></i> Bugün henüz size görünen geçiş yok; aşağıdaki kayıt ${_kapiTarihSaat(k.tarih_saat)} tarihli.</div>` : ""}
       <div class="kapi-goruntu" id="kapiGoruntu"><span class="kamera"><i class="bi bi-camera-video"></i> ${escapeHtml(k.kamera_id)} · ${k.yon === "giris" ? "Giriş" : "Çıkış"}</span><i class="bi bi-car-front-fill"></i></div>
       <div class="kapi-bilgi">
         ${_kapiPlakaHtml(k.plaka_no)}
         <div class="kapi-kim">${kim ? `<span class="ad">${escapeHtml(kim)}</span>` : ""}<span class="kapi-rozet kr-${tur.sinif}"><i class="bi ${tur.ikon}"></i> ${escapeHtml(tur.etiket)}</span></div>
       </div>
-      <div class="kapi-ayrinti"><span>${_kapiYonHtml(k.yon)}</span><span><i class="bi bi-clock"></i> <b>${_kapiSaat(k.tarih_saat)}</b> (${_kapiNeKadarOnce(k.tarih_saat)})</span><span><i class="bi bi-geo-alt"></i> <b>${escapeHtml(k.kamera_id)}</b></span></div>
+      <div class="kapi-ayrinti"><span>${_kapiYonHtml(k.yon)}</span><span><i class="bi bi-clock"></i> <b>${_kapiZaman(k.tarih_saat)}</b> (${_kapiNeKadarOnce(k.tarih_saat)})</span><span><i class="bi bi-geo-alt"></i> <b>${escapeHtml(k.kamera_id)}</b></span></div>
       <div class="kapi-not ${not ? "dolu" : ""}"><i class="bi bi-chat-left-text"></i> ${not ? escapeHtml(not) : "Not yok — eklemek için aşağıdaki düğmeye basın."}</div>
       <div class="kapi-dugmeler">
         <button class="kapi-dugme kd-ana" onclick="kapiNotAc(${k.id})"><i class="bi bi-pencil-square"></i> ${not ? "Notu Değiştir" : "Not Ekle"}</button>
@@ -238,7 +247,7 @@ function _kapiListeCiz() {
       return `<button type="button" class="kapi-satir ${gosterilen && gosterilen.id === k.id ? "secili" : ""}" data-kapi-kayit="${k.id}">
         <span class="serit ks-${tur.sinif}"></span>
         <div style="min-width:0">${_kapiPlakaHtml(k.plaka_no)}<div class="alt">${alt}</div></div>
-        <div class="sag2"><div class="saat">${_kapiSaat(k.tarih_saat)}</div>${_kapiYonHtml(k.yon)} · ${escapeHtml(k.kamera_id)}</div>
+        <div class="sag2"><div class="saat">${_kapiZaman(k.tarih_saat)}</div>${_kapiYonHtml(k.yon)} · ${escapeHtml(k.kamera_id)}</div>
       </button>`;
     }).join("");
   document.getElementById("kapiListe").innerHTML = satirlar ||
@@ -265,7 +274,7 @@ async function kapiNotAc(kayitId, hazirKayit = null) {
   document.getElementById("kapiNotBas").innerHTML =
     `${_kapiPlakaHtml(k.plaka_no)}<span class="kapi-rozet kr-${tur.sinif}" style="font-size:19px"><i class="bi ${tur.ikon}"></i> ${escapeHtml(tur.etiket)}</span>`;
   document.getElementById("kapiNotAlt").innerHTML =
-    `${_kapiYonHtml(k.yon)} · ${escapeHtml(k.kamera_id)} · <b>${_kapiSaat(k.tarih_saat)}</b>${k.kisi_adi ? ` · ${escapeHtml(k.kisi_adi)}` : ""}`;
+    `${_kapiYonHtml(k.yon)} · ${escapeHtml(k.kamera_id)} · <b>${_kapiZaman(k.tarih_saat)}</b>${k.kisi_adi ? ` · ${escapeHtml(k.kisi_adi)}` : ""}`;
   document.getElementById("kapiNotUyari").classList.toggle("d-none", k.yetki_durumu !== "kara_liste");
   const alan = document.getElementById("kapiNotAlani");
   alan.value = k.not_metni || "";
@@ -434,7 +443,7 @@ function _kapiIcerideSatir(a, onaysiz) {
   return `<button type="button" class="kapi-tsat" data-kapi-iceride="${a.kayit_id}">
     ${_kapiPlakaHtml(a.plaka_no)}<span>${kim ? escapeHtml(kim) : '<span class="kapi-soluk">—</span>'}</span>
     <span><span class="kapi-rozet kr-${tur.sinif}">${escapeHtml(tur.etiket)}</span></span>
-    <span class="kapi-soluk">${_kapiSaat(a.giris_saati)} · ${escapeHtml(a.kamera_id)}</span><span>${sure}</span></button>`;
+    <span class="kapi-soluk">${_kapiZaman(a.giris_saati)} · ${escapeHtml(a.kamera_id)}</span><span>${sure}</span></button>`;
 }
 
 function _kapiIcerideKayit(kayitId) {

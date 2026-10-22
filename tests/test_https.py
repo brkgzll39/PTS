@@ -66,3 +66,26 @@ def test_kamera_api_adresi_https_ic_portuna_yonlenir(monkeypatch):
     monkeypatch.delenv("PTS_KAMERA_API_URL")
     monkeypatch.delenv("PTS_PORT", raising=False)
     assert camera_reader.varsayilan_api_url() == "http://127.0.0.1:8000/kayitlar/otomatik"
+
+
+def _san_ipleri(yol):
+    from cryptography import x509
+
+    with open(yol, "rb") as f:
+        crt = x509.load_pem_x509_certificate(f.read())
+    san = crt.extensions.get_extension_for_class(x509.SubjectAlternativeName).value
+    return {str(ip) for ip in san.get_values_for_type(x509.IPAddress)}
+
+
+def test_ek_ip_otomatik_ve_onceki_ipleri_dusurmez(monkeypatch, tmp_path, capsys):
+    """2026-10-22: `--ip <Tailscale>` ile yenilenen sertifikada LAN IP'si kalmamıştı."""
+    klasor = str(tmp_path / "sertifika")
+    monkeypatch.setattr(sertifika_olustur, "_yerel_ipler", lambda: ["127.0.0.1", "172.17.1.254"])
+    assert sertifika_olustur.main(["--klasor", klasor, "--ip", "100.108.27.27"]) == 0
+    assert _san_ipleri(f"{klasor}/sunucu.crt") == {"127.0.0.1", "172.17.1.254", "100.108.27.27"}
+
+    # Sunucunun ağ adresi değişse (ya da o an bulunamasa) bile önceki IP'ler korunur.
+    monkeypatch.setattr(sertifika_olustur, "_yerel_ipler", lambda: ["127.0.0.1"])
+    assert sertifika_olustur.main(["--klasor", klasor, "--ip", "fd00::1"]) == 0
+    assert _san_ipleri(f"{klasor}/sunucu.crt") == {"127.0.0.1", "172.17.1.254", "100.108.27.27", "fd00::1"}
+    capsys.readouterr()
