@@ -8100,3 +8100,43 @@ def test_iki_adimli_dogrulama_kurulum_giris_ve_sifirlama(client, admin_header):
 
 def test_iki_adim_kurulumu_yalniz_yoneticiye_acik(client, izleyici_header):
     assert client.post("/auth/iki-adim/kurulum", headers=izleyici_header).status_code == 403
+
+
+# ------------------------------------------------------------------
+# Lisans modülleri (2026-10-23, ürünleştirme)
+# ------------------------------------------------------------------
+def test_modulsuz_lisans_tum_modulleri_acar(client, yetkili_header):
+    anahtar = lisans.uret("Eski Tip Lisans", kamera_limiti=5, gun=30)
+    assert client.post("/lisans/aktive-et", json={"anahtar": anahtar}, headers=yetkili_header).status_code == 200
+    j = client.get("/lisans", headers=yetkili_header).json()
+    assert j["moduller"] is None
+    assert all(m["acik"] for m in j["modul_durumu"].values())
+    assert client.put("/led/ayarlar", json={}, headers=yetkili_header).status_code != 403
+
+
+def test_modullu_lisans_yalniz_listedekileri_acar(client, yetkili_header, monkeypatch):
+    anahtar = lisans.uret("Modüllü Müşteri", kamera_limiti=5, gun=30, moduller=["led"])
+    assert client.post("/lisans/aktive-et", json={"anahtar": anahtar}, headers=yetkili_header).status_code == 200
+    try:
+        j = client.get("/lisans", headers=yetkili_header).json()
+        assert j["moduller"] == ["led"]
+        assert j["modul_durumu"]["led"]["acik"] and not j["modul_durumu"]["bildirim"]["acik"]
+        assert client.put("/led/ayarlar", json={}, headers=yetkili_header).status_code != 403
+        r = client.post("/bildirim/ayarlar", json={"ad": "x", "tip": "webhook", "hedef": "https://example.com"},
+                        headers=yetkili_header)
+        assert r.status_code == 403 and "modülü lisansınızda yok" in r.json()["detail"]
+        assert client.put("/vardiya-cizelgesi/2026/11", json={}, headers=yetkili_header).status_code == 403
+        assert pts_main._cizelge_kamera_adlari() == set()
+        # license.json elle değiştirilse de imzalı anahtar esas alınır.
+        durum = pts_main._lisans_durumunu_oku()
+        durum["moduller"] = list(lisans.MODULLER)
+        pts_main._lisans_durumunu_yaz(durum)
+        assert not pts_main._modul_acik_mi("bildirim")
+    finally:
+        anahtar = lisans.uret("Eski Tip Lisans", kamera_limiti=5, gun=30)
+        client.post("/lisans/aktive-et", json={"anahtar": anahtar}, headers=yetkili_header)
+
+
+def test_bilinmeyen_modul_reddedilir():
+    with pytest.raises(ValueError, match="Bilinmeyen modül"):
+        lisans.uret("X", kamera_limiti=1, gun=1, moduller=["uydu"])

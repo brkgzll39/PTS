@@ -46,6 +46,9 @@ def main(argv=None) -> int:
     u.add_argument("--kamera", type=int, required=True)
     u.add_argument("--gun", type=int, required=True)
     u.add_argument("--cihaz")
+    u.add_argument("--modul", action="append", default=None,
+                   help="lisansa açılacak modül (tekrarlanabilir; hiç verilmezse TÜM modüller açık): "
+                        + ", ".join(lisans.MODULLER))
     alt.add_parser("acik-anahtar", help="özel anahtar dosyasından açık anahtarı gösterir").add_argument(
         "--anahtar", default=VARSAYILAN_DOSYA)
     args = ap.parse_args(argv)
@@ -66,7 +69,15 @@ def main(argv=None) -> int:
     if args.komut == "acik-anahtar":
         print(ed25519.acik_anahtar(ozel).hex())
         return 0
-    anahtar = lisans.imzali_uret(ozel, args.musteri, args.kamera, args.gun, args.cihaz)
+    try:
+        anahtar = lisans.imzali_uret(ozel, args.musteri, args.kamera, args.gun, args.cihaz, args.modul)
+    except ValueError as exc:
+        print(f"HATA: {exc}")
+        return 1
+    if args.modul is not None:
+        print("Modüller: " + ", ".join(f"{m} ({lisans.MODULLER[m]})" for m in sorted(set(args.modul))))
+    else:
+        print("Modüller: tümü açık")
     if lisans.ACIK_ANAHTAR_HEX and lisans.ACIK_ANAHTAR_HEX != ed25519.acik_anahtar(ozel).hex():
         print("UYARI: bu özel anahtar, PTS'e gömülü açık anahtarla eşleşmiyor -- lisans kabul edilmez!")
     print(anahtar)

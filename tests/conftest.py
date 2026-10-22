@@ -40,6 +40,9 @@ os.environ["PTS_LED_CONFIG_FILE"] = os.path.join(_TEST_DB_DIZINI, "led_config.js
 # Otomatik yedek klasörü de: uygulama açılışındaki günlük yedek görevi (TestClient
 # her açılışta tetikler) gerçek kurulumun yedekler/ klasörüne test yedeği yazıyordu.
 os.environ["PTS_YEDEK_KLASORU"] = os.path.join(_TEST_DB_DIZINI, "yedekler")
+# Marka (2026-10-23): olmayan bir dosya -> TPAO varsayılanları; derlenmiş müşteri
+# paketindeki kurumsuz marka.json testlerin beklentisini değiştirmesin.
+os.environ["PTS_MARKA_FILE"] = os.path.join(_TEST_DB_DIZINI, "marka.json")
 
 
 def pytest_collection_modifyitems(config, items):

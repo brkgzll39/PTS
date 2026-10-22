@@ -94,6 +94,7 @@ from backend import led_panel
 from backend import vardiya_cizelgesi
 from backend import lisans as lisans_modulu
 from backend import totp
+from backend import marka
 from backend.vardiya_eslestirme import kayitlari_oturumlarla_eslestir
 from backend import kucuk_gorsel
 from backend import telegram_bildirim
@@ -455,7 +456,7 @@ def _pipeline_baslat(kamera: dict) -> bool:
                 # 2026-09-25: kameranın kendi ANPR okuması (Dahua) açıksa
                 # pipeline onu da dinleyip oylamaya ekler -- bkz.
                 # backend/dahua_olay.py.
-                dahua_ayarlari=kamera.get("dahua_anpr"),
+                dahua_ayarlari=kamera.get("dahua_anpr") if _modul_acik_mi("dahua_anpr") else None,
             )
             p.baslat()
             _aktif_pipelineler[kid] = p
@@ -2187,6 +2188,8 @@ _CIZELGE_ILERI_GUN = 62
 
 def _cizelge_kamera_adlari() -> set:
     """Çizelgeye göre etiketlenen kameraların ADLARI (Kayit.kamera_id adı tutar)."""
+    if not _modul_acik_mi("vardiya_cizelgesi"):
+        return set()
     secili = _sistem_ayarlari_oku().get("vardiya_cizelgesi_kameralar")
     kameralar = _kameralari_oku()
     if secili is None:
@@ -2221,6 +2224,8 @@ def _cizelge_tamamla(db: Session, bitis_gunu: Optional[date] = None) -> None:
     if _cizelge_tamamlanan_gun is not None and _cizelge_tamamlanan_gun >= bitis_gunu:
         return
     liste = _cizelge_listesi(db)
+    if not liste and marka.oku().get("varsayilan_vardiya_cizelgesi") != "ekim_2026":
+        return   # hazır çizelge yok; yönetici ilk ayı panelden girer
     if not liste:
         for gun, v in vardiya_cizelgesi.ekim_2026().items():
             _cizelge_gunu_yaz(db, gun, v, "liste")
@@ -2855,6 +2860,40 @@ def auth_durumu(db: Session = Depends(get_db)):
 
 
 # ================================================================
+# LİSANS MODÜLLERİ (2026-10-23, ürünleştirme) -- bkz. lisans.MODULLER
+# ================================================================
+# Lisansta "moduller" yoksa (bu alandan önceki tüm lisanslar, kendi sistem
+# dahil) HEPSİ açıktır. Liste imzalı anahtarın içinden okunur; license.json
+# elle değiştirilerek modül açılamaz.
+_modul_onbellek: dict = {"anahtar": None, "moduller": None}
+
+
+def _lisanstaki_moduller() -> Optional[list]:
+    anahtar = _lisans_durumunu_oku().get("anahtar")
+    if not anahtar:
+        return None
+    if _modul_onbellek["anahtar"] != anahtar:
+        try:
+            payload = lisans_modulu.coz(anahtar, beklenen_cihaz_kodu=_cihaz_kodu())
+        except lisans_modulu.LisansGecersiz:
+            return None
+        _modul_onbellek.update(anahtar=anahtar, moduller=payload.get("moduller"))
+    return _modul_onbellek["moduller"]
+
+
+def _modul_acik_mi(ad: str) -> bool:
+    moduller = _lisanstaki_moduller()
+    return moduller is None or ad in moduller
+
+
+def _modul_gerekli(ad: str):
+    def _kontrol():
+        if not _modul_acik_mi(ad):
+            raise HTTPException(403, f"'{lisans_modulu.MODULLER.get(ad, ad)}' modülü lisansınızda yok")
+    return _kontrol
+
+
+# ================================================================
 # İKİ ADIMLI DOĞRULAMA (2026-10-23, kullanıcı onayı) -- bkz. backend/totp.py
 # ================================================================
 # Yönetici hesabı telefondaki doğrulama uygulamasıyla eşleştirilir; sonra
@@ -3134,7 +3173,7 @@ def mevcut_kullanici(kullanici: models.Kullanici = Depends(_giris_gerekli)):
     return kullanici
 
 
-@app.post("/push/kaydet", response_model=schemas.PushTokenCevap)
+@app.post("/push/kaydet", response_model=schemas.PushTokenCevap, dependencies=[Depends(_modul_gerekli("mobil"))])
 def push_token_kaydet(
     istek: schemas.PushTokenIstegi,
     db: Session = Depends(get_db),
@@ -3263,6 +3302,40 @@ def servis_calisani():
         media_type="application/javascript",
         headers={"Cache-Control": "no-cache"},
     )
+
+
+@app.get("/marka")
+def marka_bilgisi():
+    """Kurum adı, logo, iletişim (bkz. backend/marka.py). Giriş ekranı da
+    kullandığı için oturum gerektirmez; gizli bilgi içermez."""
+    m = marka.oku()
+    return {
+        "kurum_adi": m["kurum_adi"], "logo_alt": m["logo_alt"], "uygulama_adi": m["uygulama_adi"],
+        "kisa_ad": m["kisa_ad"], "iletisim": m["iletisim"], "vip_adi": m["vip_adi"],
+        # None: sayfadaki (TPAO) logo kalır; marka.json varsa kurumun ya da kurumsuz logo.
+        "logo_url": "/marka/logo" if marka.dosya_var_mi() else None,
+    }
+
+
+@app.get("/marka/logo")
+def marka_logosu():
+    if marka.ozel_logo_yolu():
+        yol = marka.ozel_logo_yolu()
+    elif marka.dosya_var_mi():
+        yol = os.path.join(FRONTEND_KLASORU, "img", "pts-logo.svg")
+    else:
+        yol = os.path.join(FRONTEND_KLASORU, "img", "tpao-logo.png")
+    return FileResponse(yol, headers={"Cache-Control": "no-cache"})
+
+
+@app.get("/manifest.webmanifest")
+def uygulama_manifesti():
+    """PWA manifesti: frontend/manifest.json + marka.json'daki uygulama adları."""
+    with open(os.path.join(FRONTEND_KLASORU, "manifest.json"), encoding="utf-8") as f:
+        manifest = json.load(f)
+    m = marka.oku()
+    manifest["name"], manifest["short_name"] = f"{m['kisa_ad']} - Plaka Tanıma Sistemi", m["kisa_ad"]
+    return JSONResponse(manifest, media_type="application/manifest+json", headers={"Cache-Control": "no-cache"})
 
 
 @app.get("/pts-ca.crt")
@@ -3423,6 +3496,14 @@ def _lisans_durumunu_yaz(durum: dict) -> None:
 _LISANS_UYARI_ESIK_GUN = 14  # bitişe bu kadar veya daha az gün kalınca "yakında dolacak" uyarısı gösterilir
 
 
+def _lisans_modul_bilgisi_ekle(durum: dict) -> dict:
+    moduller = _lisanstaki_moduller()
+    durum["moduller"] = moduller
+    durum["modul_durumu"] = {ad: {"ad": etiket, "acik": moduller is None or ad in moduller}
+                             for ad, etiket in lisans_modulu.MODULLER.items()}
+    return durum
+
+
 def _lisans_kalan_gun_ekle(durum: dict) -> dict:
     """`durum` sözlüğüne `kalan_gun` (bitişe kaç gün kaldığı, tam sayı) ve
     `yakinda_doluyor` (eşik altına düştü mü) alanlarını ekler.
@@ -3455,7 +3536,7 @@ def _lisans_kalan_gun_ekle(durum: dict) -> dict:
 def lisans_durumunu_getir(_: models.Kullanici = Depends(_personel_girisi_gerekli)):
     durum = _lisans_durumunu_oku()
     durum["aktif"] = _lisans_aktif_mi()
-    return _lisans_kalan_gun_ekle(durum)
+    return _lisans_modul_bilgisi_ekle(_lisans_kalan_gun_ekle(durum))
 
 
 @app.post("/lisans/aktive-et")
@@ -3475,6 +3556,7 @@ def lisans_aktive_et(istek: schemas.LisansAktivasyonIstegi, db: Session = Depend
         "baslangic_tarihi": payload["baslangic_tarihi"],
         "bitis_tarihi": payload["bitis_tarihi"],
         "cihaz_kodu": payload["cihaz_kodu"],
+        "moduller": payload.get("moduller"),   # yalnız gösterim; yetki imzalı anahtardan okunur
     })
     _lisans_durumunu_yaz(durum)
     durum["aktif"] = _lisans_aktif_mi()
@@ -3482,7 +3564,7 @@ def lisans_aktive_et(istek: schemas.LisansAktivasyonIstegi, db: Session = Depend
         db, kullanici.kullanici_adi, "lisans_aktivasyon",
         f"müşteri={payload['musteri']}, lisans_id={payload['lisans_id']}, bitiş={payload['bitis_tarihi']}",
     )
-    return _lisans_kalan_gun_ekle(durum)
+    return _lisans_modul_bilgisi_ekle(_lisans_kalan_gun_ekle(durum))
 
 
 def _kameralari_oku() -> list:
@@ -4691,7 +4773,7 @@ def kisi_gecmis_kayitlarini_guncelle(
 _KISI_TIPLERI = ("abone", "personel", "ziyaretci", "vip", "alt_isveren")
 # Yetkili geçişte LED panelin üst satırı (bkz. kayit akışı); listede olmayan tip PERSONEL.
 # Alt işveren (TPIC, servis) 2026-10-22 kullanıcı isteği: tabelada PERSONEL değil ZİYARETÇİ.
-_LED_TIP_ETIKETI = {"ziyaretci": "ZİYARETÇİ", "vip": "BÖLGE MÜDÜRÜ", "alt_isveren": "ZİYARETÇİ"}
+_LED_TIP_ETIKETI = {"ziyaretci": "ZİYARETÇİ", "alt_isveren": "ZİYARETÇİ"}   # "vip": marka.json (vip_etiketi)
 # SQL Server tek sorguda en fazla ~2100 parametre kabul eder; uzun `IN (...)`
 # listeleri bu boyutta parçalara bölünür.
 _IN_PARCA_BOYUTU = 500
@@ -5340,6 +5422,8 @@ _led_yurutucu = ThreadPoolExecutor(max_workers=1, thread_name_prefix="led-gonder
 
 
 def _led_gonder_ve_kaydet(mesaj: str, satirlar: tuple, kamera_idleri: list, kuyruga_girme: float = None) -> None:
+    if not _modul_acik_mi("led"):
+        return
     baslangic = time.monotonic()
     try:
         basarili = led_panel.led_mesaj_gonder(mesaj, satirlar=satirlar, kamera_idleri=kamera_idleri)
@@ -5565,7 +5649,7 @@ def _kayit_olustur_ve_bildir(db: Session, plaka_no: str, kamera_id: str, yon: st
     # listesindeyse BÖLGE MÜDÜRÜ), yetkisizde ZİYARETÇİ.
     if yetki == "yetkili":
         mesaj = f"HOŞ GELDİNİZ {plaka_no.upper()}"
-        led_durum = _LED_TIP_ETIKETI.get(kisi_tip, "PERSONEL")
+        led_durum = marka.oku()["vip_etiketi"] if kisi_tip == "vip" else _LED_TIP_ETIKETI.get(kisi_tip, "PERSONEL")
     elif yetki == "suresi_dolmus":
         mesaj = f"ZİYARETÇİ SÜRESİ DOLDU: {plaka_no.upper()}"
         led_durum = "SÜRESİ DOLDU"
@@ -5811,6 +5895,8 @@ def _bildirim_tetikle(db: Session, tetikleyici: str, veri: dict) -> None:
     thread'i) hem "async def" içinden (aşağıdaki `kayit_ekle_otomatik`
     akışı gibi) çağrılabilir -- kendisi bloklamaz, yalnızca BildirimAyarlari
     sorgusu (birkaç satır, hızlı) senkron çalışır."""
+    if not _modul_acik_mi("bildirim"):
+        return
     try:
         ayarlar = db.query(models.BildirimAyarlari).filter(
             models.BildirimAyarlari.aktif == True,  # noqa: E712
@@ -6355,7 +6441,7 @@ def _bitis_tarih_filtresi_sinirini_hesapla(bitis: Optional[str]) -> Optional[dat
 
 
 @app.post("/entegrasyonlar/arvento/webhook", response_model=schemas.ArventoWebhookCevap,
-          dependencies=[Depends(_hiz_sinir_arvento_webhook)])
+          dependencies=[Depends(_hiz_sinir_arvento_webhook), Depends(_modul_gerekli("arvento"))])
 async def arvento_webhook(istek: Request, x_arvento_anahtari: Optional[str] = Header(None), db: Session = Depends(get_db)):
     """Arvento'nun "bu plakayı şu an kim kullanıyor" olaylarını aldığı uç
     nokta (2026-09-23 kullanıcı isteği: "Arvento Sisteminde kimlik kartı ile
@@ -7352,7 +7438,7 @@ def _kayitlari_rapor_satirlari(kayitlar: list, db: Session) -> list:
         if k.yetki_durumu == "kara_liste":
             arac_tipi = "Kara Liste"
         elif kisi and kisi.tip == "vip":
-            arac_tipi = "Bölge Müdürü"
+            arac_tipi = marka.oku()["vip_adi"]
         elif kisi and kisi.tip == "alt_isveren":
             arac_tipi = f"Alt İşveren ({kisi.daire_departman})" if kisi.daire_departman else "Alt İşveren"
         elif kisi and kisi.tip == "personel":
@@ -7367,7 +7453,7 @@ def _kayitlari_rapor_satirlari(kayitlar: list, db: Session) -> list:
         if kisi and kisi.tip == "personel":
             daire = "PERSONEL"
         elif kisi and kisi.tip == "vip":
-            daire = "BÖLGE MÜDÜRÜ"
+            daire = marka.oku()["vip_etiketi"]
         elif kisi and kisi.tip == "alt_isveren":
             daire = "ALT İŞVEREN"
         elif kisi:
@@ -7692,7 +7778,7 @@ def led_ayarlarini_getir(_: models.Kullanici = Depends(_personel_girisi_gerekli)
     return led_panel.ayarlari_oku()
 
 
-@app.put("/led/ayarlar")
+@app.put("/led/ayarlar", dependencies=[Depends(_modul_gerekli("led"))])
 def led_ayarlarini_guncelle(ayarlar: dict, kullanici: models.Kullanici = Depends(_personel_girisi_gerekli)):
     _rol_dogrula(kullanici, ROL_YONETICI, ROL_OPERATOR)
     mevcut = led_panel.ayarlari_oku()
@@ -7703,7 +7789,7 @@ def led_ayarlarini_guncelle(ayarlar: dict, kullanici: models.Kullanici = Depends
     return mevcut
 
 
-@app.post("/led/test")
+@app.post("/led/test", dependencies=[Depends(_modul_gerekli("led"))])
 def led_test_mesaji(
     mesaj: str = Query("PTS SİSTEMİ TEST MESAJI"),
     db: Session = Depends(get_db),
@@ -8643,7 +8729,7 @@ def bildirim_ayarlarini_getir(db: Session = Depends(get_db), _: models.Kullanici
     return db.query(models.BildirimAyarlari).order_by(models.BildirimAyarlari.olusturma_tarihi).all()
 
 
-@app.post("/bildirim/ayarlar")
+@app.post("/bildirim/ayarlar", dependencies=[Depends(_modul_gerekli("bildirim"))])
 def bildirim_ayari_ekle(istek: dict = Body(...), db: Session = Depends(get_db), kullanici: models.Kullanici = Depends(_personel_girisi_gerekli)):
     _rol_dogrula(kullanici, ROL_YONETICI)
     ad = re.sub(r"[<>&\"']", "", str(istek.get("ad", "Bildirim"))).strip()[:80] or "Bildirim"
@@ -8688,7 +8774,7 @@ def bildirim_ayari_ekle(istek: dict = Body(...), db: Session = Depends(get_db), 
     return yeni
 
 
-@app.patch("/bildirim/ayarlar/{ayar_id}/aktif")
+@app.patch("/bildirim/ayarlar/{ayar_id}/aktif", dependencies=[Depends(_modul_gerekli("bildirim"))])
 def bildirim_aktif_toggle(ayar_id: int, db: Session = Depends(get_db), kullanici: models.Kullanici = Depends(_personel_girisi_gerekli)):
     _rol_dogrula(kullanici, ROL_YONETICI)
     ayar = db.query(models.BildirimAyarlari).filter(models.BildirimAyarlari.id == ayar_id).first()
@@ -8710,7 +8796,7 @@ def bildirim_ayari_sil(ayar_id: int, db: Session = Depends(get_db), kullanici: m
     return {"mesaj": "Bildirim ayarı silindi"}
 
 
-@app.post("/bildirim/test/{ayar_id}")
+@app.post("/bildirim/test/{ayar_id}", dependencies=[Depends(_modul_gerekli("bildirim"))])
 async def bildirim_test_gonder(ayar_id: int, db: Session = Depends(get_db), kullanici: models.Kullanici = Depends(_personel_girisi_gerekli)):
     _rol_dogrula(kullanici, ROL_YONETICI)
     ayar = db.query(models.BildirimAyarlari).filter(models.BildirimAyarlari.id == ayar_id).first()
@@ -9211,8 +9297,8 @@ def sistem_ayarlarini_guncelle(yeni: dict = Body(...), db: Session = Depends(get
 #     çıkan araç dışarıda sayılır (son geçiş tüm kameralar üzerinden bulunur).
 _ICERIDE_SAYILAN_DURUMLAR = ("yetkili", "ziyaretci_onayli")
 _ONAYSIZ_GIRIS_SAAT = 24
-_KISI_TIP_ETIKETI = {"personel": "Personel", "abone": "Abone", "ziyaretci": "Ziyaretçi", "vip": "Bölge Müdürü",
-                     "alt_isveren": "Alt İşveren"}
+_KISI_TIP_ETIKETI = {"personel": "Personel", "abone": "Abone", "ziyaretci": "Ziyaretçi",
+                     "alt_isveren": "Alt İşveren"}   # "vip": marka.json (vip_adi)
 
 
 def _iceride_durumu_hesapla(db: Session, simdi: Optional[datetime] = None) -> "tuple[list, list]":
@@ -9250,7 +9336,7 @@ def _iceride_satiri(k: models.Kayit, kisi: Optional[models.Kisi], simdi: datetim
     ziyaretci = (kisi is not None and kisi.tip == "ziyaretci") or k.yetki_durumu in ("ziyaretci_onayli", "suresi_dolmus")
     if kisi is not None:
         kim = kisi.ad_soyad + (f" – {kisi.daire_departman}" if kisi.daire_departman else "")
-        tip = _KISI_TIP_ETIKETI.get(kisi.tip, kisi.tip)
+        tip = marka.oku()["vip_adi"] if kisi.tip == "vip" else _KISI_TIP_ETIKETI.get(kisi.tip, kisi.tip)
         if kisi.tip == "alt_isveren" and kisi.daire_departman:
             tip = f"{tip} · {kisi.daire_departman}"
     else:
@@ -9487,7 +9573,7 @@ def vardiya_cizelgesi_ay(
     }
 
 
-@app.put("/vardiya-cizelgesi/{yil}/{ay}")
+@app.put("/vardiya-cizelgesi/{yil}/{ay}", dependencies=[Depends(_modul_gerekli("vardiya_cizelgesi"))])
 def vardiya_cizelgesi_ay_kaydet(
     yil: int, ay: int, istek: schemas.VardiyaCizelgesiAy,
     db: Session = Depends(get_db), kullanici: models.Kullanici = Depends(_personel_girisi_gerekli),

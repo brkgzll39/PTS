@@ -17,6 +17,39 @@ if ("serviceWorker" in navigator) {
   });
 }
 
+// ---------------------- Kurum markası (2026-10-23, ürünleştirme) ----------------------
+// Kurum adı, logo ve iletişim bilgisi backend/marka.py'den (marka.json; yoksa
+// TPAO). index.html'deki metinler varsayılanla aynı olduğu için yükleme
+// sırasında görünür bir değişiklik olmaz; başka kurumda üzerlerine yazılır.
+async function markaUygula() {
+  let m;
+  try {
+    const r = await fetch(`${API}/marka`);
+    if (!r.ok) return;
+    m = await r.json();
+  } catch { return; }
+  document.title = m.uygulama_adi;
+  document.querySelector('meta[name="apple-mobile-web-app-title"]')?.setAttribute("content", m.kisa_ad);
+  document.querySelectorAll("[data-marka]").forEach(el => {
+    const deger = m[el.dataset.marka];
+    if (typeof deger === "string") el.textContent = deger;
+  });
+  document.querySelectorAll("[data-marka-logo]").forEach(img => {
+    img.alt = m.logo_alt;
+    if (m.logo_url) img.src = `${API}${m.logo_url}`;
+  });
+  const i = m.iletisim || {};
+  const satiriAyarla = (el, metin) => el.closest(".contact-row")?.classList.toggle("d-none", !metin);
+  document.querySelectorAll("[data-marka-tel]").forEach(a => {
+    a.href = `tel:${i.telefon_uri || ""}`; a.textContent = i.telefon || ""; satiriAyarla(a, i.telefon);
+  });
+  document.querySelectorAll("[data-marka-dahili]").forEach(el => { el.textContent = i.dahili || ""; satiriAyarla(el, i.dahili); });
+  document.querySelectorAll("[data-marka-eposta]").forEach(a => {
+    a.href = `mailto:${i.eposta || ""}`; a.textContent = i.eposta || ""; satiriAyarla(a, i.eposta);
+  });
+}
+markaUygula();
+
 // manifest.json'daki "shortcuts" (Kontrol Merkezi / Son Geçişler / Kayıtlar)
 // ve PWA start_url'i "/?ekran=..." sorgu parametresiyle belirli bir sekmeyi
 // açar -- örn. yönetici telefonun ana ekranındaki kısayoldan doğrudan

@@ -8,7 +8,7 @@
 // (ana sayfa kabuğu) bu SW'nin kapsamına girer; başka HİÇBİR istek yakalanmaz,
 // tarayıcı onu her zamanki gibi doğrudan sunucuya/ağa yönlendirir.
 
-const SURUM = "pts-shell-v6";
+const SURUM = "pts-shell-v7";
 const KABUK_DOSYALARI = [
   "/",
   "/static/style.css",

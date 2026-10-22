@@ -100,14 +100,39 @@ def cihaz_kodu() -> str:
     return hashlib.sha256(kaynak.encode("utf-8")).hexdigest()[:16].upper()
 
 
-def uret(musteri: str, kamera_limiti: int, gun: int, cihaz_kodu_deger: Optional[str] = None) -> str:
+# ÜRÜNLEŞTİRME (2026-10-23): lisansla açılıp kapanan modüller. Lisansta
+# "moduller" alanı YOKSA hepsi açıktır -- bu alandan önce üretilmiş tüm
+# lisanslar (kendi sistem dahil) aynen çalışmaya devam eder. Alan varsa
+# yalnızca listedekiler açılır (bkz. main.py::_modul_acik_mi).
+MODULLER = {
+    "led": "LED tabela (Huidu/seri port)",
+    "bildirim": "Telegram / webhook bildirimleri",
+    "mobil": "Mobil uygulama bildirimleri",
+    "arvento": "Arvento filo / sürücü entegrasyonu",
+    "vardiya_cizelgesi": "Vardiya çizelgesi (girişsiz vardiya)",
+    "dahua_anpr": "Kamera ANPR okumasını birleştirme (Dahua)",
+}
+
+
+def modulleri_dogrula(moduller: Optional[list]) -> Optional[list]:
+    if moduller is None:
+        return None
+    bilinmeyen = sorted(set(moduller) - set(MODULLER))
+    if bilinmeyen:
+        raise ValueError(f"Bilinmeyen modül: {', '.join(bilinmeyen)} (geçerli: {', '.join(MODULLER)})")
+    return sorted(set(moduller))
+
+
+def uret(musteri: str, kamera_limiti: int, gun: int, cihaz_kodu_deger: Optional[str] = None,
+         moduller: Optional[list] = None) -> str:
     """İmzalı bir lisans anahtarı üretir (`PTS1.<govde>.<imza>` formatında)."""
-    govde = _payload_olustur(musteri, kamera_limiti, gun, cihaz_kodu_deger)
+    govde = _payload_olustur(musteri, kamera_limiti, gun, cihaz_kodu_deger, moduller)
     imza = _b64(hmac.new(secret_al().encode("utf-8"), govde.encode("ascii"), hashlib.sha256).digest())
     return f"{LISANS_VERSIYONU}.{govde}.{imza}"
 
 
-def _payload_olustur(musteri: str, kamera_limiti: int, gun: int, cihaz_kodu_deger: Optional[str]) -> str:
+def _payload_olustur(musteri: str, kamera_limiti: int, gun: int, cihaz_kodu_deger: Optional[str],
+                     moduller: Optional[list] = None) -> str:
     if kamera_limiti < 1 or gun < 1:
         raise ValueError("Kamera limiti ve gün sayısı 1 veya daha büyük olmalıdır")
     payload = {
@@ -118,14 +143,17 @@ def _payload_olustur(musteri: str, kamera_limiti: int, gun: int, cihaz_kodu_dege
         "baslangic_tarihi": date.today().isoformat(),
         "bitis_tarihi": (date.today() + timedelta(days=gun)).isoformat(),
     }
+    moduller = modulleri_dogrula(moduller)
+    if moduller is not None:
+        payload["moduller"] = moduller
     return _b64(json.dumps(payload, ensure_ascii=True, separators=(",", ":")).encode("utf-8"))
 
 
 def imzali_uret(ozel_anahtar: bytes, musteri: str, kamera_limiti: int, gun: int,
-                cihaz_kodu_deger: Optional[str] = None) -> str:
+                cihaz_kodu_deger: Optional[str] = None, moduller: Optional[list] = None) -> str:
     """Ed25519 ile imzalı lisans (`PTS2.<govde>.<imza>`). Yalnızca lisans
     verenin bilgisayarında, özel anahtarla çalışır (bkz. araclar/lisans_araci.py)."""
-    govde = _payload_olustur(musteri, kamera_limiti, gun, cihaz_kodu_deger)
+    govde = _payload_olustur(musteri, kamera_limiti, gun, cihaz_kodu_deger, moduller)
     imza = ed25519.imzala(ozel_anahtar, f"{IMZALI_LISANS_VERSIYONU}.{govde}".encode("ascii"))
     return f"{IMZALI_LISANS_VERSIYONU}.{govde}.{_b64(imza)}"
 

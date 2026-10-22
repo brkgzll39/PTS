@@ -1,0 +1,18 @@
+{
+  "kurum_adi": "ÖRNEK SANAYİ A.Ş.",
+  "logo_alt": "Örnek Sanayi A.Ş.",
+  "uygulama_adi": "Örnek Sanayi - Plaka Tanıma Sistemi",
+  "kisa_ad": "Örnek PTS",
+  "logo_dosyasi": "logo.png",
+  "iletisim": {
+    "telefon": "0212 000 0000",
+    "telefon_uri": "+902120000000",
+    "dahili": "",
+    "eposta": "destek@ornek.com.tr"
+  },
+  "vip_adi": "Genel Müdür",
+  "vip_etiketi": "GENEL MÜDÜR",
+  "led_bekleme_yazisi": "HOŞ GELDİNİZ",
+  "led_bekleme_yazisi_2": "",
+  "varsayilan_vardiya_cizelgesi": null
+}

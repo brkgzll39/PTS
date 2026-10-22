@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="240" height="72" viewBox="0 0 240 72" role="img" aria-label="PTS">
+  <rect x="2" y="2" width="68" height="68" rx="12" fill="#1d3fbb"/>
+  <rect x="14" y="24" width="44" height="24" rx="4" fill="#fff"/>
+  <rect x="14" y="24" width="10" height="24" rx="2" fill="#0b2a8f"/>
+  <text x="41" y="42" font-family="Arial, sans-serif" font-size="12" font-weight="700" fill="#111" text-anchor="middle">34</text>
+  <text x="84" y="38" font-family="Arial, sans-serif" font-size="30" font-weight="700" fill="#14213d">PTS</text>
+  <text x="84" y="58" font-family="Arial, sans-serif" font-size="12" fill="#667085">Plaka Tanıma Sistemi</text>
+</svg>

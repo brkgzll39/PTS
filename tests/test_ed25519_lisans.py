@@ -89,3 +89,12 @@ def test_lisans_araci(tmp_path, capsys, monkeypatch):
     assert arac.main(["uret", "--anahtar", dosya, "--musteri", "M", "--kamera", "3", "--gun", "10"]) == 0
     uretilen = capsys.readouterr().out.strip().splitlines()[-1]
     assert lisans.coz(uretilen)["kamera_limiti"] == 3
+    assert "moduller" not in lisans.coz(uretilen)   # modül verilmezse alan yok -> hepsi açık
+
+    capsys.readouterr()
+    assert arac.main(["uret", "--anahtar", dosya, "--musteri", "M", "--kamera", "3", "--gun", "10",
+                      "--modul", "led", "--modul", "arvento"]) == 0
+    uretilen = capsys.readouterr().out.strip().splitlines()[-1]
+    assert lisans.coz(uretilen)["moduller"] == ["arvento", "led"]
+    assert arac.main(["uret", "--anahtar", dosya, "--musteri", "M", "--kamera", "3", "--gun", "10",
+                      "--modul", "uydu"]) == 1

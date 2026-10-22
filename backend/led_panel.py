@@ -24,6 +24,7 @@ from datetime import datetime
 from typing import Iterable, Optional, Sequence
 
 from backend import huidu
+from backend import marka
 
 # DÜZELTME (2026-09-25, sistem taraması): bu modül önceden TÜM durum/hata
 # mesajlarını `print()` ile yazıyordu -- bir servis/arka plan sürecinin
@@ -58,8 +59,9 @@ VARSAYILAN_AYARLAR = {
     "huidu_genislik": huidu.VARSAYILAN_GORUNUR_GENISLIK,  # panelin gösterdiği sütun sayısı (NİZAMİYE: 64)
     # Panelin boştaki yazısı (eski Pts.exe gibi). Araç mesajı `huidu_mesaj_suresi`
     # saniye görünür, sonra bu yazıya dönülür. Boş yazı ya da 0 sn: dönülmez.
-    "huidu_bekleme_yazisi": "T.P.A.O.",
-    "huidu_bekleme_yazisi_2": "TRAKYA",  # alt satır (iki bölgede alt yarıda, biraz küçük); boş olabilir
+    # Varsayılanlar marka.json'dan (yoksa TPAO: "T.P.A.O." / "TRAKYA").
+    "huidu_bekleme_yazisi": marka.oku()["led_bekleme_yazisi"],
+    "huidu_bekleme_yazisi_2": marka.oku()["led_bekleme_yazisi_2"],  # alt satır (iki bölgede alt yarıda, biraz küçük); boş olabilir
     "huidu_mesaj_suresi": 10,
     # Kart, PC'den gelen yazıyı bir süre sonra bırakıp boş ekrana ya da kendi
     # kayıtlı programına dönüyor (2026-10-12 saha: araç geçişinden 15-30 sn sonra,

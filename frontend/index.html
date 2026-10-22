@@ -10,7 +10,7 @@
 <link href="/static/vendor/ibm-plex-sans/ibm-plex-sans.css" rel="stylesheet">
 <link href="/static/style.css" rel="stylesheet">
 <link href="/static/kapi.css" rel="stylesheet">
-<link rel="manifest" href="/static/manifest.json">
+<link rel="manifest" href="/manifest.webmanifest">
 <link rel="apple-touch-icon" href="/static/img/apple-touch-icon.png">
 <link rel="icon" type="image/png" sizes="192x192" href="/static/img/icon-192.png">
 <meta name="theme-color" content="#30384d">
@@ -86,7 +86,7 @@
          PTS VE KAMERA LOGOSU YAZAN YERE LOGO OLARAK EKLEME ŞANSIN VAR MI" --
          önceki jenerik kamera ikonu + "TPAO PTS" metni yerine kurumun gerçek
          logosu kondu (bkz. frontend/img/tpao-logo.png, style.css::.auth-logo). -->
-    <img src="/static/img/tpao-logo.png" alt="Türkiye Petrolleri Anonim Ortaklığı" class="auth-logo">
+    <img src="/static/img/tpao-logo.png" alt="Türkiye Petrolleri Anonim Ortaklığı" class="auth-logo" data-marka-logo>
     <!-- 2026-09-22 kullanıcı isteği: "Pts yönetim paneline devam etmek için
          giriş yapın da kalksın güvenli giriş yapın yazısı da kalksın" --
          bu iki metin GÜNLÜK giriş ekranında artık gösterilmiyor (aşağıdaki
@@ -648,7 +648,7 @@
        beyaz zeminli olduğu için koyu navbar üzerinde okunaklı kalması adına
        küçük, yuvarlak köşeli beyaz bir "rozet" içine alındı (bkz.
        style.css::.navbar-logo-rozeti). -->
-  <span class="navbar-brand mb-0 h1 navbar-logo-rozeti"><img src="/static/img/tpao-logo.png" alt="Türkiye Petrolleri Anonim Ortaklığı"></span>
+  <span class="navbar-brand mb-0 h1 navbar-logo-rozeti"><img src="/static/img/tpao-logo.png" alt="Türkiye Petrolleri Anonim Ortaklığı" data-marka-logo></span>
   <span class="badge bg-info text-dark me-2 d-none" id="cizelgeVardiyaRozet" title="Vardiya çizelgesine göre şu an nöbette olan vardiya"></span>
   <span class="text-white-50 small d-none d-md-inline me-3"><span id="oturumKullanici"></span> <span id="saatGosterge"></span></span>
   <button id="farkliKullaniciButonu" class="btn btn-sm btn-outline-light d-none" onclick="farkliKullaniciylaGiris()" title="Bu bilgisayarda başka bir hesapla (kullanıcı adı ve parolayla) giriş yap"><i class="bi bi-person-gear"></i> Farklı kullanıcı</button>
@@ -716,16 +716,16 @@
   <div class="card mt-3">
     <div class="card-header"><i class="bi bi-headset me-1"></i>İletişim / Arıza Bildirim</div>
     <div class="card-body">
-      <div class="fw-semibold mb-1">TÜRKİYE PETROLLERİ ANONİM ORTAKLIĞI — PTS Sistemi</div>
+      <div class="fw-semibold mb-1"><span data-marka="kurum_adi">TÜRKİYE PETROLLERİ ANONİM ORTAKLIĞI</span> — PTS Sistemi</div>
       <p class="text-muted small mb-3">Bir arıza veya sorunla karşılaşırsanız Sistem Yöneticisi ile aşağıdaki kanallardan iletişime geçebilirsiniz.</p>
       <div class="contact-list">
-        <div class="contact-row"><i class="bi bi-telephone-fill"></i><span class="contact-label">İletişim</span><a href="tel:+905372102313">0537 210 2313</a></div>
-        <div class="contact-row"><i class="bi bi-telephone-inbound-fill"></i><span class="contact-label">Dahili İletişim</span><span>0288 427 4864</span></div>
-        <div class="contact-row"><i class="bi bi-envelope-fill"></i><span class="contact-label">E-posta</span><a href="mailto:bguzelel@tpao.gov.tr">bguzelel@tpao.gov.tr</a></div>
+        <div class="contact-row"><i class="bi bi-telephone-fill"></i><span class="contact-label">İletişim</span><a href="tel:+905372102313" data-marka-tel>0537 210 2313</a></div>
+        <div class="contact-row"><i class="bi bi-telephone-inbound-fill"></i><span class="contact-label">Dahili İletişim</span><span data-marka-dahili>0288 427 4864</span></div>
+        <div class="contact-row"><i class="bi bi-envelope-fill"></i><span class="contact-label">E-posta</span><a href="mailto:bguzelel@tpao.gov.tr" data-marka-eposta>bguzelel@tpao.gov.tr</a></div>
       </div>
     </div>
   </div>
-  <footer class="pts-footer">TÜRKİYE PETROLLERİ ANONİM ORTAKLIĞI — PTS Sistemi © 2026. Tüm hakları saklıdır.</footer>
+  <footer class="pts-footer"><span data-marka="kurum_adi">TÜRKİYE PETROLLERİ ANONİM ORTAKLIĞI</span> — PTS Sistemi © 2026. Tüm hakları saklıdır.</footer>
 </div>
 
 <!-- ============================================================
@@ -733,7 +733,7 @@
      ============================================================ -->
 <div id="kapiModu" class="d-none">
   <div class="kapi-ust">
-    <div class="kapi-logo"><img src="/static/img/tpao-logo.png" alt="TPAO"></div>
+    <div class="kapi-logo"><img src="/static/img/tpao-logo.png" alt="TPAO" data-marka-logo></div>
     <div class="kapi-sekmeler" role="tablist">
       <button class="kapi-sekme aktif" data-kapi-sekme="kapi"><i class="bi bi-door-open"></i> Kapı</button>
       <button class="kapi-sekme" data-kapi-sekme="iceride"><i class="bi bi-car-front"></i> İçeridekiler <span class="sayi d-none" id="kapiIcerideSayi"></span></button>
@@ -881,7 +881,7 @@
          eklemeni istiyorum" -- data-rol-min YOK: tüm roller (izleyici/
          operatör/güvenlik/yonetici) bu sekmeyi görebilir. -->
     <button class="side-link" data-target="#iletisim-sekme"><i class="bi bi-headset"></i>İletişim / Arıza Bildirim</button>
-    <div class="sidebar-footer"><span class="status-led"></span> Sistem çevrimiçi<br><small>TPAO PTS · v2.0</small></div>
+    <div class="sidebar-footer"><span class="status-led"></span> Sistem çevrimiçi<br><small><span data-marka="kisa_ad">TPAO PTS</span> · v2.0</small></div>
   </aside>
   <main class="container-fluid app-main">
   <ul class="nav nav-tabs" id="anaSekme" role="tablist">
@@ -2328,13 +2328,13 @@
     <div class="tab-pane fade" id="iletisim-sekme">
       <div class="card contact-card">
         <div class="card-body text-center py-4">
-          <div class="contact-kurum">TÜRKİYE PETROLLERİ ANONİM ORTAKLIĞI</div>
+          <div class="contact-kurum" data-marka="kurum_adi">TÜRKİYE PETROLLERİ ANONİM ORTAKLIĞI</div>
           <div class="contact-sistem mb-3">PTS Sistemi</div>
           <p class="text-muted small mb-4">Bu yazılımı kullanırken bir arıza veya sorunla karşılaşırsanız,<br>Sistem Yöneticisi ile aşağıdaki kanallardan iletişime geçebilirsiniz.</p>
           <div class="contact-list mx-auto">
-            <div class="contact-row"><i class="bi bi-telephone-fill"></i><span class="contact-label">İletişim</span><a href="tel:+905372102313">0537 210 2313</a></div>
-            <div class="contact-row"><i class="bi bi-telephone-inbound-fill"></i><span class="contact-label">Dahili İletişim</span><span>0288 427 4864</span></div>
-            <div class="contact-row"><i class="bi bi-envelope-fill"></i><span class="contact-label">E-posta</span><a href="mailto:bguzelel@tpao.gov.tr">bguzelel@tpao.gov.tr</a></div>
+            <div class="contact-row"><i class="bi bi-telephone-fill"></i><span class="contact-label">İletişim</span><a href="tel:+905372102313" data-marka-tel>0537 210 2313</a></div>
+            <div class="contact-row"><i class="bi bi-telephone-inbound-fill"></i><span class="contact-label">Dahili İletişim</span><span data-marka-dahili>0288 427 4864</span></div>
+            <div class="contact-row"><i class="bi bi-envelope-fill"></i><span class="contact-label">E-posta</span><a href="mailto:bguzelel@tpao.gov.tr" data-marka-eposta>bguzelel@tpao.gov.tr</a></div>
           </div>
         </div>
       </div>
@@ -2346,7 +2346,7 @@
 <!-- 2026-09-22 kullanıcı isteği: "panelin en alt kısmına Sayfanın tüm
      hakları gizlidir gibi bir yazı da yazalım" -- kurumsal/standart Türkçe
      ifadeyle ("Tüm hakları saklıdır") panelin en altına eklendi. -->
-<footer class="pts-footer">TÜRKİYE PETROLLERİ ANONİM ORTAKLIĞI — PTS Sistemi © 2026. Tüm hakları saklıdır.</footer>
+<footer class="pts-footer"><span data-marka="kurum_adi">TÜRKİYE PETROLLERİ ANONİM ORTAKLIĞI</span> — PTS Sistemi © 2026. Tüm hakları saklıdır.</footer>
 
 <script src="/static/vendor/bootstrap/bootstrap.bundle.min.js"></script>
 <script src="/static/vendor/chart.js/chart.umd.min.js"></script>
