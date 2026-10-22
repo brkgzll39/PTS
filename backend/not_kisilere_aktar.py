@@ -12,9 +12,12 @@ Ne yapar:
       "Servis", "Personel servisi", "SERVİS" -> Servis
     (İkisi birden geçen notta TPIC kazanır.)
   * Her plakayı en çok hangi grupta görüldüyse o gruba koyar.
-  * "TPIC" ve "Servis" adlı kişileri bulur ya da oluşturur (tip: personel,
+  * "TPIC" ve "Servis" adlı kişileri bulur ya da oluşturur (tip: alt işveren --
+    geçiş izni var, LED tabelada ZİYARETÇİ, panelde "Alt İşveren" yazar;
     otomatik not: "TPIC" / "Servis") ve plakaları bu kişilere araç olarak
     ekler. Bu araçlar geçince nota otomatik "TPIC" / "Servis" yazılır.
+    Bu adlarla daha önce "personel" olarak açılmış kişi varsa tipi alt
+    işverene çevrilir.
   * Plaka zaten BAŞKA bir kişiye kayıtlıysa o kişiye dokunulmaz, araç
     taşınmaz; yalnızca o kişinin "otomatik not" alanı boşsa doldurulur
     (--mevcut-kisilere-dokunma ile bu da kapatılır).
@@ -45,6 +48,7 @@ GRUPLAR = {
     "TPIC": ("TPIC", "TPIC", "TPIC"),
     "SERVIS": ("Servis", "Personel Servisi", "Servis"),
 }
+ALT_ISVEREN = "alt_isveren"
 _TR = str.maketrans({"İ": "i", "I": "i", "ı": "i", "Ş": "s", "ş": "s", "Ç": "c", "ç": "c",
                      "Ğ": "g", "ğ": "g", "Ö": "o", "ö": "o", "Ü": "u", "ü": "u"})
 _PLAKA = re.compile(r"^\d{2} ?[A-Z]{1,3} ?\d{2,5}$")
@@ -133,7 +137,8 @@ def planla(db, tarama: dict) -> list:
 
 def uygula(db, plan: list, mevcut_kisilere_not: bool, kullanici_adi: str = "not_kisilere_aktar") -> dict:
     from backend import main, models
-    ozet = {"eklenen_arac": 0, "olusturulan_kisi": 0, "notu_doldurulan_kisi": 0, "baglanan_gecis": 0}
+    ozet = {"eklenen_arac": 0, "olusturulan_kisi": 0, "notu_doldurulan_kisi": 0, "baglanan_gecis": 0,
+            "tipi_degisen_kisi": 0}
     hedefler = {}
     for grup in GRUPLAR:
         plakalar = [p for g, p, e, _ in plan if g == grup and e == "ekle"]
@@ -143,15 +148,19 @@ def uygula(db, plan: list, mevcut_kisilere_not: bool, kullanici_adi: str = "not_
         if kisi is None and not plakalar:
             continue
         if kisi is None:
-            kisi = models.Kisi(ad_soyad=ad, plaka_no=plakalar.pop(0), tip="personel",
+            kisi = models.Kisi(ad_soyad=ad, plaka_no=plakalar.pop(0), tip=ALT_ISVEREN,
                                daire_departman=departman, otomatik_not=otomatik,
                                aciklama="Geçiş notlarından otomatik oluşturuldu")
             db.add(kisi)
             db.flush()
             ozet["olusturulan_kisi"] += 1
             ozet["eklenen_arac"] += 1
-        elif not (kisi.otomatik_not or "").strip():
-            kisi.otomatik_not = otomatik
+        else:
+            if not (kisi.otomatik_not or "").strip():
+                kisi.otomatik_not = otomatik
+            if kisi.tip == "personel":   # 2026-10-22: LED'de PERSONEL değil ZİYARETÇİ yazsın
+                kisi.tip = ALT_ISVEREN
+                ozet["tipi_degisen_kisi"] += 1
         for plaka in plakalar:
             db.add(models.KisiPlaka(kisi_id=kisi.id, plaka_no=plaka, aciklama="Notlardan aktarıldı"))
             ozet["eklenen_arac"] += 1
@@ -224,7 +233,8 @@ def main(argv=None) -> int:
                 print("İptal edildi, hiçbir şey değiştirilmedi.")
                 return 1
         ozet = uygula(db, plan, not args.mevcut_kisilere_dokunma)
-        print(f"Tamam: {ozet['eklenen_arac']} araç eklendi ({ozet['olusturulan_kisi']} yeni kişi), "
+        print(f"Tamam: {ozet['eklenen_arac']} araç eklendi ({ozet['olusturulan_kisi']} yeni kişi, "
+              f"{ozet['tipi_degisen_kisi']} kişi alt işverene çevrildi), "
               f"{ozet['notu_doldurulan_kisi']} mevcut kişiye otomatik not yazıldı, "
               f"{ozet['baglanan_gecis']} geçmiş geçiş bu kişilere bağlandı.")
         return 0

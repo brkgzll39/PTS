@@ -510,13 +510,13 @@ function tarihFormatla(iso) {
 // tanımlı araç Personel (ziyaretçi olarak tanımlıysa Ziyaretçi, VIP
 // listesindeyse Bölge Müdürü), tanımsız araç Ziyaretçi.
 function durumEtiketi(durum, kisiTip) {
-  if (durum === "yetkili") return kisiTip === "vip" ? "Bölge Müdürü" : kisiTip === "ziyaretci" ? "Ziyaretçi" : "Personel";
+  if (durum === "yetkili") return kisiTip === "vip" ? "Bölge Müdürü" : kisiTip === "alt_isveren" ? "Alt İşveren" : kisiTip === "ziyaretci" ? "Ziyaretçi" : "Personel";
   const etiketler = { yetkisiz: "Ziyaretçi", suresi_dolmus: "Süresi Dolmuş", bilinmiyor: "Bilinmiyor", kara_liste: "Kara Liste", ziyaretci_onayli: "Ziyaretçi (Onaylı)" };
   return etiketler[durum] || durum;
 }
 
 function durumRozeti(durum, kisiTip) {
-  const sinif = durum === "yetkili" && kisiTip === "vip" ? "vip" : durum;
+  const sinif = durum === "yetkili" && (kisiTip === "vip" || kisiTip === "alt_isveren") ? kisiTip : durum;
   return `<span class="badge badge-${escapeHtml(sinif)}">${escapeHtml(durumEtiketi(durum, kisiTip))}</span>`;
 }
 
@@ -537,7 +537,7 @@ function alarmTipiEtiketi(tip) {
 
 function tipRozeti(tip) {
   if (!tip) return '<span class="text-muted">-</span>';
-  const etiketler = { abone: "Abone", personel: "Personel", ziyaretci: "Ziyaretçi", vip: "Bölge Müdürü" };
+  const etiketler = { abone: "Abone", personel: "Personel", ziyaretci: "Ziyaretçi", vip: "Bölge Müdürü", alt_isveren: "Alt İşveren" };
   return `<span class="badge badge-${tip}">${etiketler[tip] || escapeHtml(tip)}</span>`;
 }
 
@@ -1318,7 +1318,7 @@ function _gecisKartiOlustur(k) {
   // parçalardan (isim, vardiya) kuruluyor.
   const altBilgiParcalari = [isimBos ? null : isim, k.vardiya_adi ? escapeHtml(k.vardiya_adi) : null].filter(Boolean);
   return `
-    <div class="gecis-karti durum-${k.yetki_durumu === "yetkili" && k.kisi_tip_anlik === "vip" ? "vip" : escapeHtml(k.yetki_durumu)} ${yonSinifi}">
+    <div class="gecis-karti durum-${k.yetki_durumu === "yetkili" && (k.kisi_tip_anlik === "vip" || k.kisi_tip_anlik === "alt_isveren") ? k.kisi_tip_anlik : escapeHtml(k.yetki_durumu)} ${yonSinifi}">
       <div class="gecis-karti-baslik">
         <span class="gecis-karti-kamera" title="${escapeHtml(k.kamera_id)}">${escapeHtml(k.kamera_id)} - ${yonEtiketi}</span>
         <button class="gecis-karti-not-btn" onclick="olayDetayAc(${k.id})" title="${k.not_metni ? "Not var, görmek için tıklayın" : "Detay / not ekle"}" aria-label="Detay ve not">
@@ -1519,7 +1519,7 @@ async function olayDetayAc(id) {
   // Düzenle"/Ziyaretçi Girişi'nde girilebilir) gösteriliyor.
   document.getElementById("olayModalKisi").textContent = detay?.ad_soyad || kayit.misafir_adi || "Tanımsız araç";
   document.getElementById("olayModalDaire").textContent = detay?.daire_departman || "-";
-  document.getElementById("olayModalAracTipi").textContent = detay ? (detay.tip === "ziyaretci" ? "Ziyaretçi" : detay.tip === "vip" ? "Bölge Müdürü" : "Tanımlı") : (kayit.misafir_adi ? "Misafir" : "Tanımsız araç");
+  document.getElementById("olayModalAracTipi").textContent = detay ? (detay.tip === "ziyaretci" ? "Ziyaretçi" : detay.tip === "vip" ? "Bölge Müdürü" : detay.tip === "alt_isveren" ? "Alt İşveren" : "Tanımlı") : (kayit.misafir_adi ? "Misafir" : "Tanımsız araç");
   // 2026-09-22: kullanıcı isteği -- "OCR güven skoru gibi şeyleri görmeme
   // gerek yok, onların yerine Not yazınca not bilgisi eklensin". GÜVEN
   // SKORU/OCR DÜZELTMESİ alanları (operasyonel personel için anlamsız, teknik
@@ -3436,7 +3436,7 @@ let aktifTipFiltre = "";
 function ziyaretciAlanGoster() {
   const tip = document.getElementById("kisiTip").value;
   document.getElementById("ziyaretciBitisAlani").classList.toggle("d-none", tip !== "ziyaretci");
-  document.getElementById("daireEtiket").textContent = tip === "personel" || tip === "vip" ? "Departman / Ünvan" : "Daire No";
+  document.getElementById("daireEtiket").textContent = tip === "personel" || tip === "vip" ? "Departman / Ünvan" : tip === "alt_isveren" ? "Firma" : "Daire No";
 }
 
 function kisiTipFiltrele(tip, btn) {
@@ -3535,7 +3535,7 @@ function kisiTopluTipSecildi(secim) {
 async function kisiTopluIslem(islem, tip) {
   const idler = [..._kisiSecimi];
   if (!idler.length) return;
-  const tipEtiketi = { abone: "Abone", personel: "Personel", ziyaretci: "Ziyaretçi", vip: "Bölge Müdürü" };
+  const tipEtiketi = { abone: "Abone", personel: "Personel", ziyaretci: "Ziyaretçi", vip: "Bölge Müdürü", alt_isveren: "Alt İşveren" };
   let mesaj = `${idler.length} kişi `;
   mesaj += {
     aktif: "AKTİF yapılacak.",
@@ -3784,7 +3784,7 @@ function kisiIceAktarmaSablonuIndir() {
 function duzenleZiyaretciAlanGoster() {
   const tip = document.getElementById("duzenleTip").value;
   document.getElementById("duzenleZiyaretciBitisAlani").classList.toggle("d-none", tip !== "ziyaretci");
-  document.getElementById("duzenleDaireEtiket").textContent = tip === "personel" || tip === "vip" ? "Departman / Ünvan" : "Daire No";
+  document.getElementById("duzenleDaireEtiket").textContent = tip === "personel" || tip === "vip" ? "Departman / Ünvan" : tip === "alt_isveren" ? "Firma" : "Daire No";
 }
 
 // ================================================================

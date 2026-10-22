@@ -408,6 +408,7 @@ body {
 .badge-personel { background-color: #7c3aed; }
 .badge-ziyaretci { background-color: #0891b2; }
 .badge-vip { background-color: #b45309; }
+.badge-alt_isveren { background-color: #4b5563; }
 
 /* Kayıtlar tablosundaki "Doğrulama" sütunu: bu okumanın kaç farklı karede
    tekrarlanıp doğrulandığını gösterir (bkz. app.js::dogrulamaRozeti). */
@@ -460,6 +461,7 @@ body {
 .gecis-karti.durum-yetkili { border-left-color: #16a34a; }
 .gecis-karti.durum-yetkisiz { border-left-color: #dc2626; }
 .gecis-karti.durum-vip { border-left-color: #b45309; }
+.gecis-karti.durum-alt_isveren { border-left-color: #4b5563; }
 .gecis-karti.durum-suresi_dolmus { border-left-color: #d97706; }
 .gecis-karti.durum-bilinmiyor { border-left-color: #6b7280; }
 .gecis-karti.durum-kara_liste { border-left-color: #111827; }

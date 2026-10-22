@@ -255,6 +255,7 @@ def test_suresi_dolmus_ziyaretci_dogru_isaretlenir(client, yetkili_header):
     ("ziyaretci", "34 LED 02", "ZİYARETÇİ"),   # tanımlı (süresi geçerli) ziyaretçi
     (None, "34 LED 03", "ZİYARETÇİ"),          # tanınmayan/yetkisiz araç
     ("vip", "34 LED 04", "BÖLGE MÜDÜRÜ"),      # 2026-10-15: VIP listesi
+    ("alt_isveren", "34 LED 05", "ZİYARETÇİ"),  # 2026-10-22: TPIC / servis
 ])
 def test_led_panel_ust_satiri_personel_ziyaretci(client, yetkili_header, monkeypatch, kisi_tip, plaka, beklenen):
     """2026-10-12 kullanıcı isteği: panelde "HOŞ GELDİNİZ" yerine yetkili araçta
@@ -7824,7 +7825,7 @@ def test_not_kisilere_aktar_tpic_ve_servis(client, yetkili_header, capsys):
     try:
         tpic = db.query(M.Kisi).filter(M.Kisi.ad_soyad == "TPIC").one()
         servis = db.query(M.Kisi).filter(M.Kisi.ad_soyad == "Servis").one()
-        assert tpic.otomatik_not == "TPIC" and tpic.tip == "personel" and servis.otomatik_not == "Servis"
+        assert tpic.otomatik_not == "TPIC" and tpic.tip == "alt_isveren" and servis.otomatik_not == "Servis"
         tpic_plakalar = {tpic.plaka_no} | {p.plaka_no for p in db.query(M.KisiPlaka).filter(M.KisiPlaka.kisi_id == tpic.id)}
         assert tpic_plakalar == {"34 TPC 001", "34 TPC 002"}
         assert servis.plaka_no == "34 SRV 001"
@@ -7841,5 +7842,29 @@ def test_not_kisilere_aktar_tpic_ve_servis(client, yetkili_header, capsys):
     try:
         assert db.query(M.Kisi).filter(M.Kisi.ad_soyad == "TPIC").count() == 1
         assert db.query(M.KisiPlaka).filter(M.KisiPlaka.plaka_no == "34 TPC 002").count() == 1
+    finally:
+        db.close()
+
+
+def test_not_kisilere_aktar_personel_acilmis_tpic_alt_isverene_cevrilir(client, yetkili_header):
+    """2026-10-22: aracı daha önce personel olarak açılmış "TPIC" kişisi aktarımda
+    alt işverene çevrilir (LED'de PERSONEL yerine ZİYARETÇİ yazsın)."""
+    from backend import not_kisilere_aktar as na, models as M
+    from backend.database import SessionLocal
+    db = SessionLocal()
+    try:
+        kisi = db.query(M.Kisi).filter(M.Kisi.ad_soyad == "TPIC").first()
+        if kisi is None:
+            kisi = M.Kisi(ad_soyad="TPIC", plaka_no="34 TPX 001", tip="personel")
+            db.add(kisi)
+        kisi.tip = "personel"
+        db.commit()
+        kisi_id = kisi.id
+    finally:
+        db.close()
+    assert na.main(["--uygula", "--evet", "--haric", "34 TPC 003"]) == 0
+    db = SessionLocal()
+    try:
+        assert db.get(M.Kisi, kisi_id).tip == "alt_isveren"
     finally:
         db.close()

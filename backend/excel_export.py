@@ -209,7 +209,7 @@ def kisiler_excel_olustur(kisiler: list, dosya_yolu: str) -> str:
 # KULLANILAMAZ (örn. "Daire/Departman" "daire/departman" olur, beklenen
 # "daire_departman" ile eşleşmez -- bu yüzden burada "Daire Departman").
 _ICE_AKTARMA_SABLONU_BASLIKLARI = ["Ad Soyad", "Plaka No", "Tip", "Telefon", "Daire Departman"]
-_ICE_AKTARMA_GECERLI_TIPLER = ("abone", "personel", "ziyaretci", "vip")
+_ICE_AKTARMA_GECERLI_TIPLER = ("abone", "personel", "ziyaretci", "vip", "alt_isveren")
 
 
 def kisi_ice_aktarma_sablonu_olustur(dosya_yolu: str) -> str:
@@ -250,7 +250,7 @@ def kisi_ice_aktarma_sablonu_olustur(dosya_yolu: str) -> str:
         showDropDown=False,  # openpyxl/Excel XML tersten çalışır: False = açılır oku GÖSTER
         showErrorMessage=True,
     )
-    tip_dogrulama.error = "Tip yalnızca 'abone', 'personel', 'ziyaretci' veya 'vip' olabilir."
+    tip_dogrulama.error = "Tip yalnızca 'abone', 'personel', 'ziyaretci', 'vip' veya 'alt_isveren' olabilir."
     tip_dogrulama.errorTitle = "Geçersiz Tip"
     ws.add_data_validation(tip_dogrulama)
     tip_sutun_harfi = get_column_letter(_ICE_AKTARMA_SABLONU_BASLIKLARI.index("Tip") + 1)
@@ -267,7 +267,7 @@ def kisi_ice_aktarma_sablonu_olustur(dosya_yolu: str) -> str:
     aciklama_satirlari = [
         ("Ad Soyad", "Evet", "Kişinin (personel/abone/ziyaretçi) tam adı."),
         ("Plaka No", "Evet", "Örn. '34 ABC 123'. Aynı kişinin/birimin birden fazla aracı varsa, bu hücreye plakaları virgülle (,) ayırarak da yazabilirsiniz -- örn. '34 ABC 123, 34 DEF 456'. İlk yazılan plaka ana plaka olur, diğerleri ek araç olarak kaydedilir; içe aktardıktan sonra panelden Kişiler sekmesinden de ek plaka eklenip çıkarılabilir."),
-        ("Tip", "Evet", "'abone' (site sakini), 'personel', 'ziyaretci' veya 'vip' (Bölge Müdürü) olmalı — açılır listeden seçin. Geçersiz/boş bir değer sessizce 'abone' olarak kaydedilir, bu yüzden dikkatli seçin."),
+        ("Tip", "Evet", "'abone' (site sakini), 'personel', 'ziyaretci', 'vip' (Bölge Müdürü) veya 'alt_isveren' (TPIC, servis) olmalı — açılır listeden seçin. Geçersiz/boş bir değer sessizce 'abone' olarak kaydedilir, bu yüzden dikkatli seçin."),
         ("Telefon", "Hayır", "Boş bırakılabilir."),
         ("Daire Departman", "Hayır", "Abone için daire/blok bilgisi (örn. 'A Blok 12'), personel için departman adı (örn. 'ÜRETİM MÜDÜRLÜĞÜ'). Boş bırakılabilir."),
     ]

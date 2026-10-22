@@ -7,7 +7,9 @@ from typing import Literal, Optional, List
 
 # "vip" (2026-10-15): Bölge Müdürü araçları -- geçişte panelde ve LED'de
 # "Bölge Müdürü" yazar.
-GECERLI_TIPLER = ("abone", "personel", "ziyaretci", "vip")
+# "alt_isveren" (2026-10-22): TPIC, personel servisi gibi alt işveren araçları --
+# geçiş izni personel gibi, LED'de ZİYARETÇİ, panelde "Alt İşveren" yazar.
+GECERLI_TIPLER = ("abone", "personel", "ziyaretci", "vip", "alt_isveren")
 # "sakin": bir Kişi kaydına bağlı, yalnızca kendi araç/geçmiş bilgisine
 # erişebilen öz-hizmet giriş hesabı (bkz. main.py::_personel_girisi_gerekli
 # ve /sakin/... uç noktaları, 2026-09-17 notu).

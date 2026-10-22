@@ -161,7 +161,7 @@ class Kisi(Base):
     id = Column(Integer, primary_key=True, index=True)
     ad_soyad = Column(String(100), nullable=False)
     plaka_no = Column(String(15), nullable=False, index=True)
-    tip = Column(String(20), nullable=False)  # abone | personel | ziyaretci | vip
+    tip = Column(String(20), nullable=False)  # abone | personel | ziyaretci | vip | alt_isveren
     telefon = Column(String(20))
     daire_departman = Column(String(50))
     aciklama = Column(Text)
