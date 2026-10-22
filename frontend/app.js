@@ -535,6 +535,10 @@ function alarmTipiEtiketi(tip) {
   return etiketler[tip] || escapeHtml(tip || "Bilinmeyen alarm");
 }
 
+function tipEtiketiMetni(tip) {
+  return { abone: "Abone", personel: "Personel", ziyaretci: "Ziyaretçi", vip: "Bölge Müdürü", alt_isveren: "Alt İşveren" }[tip] || tip || "-";
+}
+
 function tipRozeti(tip) {
   if (!tip) return '<span class="text-muted">-</span>';
   const etiketler = { abone: "Abone", personel: "Personel", ziyaretci: "Ziyaretçi", vip: "Bölge Müdürü", alt_isveren: "Alt İşveren" };
@@ -3585,6 +3589,14 @@ async function gecmisKayitlariYenidenBagla() {
     if (on.baglanan_kayit) satirlar.push(`• ${on.baglanan_kayit} eski kayıt ${on.etkilenen_kisi} kişiye bağlanacak (yetki etiketleri DEĞİŞMEZ).`);
     if (on.yetkisiz_aday) satirlar.push(`• ${on.yetkisiz_aday} eski "yetkisiz" kayıt, kişinin şimdiki izinlerine göre yeniden değerlendirilecek.`);
     if (on.eslesmeyen_yetkili) satirlar.push(`• ${on.eslesmeyen_yetkili} eski yetkili kayıt hiçbir kişiyle eşleşmiyor, olduğu gibi kalacak.`);
+    // 2026-10-22: kimin kayıtları bağlanacak -- kişi başına döküm (en çok kayıttan aza).
+    if ((on.ayrinti || []).length) {
+      satirlar.push("", "Kişi kişi (kayıt sayısı -- plakalar):");
+      for (const a of on.ayrinti) {
+        const ek = a.yetkisiz ? `, ${a.yetkisiz} yetkisiz yeniden değerlendirilecek` : "";
+        satirlar.push(`${a.ad_soyad} [${tipEtiketiMetni(a.tip)}]: ${a.baglanacak} kayıt${ek} -- ${a.plakalar.join(", ")}`);
+      }
+    }
     const onay = await onayAl(satirlar.join("\n"), {
       baslik: "Eski geçiş kayıtlarını yeniden bağla",
       onayMetni: "Evet, bağla",

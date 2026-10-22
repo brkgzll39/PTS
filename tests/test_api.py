@@ -7868,3 +7868,25 @@ def test_not_kisilere_aktar_personel_acilmis_tpic_alt_isverene_cevrilir(client, 
         assert db.get(M.Kisi, kisi_id).tip == "alt_isveren"
     finally:
         db.close()
+
+
+def test_gecmis_yeniden_bagla_onizleme_kisi_kisi_doker(client, yetkili_header):
+    """2026-10-22: önizleme hangi kişinin hangi plakalarından kaç kaydın
+    bağlanacağını da döner (kullanıcı: "bunlar kimi kapsıyor görebilir miyim")."""
+    from backend import models as M
+    from backend.database import SessionLocal
+    db = SessionLocal()
+    try:
+        for _ in range(3):
+            db.add(M.Kayit(plaka_no="34 YBD 001", kamera_id="TEST", yon="giris", yetki_durumu="yetkili"))
+        db.add(M.Kayit(plaka_no="34 YBD 001", kamera_id="TEST", yon="giris", yetki_durumu="yetkisiz"))
+        db.commit()
+    finally:
+        db.close()
+    r = client.post("/kisiler", json={"ad_soyad": "Döküm Kişi", "plaka_no": "34 YBD 001", "tip": "personel"},
+                    headers=yetkili_header)
+    assert r.status_code == 200, r.text
+    v = client.post("/kisiler/gecmis-kayitlari-yeniden-bagla", headers=yetkili_header).json()
+    satir = next(a for a in v["ayrinti"] if a["ad_soyad"] == "Döküm Kişi")
+    assert satir["baglanacak"] == 3 and satir["plakalar"] == ["34 YBD 001"] and satir["tip"] == "personel"
+    assert sum(a["baglanacak"] for a in v["ayrinti"]) == v["baglanan_kayit"]

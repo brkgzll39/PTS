@@ -166,6 +166,9 @@ def _yeniden_bagla_senaryosu(db):
 def test_yeniden_bagla_onizleme_hicbir_sey_yazmaz(db):
     s = _yeniden_bagla_senaryosu(db)
     sonuc = pts_main._gecmis_kayitlari_yeniden_bagla(db, False, "t")
+    ayrinti = sonuc.pop("ayrinti")   # 2026-10-22: kişi başına döküm
+    assert {a["ad_soyad"]: (a["baglanacak"], a["yetkisiz"]) for a in ayrinti} == {
+        s["a"].ad_soyad: (1, 1), s["b"].ad_soyad: (2, 0)}
     assert sonuc == {
         "uygulandi": False, "baglanan_kayit": 3, "etkilenen_kisi": 2,
         "yetkisiz_aday": 1, "yetkisiz_duzeltilen": 0, "eslesmeyen_yetkili": 1,

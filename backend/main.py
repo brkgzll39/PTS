@@ -4545,18 +4545,32 @@ def _gecmis_kayitlari_yeniden_bagla(db: Session, uygula: bool, kullanici_adi: st
     yetkisiz_aday = 0
     etkilenen_kisiler: dict = {}
     yetkisiz_kisiler: dict = {}
+    # 2026-10-22 kullanıcı isteği: "3560 eski kayıt 158 kişiye bağlanacak --
+    # bunlar kimi kapsıyor görebilir miyim": kişi başına döküm.
+    ayrinti: dict = {}
+
+    def _ayrinti(kisi):
+        return ayrinti.setdefault(kisi.id, {"kisi_id": kisi.id, "ad_soyad": kisi.ad_soyad, "tip": kisi.tip,
+                                            "plakalar": {}, "baglanacak": 0, "yetkisiz": 0})
+
     for plaka_no, durum, adet in gruplar:
         kisi = harita.get(_plaka_normalize(plaka_no))
         if durum == "yetkisiz":
             if kisi:
                 yetkisiz_aday += adet
                 yetkisiz_kisiler[kisi.id] = kisi
+                a = _ayrinti(kisi)
+                a["yetkisiz"] += adet
+                a["plakalar"][plaka_no] = a["plakalar"].get(plaka_no, 0) + adet
             continue
         if not kisi:
             eslesmeyen_yetkili += adet
             continue
         baglanan += adet
         etkilenen_kisiler[kisi.id] = kisi
+        a = _ayrinti(kisi)
+        a["baglanacak"] += adet
+        a["plakalar"][plaka_no] = a["plakalar"].get(plaka_no, 0) + adet
         if uygula:
             db.query(models.Kayit).filter(
                 models.Kayit.plaka_no == plaka_no,
@@ -4588,6 +4602,10 @@ def _gecmis_kayitlari_yeniden_bagla(db: Session, uygula: bool, kullanici_adi: st
         "yetkisiz_aday": yetkisiz_aday,
         "yetkisiz_duzeltilen": yetkisiz_duzeltilen,
         "eslesmeyen_yetkili": eslesmeyen_yetkili,
+        "ayrinti": sorted(
+            ({**a, "plakalar": sorted(a["plakalar"])} for a in ayrinti.values()),
+            key=lambda a: (-(a["baglanacak"] + a["yetkisiz"]), a["ad_soyad"]),
+        ),
     }
 
 
