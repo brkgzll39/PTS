@@ -36,7 +36,7 @@ from calendar import monthrange
 from concurrent.futures import ThreadPoolExecutor
 
 from starlette.concurrency import run_in_threadpool
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from typing import Optional, List
 
 # ================================================================
@@ -1106,6 +1106,74 @@ async def _disk_izleme_dongu() -> None:
 
 
 # ================================================================
+# HTTPS SERTİFİKASI BİTİŞ UYARISI (2026-10-23, kullanıcı onayı)
+# ================================================================
+# Sunucu sertifikası 398 gün geçerli (bkz. sertifika_olustur.py). Süresi
+# dolduğunda panelin açıldığı TÜM bilgisayarlar ve telefonlar aynı anda
+# "Bağlantınız gizli değil" hatası alır; önceden bunu haber veren hiçbir şey
+# yoktu. Bitişe SERTIFIKA_UYARI_GUN kala günde bir alarm + bildirim üretilir.
+SERTIFIKA_UYARI_GUN = 30
+SERTIFIKA_IZLEME_ARALIK_SN = 6 * 3600
+_sertifika_son_alarm_gunu: Optional[date] = None
+
+
+def _https_acik_mi() -> bool:
+    return (os.environ.get("PTS_HTTPS") or "").strip().lower() in ("1", "true", "evet", "on")
+
+
+def _sertifika_kalan_gun() -> Optional[int]:
+    """HTTPS açıksa sunucu sertifikasının bitişine kalan tam gün (geçmişse
+    negatif); HTTPS kapalıysa ya da sertifika okunamıyorsa None."""
+    if not _https_acik_mi():
+        return None
+    yol = (os.environ.get("PTS_HTTPS_SERTIFIKA") or "").strip() or os.path.join(PROJE_KOKU, "sertifika", "sunucu.crt")
+    try:
+        from cryptography import x509
+        with open(yol, "rb") as f:
+            crt = x509.load_pem_x509_certificate(f.read())
+    except (OSError, ValueError, ImportError) as exc:
+        logger.error("[sertifika] '%s' okunamadı: %s", yol, exc)
+        return None
+    bitis = getattr(crt, "not_valid_after_utc", None)
+    if bitis is None:  # cryptography < 42
+        bitis = crt.not_valid_after.replace(tzinfo=timezone.utc)
+    return (bitis - datetime.now(timezone.utc)).days
+
+
+def _sertifika_bitis_bir_kontrol() -> None:
+    global _sertifika_son_alarm_gunu
+    kalan = _sertifika_kalan_gun()
+    if kalan is None or kalan > SERTIFIKA_UYARI_GUN or _sertifika_son_alarm_gunu == date.today():
+        return
+    _sertifika_son_alarm_gunu = date.today()
+    durum = f"{kalan} gün sonra doluyor" if kalan >= 0 else f"{-kalan} gün önce DOLDU"
+    mesaj = (f"HTTPS sertifikası {durum}. Sunucuda proje klasöründe "
+             f"'python backend\\sertifika_olustur.py' çalıştırıp PTS'i yeniden başlatın "
+             f"(bilgisayarlara/telefonlara yeniden kurulum gerekmez).")
+    logger.error("[sertifika] %s", mesaj)
+    db = SessionLocal()
+    try:
+        db.add(models.Alarm(plaka_no="SISTEM", alarm_tipi="sertifika_bitiyor", mesaj=mesaj[:255]))
+        db.commit()
+        _bildirim_tetikle(db, "sertifika_bitiyor", {
+            "olay": "sertifika_bitiyor", "alarm_tipi": "sertifika_bitiyor", "mesaj": mesaj, "kalan_gun": kalan,
+        })
+    except Exception as exc:
+        logger.error("[sertifika] alarm kaydedilemedi: %s", exc)
+    finally:
+        db.close()
+
+
+async def _sertifika_izleme_dongu() -> None:
+    while True:
+        try:
+            await asyncio.to_thread(_sertifika_bitis_bir_kontrol)
+        except Exception as exc:
+            logger.error("[sertifika] izleme döngüsünde beklenmeyen hata: %s", exc, exc_info=True)
+        await asyncio.sleep(SERTIFIKA_IZLEME_ARALIK_SN)
+
+
+# ================================================================
 # SON KULLANILAN NOT ÖNBELLEĞİ — kullanıcı talebi (2026-09-17, devam)
 # ================================================================
 # Kullanıcı senaryosu: yetkisiz bir araca (örn. bir kargo aracına) panelden
@@ -1614,6 +1682,14 @@ async def _disk_izlemeyi_baslat():
     gerçekten dolmasına karşı erken uyarı")."""
     asyncio.ensure_future(_disk_izleme_dongu())
     logger.info("Disk doluluk izleme başlatıldı (her %d sn kontrol)", DISK_IZLEME_ARALIK_SN)
+
+
+@app.on_event("startup")
+async def _sertifika_izlemeyi_baslat():
+    """HTTPS sertifikasının bitişine 30 gün kala uyarır (bkz. yukarısı)."""
+    if _https_acik_mi():
+        asyncio.ensure_future(_sertifika_izleme_dongu())
+        logger.info("HTTPS sertifikası bitiş izleme başlatıldı")
 
 
 @app.on_event("startup")
@@ -3091,16 +3167,81 @@ def sertifika_yetkilisi_indir():
                         headers={"Cache-Control": "no-cache"})
 
 
+SAGLIK_YEDEK_UYARI_SAAT = 36   # günde bir alınan yedek bu kadar eskiyse uyar
+
+
+def _son_otomatik_yedek_yasi_saat(ayarlar: dict) -> Optional[float]:
+    if not ayarlar.get("otomatik_yedek_aktif", True):
+        return None
+    try:
+        if _mssql_modu():
+            yas = mssql_yedek.son_yedek_yasi_saat(mssql_yedek.yedek_gecmisi(engine, adet=5))
+            return round(yas, 1) if yas is not None else None
+        klasor = _otomatik_yedek_klasoru_al(ayarlar)
+        zamanlar = [os.path.getmtime(os.path.join(klasor, ad)) for ad in os.listdir(klasor)
+                    if ad.startswith(OTOMATIK_YEDEK_DOSYA_ONEKI) and ad.endswith(".db")]
+    except Exception as exc:  # noqa: BLE001 - izleme amaçlı
+        logger.error("Sağlık kontrolünde yedek yaşı okunamadı: %s", exc)
+        return None
+    return round((time.time() - max(zamanlar)) / 3600, 1) if zamanlar else None
+
+
 @app.get("/saglik")
 def saglik_kontrolu(db: Session = Depends(get_db)):
-    """İzleme/servis denetleyicileri için basit sağlık kontrolü uç noktası."""
+    """İzleme/servis denetleyicileri için sağlık kontrolü uç noktası.
+
+    2026-10-23 (kullanıcı onayı): yalnız "çalışıyor" demek dışarıdan izlemeye
+    yetmiyordu -- gece bir kamera durduğunda ya da yedek alınamadığında haber
+    veren yoktu. Artık kamera, son kayıt, yedek, disk ve sertifika durumu da
+    döner; `saglikli` False ise `uyarilar` nedenini Türkçe söyler (Uptime
+    Kuma vb. "anahtar kelime" izleyicisi `"saglikli":true` arayabilir).
+    Oturum gerektirmez; bu yüzden yalnız sayı döner, kamera adı/IP vermez.
+    Durum kodu bilerek hep 200: eski izleyiciler ve servis betikleri yalnız
+    `durum` alanına bakıyor."""
+    uyarilar = []
     try:
         db.execute(text("SELECT 1"))
         veritabani_durumu = "tamam"
     except Exception as e:  # noqa: BLE001 - izleme amaçlı, hatayı yutup durumu bildiriyoruz
         logger.error("Sağlık kontrolünde veritabanı hatası: %s", e)
         veritabani_durumu = "hata"
-    return {"durum": "calisiyor", "veritabani": veritabani_durumu}
+        uyarilar.append("Veritabanına ulaşılamıyor")
+
+    aktif_kameralar = [k for k in _kameralari_oku() if k.get("aktif", True)]
+    calisan = 0
+    for k in aktif_kameralar:
+        p = _aktif_pipelineler.get(k["id"])
+        if p is not None and p.calisiyor and p.thread_canli_mi() and not p.durum_bilgisi().get("donmus"):
+            calisan += 1
+    if _CAM_LIBS and calisan < len(aktif_kameralar):
+        uyarilar.append(f"{len(aktif_kameralar) - calisan} kamera görüntü vermiyor")
+
+    son_kayit_dk = None
+    if veritabani_durumu == "tamam":
+        son = db.query(func.max(models.Kayit.tarih_saat)).scalar()
+        if son is not None:
+            son_kayit_dk = max(0, int((datetime.now() - son).total_seconds() // 60))
+
+    ayarlar = _sistem_ayarlari_oku()
+    yedek_saat = _son_otomatik_yedek_yasi_saat(ayarlar)
+    if yedek_saat is not None and yedek_saat > SAGLIK_YEDEK_UYARI_SAAT:
+        uyarilar.append(f"Son otomatik yedek {yedek_saat:.0f} saat önce alınmış")
+
+    disk_yuzde = max((y for y in (_disk_kullanim_yuzdesi(yol) for yol in _izlenen_disk_yollari(ayarlar).values())
+                      if y is not None), default=None)
+    if disk_yuzde is not None and disk_yuzde >= float(ayarlar.get("disk_uyari_esik_yuzde", 90)):
+        uyarilar.append(f"Disk %{disk_yuzde:.0f} dolu")
+
+    sertifika_gun = _sertifika_kalan_gun()
+    if sertifika_gun is not None and sertifika_gun <= SERTIFIKA_UYARI_GUN:
+        uyarilar.append(f"HTTPS sertifikasının bitişine {sertifika_gun} gün kaldı")
+
+    return {
+        "durum": "calisiyor", "veritabani": veritabani_durumu, "saglikli": not uyarilar, "uyarilar": uyarilar,
+        "kameralar": {"aktif": len(aktif_kameralar), "calisan": calisan},
+        "son_kayit_dk": son_kayit_dk, "son_yedek_saat": yedek_saat,
+        "disk_yuzde": disk_yuzde, "sertifika_kalan_gun": sertifika_gun,
+    }
 
 
 # ==================================================================

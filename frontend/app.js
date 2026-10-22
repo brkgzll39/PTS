@@ -5857,7 +5857,7 @@ async function bildirimAyarlariYukle() {
       suresi_dolmus: "Süresi dolmuş", supheli_arac: "Şüpheli araç",
       bariyer_hatasi: "Bariyer hatası", kamera_arizasi: "Kamera arızası",
       disk_hatasi: "Disk hatası", yedek_bozuk: "Otomatik yedek bozuk", yedek_hatasi: "Otomatik yedek alınamadı",
-      disk_doluyor: "Disk doluluk erken uyarısı", gunluk_ozet: "Günlük özet (her sabah)",
+      disk_doluyor: "Disk doluluk erken uyarısı", sertifika_bitiyor: "HTTPS sertifikası bitiyor", gunluk_ozet: "Günlük özet (her sabah)",
     };
     el.innerHTML = ayarlar.map(a => `<tr>
       <td><strong>${escapeHtml(a.ad)}</strong></td>

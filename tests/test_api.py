@@ -123,6 +123,48 @@ def test_saglik_kontrolu(client):
     assert r.status_code == 200
 
 
+def test_saglik_izleme_alanlari(client, monkeypatch):
+    monkeypatch.delenv("PTS_HTTPS", raising=False)
+    j = client.get("/saglik").json()
+    assert j["durum"] == "calisiyor" and j["veritabani"] == "tamam"
+    for alan in ("saglikli", "uyarilar", "kameralar", "son_kayit_dk", "son_yedek_saat", "disk_yuzde", "sertifika_kalan_gun"):
+        assert alan in j
+    assert j["sertifika_kalan_gun"] is None   # HTTPS kapalı
+
+    monkeypatch.setattr(pts_main, "_sertifika_kalan_gun", lambda: 12)
+    j = client.get("/saglik").json()
+    assert j["saglikli"] is False
+    assert any("sertifika" in u for u in j["uyarilar"])
+
+
+def test_sertifika_kalan_gun_gercek_sertifikadan(monkeypatch, tmp_path):
+    pytest.importorskip("cryptography")
+    from backend import sertifika_olustur
+    sertifika_olustur.olustur(str(tmp_path), ["127.0.0.1"], ["localhost"])
+    monkeypatch.setenv("PTS_HTTPS_SERTIFIKA", str(tmp_path / "sunucu.crt"))
+    monkeypatch.delenv("PTS_HTTPS", raising=False)
+    assert pts_main._sertifika_kalan_gun() is None
+    monkeypatch.setenv("PTS_HTTPS", "1")
+    assert 395 <= pts_main._sertifika_kalan_gun() <= 397
+
+
+def test_sertifika_bitis_alarmi_gunde_bir_kez(client, monkeypatch):
+    from backend import models
+    monkeypatch.setattr(pts_main, "_sertifika_son_alarm_gunu", None)
+    db = pts_main.SessionLocal()
+    try:
+        once = db.query(models.Alarm).filter(models.Alarm.alarm_tipi == "sertifika_bitiyor").count()
+        monkeypatch.setattr(pts_main, "_sertifika_kalan_gun", lambda: 45)
+        pts_main._sertifika_bitis_bir_kontrol()   # 30 günden fazla: uyarı yok
+        monkeypatch.setattr(pts_main, "_sertifika_kalan_gun", lambda: 20)
+        pts_main._sertifika_bitis_bir_kontrol()
+        pts_main._sertifika_bitis_bir_kontrol()   # aynı gün tekrar: yeni alarm yok
+        sonra = db.query(models.Alarm).filter(models.Alarm.alarm_tipi == "sertifika_bitiyor").count()
+    finally:
+        db.close()
+    assert sonra - once == 1
+
+
 def test_sertifika_yetkilisi_oturumsuz_indirilir(client, monkeypatch, tmp_path):
     monkeypatch.setenv("PTS_HTTPS_CA", str(tmp_path / "yok.crt"))
     assert client.get("/pts-ca.crt").status_code == 404

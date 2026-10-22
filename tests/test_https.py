@@ -89,3 +89,64 @@ def test_ek_ip_otomatik_ve_onceki_ipleri_dusurmez(monkeypatch, tmp_path, capsys)
     assert sertifika_olustur.main(["--klasor", klasor, "--ip", "fd00::1"]) == 0
     assert _san_ipleri(f"{klasor}/sunucu.crt") == {"127.0.0.1", "172.17.1.254", "100.108.27.27", "fd00::1"}
     capsys.readouterr()
+
+
+def test_ayni_porta_duz_http_https_e_yonlendirilir(tmp_path):
+    """2026-10-23: http:// yer imleri HTTPS'e geçince açılmıyordu."""
+    import time
+
+    async def uygulama(scope, receive, send):
+        assert scope["type"] == "http"
+        await send({"type": "http.response.start", "status": 200, "headers": [(b"content-type", b"text/plain")]})
+        await send({"type": "http.response.body", "body": b"tamam"})
+
+    klasor = str(tmp_path)
+    sertifika_olustur.olustur(klasor, ["127.0.0.1"], ["localhost"])
+    with socket.socket() as s:
+        s.bind(("127.0.0.1", 0))
+        port = s.getsockname()[1]
+    sunucu_nesnesi = sunucu._Sunucu(sunucu._Ayar(uygulama, host="127.0.0.1", port=port, lifespan="off",
+                                                 log_level="warning", ssl_certfile=f"{klasor}/sunucu.crt",
+                                                 ssl_keyfile=f"{klasor}/sunucu.key"))
+    t = threading.Thread(target=sunucu_nesnesi.run, daemon=True)
+    t.start()
+    for _ in range(100):
+        if sunucu_nesnesi.started:
+            break
+        time.sleep(0.05)
+    try:
+        # Düz HTTP -> 302 https://
+        with socket.create_connection(("127.0.0.1", port), timeout=5) as ham:
+            ham.sendall(f"GET /kayitlar?sayfa=2 HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nUser-Agent: test\r\n\r\n".encode())
+            yanit = b""
+            while b"\r\n\r\n" not in yanit:
+                parca = ham.recv(4096)
+                if not parca:
+                    break
+                yanit += parca
+        assert yanit.startswith(b"HTTP/1.1 302")
+        assert f"Location: https://127.0.0.1:{port}/kayitlar?sayfa=2\r\n".encode() in yanit
+
+        # HTTPS aynen çalışır.
+        ctx = ssl.create_default_context(cafile=f"{klasor}/pts-ca.crt")
+        with socket.create_connection(("127.0.0.1", port), timeout=5) as ham:
+            with ctx.wrap_socket(ham, server_hostname="127.0.0.1") as tls:
+                tls.sendall(b"GET / HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n")
+                cevap = b""
+                while True:
+                    parca = tls.recv(4096)
+                    if not parca:
+                        break
+                    cevap += parca
+        assert cevap.startswith(b"HTTP/1.1 200") and b"tamam" in cevap
+    finally:
+        sunucu_nesnesi.should_exit = True
+        t.join(10)
+
+
+def test_http_yonlendirme_yaniti_basliklari_temizler():
+    assert sunucu.http_yonlendirme_yaniti(b"\x16\x03\x01...") is None
+    yanit = sunucu.http_yonlendirme_yaniti(b"GET http://x/ HTTP/1.1\r\nHost: 172.17.1.254:8787\r\n\r\n")
+    assert b"Location: https://172.17.1.254:8787/\r\n" in yanit
+    # Başlık enjeksiyonu: geçersiz Host -> yönlendirme yok, 400.
+    assert sunucu.http_yonlendirme_yaniti(b"GET / HTTP/1.1\r\nHost: a\x00b\r\n\r\n").startswith(b"HTTP/1.1 400")

@@ -20,10 +20,14 @@ import asyncio
 import contextlib
 import logging
 import os
+import re
 import secrets
 import signal
 import socket
+import ssl
+from typing import Optional
 
+import _ssl
 import uvicorn
 
 logger = logging.getLogger("pts.sunucu")
@@ -53,6 +57,76 @@ def https_ayari() -> dict:
         raise SystemExit("PTS_HTTPS=1 ama sertifika bulunamadı: " + ", ".join(eksik)
                          + " -- önce: python -m backend.sertifika_olustur")
     return {"ssl_certfile": crt, "ssl_keyfile": key}
+
+
+# ---------------------------------------------------------------- http:// -> https://
+# 2026-10-23 (kullanıcı onayı): HTTPS'e geçince http:// ile kaydedilmiş yer
+# imleri/kısayollar çalışmaz oldu; Nizamiye'de tarayıcı önbellekteki eski
+# sayfayı "PTS sunucusuna ulaşılamıyor" uyarısıyla gösterdi. Aynı porta düz
+# HTTP isteği gelirse TLS el sıkışmasına başlamadan https:// adresine
+# yönlendirilir. Python'un TLS nesnesi (SSLContext.sslobject_class) üzerinden
+# yapılır: asyncio gelen baytları önce bu nesneye verir; ilk bayt TLS değil de
+# "GET /..." ise yanıt, TLS'nin şifreli çıktısı yerine düz metin olarak geri
+# yazılır. HTTPS bağlantıları hiçbir şekilde değişmez; istemci IP'si de korunur.
+_HTTP_ISTEK = re.compile(rb"([A-Z]{3,7}) (\S+) HTTP/1\.[01]\r\n")
+_HOST = re.compile(rb"\r\nhost:[ \t]*([A-Za-z0-9.\-:\[\]]{1,255})[ \t]*\r\n", re.IGNORECASE)
+_HTTP_BASLIK_SINIRI = 16384
+
+
+def http_yonlendirme_yaniti(istek: bytes) -> Optional[bytes]:
+    """Düz HTTP isteğine https:// yönlendirmesi; istek HTTP değilse None.
+    302 (kalıcı değil): HTTPS ileride kapatılırsa tarayıcılarda takılı kalmasın."""
+    m = _HTTP_ISTEK.match(istek)
+    if not m:
+        return None
+    h = _HOST.search(istek)
+    if h is None:
+        govde = b"Bu adres yalnizca https:// ile acilir.\n"
+        return (b"HTTP/1.1 400 Bad Request\r\nContent-Type: text/plain; charset=utf-8\r\n"
+                b"Content-Length: " + str(len(govde)).encode() + b"\r\nConnection: close\r\n\r\n" + govde)
+    yol = m.group(2) if m.group(2).startswith(b"/") else b"/"
+    return (b"HTTP/1.1 302 Found\r\nLocation: https://" + h.group(1) + yol +
+            b"\r\nContent-Length: 0\r\nCache-Control: no-store\r\nConnection: close\r\n\r\n")
+
+
+class _HttpYonlendirenSSLObject(ssl.SSLObject):
+    @classmethod
+    def _create(cls, incoming, outgoing, *args, **kwargs):
+        nesne = super()._create(incoming, outgoing, *args, **kwargs)
+        nesne._pts_gelen, nesne._pts_giden, nesne._pts_http = incoming, outgoing, None
+        return nesne
+
+    def do_handshake(self):
+        if self._pts_http is None:
+            veri = self._pts_gelen.read()
+            if veri[:1] == b"\x16" or not re.match(rb"[A-Z]{3,7} ", veri[:8]):
+                if veri:
+                    self._pts_http = False
+                self._pts_gelen.write(veri)
+                return super().do_handshake()
+            if b"\r\n\r\n" not in veri and len(veri) < _HTTP_BASLIK_SINIRI:
+                self._pts_gelen.write(veri)   # başlıkların gerisi bekleniyor
+                raise ssl.SSLWantReadError(ssl.SSL_ERROR_WANT_READ, "http istegi bekleniyor")
+            self._pts_http = True
+            self._pts_giden.write(http_yonlendirme_yaniti(veri) or b"")
+        if self._pts_http:
+            # asyncio bekleyen çıktıyı (yönlendirmeyi) gönderir; tarayıcı
+            # bağlantıyı kapatınca (ya da el sıkışma süresi dolunca) kapanır.
+            self._pts_gelen.read()
+            raise ssl.SSLWantReadError(ssl.SSL_ERROR_WANT_READ, "duz http yonlendirildi")
+        return super().do_handshake()
+
+
+class _Ayar(uvicorn.Config):
+    def load(self) -> None:
+        super().load()
+        if self.ssl is not None:
+            # main.py truststore.inject_into_ssl() ile ssl.SSLContext'i kendi
+            # sarmalayıcısına çevirir; wrap_bio o zaman içteki asıl bağlamla
+            # (._ctx) yapılır ve sarmalayıcıya yazılan ayar hiç kullanılmaz.
+            ic = getattr(self.ssl, "_ctx", None)
+            hedef = ic if isinstance(ic, _ssl._SSLContext) else self.ssl
+            hedef.sslobject_class = _HttpYonlendirenSSLObject
 
 
 def _port_bos_mu(host: str, port: int) -> bool:
@@ -95,19 +169,19 @@ def main() -> None:
         print("Kamera kayit anahtari bu calisma icin otomatik uretildi "
               "(ag uzerinden sahte plaka kaydi engellendi).", flush=True)
 
-    ssl = https_ayari()
-    sema = "https" if ssl else "http"
+    ssl_ayari = https_ayari()
+    sema = "https" if ssl_ayari else "http"
     ic_port = _port_ayari("PTS_IC_PORT", 8001)
-    if ssl:
+    if ssl_ayari:
         # Kameralar (aynı süreç) kayıtlarını sertifikasız, yalnızca bu
         # bilgisayardan erişilebilen bir HTTP kapısına gönderir.
         os.environ["PTS_KAMERA_API_URL"] = f"http://127.0.0.1:{ic_port}/kayitlar/otomatik"
 
     from backend.main import app
 
-    sunucular = [_Sunucu(uvicorn.Config(app, host=host, port=ana_port, lifespan="on", **ssl))]
+    sunucular = [_Sunucu(_Ayar(app, host=host, port=ana_port, lifespan="on", **ssl_ayari))]
     print(f"PTS paneli: {sema}://<bu bilgisayar>:{ana_port}", flush=True)
-    if ssl:
+    if ssl_ayari:
         if not _port_bos_mu("127.0.0.1", ic_port):
             raise SystemExit(f"Kamera iç portu {ic_port} dolu -- .env'de PTS_IC_PORT ile değiştirin.")
         sunucular.append(_Sunucu(uvicorn.Config(app, host="127.0.0.1", port=ic_port, lifespan="off")))
@@ -115,7 +189,7 @@ def main() -> None:
         # Otomatik giriş portu doluysa ana panel yine açılsın (uvicorn bağlanamazsa
         # tüm süreci kapatır).
         if _port_bos_mu(host, otomatik_port):
-            sunucular.append(_Sunucu(uvicorn.Config(app, host=host, port=otomatik_port, lifespan="off", **ssl)))
+            sunucular.append(_Sunucu(_Ayar(app, host=host, port=otomatik_port, lifespan="off", **ssl_ayari)))
             print(f"Otomatik giris (parolasiz) paneli: {sema}://<bu bilgisayar>:{otomatik_port}", flush=True)
         else:
             print(f"UYARI: {otomatik_port} portu dolu -- otomatik giris paneli ACILMADI, "
