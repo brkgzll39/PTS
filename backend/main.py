@@ -105,7 +105,7 @@ from backend.metin_araclari import levenshtein_mesafesi, en_yakin_bilinen_plakay
 # ---------------------- KLASÖR AYARLARI ----------------------
 BACKEND_DIR = os.path.dirname(os.path.abspath(__file__))
 PROJE_KOKU = os.path.dirname(BACKEND_DIR)
-GORUNTU_KLASORU = os.path.join(PROJE_KOKU, "goruntuler")
+GORUNTU_KLASORU = os.getenv("PTS_GORUNTU_KLASORU") or os.path.join(PROJE_KOKU, "goruntuler")  # demo: araclar/demo.py
 DISA_AKTAR_KLASORU = os.path.join(PROJE_KOKU, "disa_aktarilanlar")
 FRONTEND_KLASORU = os.path.join(PROJE_KOKU, "frontend")
 # PTS_LICENSE_FILE / PTS_CAMERAS_FILE: normalde ayarlamanıza gerek yok (varsayılan
@@ -113,7 +113,7 @@ FRONTEND_KLASORU = os.path.join(PROJE_KOKU, "frontend")
 # dosyalarını ezmemek için bunları geçici bir dizine yönlendirir.
 LISANS_DOSYASI = os.getenv("PTS_LICENSE_FILE") or os.path.join(BACKEND_DIR, "license.json")
 KAMERA_DOSYASI = os.getenv("PTS_CAMERAS_FILE") or os.path.join(BACKEND_DIR, "cameras.json")
-LOG_KLASORU = os.path.join(PROJE_KOKU, "loglar")
+LOG_KLASORU = os.getenv("PTS_LOG_KLASORU") or os.path.join(PROJE_KOKU, "loglar")
 os.makedirs(GORUNTU_KLASORU, exist_ok=True)
 os.makedirs(DISA_AKTAR_KLASORU, exist_ok=True)
 os.makedirs(LOG_KLASORU, exist_ok=True)
