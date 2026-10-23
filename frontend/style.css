@@ -652,3 +652,6 @@ table td, table th {
 .kisi-toplu-cubuk { background: var(--bs-primary-bg-subtle, #e7f1ff); }
 .kisi-sec-hucre { width: 2.25rem; text-align: center; }
 
+
+/* Kullanıcı bazlı ekran kısıtlaması (app.js::ekranKisitlamasiUygula) */
+.ekran-gizli { display: none !important; }

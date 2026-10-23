@@ -8140,3 +8140,49 @@ def test_modullu_lisans_yalniz_listedekileri_acar(client, yetkili_header, monkey
 def test_bilinmeyen_modul_reddedilir():
     with pytest.raises(ValueError, match="Bilinmeyen modül"):
         lisans.uret("X", kamera_limiti=1, gun=1, moduller=["uydu"])
+
+
+# ---------------- Kullanıcı bazlı ekran kısıtlaması (2026-10-23) ----------------
+
+def test_kullanici_ekran_listesiyle_olusturulur_ve_giriste_doner(client, yetkili_header):
+    ekranlar = ["canli", "panel", "kontrol", "iceride", "kayitlar"]
+    r = client.post("/kullanicilar", json={
+        "kullanici_adi": "ekran-kisitli", "parola": "GucluParola123!", "rol": "izleyici", "ekran_listesi": ekranlar,
+    }, headers=yetkili_header)
+    assert r.status_code == 200, r.text
+    assert r.json()["ekran_listesi"] == ekranlar
+    g = client.post("/auth/giris", json={"kullanici_adi": "ekran-kisitli", "parola": "GucluParola123!"})
+    assert g.status_code == 200, g.text
+    assert g.json()["kullanici"]["ekran_listesi"] == ekranlar
+    me = client.get("/auth/me", headers={"Authorization": f"Bearer {g.json()['token']}"})
+    assert me.json()["ekran_listesi"] == ekranlar
+
+
+def test_kullanici_ekran_listesi_yoksa_null(client, yetkili_header):
+    r = client.post("/kullanicilar", json={
+        "kullanici_adi": "ekran-serbest", "parola": "GucluParola123!", "rol": "izleyici", "ekran_listesi": [],
+    }, headers=yetkili_header)
+    assert r.status_code == 200, r.text
+    assert r.json()["ekran_listesi"] is None
+
+
+def test_kullanici_bilinmeyen_ekran_reddedilir(client, yetkili_header):
+    r = client.post("/kullanicilar", json={
+        "kullanici_adi": "ekran-gecersiz", "parola": "GucluParola123!", "rol": "izleyici", "ekran_listesi": ["canli", "yok"],
+    }, headers=yetkili_header)
+    assert r.status_code == 422, r.text
+
+
+def test_kullanici_ekran_listesi_guncellenir_ve_kaldirilir(client, yetkili_header):
+    r = client.post("/kullanicilar", json={
+        "kullanici_adi": "ekran-guncelle", "parola": "GucluParola123!", "rol": "izleyici",
+    }, headers=yetkili_header)
+    kid = r.json()["id"]
+    r2 = client.put(f"/kullanicilar/{kid}", json={"ekran_listesi": ["kayitlar", "canli", "canli"]}, headers=yetkili_header)
+    assert r2.status_code == 200, r2.text
+    assert r2.json()["ekran_listesi"] == ["kayitlar", "canli"]
+    # Alan gönderilmezse dokunulmaz.
+    r3 = client.put(f"/kullanicilar/{kid}", json={"rol": "operatör"}, headers=yetkili_header)
+    assert r3.json()["ekran_listesi"] == ["kayitlar", "canli"]
+    r4 = client.put(f"/kullanicilar/{kid}", json={"ekran_listesi": []}, headers=yetkili_header)
+    assert r4.json()["ekran_listesi"] is None

@@ -115,6 +115,22 @@ class LisansAktivasyonIstegi(BaseModel):
     anahtar: str
 
 
+# Arayüz sekmeleri (index.html "#<ad>-sekme"; "kapi" = Kapı Modu). Kullanıcıya
+# ekran kısıtlaması verilirken yalnız bunlar kabul edilir.
+EKRANLAR = ("canli", "kontrol", "panel", "iceride", "nobet", "kayitlar", "kisiler", "karaliste", "kapi",
+            "kamera", "bariyer", "site", "bildirim", "led", "kullanicilar", "test", "lisans", "sistem",
+            "denetim", "iletisim")
+
+
+def _ekran_listesini_dogrula(v):
+    if v is None:
+        return None
+    bilinmeyen = [e for e in v if e not in EKRANLAR]
+    if bilinmeyen:
+        raise ValueError(f"Bilinmeyen ekran: {', '.join(bilinmeyen)}")
+    return list(dict.fromkeys(v))
+
+
 class KullaniciCevap(BaseModel):
     id: int
     kullanici_adi: str
@@ -136,8 +152,21 @@ class KullaniciCevap(BaseModel):
     # BİRLEŞİK sayılır.
     vardiya_adi: Optional[str] = None
     totp_aktif: bool = False
+    # None = kısıtlama yok (rolün tüm ekranları); bkz. models.Kullanici.ekran_listesi.
+    ekran_listesi: Optional[List[str]] = None
 
     model_config = ConfigDict(from_attributes=True)
+
+    @field_validator("ekran_listesi", mode="before")
+    @classmethod
+    def _ekran_listesini_coz(cls, v):
+        if v is None or isinstance(v, list):
+            return v
+        try:
+            cozulen = json.loads(v)
+        except (ValueError, TypeError):
+            return None
+        return cozulen if isinstance(cozulen, list) else None
 
     @field_validator("totp_aktif", mode="before")
     @classmethod
@@ -173,6 +202,13 @@ class KullaniciOlustur(BaseModel):
     # temizlenir, büyük harfe çevrilir; arayüz A/B/C/D önerir ama serbest
     # metindir).
     vardiya_adi: Optional[str] = Field(None, max_length=20)
+    # Görebileceği ekranlar (bkz. EKRANLAR); None/boş = rolün tüm ekranları.
+    ekran_listesi: Optional[List[str]] = None
+
+    @field_validator("ekran_listesi")
+    @classmethod
+    def ekran_kontrol(cls, v):
+        return _ekran_listesini_dogrula(v) or None
 
     @field_validator("rol")
     @classmethod
@@ -203,6 +239,13 @@ class KullaniciGuncelle(BaseModel):
     # gibi ayrı bir "temizle" bayrağına GEREK YOK, çünkü boş bir vardiya adı
     # zaten geçerli bir değer DEĞİLDİR (bkz. main.py::kullanici_guncelle).
     vardiya_adi: Optional[str] = Field(None, max_length=20)
+    # None = değiştirme; [] = kısıtlamayı kaldır (rolün tüm ekranları).
+    ekran_listesi: Optional[List[str]] = None
+
+    @field_validator("ekran_listesi")
+    @classmethod
+    def ekran_kontrol(cls, v):
+        return _ekran_listesini_dogrula(v)
 
     @field_validator("rol")
     @classmethod

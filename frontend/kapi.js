@@ -30,6 +30,7 @@ let _kapiAramaIstekNo = 0;
 
 function kapiModuAcilsinMi() {
   if (mevcutRol === "sakin") return false;
+  if (typeof _ekranIzinli === "function" && !_ekranIzinli("kapi")) return false;
   try {
     const tercih = localStorage.getItem("pts_gorunum");
     if (tercih === "kapi") return true;

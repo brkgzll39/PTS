@@ -76,6 +76,11 @@ class Kullanici(Base):
     # doğrulanınca True olur. Aktifken girişte parolaya ek 6 haneli kod istenir.
     totp_gizli = Column(String(64), nullable=True)
     totp_aktif = Column(Boolean, default=False)
+    # EKRAN KISITLAMASI (2026-10-23): NULL = rolün gördüğü tüm ekranlar.
+    # Dolu ise JSON dizi (ör. ["canli","kontrol","panel","iceride","kayitlar"]):
+    # arayüz yalnız bu sekmeleri gösterir. Yetki rolden gelir; bu yalnız
+    # görünürlüktür (bkz. schemas.EKRANLAR).
+    ekran_listesi = Column(Text, nullable=True)
     olusturma_tarihi = Column(DateTime, default=datetime.now)
 
 

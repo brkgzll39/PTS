@@ -241,6 +241,7 @@ def _veritabani_migrasyon() -> None:
         "UPDATE plaka_kayitlari SET manuel_giris = 0 WHERE manuel_giris IS NULL",
         # İki adımlı doğrulama (2026-10-23) -- bkz. models.Kullanici.totp_gizli.
         f"ALTER TABLE kullanicilar ADD {col_kw}totp_gizli VARCHAR(64)",
+        f"ALTER TABLE kullanicilar ADD {col_kw}ekran_listesi {'TEXT' if sqlite_mod else 'NVARCHAR(MAX)'}",
         f"ALTER TABLE kullanicilar ADD {col_kw}totp_aktif {bool_tip}{bit_sonu}",
         "UPDATE kullanicilar SET totp_aktif = 0 WHERE totp_aktif IS NULL",
         # "Otomatik not" (2026-10-22) -- bkz. models.Kisi.otomatik_not. Türkçe
@@ -7869,6 +7870,7 @@ def kullanici_ekle(istek: schemas.KullaniciOlustur, db: Session = Depends(get_db
         # "Vardiya Grupları" (2026-09-21) -- bkz. _vardiya_adi_normalize ve
         # models.Kullanici.vardiya_adi'nin docstring'i.
         vardiya_adi=_vardiya_adi_normalize(istek.vardiya_adi),
+        ekran_listesi=json.dumps(istek.ekran_listesi) if istek.ekran_listesi else None,
     )
     db.add(yeni)
     db.commit()
@@ -7955,6 +7957,12 @@ def kullanici_guncelle(kullanici_id: int, istek: schemas.KullaniciGuncelle, db: 
         if yeni_vardiya_adi != hedef.vardiya_adi:
             degisiklikler.append(f"vardiya adı: {hedef.vardiya_adi or '(yok)'} -> {yeni_vardiya_adi or '(yok)'}")
             hedef.vardiya_adi = yeni_vardiya_adi
+    # Ekran kısıtlaması (2026-10-23): None = değiştirme, [] = kaldır.
+    if istek.ekran_listesi is not None:
+        yeni_ekranlar = json.dumps(istek.ekran_listesi) if istek.ekran_listesi else None
+        if yeni_ekranlar != hedef.ekran_listesi:
+            degisiklikler.append(f"ekranlar: {', '.join(istek.ekran_listesi) or 'rolün tümü'}")
+            hedef.ekran_listesi = yeni_ekranlar
     if oturumlari_iptal_et:
         db.query(models.OturumTokeni).filter(models.OturumTokeni.kullanici_id == hedef.id).delete()
     db.commit()

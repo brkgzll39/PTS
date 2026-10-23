@@ -158,6 +158,47 @@ function rolBazliArayuzuUygula() {
   if (mevcutRol === "güvenlik") guvenlikVardiyaDurumunuGuncelle();
 }
 
+// Kullanıcı bazlı ekran kısıtlaması (2026-10-23): yönetici bir hesaba yalnız
+// seçtiği ekranları verebilir (bkz. models.Kullanici.ekran_listesi). Bu yalnız
+// görünürlüktür; asıl yetki rol ile backend'de (_rol_dogrula) denetlenir.
+// Anahtarlar schemas.EKRANLAR ile aynı.
+const EKRAN_ADLARI = {
+  canli: "Canlı İzleme", kontrol: "Kontrol Merkezi", panel: "Son Geçişler", iceride: "İçerideki Araçlar",
+  nobet: "Nöbet Defteri", kayitlar: "Geçiş Kayıtları", kisiler: "Kişiler", karaliste: "Kara Liste",
+  kapi: "Kapı Modu", kamera: "Kameralar", bariyer: "Bariyer", site: "Site / Nokta", bildirim: "Bildirimler",
+  led: "LED", kullanicilar: "Kullanıcılar", test: "Test", lisans: "Lisans", sistem: "Sistem / Log",
+  denetim: "Denetim Kayıtları", iletisim: "İletişim / Arıza",
+};
+let mevcutEkranlar = null; // null = rolün tüm ekranları
+
+function _ekranIzinli(ekran) {
+  return !Array.isArray(mevcutEkranlar) || mevcutEkranlar.includes(ekran);
+}
+
+function ekranKisitlamasiUygula() {
+  const sekmeAdi = hedef => (hedef || "").replace(/^#/, "").replace(/-sekme$/, "");
+  document.querySelectorAll('[data-bs-target$="-sekme"], [data-target$="-sekme"]').forEach(el => {
+    const ekran = sekmeAdi(el.dataset.bsTarget || el.dataset.target);
+    if (!(ekran in EKRAN_ADLARI)) return;
+    (el.closest("li.nav-item") || el).classList.toggle("ekran-gizli", !_ekranIzinli(ekran));
+  });
+  document.querySelectorAll('[onclick="gorunumDegistir(\'kapi\')"]').forEach(el => el.classList.toggle("ekran-gizli", !_ekranIzinli("kapi")));
+  // Altındaki bağlantıların hepsi gizlenen kenar çubuğu başlıkları da gizlenir.
+  document.querySelectorAll(".pts-sidebar .sidebar-section-label").forEach(baslik => {
+    let el = baslik.nextElementSibling, gorunur = false;
+    while (el && !el.classList.contains("sidebar-section-label")) {
+      if (el.classList.contains("side-link") && !el.classList.contains("ekran-gizli")) gorunur = true;
+      el = el.nextElementSibling;
+    }
+    baslik.classList.toggle("ekran-gizli", !gorunur);
+  });
+  const aktif = document.querySelector("#anaSekme .nav-link.active");
+  if (aktif && aktif.closest(".ekran-gizli")) {
+    const ilk = document.querySelector('#anaSekme li.nav-item:not(.ekran-gizli):not(.d-none) .nav-link');
+    if (ilk) sekmeAc(ilk.dataset.bsTarget);
+  }
+}
+
 function sekmeAc(target) {
   const sekme = document.querySelector(`[data-bs-target="${target}"]`);
   if (sekme && window.bootstrap) bootstrap.Tab.getOrCreateInstance(sekme).show();
@@ -879,7 +920,9 @@ function authBasarili(kullanici) {
     sakinModunuBaslat();
     return;
   }
+  mevcutEkranlar = Array.isArray(kullanici.ekran_listesi) && kullanici.ekran_listesi.length ? kullanici.ekran_listesi : null;
   rolBazliArayuzuUygula();
+  ekranKisitlamasiUygula();
   uygulamaVerileriniYukle();
   _pwaKisaYolunuUygula();
   _nobetDefteriniBaslat();
@@ -5183,6 +5226,24 @@ function _isaretliKameraIdleriniAl(girdiAdi) {
   return Array.from(document.querySelectorAll(`input[name="${girdiAdi}"]:checked`)).map(el => el.value);
 }
 
+// "Görebileceği ekranlar" listesi; `secililer` null ise hepsi işaretli.
+function _ekranCheckboxListesiHtml(secililer, girdiAdi) {
+  return Object.entries(EKRAN_ADLARI).map(([ekran, ad]) => `<div class="form-check form-check-inline" style="min-width: 46%;">
+      <input class="form-check-input" type="checkbox" name="${girdiAdi}" value="${ekran}" id="${girdiAdi}-${ekran}" ${secililer === null || secililer.includes(ekran) ? "checked" : ""}>
+      <label class="form-check-label small" for="${girdiAdi}-${ekran}">${ad}</label>
+    </div>`).join("");
+}
+
+function ekranListesiGoster(onekId) {
+  const tumu = document.getElementById(onekId + "TumEkranlar").checked;
+  const alan = document.getElementById(onekId + "EkranListesi");
+  alan.classList.toggle("d-none", tumu);
+  if (!tumu && !alan.dataset.dolduruldu) {
+    alan.innerHTML = _ekranCheckboxListesiHtml([], onekId + "Ekran");
+    alan.dataset.dolduruldu = "1";
+  }
+}
+
 async function yeniKullaniciKameraListesiGoster() {
   const tumKameralar = document.getElementById("yeniKullaniciTumKameralar").checked;
   const alan = document.getElementById("yeniKullaniciKameraListesi");
@@ -5211,9 +5272,12 @@ async function kullanicilariYukle() {
       const vardiyaEtiketi = k.vardiya_adi
         ? `<span class="badge bg-info text-dark">${escapeHtml(k.vardiya_adi)} Vardiyası</span>`
         : '<span class="text-muted small">-</span>';
+      const ekranEtiketi = Array.isArray(k.ekran_listesi) && k.ekran_listesi.length
+        ? ` <span class="badge bg-light text-dark border" title="${escapeHtml(k.ekran_listesi.map(e => EKRAN_ADLARI[e] || e).join(", "))}">${k.ekran_listesi.length} ekran</span>`
+        : "";
       return `<tr>
       <td><strong>${escapeHtml(k.kullanici_adi)}</strong></td>
-      <td><span class="badge ${roller[k.rol] || "bg-secondary"}">${escapeHtml(k.rol)}</span></td>
+      <td><span class="badge ${roller[k.rol] || "bg-secondary"}">${escapeHtml(k.rol)}</span>${ekranEtiketi}</td>
       <td class="small">${bagliKisi ? escapeHtml(bagliKisi.ad_soyad) : (k.kisi_id ? `#${k.kisi_id} (silinmiş)` : "-")}</td>
       <td>${kameraEtiketi}</td>
       <td>${vardiyaEtiketi}</td>
@@ -5403,11 +5467,16 @@ document.getElementById("kullaniciForm")?.addEventListener("submit", async (e) =
     if (!document.getElementById("yeniKullaniciTumKameralar").checked) {
       govde.kamera_erisim_listesi = _isaretliKameraIdleriniAl("yeniKullaniciKamera");
     }
+    if (!document.getElementById("ykTumEkranlar").checked) {
+      govde.ekran_listesi = _isaretliKameraIdleriniAl("ykEkran");
+      if (!govde.ekran_listesi.length) throw new Error("En az bir ekran seçin ya da 'Rolünün tüm ekranları' kutusunu işaretleyin.");
+    }
     await apiCagir("/kullanicilar", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(govde) });
     sonuc.className = "small mt-2 text-success"; sonuc.textContent = "Kullanıcı oluşturuldu.";
     e.target.reset();
     document.getElementById("yeniKullaniciKisiAlani").classList.add("d-none");
     document.getElementById("yeniKullaniciKameraListesi").classList.add("d-none");
+    document.getElementById("ykEkranListesi").classList.add("d-none");
     kullanicilariYukle();
   } catch (err) { sonuc.className = "small mt-2 text-danger"; sonuc.textContent = err.message; }
   finally { if (btn) btn.disabled = false; }
@@ -5461,6 +5530,12 @@ async function kullaniciDuzenleAc(id) {
     kameraListesiAlani.innerHTML = _kameraCheckboxListesiHtml(kameralar, k.kamera_erisim_listesi, "kdKamera");
     kameraListesiAlani.dataset.dolduruldu = "1";
   }
+  const ekranKisitli = Array.isArray(k.ekran_listesi) && k.ekran_listesi.length > 0;
+  document.getElementById("kdTumEkranlar").checked = !ekranKisitli;
+  const ekranAlani = document.getElementById("kdEkranListesi");
+  ekranAlani.classList.toggle("d-none", !ekranKisitli);
+  ekranAlani.innerHTML = _ekranCheckboxListesiHtml(ekranKisitli ? k.ekran_listesi : [], "kdEkran");
+  ekranAlani.dataset.dolduruldu = "1";
   bootstrap.Modal.getOrCreateInstance(document.getElementById("kullaniciDuzenleModal")).show();
 }
 
@@ -5480,6 +5555,12 @@ document.getElementById("kullaniciDuzenleForm")?.addEventListener("submit", asyn
     govde.kamera_erisimi_temizle = true;
   } else {
     govde.kamera_erisim_listesi = _isaretliKameraIdleriniAl("kdKamera");
+  }
+  // [] = kısıtlamayı kaldır (rolün tüm ekranları).
+  govde.ekran_listesi = document.getElementById("kdTumEkranlar").checked ? [] : _isaretliKameraIdleriniAl("kdEkran");
+  if (!document.getElementById("kdTumEkranlar").checked && !govde.ekran_listesi.length) {
+    sonuc.className = "small text-danger"; sonuc.textContent = "En az bir ekran seçin.";
+    return;
   }
   const btn = e.target.querySelector('button[type="submit"]');
   if (btn) btn.disabled = true;

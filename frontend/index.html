@@ -347,6 +347,15 @@
             "Kayıtlar" listesinde görebileceği kameraları sınırlar. "Plaka Analizi" araması (belirli bir aracı
             arama) bu kısıtlamadan her zaman MUAFTIR.</div>
         </div>
+        <div class="mb-2" id="kdEkranAlani">
+          <div class="form-check">
+            <input class="form-check-input" type="checkbox" id="kdTumEkranlar" onchange="ekranListesiGoster('kd')">
+            <label class="form-check-label small" for="kdTumEkranlar">Rolünün tüm ekranlarını görebilir</label>
+          </div>
+          <div class="d-none border rounded p-2 mt-1" id="kdEkranListesi" style="max-height: 180px; overflow-y: auto;"></div>
+          <div class="form-text">İşareti kaldırıp yalnız görmesini istediğiniz ekranları seçin. Bu yalnızca menüyü
+            sadeleştirir; hesabın yetkisini rolü belirler.</div>
+        </div>
         <div id="kdSonuc" class="small"></div>
       </div>
       <div class="modal-footer">
@@ -1955,6 +1964,15 @@
                   <div class="form-text">Kutunun işaretini kaldırıp yalnızca bu hesabın izleyebileceği kameraları seçin
                     (ör. Lojman Nizamiye'de çalışan personel yalnızca o noktanın kameralarını görsün). "Plaka Analizi"
                     araması (belirli bir aracı arama) bu kısıtlamadan her zaman MUAFTIR.</div>
+                </div>
+                <div class="mb-2" id="ykEkranAlani">
+                  <div class="form-check">
+                    <input class="form-check-input" type="checkbox" id="ykTumEkranlar" checked onchange="ekranListesiGoster('yk')">
+                    <label class="form-check-label small" for="ykTumEkranlar">Rolünün tüm ekranlarını görebilir</label>
+                  </div>
+                  <div class="d-none border rounded p-2 mt-1" id="ykEkranListesi" style="max-height: 180px; overflow-y: auto;"></div>
+                  <div class="form-text">İşareti kaldırıp yalnız görmesini istediğiniz ekranları seçin. Bu yalnızca menüyü
+                    sadeleştirir; hesabın yetkisini rolü belirler.</div>
                 </div>
                 <button type="submit" class="btn btn-primary w-100"><i class="bi bi-person-check"></i> Kullanıcı Oluştur</button>
               </form>
