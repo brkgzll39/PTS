@@ -655,3 +655,19 @@ table td, table th {
 
 /* Kullanıcı bazlı ekran kısıtlaması (app.js::ekranKisitlamasiUygula) */
 .ekran-gizli { display: none !important; }
+
+/* 2026-10-24: Bootstrap'in kaydırılabilir penceresi (.modal-dialog-scrollable)
+   .modal-body'nin .modal-content'in doğrudan çocuğu olmasını bekler. Araya
+   <form> girince (ör. Kişi Kartı) uzun içerik ekranın dışına taşıyor ve aşağı
+   inilemiyordu (TPIC: 172 araç). Form da esnek sütun yapılıyor ki gövde kaysın. */
+.modal-dialog-scrollable .modal-content > form {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
+}
+/* Kişi Kartı araç listesi: çok araçlı kişide liste kendi içinde kayar,
+   başlık satırı üstte sabit kalır; "Araç Ekle" alanı hep görünür. */
+#kartAraclarPane .table-responsive { max-height: 55vh; overflow-y: auto; }
+#kartAraclarPane .kart-arac-tablo thead th { position: sticky; top: 0; z-index: 1; }
