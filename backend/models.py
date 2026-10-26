@@ -550,6 +550,32 @@ class NobetNotu(Base):
     okumalar = relationship("NobetNotuOkuma", back_populates="nobet_notu", order_by="NobetNotuOkuma.okuma_zamani")
 
 
+class BeklenenZiyaretci(Base):
+    """Ön kayıtlı (beklenen) ziyaretçi (2026-10-26, kullanıcı isteği). Nöbet
+    Defteri'ne "34 ABC 123 yarın 09:00'da gelecek" yazmak yerine plaka, misafir
+    ve ev sahibi girilir; araç geçerlilik aralığında kameraya okununca kayıt
+    kendiliğinden "onaylı ziyaretçi" sayılır, misafir adı ve not dolar (bkz.
+    main.py::_beklenen_ziyaretci_bul). Otomatik bariyer açtırmaz: o yalnızca
+    tanımlı (yetkili) araçlar içindir. Kayıtlar silinmez; iptal edilir."""
+    __tablename__ = "beklenen_ziyaretciler"
+
+    id = Column(Integer, primary_key=True, index=True)
+    plaka_no = Column(String(15), nullable=False, index=True)
+    misafir_adi = Column(String(100), nullable=True)
+    ev_sahibi = Column(String(120), nullable=True)   # kimin misafiri / departman
+    aciklama = Column(String(300), nullable=True)
+    beklenen_saat = Column(String(5), nullable=True)  # "09:00" -- bilgi amaçlı
+    baslangic = Column(DateTime, nullable=False, index=True)
+    bitis = Column(DateTime, nullable=False, index=True)
+    olusturan_adi = Column(String(80), nullable=False)
+    olusturma_zamani = Column(DateTime, default=datetime.now)
+    ilk_gelis_zamani = Column(DateTime, nullable=True)
+    ilk_gelis_kayit_id = Column(Integer, nullable=True)
+    ilk_gelis_kamera = Column(String(64), nullable=True)
+    iptal = Column(Boolean, default=False)
+    iptal_eden = Column(String(80), nullable=True)
+
+
 class NobetNotuOkuma(Base):
     """Bir nöbet notunun kim tarafından, ne zaman "Okudum" denerek okunduğu
     (devir-teslimin kanıtı). Not başına kullanıcı başına en fazla bir satır."""

@@ -704,3 +704,4 @@ table td, table th {
   .nobet-kayan .nk-pencere { overflow-x: auto; }
   .nobet-kayan .nk-yeni { animation: none; }
 }
+.nobet-kayan .nk-beklenen { background: #0d6efd; color: #fff; border-radius: 4px; padding: .05rem .35rem; margin-right: .4rem; font-size: .7rem; font-weight: 700; }

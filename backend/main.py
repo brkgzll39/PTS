@@ -5536,6 +5536,28 @@ def _kamera_okumasi_farki(plaka_no: str, kamera_okumasi: Optional[str]) -> Optio
     return temiz
 
 
+def _beklenen_ziyaretci_bul(db: Session, plaka_no: str, simdi: Optional[datetime] = None) -> Optional[models.BeklenenZiyaretci]:
+    """Bu plaka için şu an geçerli (iptal edilmemiş) ön kayıt -- bkz. models.BeklenenZiyaretci."""
+    simdi = simdi or datetime.now()
+    B = models.BeklenenZiyaretci
+    return (
+        db.query(B)
+        .filter(B.iptal == False, B.baslangic <= simdi, B.bitis >= simdi,  # noqa: E712
+                _plaka_normalize_sql(B.plaka_no) == _plaka_normalize(plaka_no))
+        .order_by(B.baslangic.desc(), B.id.desc())
+        .first()
+    )
+
+
+def _beklenen_ziyaretci_notu(b: models.BeklenenZiyaretci) -> str:
+    parcalar = ["Ön kayıtlı misafir"]
+    if b.ev_sahibi:
+        parcalar.append(b.ev_sahibi)
+    if b.aciklama:
+        parcalar.append(b.aciklama)
+    return " · ".join(parcalar)[:500]
+
+
 def _kayit_olustur_ve_bildir(db: Session, plaka_no: str, kamera_id: str, yon: str,
                               guven_skoru: Optional[float], goruntu_yolu: Optional[str],
                               dogrulama_kare_sayisi: Optional[int] = None,
@@ -5593,6 +5615,13 @@ def _kayit_olustur_ve_bildir(db: Session, plaka_no: str, kamera_id: str, yon: st
             })
 
     yetki, kisi_id, kisi_tip = _plaka_yetki_kontrol(db, plaka_no)
+    # Ön kayıtlı ziyaretçi (2026-10-26): tanımsız ya da ziyaret süresi dolmuş
+    # plaka bugün bekleniyorsa onaylı ziyaretçi sayılır. Kara liste ASLA aşılmaz.
+    beklenen = None
+    if yetki in ("yetkisiz", "suresi_dolmus"):
+        beklenen = _beklenen_ziyaretci_bul(db, plaka_no)
+        if beklenen is not None:
+            yetki = "ziyaretci_onayli"
 
     not_metni_temiz = (not_metni or "").strip() or None
     # Kamera tespitlerinde (manuel olmayan) not boşsa, aynı plakanın bugünkü son
@@ -5606,7 +5635,11 @@ def _kayit_olustur_ve_bildir(db: Session, plaka_no: str, kamera_id: str, yon: st
     # ve kayıt notsuzsa o yazılır (görevlinin elle girdiği kayıtta da).
     if not_metni_temiz is None and kisi_id is not None:
         not_metni_temiz = _kisinin_otomatik_notu(db, kisi_id)
+    if not_metni_temiz is None and beklenen is not None:
+        not_metni_temiz = _beklenen_ziyaretci_notu(beklenen)
     misafir_adi_temiz = (misafir_adi or "").strip() or None
+    if misafir_adi_temiz is None and beklenen is not None:
+        misafir_adi_temiz = beklenen.misafir_adi
     # Arvento entegrasyonu (2026-09-23): "o araç plaka tanıma sisteminden
     # geçiş yaptığında direkt olarak aracı kullanan personel ismi ona göre
     # güncellenecek" -- bkz. _arvento_surucu_bul'un docstring'i. Hem kamera
@@ -5636,6 +5669,11 @@ def _kayit_olustur_ve_bildir(db: Session, plaka_no: str, kamera_id: str, yon: st
     db.add(kayit)
     db.commit()
     db.refresh(kayit)
+    if beklenen is not None and beklenen.ilk_gelis_zamani is None and yon == "giris":
+        beklenen.ilk_gelis_zamani = kayit.tarih_saat
+        beklenen.ilk_gelis_kayit_id = kayit.id
+        beklenen.ilk_gelis_kamera = kayit.kamera_id
+        db.commit()
 
     # Bu geçişin KENDİ alarmı aşağıda eklenir; bu yüzden otomatik okundu
     # işaretleme (yalnızca ÖNCEKİ geçişlerin alarmları) alarm eklenmeden önce
@@ -5654,6 +5692,9 @@ def _kayit_olustur_ve_bildir(db: Session, plaka_no: str, kamera_id: str, yon: st
     if yetki == "yetkili":
         mesaj = f"HOŞ GELDİNİZ {plaka_no.upper()}"
         led_durum = marka.oku()["vip_etiketi"] if kisi_tip == "vip" else _LED_TIP_ETIKETI.get(kisi_tip, "PERSONEL")
+    elif yetki == "ziyaretci_onayli":  # ön kayıtlı ziyaretçi
+        mesaj = f"HOŞ GELDİNİZ {plaka_no.upper()}"
+        led_durum = "ZİYARETÇİ"
     elif yetki == "suresi_dolmus":
         mesaj = f"ZİYARETÇİ SÜRESİ DOLDU: {plaka_no.upper()}"
         led_durum = "SÜRESİ DOLDU"
@@ -5672,7 +5713,7 @@ def _kayit_olustur_ve_bildir(db: Session, plaka_no: str, kamera_id: str, yon: st
     # async uç noktadan çağrıldığı için o süre boyunca TÜM sunucu (arayüz, diğer
     # kameralar) bekliyordu; otomatik bariyer de LED'i bekliyordu.
     _led_arka_planda_gonder(mesaj, (led_durum, plaka_no.upper()), kamera_idleri)
-    if yetki != "yetkili":
+    if yetki not in ("yetkili", "ziyaretci_onayli"):
         db.add(models.Alarm(
             kayit_id=kayit.id,
             plaka_no=kayit.plaka_no,
@@ -9469,6 +9510,192 @@ def araclar_iceriden_cikar_geri_al(istek: schemas.IceridenCikar, db: Session = D
         _denetim_kaydet(db, kullanici.kullanici_adi, "iceriden_cikar_geri_al",
                         ", ".join(f"{k.plaka_no} (#{k.id})" for k in geri)[:1500])
     return {"geri_alinan": len(geri)}
+
+
+# ==================================================================
+# KAÇIRILAN GEÇİŞLER (2026-10-26, kullanıcı isteği) -- "İçeriyi Temizle"
+# sorunu gideriyor ama nedenini göstermiyordu. Bir plakanın art arda iki
+# girişi (arada çıkış yok) kaçırılmış bir çıkış, art arda iki çıkışı kaçırılmış
+# bir giriştir; elle içeriden çıkarılan araç da kaçırılmış çıkıştır. Sayılar
+# nizamiyeye göre toplanır: kaçırılan çıkış aracın GİRDİĞİ nizamiyeye, kaçırılan
+# giriş aracın ÇIKTIĞI nizamiyeye yazılır (araç çoğunlukla girdiği kapıdan çıkar).
+# ==================================================================
+_KACIRILAN_MIN_ARALIK = timedelta(minutes=15)  # daha kısa ardışık okumalar çift okumadır
+
+
+@app.get("/analiz/kacirilan-gecisler")
+def kacirilan_gecisler(gun: int = Query(7, ge=1, le=90), db: Session = Depends(get_db),
+                       kullanici: models.Kullanici = Depends(_personel_girisi_gerekli)):
+    simdi = datetime.now()
+    bas = simdi - timedelta(days=gun)
+    K = models.Kayit
+    satirlar = (
+        db.query(K.id, K.plaka_no, K.yon, K.tarih_saat, K.kamera_id, K.yetki_durumu, K.elle_cikis_zamani)
+        .filter(K.tarih_saat >= bas - timedelta(days=3), K.plaka_no != "BILINMEYEN")
+        .order_by(K.tarih_saat, K.id)
+        .all()
+    )
+    izinli = _kullanicinin_izinli_kamera_adlari(kullanici)
+    plakalar: dict = {}
+    for r in satirlar:
+        plakalar.setdefault(_plaka_normalize(r.plaka_no), []).append(r)
+
+    kapilar: dict = {}
+    gunluk: dict = {}
+    ornekler = []
+
+    def kapi(kamera_id):
+        anahtar = excel_export.nizamiye_grubu(kamera_id or "") or ""
+        d = kapilar.setdefault(anahtar, {"adlar": set(), "giris": 0, "cikis": 0, "kacirilan_cikis": 0,
+                                         "kacirilan_giris": 0, "elle": 0, "giris_kameralari": set(),
+                                         "cikis_kameralari": set()})
+        d["adlar"].add(kamera_id or "")
+        return d
+
+    def ekle(tur, r_ilk, r_son, zaman, elle):
+        kamera = r_ilk.kamera_id if tur == "cikis" else r_son.kamera_id
+        if izinli is not None and kamera not in izinli:
+            return
+        d = kapi(kamera)
+        d["kacirilan_" + tur] += 1
+        d["elle"] += 1 if elle else 0
+        g = gunluk.setdefault(zaman.date().isoformat(), {"kacirilan_cikis": 0, "kacirilan_giris": 0})
+        g["kacirilan_" + tur] += 1
+        ornekler.append({
+            "tur": tur, "plaka_no": r_ilk.plaka_no, "kamera_id": kamera,
+            "kayit_id": r_ilk.id if tur == "cikis" else r_son.id,
+            "ilk_zaman": r_ilk.tarih_saat.isoformat(),
+            "sonraki_zaman": r_son.tarih_saat.isoformat() if r_son is not None else None,
+            "elle": elle, "zaman": zaman.isoformat(),
+        })
+
+    for liste in plakalar.values():
+        for r in liste:
+            if r.tarih_saat >= bas and (izinli is None or r.kamera_id in izinli):
+                d = kapi(r.kamera_id)
+                d["giris" if r.yon == "giris" else "cikis"] += 1
+                d["giris_kameralari" if r.yon == "giris" else "cikis_kameralari"].add(r.kamera_id)
+        for a, b in zip(liste, liste[1:]):
+            if b.tarih_saat < bas or a.yon != b.yon or b.tarih_saat - a.tarih_saat < _KACIRILAN_MIN_ARALIK:
+                continue
+            if a.yon == "giris" and a.yetki_durumu in _ICERIDE_SAYILAN_DURUMLAR:
+                ekle("cikis", a, b, b.tarih_saat, a.elle_cikis_zamani is not None)
+            elif a.yon == "cikis":
+                ekle("giris", a, b, b.tarih_saat, False)
+        son = liste[-1]
+        if son.yon == "giris" and son.elle_cikis_zamani is not None and son.elle_cikis_zamani >= bas:
+            ekle("cikis", son, None, son.elle_cikis_zamani, True)
+
+    sonuc_kapilar = []
+    for anahtar, d in kapilar.items():
+        if not (d["giris"] or d["cikis"] or d["kacirilan_cikis"] or d["kacirilan_giris"]):
+            continue
+        sonuc_kapilar.append({
+            "kapi": excel_export.nizamiye_gorunen_adi(anahtar, sorted(d["adlar"])),
+            "giris": d["giris"], "cikis": d["cikis"],
+            "kacirilan_cikis": d["kacirilan_cikis"], "kacirilan_giris": d["kacirilan_giris"],
+            "elle_cikarilan": d["elle"],
+            "cikis_kacirma_orani": round(100 * d["kacirilan_cikis"] / d["giris"], 1) if d["giris"] else None,
+            "giris_kacirma_orani": round(100 * d["kacirilan_giris"] / d["cikis"], 1) if d["cikis"] else None,
+            "giris_kameralari": sorted(d["giris_kameralari"]),
+            "cikis_kameralari": sorted(d["cikis_kameralari"]),
+        })
+    sonuc_kapilar.sort(key=lambda x: -(x["kacirilan_cikis"] + x["kacirilan_giris"]))
+    ornekler.sort(key=lambda o: o["zaman"], reverse=True)
+    return {
+        "gun": gun,
+        "toplam_kacirilan_cikis": sum(k["kacirilan_cikis"] for k in sonuc_kapilar),
+        "toplam_kacirilan_giris": sum(k["kacirilan_giris"] for k in sonuc_kapilar),
+        "kapilar": sonuc_kapilar,
+        "gunluk": [{"tarih": t, **v} for t, v in sorted(gunluk.items())],
+        "ornekler": ornekler[:100],
+    }
+
+
+# ==================================================================
+# BEKLENEN ZİYARETÇİ (ön kayıt, 2026-10-26) -- bkz. models.BeklenenZiyaretci
+# ==================================================================
+
+def _beklenen_cevap(b: models.BeklenenZiyaretci, simdi: datetime) -> dict:
+    if b.iptal:
+        durum = "iptal"
+    elif b.ilk_gelis_zamani is not None:
+        durum = "geldi"
+    elif b.bitis < simdi:
+        durum = "gelmedi"
+    elif b.baslangic > simdi:
+        durum = "ileri_tarih"
+    else:
+        durum = "bekleniyor"
+    return {
+        "id": b.id, "plaka_no": b.plaka_no, "misafir_adi": b.misafir_adi, "ev_sahibi": b.ev_sahibi,
+        "aciklama": b.aciklama, "beklenen_saat": b.beklenen_saat,
+        "baslangic": b.baslangic.isoformat(), "bitis": b.bitis.isoformat(),
+        "olusturan_adi": b.olusturan_adi, "olusturma_zamani": b.olusturma_zamani.isoformat() if b.olusturma_zamani else None,
+        "ilk_gelis_zamani": b.ilk_gelis_zamani.isoformat() if b.ilk_gelis_zamani else None,
+        "ilk_gelis_kayit_id": b.ilk_gelis_kayit_id, "ilk_gelis_kamera": b.ilk_gelis_kamera,
+        "iptal_eden": b.iptal_eden, "durum": durum,
+    }
+
+
+@app.get("/beklenen-ziyaretciler")
+def beklenen_ziyaretciler(kapsam: str = Query("guncel", pattern="^(guncel|gecmis)$"), db: Session = Depends(get_db),
+                          _: models.Kullanici = Depends(_personel_girisi_gerekli)):
+    """guncel: bugün ve sonrası için geçerli olanlar; gecmis: son 30 günün bitmiş/iptal edilmişleri."""
+    simdi = datetime.now()
+    bugun = simdi.replace(hour=0, minute=0, second=0, microsecond=0)
+    B = models.BeklenenZiyaretci
+    sorgu = db.query(B)
+    if kapsam == "guncel":
+        sorgu = sorgu.filter(B.iptal == False, B.bitis >= bugun).order_by(B.baslangic, B.beklenen_saat, B.id)  # noqa: E712
+    else:
+        sorgu = sorgu.filter(B.baslangic >= bugun - timedelta(days=30),
+                             or_(B.iptal == True, B.bitis < bugun)).order_by(desc(B.baslangic), desc(B.id))  # noqa: E712
+    return [_beklenen_cevap(b, simdi) for b in sorgu.limit(500).all()]
+
+
+@app.post("/beklenen-ziyaretciler")
+def beklenen_ziyaretci_ekle(istek: schemas.BeklenenZiyaretciOlustur, db: Session = Depends(get_db),
+                            kullanici: models.Kullanici = Depends(_personel_girisi_gerekli)):
+    _rol_dogrula(kullanici, ROL_YONETICI, ROL_OPERATOR, ROL_GUVENLIK)
+    baslangic = datetime.combine(istek.tarih, datetime.min.time())
+    bitis = datetime.combine(istek.bitis_tarihi or istek.tarih, datetime.max.time().replace(microsecond=0))
+    if bitis < datetime.now():
+        raise HTTPException(400, "Geçmiş bir tarih için ön kayıt yapılamaz")
+    yetki, _, _ = _plaka_yetki_kontrol(db, istek.plaka_no)
+    if yetki == "kara_liste":
+        raise HTTPException(409, "Bu plaka kara listede; ön kayıt yapılamaz")
+    b = models.BeklenenZiyaretci(
+        plaka_no=istek.plaka_no, misafir_adi=istek.misafir_adi, ev_sahibi=istek.ev_sahibi,
+        aciklama=istek.aciklama, beklenen_saat=istek.beklenen_saat, baslangic=baslangic, bitis=bitis,
+        olusturan_adi=kullanici.kullanici_adi,
+    )
+    db.add(b)
+    db.commit()
+    _denetim_kaydet(db, kullanici.kullanici_adi, "beklenen_ziyaretci_ekle",
+                    f"#{b.id} {b.plaka_no} {istek.tarih}{'-' + str(istek.bitis_tarihi) if istek.bitis_tarihi else ''} "
+                    f"{b.misafir_adi or ''} / {b.ev_sahibi or ''}".strip())
+    db.refresh(b)
+    sonuc = _beklenen_cevap(b, datetime.now())
+    sonuc["tanimli_arac"] = yetki == "yetkili"  # zaten tanımlı araçsa ön kayda gerek yok (uyarı)
+    return sonuc
+
+
+@app.post("/beklenen-ziyaretciler/{beklenen_id}/iptal")
+def beklenen_ziyaretci_iptal(beklenen_id: int, db: Session = Depends(get_db),
+                             kullanici: models.Kullanici = Depends(_personel_girisi_gerekli)):
+    _rol_dogrula(kullanici, ROL_YONETICI, ROL_OPERATOR, ROL_GUVENLIK)
+    b = db.query(models.BeklenenZiyaretci).filter(models.BeklenenZiyaretci.id == beklenen_id).first()
+    if not b:
+        raise HTTPException(404, "Ön kayıt bulunamadı")
+    if b.iptal:
+        raise HTTPException(409, "Ön kayıt zaten iptal edilmiş")
+    b.iptal = True
+    b.iptal_eden = kullanici.kullanici_adi
+    db.commit()
+    _denetim_kaydet(db, kullanici.kullanici_adi, "beklenen_ziyaretci_iptal", f"#{b.id} {b.plaka_no}")
+    db.refresh(b)
+    return _beklenen_cevap(b, datetime.now())
 
 
 # ==================================================================

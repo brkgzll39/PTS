@@ -1,8 +1,8 @@
 import json
 import re
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
-from datetime import datetime
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from datetime import date, datetime
 from typing import Literal, Optional, List
 
 # "vip" (2026-10-15): Bölge Müdürü araçları -- geçişte panelde ve LED'de
@@ -771,6 +771,40 @@ class NobetNotuKapat(BaseModel):
 
 class NobetNotuOkudum(BaseModel):
     not_idleri: List[int] = Field(min_length=1, max_length=500)
+
+
+class BeklenenZiyaretciOlustur(BaseModel):
+    """POST /beklenen-ziyaretciler. `bitis_tarihi` verilmezse yalnız `tarih` günü."""
+    plaka_no: str = Field(min_length=2, max_length=15)
+    misafir_adi: Optional[str] = Field(None, max_length=100)
+    ev_sahibi: Optional[str] = Field(None, max_length=120)
+    aciklama: Optional[str] = Field(None, max_length=300)
+    beklenen_saat: Optional[str] = Field(None, pattern=r"^([01]\d|2[0-3]):[0-5]\d$")
+    tarih: date
+    bitis_tarihi: Optional[date] = None
+
+    @field_validator("plaka_no")
+    @classmethod
+    def plaka_kontrol(cls, v):
+        v = plaka_normalize(v)
+        if len(v.replace(" ", "")) < 2:
+            raise ValueError("Geçerli bir plaka girin")
+        return v
+
+    @field_validator("misafir_adi", "ev_sahibi", "aciklama", "beklenen_saat", mode="before")
+    @classmethod
+    def bos_metin(cls, v):
+        if isinstance(v, str):
+            v = v.strip()
+        return v or None
+
+    @model_validator(mode="after")
+    def tarih_kontrol(self):
+        if self.bitis_tarihi is not None and self.bitis_tarihi < self.tarih:
+            raise ValueError("Bitiş tarihi geliş tarihinden önce olamaz")
+        if self.bitis_tarihi is not None and (self.bitis_tarihi - self.tarih).days > 30:
+            raise ValueError("Ön kayıt en fazla 31 gün geçerli olabilir")
+        return self
 
 
 class IceridenCikar(BaseModel):

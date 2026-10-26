@@ -3128,27 +3128,38 @@ const _NOBET_KAYAN_GIZLI = "pts_nobet_kayan_gizli";
 let _nobetKayanSonId = 0;
 
 async function nobetKayanGuncelle() {
-  let notlar;
+  let notlar, beklenenler;
   try {
-    notlar = await apiCagir("/nobet-defteri?durum=acik&limit=30");
+    [notlar, beklenenler] = await Promise.all([
+      apiCagir("/nobet-defteri?durum=acik&limit=30"),
+      apiCagir("/beklenen-ziyaretciler").catch(() => []),
+    ]);
   } catch (e) {
     return; // şerit yardımcı bir gösterge; hata toast'u basmaya değmez
   }
-  _nobetKayanSonId = notlar.reduce((m, n) => Math.max(m, n.id), 0);
-  let gizliId = 0;
-  try { gizliId = Number(sessionStorage.getItem(_NOBET_KAYAN_GIZLI) || 0); } catch (e) { /* yok say */ }
-  const goster = notlar.length > 0 && _nobetKayanSonId > gizliId;
-  const metin = notlar.map(n =>
+  // Ön kayıtlı ve bugün henüz gelmemiş ziyaretçiler de şeritte (2026-10-26).
+  beklenenler = beklenenler.filter(b => b.durum === "bekleniyor");
+  const enBuyuk = liste => liste.reduce((m, x) => Math.max(m, x.id), 0);
+  _nobetKayanSonId = `${enBuyuk(notlar)}-${enBuyuk(beklenenler)}`;
+  let gizliImza = "";
+  try { gizliImza = sessionStorage.getItem(_NOBET_KAYAN_GIZLI) || ""; } catch (e) { /* yok say */ }
+  const goster = (notlar.length + beklenenler.length) > 0 && _nobetKayanSonId !== gizliImza;
+  const beklenenMetni = beklenenler.map(b =>
+    `<span class="nk-not"><span class="nk-beklenen">BEKLENEN</span>${escapeHtml(b.plaka_no)}` +
+    `${b.misafir_adi ? " — " + escapeHtml(b.misafir_adi) : ""}` +
+    `${b.ev_sahibi ? ` <span class="nk-kim">(${escapeHtml(b.ev_sahibi)})</span>` : ""}` +
+    `${b.beklenen_saat ? ` <span class="nk-kim">· ${escapeHtml(b.beklenen_saat)}</span>` : ""}</span>`);
+  const metin = [...beklenenMetni, ...notlar.map(n =>
     `<span class="nk-not">${n.okundu ? "" : '<span class="nk-yeni">YENİ</span>'}` +
     `<span class="nk-kapi">${escapeHtml(n.kapi)}</span>${escapeHtml(n.metin.replace(/\s+/g, " "))}` +
     ` <span class="nk-kim">— ${escapeHtml(n.olusturan_adi)}, ${escapeHtml(tarihFormatla(n.olusturma_zamani))}</span></span>`,
-  ).join('<span class="nk-ayrac">✦</span>');
+  )].join('<span class="nk-ayrac">✦</span>');
   // Kayma hızı metin uzunluğundan bağımsız kalsın (~ saniyede 8 karakter).
-  const sure = Math.max(18, Math.round(notlar.reduce((t, n) => t + n.metin.length + 40, 0) / 8));
+  const sure = Math.max(18, Math.round((notlar.reduce((t, n) => t + n.metin.length + 40, 0) + beklenenler.length * 60) / 8));
   document.querySelectorAll(".nobet-kayan").forEach(serit => {
     serit.classList.toggle("d-none", !goster);
     if (!goster) return;
-    serit.querySelector(".nk-sayi").textContent = notlar.length;
+    serit.querySelector(".nk-sayi").textContent = notlar.length + beklenenler.length;
     const kayan = serit.querySelector(".nk-metin");
     if (kayan.dataset.icerik !== metin) {  // aynı içerikte animasyon baştan başlamasın
       kayan.innerHTML = metin;
@@ -3171,6 +3182,157 @@ function nobetKayanGizle(e) {
   try { sessionStorage.setItem(_NOBET_KAYAN_GIZLI, String(_nobetKayanSonId)); } catch (err) { /* yok say */ }
   document.querySelectorAll(".nobet-kayan").forEach(serit => serit.classList.add("d-none"));
 }
+
+// ---------------------- BEKLENEN ZİYARETÇİLER (ön kayıt, 2026-10-26) ----------------------
+// Bkz. main.py "BEKLENEN ZİYARETÇİ". Nöbet Defteri sekmesinde (Kapı Modunda da
+// aynı sekme açılır) liste ve ekleme formu.
+const _BEKLENEN_DURUM = {
+  bekleniyor: '<span class="badge bg-warning text-dark">Bekleniyor</span>',
+  ileri_tarih: '<span class="badge bg-light text-dark border">İleri tarih</span>',
+  geldi: '<span class="badge bg-success">Geldi</span>',
+  gelmedi: '<span class="badge bg-secondary">Gelmedi</span>',
+  iptal: '<span class="badge bg-dark">İptal</span>',
+};
+
+function _yerelTarihMetni(t) {
+  const d = new Date(t);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
+async function beklenenleriYukle() {
+  const kapsam = document.querySelector('input[name="beklenenKapsam"]:checked')?.value || "guncel";
+  const tbody = document.getElementById("beklenenTablo");
+  let liste;
+  try {
+    liste = await apiCagir(`/beklenen-ziyaretciler?kapsam=${kapsam}`);
+  } catch (e) {
+    _yuklemeHatasi("Beklenen ziyaretçiler", e);
+    return;
+  }
+  document.getElementById("beklenenSayi").textContent = liste.filter(b => b.durum === "bekleniyor").length;
+  const operatorMu = rolYeterli("operatör");
+  tbody.innerHTML = liste.length ? liste.map(b => {
+    const bas = new Date(b.baslangic).toLocaleDateString("tr-TR");
+    const bit = new Date(b.bitis).toLocaleDateString("tr-TR");
+    const tarih = (bas === bit ? bas : `${bas} – ${bit}`) + (b.beklenen_saat ? ` · ${escapeHtml(b.beklenen_saat)}` : "");
+    const geldi = b.ilk_gelis_zamani
+      ? `<div class="small text-muted">${escapeHtml(tarihFormatla(b.ilk_gelis_zamani))} · ${escapeHtml(b.ilk_gelis_kamera || "")}</div>` : "";
+    const iptalEdilebilir = operatorMu && ["bekleniyor", "ileri_tarih"].includes(b.durum);
+    return `<tr>
+      <td class="fw-bold text-nowrap">${b.ilk_gelis_kayit_id
+        ? `<a href="#" onclick="olayDetayAc(${Number(b.ilk_gelis_kayit_id)});return false">${escapeHtml(b.plaka_no)}</a>` : escapeHtml(b.plaka_no)}</td>
+      <td>${b.misafir_adi ? escapeHtml(b.misafir_adi) : '<span class="text-muted">-</span>'}${b.aciklama ? `<div class="small text-muted">${escapeHtml(b.aciklama)}</div>` : ""}</td>
+      <td class="small">${b.ev_sahibi ? escapeHtml(b.ev_sahibi) : '<span class="text-muted">-</span>'}</td>
+      <td class="small text-nowrap">${tarih}<div class="text-muted">${escapeHtml(b.olusturan_adi)}</div></td>
+      <td>${_BEKLENEN_DURUM[b.durum] || escapeHtml(b.durum)}${geldi}</td>
+      <td class="text-end">${iptalEdilebilir ? `<button type="button" class="btn btn-sm btn-outline-danger" onclick="beklenenIptal(${Number(b.id)})" title="Ön kaydı iptal et"><i class="bi bi-x-lg"></i></button>` : ""}</td>
+    </tr>`;
+  }).join("") : `<tr><td colspan="6" class="text-muted text-center py-3">${kapsam === "guncel" ? "Beklenen ziyaretçi yok" : "Son 30 günde kayıt yok"}</td></tr>`;
+}
+
+async function beklenenIptal(id) {
+  if (!(await onayAl("Bu ön kayıt iptal edilsin mi? Araç gelirse artık otomatik onaylanmaz."))) return;
+  try {
+    await apiCagir(`/beklenen-ziyaretciler/${id}/iptal`, { method: "POST" });
+    beklenenleriYukle();
+    nobetKayanGuncelle();
+  } catch (e) { toastGoster(e.message, "hata"); }
+}
+
+document.getElementById("beklenenForm")?.addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const tarih = document.getElementById("bkTarih").value;
+  const gun = Math.max(1, Math.min(31, Number(document.getElementById("bkGun").value) || 1));
+  const govde = {
+    plaka_no: document.getElementById("bkPlaka").value,
+    misafir_adi: document.getElementById("bkMisafir").value,
+    ev_sahibi: document.getElementById("bkEvSahibi").value,
+    aciklama: document.getElementById("bkAciklama").value,
+    beklenen_saat: document.getElementById("bkSaat").value || null,
+    tarih,
+  };
+  if (gun > 1) {
+    const bitis = new Date(`${tarih}T12:00:00`);
+    bitis.setDate(bitis.getDate() + gun - 1);
+    govde.bitis_tarihi = _yerelTarihMetni(bitis);
+  }
+  const btn = e.target.querySelector('button[type="submit"]');
+  btn.disabled = true;
+  try {
+    const b = await apiCagir("/beklenen-ziyaretciler", {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(govde),
+    });
+    toastGoster(b.tanimli_arac ? `${b.plaka_no} zaten tanımlı (yetkili) bir araç; ön kayıt yine de eklendi.` : `${b.plaka_no} için ön kayıt eklendi`,
+      b.tanimli_arac ? "bilgi" : "basari");
+    ["bkPlaka", "bkMisafir", "bkEvSahibi", "bkAciklama", "bkSaat"].forEach(id => { document.getElementById(id).value = ""; });
+    document.getElementById("bkGun").value = 1;
+    beklenenleriYukle();
+    nobetKayanGuncelle();
+  } catch (err) {
+    toastGoster("Ön kayıt eklenemedi: " + err.message, "hata");
+  } finally {
+    btn.disabled = false;
+  }
+});
+
+(function () {
+  const tarih = document.getElementById("bkTarih");
+  if (tarih && !tarih.value) tarih.value = _yerelTarihMetni(new Date());
+  const dugme = document.querySelector('[data-bs-target="#nobet-sekme"]');
+  dugme?.addEventListener("shown.bs.tab", beklenenleriYukle);
+})();
+
+// ---------------------- KAÇIRILAN GEÇİŞLER (2026-10-26) ----------------------
+// Kontrol Merkezi kartı: nizamiye bazında kameraların kaçırdığı giriş/çıkışlar
+// (bkz. main.py::kacirilan_gecisler).
+function _kacirilanOran(sayi, oran) {
+  if (!sayi) return '<span class="text-muted">0</span>';
+  return `<b>${sayi}</b>${oran !== null && oran !== undefined ? ` <span class="text-muted">(%${oran})</span>` : ""}`;
+}
+
+function _kacirilanDegerlendirme(k) {
+  const enKotu = Math.max(k.cikis_kacirma_orani || 0, k.giris_kacirma_orani || 0);
+  const hangi = (k.cikis_kacirma_orani || 0) >= (k.giris_kacirma_orani || 0)
+    ? `çıkış kamerası${k.cikis_kameralari.length ? ` (${k.cikis_kameralari.join(", ")})` : ""}`
+    : `giriş kamerası${k.giris_kameralari.length ? ` (${k.giris_kameralari.join(", ")})` : ""}`;
+  if (enKotu >= 10) return `<span class="badge bg-danger">Kontrol edin</span> <span class="small">${escapeHtml(hangi)}</span>`;
+  if (enKotu >= 3) return `<span class="badge bg-warning text-dark">İzleyin</span> <span class="small">${escapeHtml(hangi)}</span>`;
+  return '<span class="badge bg-success">İyi</span>';
+}
+
+async function kacirilanGecisleriYukle() {
+  const tbody = document.getElementById("kacirilanTablo");
+  if (!tbody) return;
+  const gun = document.getElementById("kacirilanGun").value;
+  let v;
+  try {
+    v = await apiCagir(`/analiz/kacirilan-gecisler?gun=${gun}`);
+  } catch (e) {
+    _yuklemeHatasi("Kaçırılan geçişler", e);
+    return;
+  }
+  document.getElementById("kacirilanOzet").textContent =
+    `${v.toplam_kacirilan_cikis} kaçırılan çıkış · ${v.toplam_kacirilan_giris} kaçırılan giriş`;
+  tbody.innerHTML = v.kapilar.length ? v.kapilar.map(k => `<tr>
+      <td class="fw-semibold">${escapeHtml(k.kapi)}</td>
+      <td class="text-end">${k.giris}</td><td class="text-end">${k.cikis}</td>
+      <td class="text-end">${_kacirilanOran(k.kacirilan_cikis, k.cikis_kacirma_orani)}${k.elle_cikarilan ? `<div class="small text-muted">${k.elle_cikarilan} elle çıkarıldı</div>` : ""}</td>
+      <td class="text-end">${_kacirilanOran(k.kacirilan_giris, k.giris_kacirma_orani)}</td>
+      <td>${_kacirilanDegerlendirme(k)}</td></tr>`).join("")
+    : '<tr><td colspan="6" class="text-muted text-center py-3">Bu aralıkta geçiş yok</td></tr>';
+  document.getElementById("kacirilanOrnekSayi").textContent = v.ornekler.length;
+  document.getElementById("kacirilanOrnekler").innerHTML = v.ornekler.map(o => `<tr role="button" onclick="olayDetayAc(${Number(o.kayit_id)})">
+      <td class="fw-bold text-nowrap">${escapeHtml(o.plaka_no)}</td>
+      <td>${o.tur === "cikis" ? '<span class="badge bg-danger-subtle text-danger-emphasis">Çıkış kaçtı</span>' : '<span class="badge bg-primary-subtle text-primary-emphasis">Giriş kaçtı</span>'}${o.elle ? ' <span class="badge bg-light text-dark border">elle çıkarıldı</span>' : ""}</td>
+      <td class="text-nowrap">${escapeHtml(o.kamera_id)}</td>
+      <td class="text-nowrap">${escapeHtml(tarihFormatla(o.ilk_zaman))}${o.sonraki_zaman ? ` → ${escapeHtml(tarihFormatla(o.sonraki_zaman))}` : ""}</td></tr>`).join("")
+    || '<tr><td class="text-muted">Yok</td></tr>';
+}
+
+(function () {
+  const dugme = document.querySelector('[data-bs-target="#kontrol-sekme"]');
+  dugme?.addEventListener("shown.bs.tab", kacirilanGecisleriYukle);
+})();
 
 // ---------------------- VARDİYA ÇİZELGESİ (2026-10-12) ----------------------
 // Lojman A/B/C/D vardiyaları Bölge Müdürlüğü çizelgesinden (bkz.

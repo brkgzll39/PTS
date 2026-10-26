@@ -1113,6 +1113,37 @@
           </div>
         </div>
       </div>
+
+      <!-- KAÇIRILAN GEÇİŞLER (2026-10-26): hangi nizamiyenin kamerası giriş/çıkış
+           kaçırıyor (bkz. main.py::kacirilan_gecisler, app.js::kacirilanGecisleriYukle). -->
+      <div class="card mb-3">
+        <div class="card-header d-flex flex-wrap align-items-center gap-2">
+          <span><i class="bi bi-camera-video-off me-1"></i>Kaçırılan Geçişler</span>
+          <span class="small text-muted" id="kacirilanOzet"></span>
+          <select class="form-select form-select-sm w-auto ms-auto" id="kacirilanGun" onchange="kacirilanGecisleriYukle()" aria-label="Gün aralığı">
+            <option value="7">Son 7 gün</option><option value="14">Son 14 gün</option><option value="30">Son 30 gün</option>
+          </select>
+        </div>
+        <div class="card-body p-0">
+          <div class="table-responsive">
+            <table class="table table-sm align-middle mb-0">
+              <thead class="table-light"><tr><th>Nizamiye</th><th class="text-end">Giriş</th><th class="text-end">Çıkış</th>
+                <th class="text-end" title="Girişi okunup çıkışı okunmayan araçlar (art arda iki giriş ya da elle içeriden çıkarılan)">Kaçırılan çıkış</th>
+                <th class="text-end" title="Çıkışı okunup girişi okunmayan araçlar (art arda iki çıkış)">Kaçırılan giriş</th><th>Değerlendirme</th></tr></thead>
+              <tbody id="kacirilanTablo"><tr><td colspan="6" class="text-muted text-center py-3">Yükleniyor…</td></tr></tbody>
+            </table>
+          </div>
+          <details class="px-3 py-2 border-top">
+            <summary class="small fw-semibold">Örnekler (<span id="kacirilanOrnekSayi">0</span>): hangi araç, ne zaman</summary>
+            <div class="table-responsive mt-2" style="max-height: 40vh; overflow-y: auto;">
+              <table class="table table-sm table-hover align-middle mb-0 small"><tbody id="kacirilanOrnekler"></tbody></table>
+            </div>
+          </details>
+          <div class="small text-muted px-3 pb-2">Bir aracın arada çıkışı olmadan iki kez girmesi çıkış kameranın, arada girişi olmadan
+            iki kez çıkması giriş kameranın aracı kaçırdığını gösterir. 15 dakikadan kısa aralıklı tekrarlar çift okuma sayılıp atlanır.
+            Oran yüksekse kamera açısını, gece aydınlatmasını ve araçların hızını kontrol edin.</div>
+        </div>
+      </div>
     </div>
 
     <!-- ================= SON GEÇİŞLER (sınırsız, sayfalanabilir) ================= -->
@@ -1215,6 +1246,46 @@
     <!-- NÖBET DEFTERİ (2026-10-12): vardiya devir-teslim notları. Kurallar:
          main.py "NÖBET DEFTERİ" bölümü. -->
     <div class="tab-pane fade" id="nobet-sekme">
+      <!-- BEKLENEN ZİYARETÇİLER (ön kayıt, 2026-10-26): araç gelince kendiliğinden
+           onaylı ziyaretçi sayılır (bkz. app.js::beklenenleriYukle, main.py::_beklenen_ziyaretci_bul). -->
+      <div class="card mb-3" id="beklenenKart">
+        <div class="card-header d-flex flex-wrap align-items-center gap-2">
+          <span><i class="bi bi-calendar-check me-1"></i>Beklenen Ziyaretçiler (ön kayıt)</span>
+          <span class="badge bg-primary" id="beklenenSayi">0</span>
+          <div class="ms-auto btn-group btn-group-sm" role="group" aria-label="Kapsam">
+            <input type="radio" class="btn-check" name="beklenenKapsam" id="beklenenGuncel" value="guncel" checked onchange="beklenenleriYukle()">
+            <label class="btn btn-outline-secondary" for="beklenenGuncel">Bugün ve sonrası</label>
+            <input type="radio" class="btn-check" name="beklenenKapsam" id="beklenenGecmis" value="gecmis" onchange="beklenenleriYukle()">
+            <label class="btn btn-outline-secondary" for="beklenenGecmis">Geçmiş</label>
+          </div>
+        </div>
+        <div class="card-body">
+          <form id="beklenenForm" class="row g-2 align-items-end mb-3" data-rol-min="operatör" data-rol-davranis="gizle">
+            <div class="col-6 col-md-2"><label class="form-label small mb-1" for="bkPlaka">Plaka *</label>
+              <input type="text" class="form-control form-control-sm text-uppercase" id="bkPlaka" maxlength="15" required placeholder="34 ABC 123" autocomplete="off"></div>
+            <div class="col-6 col-md-2"><label class="form-label small mb-1" for="bkMisafir">Misafir adı</label>
+              <input type="text" class="form-control form-control-sm" id="bkMisafir" maxlength="100" autocomplete="off"></div>
+            <div class="col-12 col-md-2"><label class="form-label small mb-1" for="bkEvSahibi">Kimin misafiri</label>
+              <input type="text" class="form-control form-control-sm" id="bkEvSahibi" maxlength="120" placeholder="Ahmet Bey (Satın Alma)" autocomplete="off"></div>
+            <div class="col-6 col-md-2"><label class="form-label small mb-1" for="bkTarih">Geliş tarihi *</label>
+              <input type="date" class="form-control form-control-sm" id="bkTarih" required></div>
+            <div class="col-6 col-md-1"><label class="form-label small mb-1" for="bkSaat">Saat</label>
+              <input type="time" class="form-control form-control-sm" id="bkSaat"></div>
+            <div class="col-6 col-md-1"><label class="form-label small mb-1" for="bkGun" title="Kaç gün geçerli">Gün</label>
+              <input type="number" class="form-control form-control-sm" id="bkGun" min="1" max="31" value="1"></div>
+            <div class="col-6 col-md-2 d-grid"><button type="submit" class="btn btn-sm btn-primary"><i class="bi bi-plus-lg"></i> Ön kayıt ekle</button></div>
+            <div class="col-12"><input type="text" class="form-control form-control-sm" id="bkAciklama" maxlength="300" placeholder="Açıklama (opsiyonel): toplantı, teslimat, servis…" autocomplete="off"></div>
+          </form>
+          <div class="table-responsive">
+            <table class="table table-sm align-middle mb-0">
+              <thead class="table-light"><tr><th>Plaka</th><th>Misafir</th><th>Kimin misafiri</th><th>Tarih</th><th>Durum</th><th></th></tr></thead>
+              <tbody id="beklenenTablo"><tr><td colspan="6" class="text-muted text-center py-3">Yükleniyor…</td></tr></tbody>
+            </table>
+          </div>
+          <div class="form-text">Ön kayıtlı araç geldiğinde kayıt kendiliğinden <b>onaylı ziyaretçi</b> sayılır; misafir adı ve not dolar.
+            Bariyer kendiliğinden açılmaz, kara listedeki araç için ön kayıt yapılamaz.</div>
+        </div>
+      </div>
       <div class="row g-3">
         <div class="col-lg-4">
           <div class="card mb-3">

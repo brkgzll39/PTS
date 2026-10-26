@@ -8220,3 +8220,80 @@ def test_kullanici_ekran_listesi_guncellenir_ve_kaldirilir(client, yetkili_heade
     assert r3.json()["ekran_listesi"] == ["kayitlar", "canli"]
     r4 = client.put(f"/kullanicilar/{kid}", json={"ekran_listesi": []}, headers=yetkili_header)
     assert r4.json()["ekran_listesi"] is None
+
+
+# ---------------- Beklenen ziyaretçi / ön kayıt (2026-10-26) ----------------
+
+def _beklenen_ekle(client, header, **ek):
+    govde = {"plaka_no": "34 BKL 01", "misafir_adi": "Mehmet Yılmaz", "ev_sahibi": "Ahmet Bey (Satın Alma)",
+             "tarih": datetime.now().date().isoformat(), **ek}
+    return client.post("/beklenen-ziyaretciler", json=govde, headers=header)
+
+
+def test_beklenen_ziyaretci_gelince_onayli_sayilir_ve_geldi_olur(client, operator_header):
+    r = _beklenen_ekle(client, operator_header, plaka_no="34 bkl 01", aciklama="Toplantı", beklenen_saat="09:00")
+    assert r.status_code == 200, r.text
+    b = r.json()
+    assert (b["plaka_no"], b["durum"], b["tanimli_arac"]) == ("34 BKL 01", "bekleniyor", False)
+    k = _otomatik_kayit(client, "34BKL01", "BEKLENEN-KAM", kare=5)
+    assert k["yetki_durumu"] == "ziyaretci_onayli"
+    assert k["misafir_adi"] == "Mehmet Yılmaz"
+    assert k["not_metni"] == "Ön kayıtlı misafir · Ahmet Bey (Satın Alma) · Toplantı"
+    liste = {x["id"]: x for x in client.get("/beklenen-ziyaretciler", headers=operator_header).json()}
+    assert liste[b["id"]]["durum"] == "geldi" and liste[b["id"]]["ilk_gelis_kayit_id"] == k["id"]
+    # Onaylı ziyaretçi içeride sayılır ve yetkisiz araç alarmı üretilmez.
+    _, araclar, _ = _iceride(client, operator_header)
+    assert "34BKL01" in araclar
+    alarmlar = client.get("/alarmlar", headers=operator_header).json()
+    assert not any(a.get("kayit_id") == k["id"] for a in alarmlar)
+
+
+def test_beklenen_ziyaretci_iptal_ve_tarih_disinda_eslesmez(client, operator_header):
+    yarin = (datetime.now() + timedelta(days=1)).date().isoformat()
+    r = _beklenen_ekle(client, operator_header, plaka_no="34 BKL 02", tarih=yarin)
+    assert r.status_code == 200 and r.json()["durum"] == "ileri_tarih"
+    assert _otomatik_kayit(client, "34 BKL 02", "BEKLENEN-KAM", kare=5)["yetki_durumu"] == "yetkisiz"
+    r2 = _beklenen_ekle(client, operator_header, plaka_no="34 BKL 03")
+    iptal = client.post(f"/beklenen-ziyaretciler/{r2.json()['id']}/iptal", headers=operator_header)
+    assert iptal.status_code == 200 and iptal.json()["durum"] == "iptal"
+    assert _otomatik_kayit(client, "34 BKL 03", "BEKLENEN-KAM", kare=5)["yetki_durumu"] == "yetkisiz"
+
+
+def test_beklenen_ziyaretci_kurallari(client, operator_header, izleyici_header):
+    dun = (datetime.now() - timedelta(days=1)).date().isoformat()
+    assert _beklenen_ekle(client, operator_header, tarih=dun).status_code == 400
+    assert _beklenen_ekle(client, izleyici_header).status_code == 403
+    bugun = datetime.now().date()
+    assert _beklenen_ekle(client, operator_header, bitis_tarihi=(bugun - timedelta(days=1)).isoformat()).status_code == 422
+    assert _beklenen_ekle(client, operator_header, beklenen_saat="25:00").status_code == 422
+    r = client.post("/kara-listesi", json={"plaka_no": "34 BKL 09", "sebep": "test"}, headers=operator_header)
+    assert r.status_code == 200, r.text
+    assert _beklenen_ekle(client, operator_header, plaka_no="34 BKL 09").status_code == 409
+
+
+# ---------------- Kaçırılan geçişler (2026-10-26) ----------------
+
+def test_kacirilan_gecisler_ardisik_giris_ve_cikislari_sayar(client, operator_header):
+    # Kaçırılan çıkış: giriş -> (çıkış okunmadı) -> ertesi gün giriş
+    _kayit_ekle_db("34 KCR 01", "giris", kamera="Kacir Kapi Giris", once=timedelta(days=2))
+    _kayit_ekle_db("34 KCR 01", "giris", kamera="Kacir Kapi Giris", once=timedelta(days=1))
+    # Kaçırılan giriş: çıkış -> (giriş okunmadı) -> çıkış
+    _kayit_ekle_db("34 KCR 02", "cikis", kamera="Kacir Kapi Cikis", once=timedelta(days=2))
+    _kayit_ekle_db("34 KCR 02", "cikis", kamera="Kacir Kapi Cikis", once=timedelta(hours=3))
+    # Çift okuma (5 dk arayla iki giriş) sayılmaz; reddedilen (yetkisiz) giriş de sayılmaz.
+    _kayit_ekle_db("34 KCR 03", "giris", kamera="Kacir Kapi Giris", once=timedelta(minutes=30))
+    _kayit_ekle_db("34 KCR 03", "giris", kamera="Kacir Kapi Giris", once=timedelta(minutes=25))
+    _kayit_ekle_db("34 KCR 04", "giris", "yetkisiz", kamera="Kacir Kapi Giris", once=timedelta(hours=5))
+    _kayit_ekle_db("34 KCR 04", "giris", kamera="Kacir Kapi Giris", once=timedelta(hours=2))
+    # Elle içeriden çıkarılan araç da kaçırılmış çıkıştır.
+    kid = _kayit_ekle_db("34 KCR 05", "giris", kamera="Kacir Kapi Giris", once=timedelta(days=3))
+    client.post("/araclar/iceriden-cikar", json={"kayit_idleri": [kid]}, headers=operator_header)
+
+    r = client.get("/analiz/kacirilan-gecisler?gun=7", headers=operator_header)
+    assert r.status_code == 200, r.text
+    veri = r.json()
+    kapi = next(k for k in veri["kapilar"] if k["kapi"].lower().startswith("kacir"))
+    assert (kapi["kacirilan_cikis"], kapi["kacirilan_giris"], kapi["elle_cikarilan"]) == (2, 1, 1)
+    plakalar = {(o["plaka_no"], o["tur"]) for o in veri["ornekler"]}
+    assert {("34 KCR 01", "cikis"), ("34 KCR 02", "giris"), ("34 KCR 05", "cikis")} <= plakalar
+    assert not any(p in ("34 KCR 03", "34 KCR 04") for p, _ in plakalar)
