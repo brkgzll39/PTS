@@ -216,6 +216,9 @@ def _veritabani_migrasyon() -> None:
         f"ALTER TABLE plaka_kayitlari ADD {col_kw}manuel_giris {bool_tip}{bit_sonu}",
         f"ALTER TABLE plaka_kayitlari ADD {col_kw}duzenleyen VARCHAR(80)",
         f"ALTER TABLE plaka_kayitlari ADD {col_kw}duzenleme_tarihi DATETIME",
+        # "İçeriden çıkar" (2026-10-26) -- bkz. models.Kayit.elle_cikis_zamani.
+        f"ALTER TABLE plaka_kayitlari ADD {col_kw}elle_cikis_zamani DATETIME",
+        f"ALTER TABLE plaka_kayitlari ADD {col_kw}elle_cikis_yapan VARCHAR(80)",
         # "sakin" (site sakini öz-hizmet) rolü: bir giriş hesabını bir Kişi
         # kaydına bağlar. NULL kabul eden, DEFAULT'suz bir INTEGER sütun
         # olduğu için (manuel_giris'teki BIT DEFAULT 0 vakasının aksine) burada
@@ -9303,14 +9306,22 @@ def sistem_ayarlarini_guncelle(yeni: dict = Body(...), db: Session = Depends(get
 #     (geri çevrilmiş de olabilir, onay işaretlenmeden içeri alınmış da).
 #   - Ana Nizamiye ve Lojman içeriden bağlantılı: bir kapıdan girip diğerinden
 #     çıkan araç dışarıda sayılır (son geçiş tüm kameralar üzerinden bulunur).
+#   - Çıkışı okunamadığı için görevlinin "içeriden çıkar" dediği giriş
+#     (elle_cikis_zamani dolu) dışarıda sayılır; araç yeniden girince yeni
+#     giriş kaydı son kayıt olur ve araç yine listeye girer.
 _ICERIDE_SAYILAN_DURUMLAR = ("yetkili", "ziyaretci_onayli")
 _ONAYSIZ_GIRIS_SAAT = 24
 _KISI_TIP_ETIKETI = {"personel": "Personel", "abone": "Abone", "ziyaretci": "Ziyaretçi",
                      "alt_isveren": "Alt İşveren"}   # "vip": marka.json (vip_adi)
 
 
-def _iceride_durumu_hesapla(db: Session, simdi: Optional[datetime] = None) -> "tuple[list, list]":
-    """(içerideki kayıtlar, onaylanmamış giriş kayıtları) -- her biri plakanın son kaydı."""
+_ELLE_CIKARILAN_GOSTERME_GUN = 7
+
+
+def _iceride_durumu_hesapla(db: Session, simdi: Optional[datetime] = None) -> "tuple[list, list, list]":
+    """(içerideki kayıtlar, onaylanmamış giriş kayıtları, son 7 günde elle
+    içeriden çıkarılmış ve hâlâ plakanın son kaydı olan girişler) -- her biri
+    plakanın son kaydı."""
     simdi = simdi or datetime.now()
     takip_gun = int(_sistem_ayarlari_oku().get("iceride_takip_gun") or 30)
     son = (
@@ -9329,15 +9340,20 @@ def _iceride_durumu_hesapla(db: Session, simdi: Optional[datetime] = None) -> "t
         if k.plaka_no not in son_kayit or k.id > son_kayit[k.plaka_no].id:
             son_kayit[k.plaka_no] = k
     onaysiz_sinir = simdi - timedelta(hours=_ONAYSIZ_GIRIS_SAAT)
-    iceride, onaysiz = [], []
+    elle_sinir = simdi - timedelta(days=_ELLE_CIKARILAN_GOSTERME_GUN)
+    iceride, onaysiz, elle_cikarilan = [], [], []
     for k in son_kayit.values():
         if k.yon != "giris":
+            continue
+        if k.elle_cikis_zamani is not None:
+            if k.elle_cikis_zamani >= elle_sinir:
+                elle_cikarilan.append(k)
             continue
         if k.yetki_durumu in _ICERIDE_SAYILAN_DURUMLAR:
             iceride.append(k)
         elif k.tarih_saat >= onaysiz_sinir:
             onaysiz.append(k)
-    return iceride, onaysiz
+    return iceride, onaysiz, elle_cikarilan
 
 
 def _iceride_satiri(k: models.Kayit, kisi: Optional[models.Kisi], simdi: datetime, uyari_saat: int) -> dict:
@@ -9382,12 +9398,13 @@ def araclar_iceridedurum(db: Session = Depends(get_db), kullanici: models.Kullan
     kameralarından GİREN araçları görür. Vardiya penceresi kısıtı UYGULANMAZ:
     önceki vardiyada içeri giren aracı görmek bu listenin amacıdır."""
     simdi = datetime.now()
-    iceride, onaysiz = _iceride_durumu_hesapla(db, simdi)
+    iceride, onaysiz, elle_cikarilan = _iceride_durumu_hesapla(db, simdi)
     izinli = _kullanicinin_izinli_kamera_adlari(kullanici)
     if izinli is not None:
         iceride = [k for k in iceride if k.kamera_id in izinli]
         onaysiz = [k for k in onaysiz if k.kamera_id in izinli]
-    kisi_idleri = {k.kisi_id for k in iceride + onaysiz if k.kisi_id}
+        elle_cikarilan = [k for k in elle_cikarilan if k.kamera_id in izinli]
+    kisi_idleri = {k.kisi_id for k in iceride + onaysiz + elle_cikarilan if k.kisi_id}
     kisiler = {x.id: x for x in db.query(models.Kisi).filter(models.Kisi.id.in_(kisi_idleri)).all()} if kisi_idleri else {}
     uyari_saat = int(_sistem_ayarlari_oku().get("iceride_ziyaretci_uyari_saat") or 0)
     satir = lambda k: _iceride_satiri(k, kisiler.get(k.kisi_id), simdi, uyari_saat)  # noqa: E731
@@ -9398,8 +9415,60 @@ def araclar_iceridedurum(db: Session = Depends(get_db), kullanici: models.Kullan
         "uyarili_sayisi": sum(1 for a in araclar if a["uyari"]),
         "araclar": araclar,
         "onaysiz": [satir(k) for k in sorted(onaysiz, key=lambda x: x.tarih_saat, reverse=True)],
+        "elle_cikarilan": [
+            {**satir(k), "elle_cikis_zamani": k.elle_cikis_zamani.isoformat(), "elle_cikis_yapan": k.elle_cikis_yapan}
+            for k in sorted(elle_cikarilan, key=lambda x: x.elle_cikis_zamani, reverse=True)
+        ],
         "uyari_saat": uyari_saat,
     }
+
+
+def _iceriden_cikar_kayitlari(db: Session, kullanici: models.Kullanici, kayit_idleri: List[int]) -> "list[models.Kayit]":
+    _rol_dogrula(kullanici, ROL_YONETICI, ROL_OPERATOR, ROL_GUVENLIK)
+    idler = set(kayit_idleri)
+    kayitlar = db.query(models.Kayit).filter(models.Kayit.id.in_(idler)).all()
+    eksik = idler - {k.id for k in kayitlar}
+    if eksik:
+        raise HTTPException(404, f"Kayıt bulunamadı: {sorted(eksik)}")
+    cikis = [k.id for k in kayitlar if k.yon != "giris"]
+    if cikis:
+        raise HTTPException(400, f"Yalnızca giriş kayıtları içeriden çıkarılabilir: {cikis}")
+    izinli = _kullanicinin_izinli_kamera_adlari(kullanici)
+    if izinli is not None and any(k.kamera_id not in izinli for k in kayitlar):
+        raise HTTPException(403, "Erişiminiz olmayan bir kameranın kaydı seçildi")
+    return kayitlar
+
+
+@app.post("/araclar/iceriden-cikar")
+def araclar_iceriden_cikar(istek: schemas.IceridenCikar, db: Session = Depends(get_db),
+                           kullanici: models.Kullanici = Depends(_personel_girisi_gerekli)):
+    """Çıkışı kameraya okunmamış araçları "çıktı" sayar (bkz. models.Kayit.elle_cikis_zamani)."""
+    kayitlar = _iceriden_cikar_kayitlari(db, kullanici, istek.kayit_idleri)
+    simdi = datetime.now()
+    yeni = [k for k in kayitlar if k.elle_cikis_zamani is None]
+    for k in yeni:
+        k.elle_cikis_zamani = simdi
+        k.elle_cikis_yapan = kullanici.kullanici_adi
+    db.commit()
+    if yeni:
+        _denetim_kaydet(db, kullanici.kullanici_adi, "iceriden_cikar",
+                        f"{len(yeni)} araç: " + ", ".join(f"{k.plaka_no} (#{k.id})" for k in yeni)[:1500])
+    return {"cikarilan": len(yeni)}
+
+
+@app.post("/araclar/iceriden-cikar/geri-al")
+def araclar_iceriden_cikar_geri_al(istek: schemas.IceridenCikar, db: Session = Depends(get_db),
+                                   kullanici: models.Kullanici = Depends(_personel_girisi_gerekli)):
+    kayitlar = _iceriden_cikar_kayitlari(db, kullanici, istek.kayit_idleri)
+    geri = [k for k in kayitlar if k.elle_cikis_zamani is not None]
+    for k in geri:
+        k.elle_cikis_zamani = None
+        k.elle_cikis_yapan = None
+    db.commit()
+    if geri:
+        _denetim_kaydet(db, kullanici.kullanici_adi, "iceriden_cikar_geri_al",
+                        ", ".join(f"{k.plaka_no} (#{k.id})" for k in geri)[:1500])
+    return {"geri_alinan": len(geri)}
 
 
 # ==================================================================

@@ -7210,6 +7210,40 @@ def test_iceride_kamera_kisitli_hesap_yalnizca_kendi_kapisindan_gireni_gorur(cli
     assert "34 ICR 08" in araclar and "34 ICR 09" not in araclar
 
 
+def test_iceriden_cikar_araci_listeden_dusurur_ve_geri_alinir(client, operator_header):
+    kid = _kayit_ekle_db("34 ICR 20", "giris", once=timedelta(days=3))
+    r = client.post("/araclar/iceriden-cikar", json={"kayit_idleri": [kid]}, headers=operator_header)
+    assert r.status_code == 200, r.text
+    assert r.json()["cikarilan"] == 1
+    veri, araclar, _ = _iceride(client, operator_header)
+    assert "34 ICR 20" not in araclar
+    elle = {a["plaka_no"]: a for a in veri["elle_cikarilan"]}
+    assert elle["34 ICR 20"]["elle_cikis_yapan"] and elle["34 ICR 20"]["kayit_id"] == kid
+    # Tekrar çıkarmak bir şey değiştirmez.
+    assert client.post("/araclar/iceriden-cikar", json={"kayit_idleri": [kid]}, headers=operator_header).json()["cikarilan"] == 0
+    r2 = client.post("/araclar/iceriden-cikar/geri-al", json={"kayit_idleri": [kid]}, headers=operator_header)
+    assert r2.status_code == 200 and r2.json()["geri_alinan"] == 1
+    veri, araclar, _ = _iceride(client, operator_header)
+    assert "34 ICR 20" in araclar and all(a["plaka_no"] != "34 ICR 20" for a in veri["elle_cikarilan"])
+
+
+def test_iceriden_cikarilan_arac_yeniden_girince_listeye_doner(client, operator_header):
+    kid = _kayit_ekle_db("34 ICR 21", "giris", once=timedelta(days=2))
+    client.post("/araclar/iceriden-cikar", json={"kayit_idleri": [kid]}, headers=operator_header)
+    _kayit_ekle_db("34 ICR 21", "giris", once=timedelta(minutes=1))
+    veri, araclar, _ = _iceride(client, operator_header)
+    assert "34 ICR 21" in araclar and all(a["plaka_no"] != "34 ICR 21" for a in veri["elle_cikarilan"])
+
+
+def test_iceriden_cikar_kurallari(client, operator_header, izleyici_header):
+    giris = _kayit_ekle_db("34 ICR 22", "giris", once=timedelta(hours=30))
+    cikis = _kayit_ekle_db("34 ICR 23", "cikis")
+    assert client.post("/araclar/iceriden-cikar", json={"kayit_idleri": [giris]}, headers=izleyici_header).status_code == 403
+    assert client.post("/araclar/iceriden-cikar", json={"kayit_idleri": [cikis]}, headers=operator_header).status_code == 400
+    assert client.post("/araclar/iceriden-cikar", json={"kayit_idleri": [99999999]}, headers=operator_header).status_code == 404
+    assert client.post("/araclar/iceriden-cikar", json={"kayit_idleri": []}, headers=operator_header).status_code == 422
+
+
 @pytest.mark.parametrize("giris, simdi, ziyaretci, beklenen", [
     ("2026-10-12 09:00", "2026-10-12 12:59", True, None),     # 3 sa 59 dk
     ("2026-10-12 09:00", "2026-10-12 13:00", True, "uzun"),   # 4 saat: turuncu

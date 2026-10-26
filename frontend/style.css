@@ -671,3 +671,36 @@ table td, table th {
    başlık satırı üstte sabit kalır; "Araç Ekle" alanı hep görünür. */
 #kartAraclarPane .table-responsive { max-height: 55vh; overflow-y: auto; }
 #kartAraclarPane .kart-arac-tablo thead th { position: sticky; top: 0; z-index: 1; }
+
+/* Nöbet Defteri kayan yazı (2026-10-26, app.js::nobetKayanGuncelle) */
+.nobet-kayan {
+  display: flex; align-items: stretch; gap: 0; margin-bottom: .75rem;
+  background: #fff4d6; color: #3d2c00; border: 1px solid #f3c552; border-left: 6px solid #e0a100;
+  border-radius: 8px; overflow: hidden; cursor: pointer; font-size: .95rem; min-height: 2.4rem;
+}
+.nobet-kayan .nk-etiket {
+  flex: 0 0 auto; display: flex; align-items: center; gap: .35rem; padding: 0 .8rem;
+  background: #e0a100; color: #fff; font-weight: 700; letter-spacing: .03em; font-size: .8rem;
+}
+.nobet-kayan .nk-sayi { background: #fff; color: #9a6b00; border-radius: 99px; padding: 0 .45rem; font-size: .75rem; }
+.nobet-kayan .nk-pencere { flex: 1 1 auto; overflow: hidden; display: flex; align-items: center; min-width: 0; }
+.nobet-kayan .nk-metin {
+  display: inline-block; white-space: nowrap; padding-left: 100%;
+  animation: nobetKay 40s linear infinite;
+}
+.nobet-kayan:hover .nk-metin, .nobet-kayan:focus .nk-metin { animation-play-state: paused; }
+@keyframes nobetKay { from { transform: translateX(0); } to { transform: translateX(-100%); } }
+.nobet-kayan .nk-not { font-weight: 600; }
+.nobet-kayan .nk-kapi { background: #3d2c00; color: #fff; border-radius: 4px; padding: .05rem .4rem; margin-right: .4rem; font-size: .75rem; font-weight: 600; }
+.nobet-kayan .nk-yeni { background: #dc3545; color: #fff; border-radius: 4px; padding: .05rem .35rem; margin-right: .35rem; font-size: .7rem; font-weight: 700; animation: nobetYanip 1.2s ease-in-out infinite; }
+@keyframes nobetYanip { 50% { opacity: .35; } }
+.nobet-kayan .nk-kim { font-weight: 400; color: #7a5c12; font-size: .85rem; }
+.nobet-kayan .nk-ayrac { color: #e0a100; margin: 0 1.2rem; }
+.nobet-kayan .nk-kapat { flex: 0 0 auto; border: 0; background: transparent; color: #7a5c12; padding: 0 .7rem; }
+.nobet-kayan .nk-kapat:hover { color: #000; }
+.nobet-kayan-kapi { margin: .5rem 1rem 0; font-size: 1.05rem; min-height: 2.8rem; }
+@media (prefers-reduced-motion: reduce) {
+  .nobet-kayan .nk-metin { animation: none; padding-left: .5rem; }
+  .nobet-kayan .nk-pencere { overflow-x: auto; }
+  .nobet-kayan .nk-yeni { animation: none; }
+}

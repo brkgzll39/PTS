@@ -2792,6 +2792,125 @@ function icerideCiz() {
     : '<tr><td colspan="5" class="text-muted text-center py-3">Onaylanmamış giriş yok</td></tr>';
 }
 
+// ---------------------- İÇERİYİ TEMİZLE (2026-10-26) ----------------------
+// Çıkışı kameraya okunmayan araçlar günlerce "içeride" kalıyordu. Görevli
+// burada seçip "çıktı" sayar (bkz. main.py::araclar_iceriden_cikar); kayıtlar
+// silinmez, son 7 günde çıkarılanlar geri alınabilir.
+let _itVeri = null;
+const _itSecili = new Set();
+
+async function icerideTemizleAc() {
+  _itSecili.clear();
+  document.getElementById("itAra").value = "";
+  bootstrap.Modal.getOrCreateInstance(document.getElementById("icerideTemizleModal")).show();
+  await icerideTemizleYukle();
+  // Açılışta süre filtresine uyanların hepsi seçili gelir.
+  _itUygunlar().forEach(a => _itSecili.add(a.kayit_id));
+  icerideTemizleCiz();
+}
+
+async function icerideTemizleYukle() {
+  try {
+    _itVeri = await apiCagir("/araclar/iceridedurum");
+  } catch (e) {
+    _yuklemeHatasi("İçerideki araçlar", e);
+    return;
+  }
+  const kapiSecimi = document.getElementById("itKapi");
+  const onceki = kapiSecimi.value;
+  const kapilar = [...new Set(_itVeri.araclar.map(a => a.kamera_id))].sort();
+  kapiSecimi.innerHTML = '<option value="">Tüm kapılar</option>' +
+    kapilar.map(k => `<option value="${escapeHtml(k)}">${escapeHtml(k)}</option>`).join("");
+  kapiSecimi.value = kapilar.includes(onceki) ? onceki : "";
+  icerideTemizleCiz();
+}
+
+function _itUygunlar() {
+  if (!_itVeri) return [];
+  const sureDk = Number(document.getElementById("itSure").value) * 60;
+  const kapi = document.getElementById("itKapi").value;
+  const ara = document.getElementById("itAra").value.trim().toLocaleUpperCase("tr-TR");
+  const araBosluksuz = ara.replace(/\s+/g, "");
+  return _itVeri.araclar.filter(a => a.sure_dk >= sureDk && (!kapi || a.kamera_id === kapi) &&
+    (!ara || a.plaka_no.replace(/\s+/g, "").includes(araBosluksuz) || (a.kim || "").toLocaleUpperCase("tr-TR").includes(ara)));
+}
+
+function icerideTemizleCiz() {
+  if (!_itVeri) return;
+  const liste = _itUygunlar();
+  const gorunen = new Set(liste.map(a => a.kayit_id));
+  [..._itSecili].forEach(id => { if (!gorunen.has(id)) _itSecili.delete(id); });
+  document.getElementById("itTablo").innerHTML = liste.length ? liste.map(a => `<tr>
+      <td><input type="checkbox" class="form-check-input" ${_itSecili.has(a.kayit_id) ? "checked" : ""} onchange="icerideTemizleSec(${Number(a.kayit_id)}, this.checked)" aria-label="${escapeHtml(a.plaka_no)} seç"></td>
+      <td class="fw-bold text-nowrap">${escapeHtml(a.plaka_no)}</td>
+      <td class="small">${a.kim ? escapeHtml(a.kim) : '<span class="text-muted">-</span>'}</td>
+      <td class="small text-nowrap">${escapeHtml(a.kamera_id)}</td>
+      <td class="small text-nowrap">${escapeHtml(_icerideGirisMetni(a.giris_saati))}</td>
+      <td class="small text-nowrap">${escapeHtml(_icerideSureMetni(a.sure_dk))}</td></tr>`).join("")
+    : '<tr><td colspan="6" class="text-muted text-center py-3">Bu süreden uzun içeride görünen araç yok</td></tr>';
+  document.getElementById("itHepsi").checked = liste.length > 0 && liste.every(a => _itSecili.has(a.kayit_id));
+  document.getElementById("itSeciliSayi").textContent = `${_itSecili.size} araç seçili`;
+  document.getElementById("itCikarBtn").disabled = _itSecili.size === 0;
+
+  const geri = _itVeri.elle_cikarilan || [];
+  document.getElementById("itGeriSayi").textContent = geri.length;
+  document.getElementById("itGeriTablo").innerHTML = geri.length ? geri.map(a => `<tr>
+      <td class="fw-bold text-nowrap">${escapeHtml(a.plaka_no)}</td>
+      <td class="small">${a.kim ? escapeHtml(a.kim) : ""}</td>
+      <td class="small text-muted">${escapeHtml(tarihFormatla(a.elle_cikis_zamani))} · ${escapeHtml(a.elle_cikis_yapan || "")}</td>
+      <td class="text-end"><button type="button" class="btn btn-sm btn-outline-secondary" onclick="icerideTemizleGeriAl(${Number(a.kayit_id)})"><i class="bi bi-arrow-counterclockwise"></i> Geri al</button></td></tr>`).join("")
+    : '<tr><td class="text-muted small">Yok</td></tr>';
+}
+
+function icerideTemizleSec(id, secili) {
+  if (secili) _itSecili.add(id); else _itSecili.delete(id);
+  icerideTemizleCiz();
+}
+
+function icerideTemizleHepsi(secili) {
+  _itUygunlar().forEach(a => { if (secili) _itSecili.add(a.kayit_id); else _itSecili.delete(a.kayit_id); });
+  icerideTemizleCiz();
+}
+
+function _icerideListeleriniYenile() {
+  if (typeof icerideAraclariYukle === "function" && _icerideVeri) icerideAraclariYukle();
+  if (typeof _kapiIcerideYukle === "function" && document.body.classList.contains("kapi-modu")) _kapiIcerideYukle();
+}
+
+async function icerideTemizleUygula() {
+  const idler = [..._itSecili];
+  if (!idler.length) return;
+  if (!(await onayAl(`${idler.length} araç içeriden çıkarılacak (çıkış yaptı sayılacak). Geçiş kayıtları silinmez. Devam edilsin mi?`))) return;
+  const btn = document.getElementById("itCikarBtn");
+  btn.disabled = true;
+  try {
+    const r = await apiCagir("/araclar/iceriden-cikar", {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ kayit_idleri: idler }),
+    });
+    toastGoster(`${r.cikarilan} araç içeriden çıkarıldı`, "basari");
+    _itSecili.clear();
+    await icerideTemizleYukle();
+    _icerideListeleriniYenile();
+  } catch (e) {
+    toastGoster(e.message, "hata");
+  } finally {
+    btn.disabled = _itSecili.size === 0;
+  }
+}
+
+async function icerideTemizleGeriAl(id) {
+  try {
+    await apiCagir("/araclar/iceriden-cikar/geri-al", {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ kayit_idleri: [id] }),
+    });
+    toastGoster("Araç yeniden içeride sayılıyor", "basari");
+    await icerideTemizleYukle();
+    _icerideListeleriniYenile();
+  } catch (e) {
+    toastGoster(e.message, "hata");
+  }
+}
+
 (function () {
   const dugme = document.querySelector('[data-bs-target="#iceride-sekme"]');
   if (!dugme) return;
@@ -2925,6 +3044,7 @@ async function nobetNotlariYukle() {
       ${kapanis}
     </div>`;
   }).join("") : '<span class="text-muted">Not yok.</span>';
+  nobetKayanGuncelle();
 }
 
 function nobetKapatmaAlaniAc(id) {
@@ -2994,8 +3114,62 @@ document.getElementById("nobetAra").addEventListener("input", () => {
 
 function _nobetDefteriniBaslat() {
   nobetOkunmamislariGoster();
+  nobetKayanGuncelle();
   clearInterval(_nobetRozetZamanlayici);
-  _nobetRozetZamanlayici = setInterval(nobetRozetGuncelle, 120000);
+  _nobetRozetZamanlayici = setInterval(() => { nobetRozetGuncelle(); nobetKayanGuncelle(); }, 60000);
+}
+
+// ---------------------- NÖBET DEFTERİ KAYAN YAZI (2026-10-26) ----------------------
+// Açık (kapatılmamış) nöbet notları her ekranın üstünde kayan bir şeritte
+// görünür; klasik panelde ve Kapı Modunda. Okunmamış notlar "YENİ" ile işaretli.
+// Şeride tıklayınca Nöbet Defteri açılır; "x" ile gizlenen şerit yeni bir not
+// gelene kadar (bu oturumda) kapalı kalır. Not yoksa şerit hiç görünmez.
+const _NOBET_KAYAN_GIZLI = "pts_nobet_kayan_gizli";
+let _nobetKayanSonId = 0;
+
+async function nobetKayanGuncelle() {
+  let notlar;
+  try {
+    notlar = await apiCagir("/nobet-defteri?durum=acik&limit=30");
+  } catch (e) {
+    return; // şerit yardımcı bir gösterge; hata toast'u basmaya değmez
+  }
+  _nobetKayanSonId = notlar.reduce((m, n) => Math.max(m, n.id), 0);
+  let gizliId = 0;
+  try { gizliId = Number(sessionStorage.getItem(_NOBET_KAYAN_GIZLI) || 0); } catch (e) { /* yok say */ }
+  const goster = notlar.length > 0 && _nobetKayanSonId > gizliId;
+  const metin = notlar.map(n =>
+    `<span class="nk-not">${n.okundu ? "" : '<span class="nk-yeni">YENİ</span>'}` +
+    `<span class="nk-kapi">${escapeHtml(n.kapi)}</span>${escapeHtml(n.metin.replace(/\s+/g, " "))}` +
+    ` <span class="nk-kim">— ${escapeHtml(n.olusturan_adi)}, ${escapeHtml(tarihFormatla(n.olusturma_zamani))}</span></span>`,
+  ).join('<span class="nk-ayrac">✦</span>');
+  // Kayma hızı metin uzunluğundan bağımsız kalsın (~ saniyede 8 karakter).
+  const sure = Math.max(18, Math.round(notlar.reduce((t, n) => t + n.metin.length + 40, 0) / 8));
+  document.querySelectorAll(".nobet-kayan").forEach(serit => {
+    serit.classList.toggle("d-none", !goster);
+    if (!goster) return;
+    serit.querySelector(".nk-sayi").textContent = notlar.length;
+    const kayan = serit.querySelector(".nk-metin");
+    if (kayan.dataset.icerik !== metin) {  // aynı içerikte animasyon baştan başlamasın
+      kayan.innerHTML = metin;
+      kayan.dataset.icerik = metin;
+      kayan.style.animationDuration = `${sure}s`;
+    }
+  });
+}
+
+function nobetKayanAc() {
+  if (document.body.classList.contains("kapi-modu")) {
+    if (typeof kapiSekme === "function") kapiSekme("nobet");
+    return;
+  }
+  if (_ekranIzinli("nobet")) sekmeAc("#nobet-sekme");
+}
+
+function nobetKayanGizle(e) {
+  e?.stopPropagation();
+  try { sessionStorage.setItem(_NOBET_KAYAN_GIZLI, String(_nobetKayanSonId)); } catch (err) { /* yok say */ }
+  document.querySelectorAll(".nobet-kayan").forEach(serit => serit.classList.add("d-none"));
 }
 
 // ---------------------- VARDİYA ÇİZELGESİ (2026-10-12) ----------------------

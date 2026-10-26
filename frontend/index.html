@@ -25,6 +25,56 @@
 <div id="toastKonteyneri" class="toast-container position-fixed top-0 end-0 p-3" style="z-index:9999"></div>
 
 <!-- Plaka analiz modal -->
+<!-- İÇERİYİ TEMİZLE (2026-10-26): çıkışı kameraya okunmayıp günlerce "içeride"
+     görünen araçları elle "çıktı" sayma (bkz. app.js::icerideTemizleAc,
+     main.py::araclar_iceriden_cikar). Geçiş kayıtları silinmez. -->
+<div class="modal fade" id="icerideTemizleModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-lg modal-dialog-centered modal-dialog-scrollable"><div class="modal-content">
+    <div class="modal-header">
+      <h5 class="modal-title"><i class="bi bi-eraser me-2"></i>İçeriyi Temizle</h5>
+      <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Kapat"></button>
+    </div>
+    <div class="modal-body">
+      <p class="small text-muted mb-2">Çıkışı kameraya okunmadığı için hâlâ içeride görünen araçları seçip "çıktı" sayın.
+        Geçiş kayıtları silinmez, araç yalnızca İçerideki Araçlar listesinden düşer. Araç yeniden girerse listeye kendiliğinden döner.
+        Yanlışlıkla çıkardığınızı alttaki listeden geri alabilirsiniz.</p>
+      <div class="d-flex flex-wrap align-items-center gap-2 mb-2">
+        <label class="small" for="itSure">İçeride en az</label>
+        <select class="form-select form-select-sm" id="itSure" style="width: auto" onchange="icerideTemizleCiz()">
+          <option value="0">süre fark etmez</option>
+          <option value="6">6 saat</option>
+          <option value="12">12 saat</option>
+          <option value="24" selected>24 saat</option>
+          <option value="48">2 gün</option>
+          <option value="72">3 gün</option>
+          <option value="168">7 gün</option>
+        </select>
+        <select class="form-select form-select-sm" id="itKapi" style="width: auto" onchange="icerideTemizleCiz()" aria-label="Kapı"></select>
+        <input type="search" class="form-control form-control-sm" id="itAra" placeholder="Plaka veya isim" style="width: 10rem" oninput="icerideTemizleCiz()">
+      </div>
+      <div class="table-responsive border rounded" style="max-height: 50vh; overflow-y: auto;">
+        <table class="table table-sm table-hover align-middle mb-0">
+          <thead class="table-light" style="position: sticky; top: 0; z-index: 1;"><tr>
+            <th style="width: 2rem"><input type="checkbox" class="form-check-input" id="itHepsi" onchange="icerideTemizleHepsi(this.checked)" aria-label="Tümünü seç"></th>
+            <th>Plaka</th><th>Kim</th><th>Kapı</th><th>Giriş</th><th>Süre</th></tr></thead>
+          <tbody id="itTablo"></tbody>
+        </table>
+      </div>
+      <details class="mt-3" id="itGeriAlBolum">
+        <summary class="small fw-semibold">Son 7 günde elle çıkarılanlar (<span id="itGeriSayi">0</span>)</summary>
+        <div class="table-responsive mt-2" style="max-height: 30vh; overflow-y: auto;">
+          <table class="table table-sm align-middle mb-0"><tbody id="itGeriTablo"></tbody></table>
+        </div>
+      </details>
+    </div>
+    <div class="modal-footer">
+      <span class="small text-muted me-auto" id="itSeciliSayi">0 araç seçili</span>
+      <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Kapat</button>
+      <button type="button" class="btn btn-danger" id="itCikarBtn" onclick="icerideTemizleUygula()" disabled><i class="bi bi-box-arrow-right me-1"></i>Seçilenleri çıktı say</button>
+    </div>
+  </div></div>
+</div>
+
 <!-- NÖBET DEFTERİ (2026-10-12): girişte okunmamış açık devir-teslim notları.
      Kapatma düğmesi YOK, arka plana tıklayınca/Esc ile kapanmaz: "Okudum"
      denince kim/ne zaman okudu kaydedilir (bkz. app.js::nobetOkunmamislariGoster). -->
@@ -755,6 +805,11 @@
     <button class="kapi-kucuk-dugme d-none" id="kapiFarkliKullanici" onclick="farkliKullaniciylaGiris()" title="Başka bir hesapla giriş"><i class="bi bi-person-gear"></i></button>
     <button class="kapi-kucuk-dugme" id="kapiCikis" onclick="oturumKapat()" title="Çıkış"><i class="bi bi-box-arrow-right"></i></button>
   </div>
+  <div class="nobet-kayan nobet-kayan-kapi d-none" role="button" tabindex="0" onclick="nobetKayanAc()" onkeydown="if(event.key==='Enter'){nobetKayanAc()}" title="Nöbet Defteri'ni aç">
+    <span class="nk-etiket"><i class="bi bi-megaphone-fill"></i> NÖBET DEFTERİ <span class="nk-sayi"></span></span>
+    <span class="nk-pencere"><span class="nk-metin"></span></span>
+    <button type="button" class="nk-kapat" onclick="nobetKayanGizle(event)" title="Yeni not gelene kadar gizle" aria-label="Gizle"><i class="bi bi-x-lg"></i></button>
+  </div>
 
   <div class="kapi-icerik" id="kapiIcerik">
     <!-- Kapı -->
@@ -772,6 +827,7 @@
     <!-- İçeridekiler -->
     <div id="kapiSekme_iceride" class="d-none">
       <div class="kapi-ozet" id="kapiOzet"></div>
+      <div class="text-end mb-2" data-rol-min="operatör" data-rol-davranis="gizle"><button type="button" class="kapi-kucuk-dugme" onclick="icerideTemizleAc()" title="Çıkışı okunmamış araçları listeden çıkar"><i class="bi bi-eraser"></i> İçeriyi Temizle</button></div>
       <div class="kapi-kart kapi-tablo">
         <div class="kapi-tbas"><span>Plaka</span><span>Kim / Not</span><span>Tür</span><span>Girdi</span><span>İçeride</span></div>
         <div id="kapiIcerideTablo"></div>
@@ -893,6 +949,12 @@
     <div class="sidebar-footer"><span class="status-led"></span> Sistem çevrimiçi<br><small><span data-marka="kisa_ad">TPAO PTS</span> · v2.0</small></div>
   </aside>
   <main class="container-fluid app-main">
+  <!-- Nöbet Defteri kayan yazı (2026-10-26, bkz. app.js::nobetKayanGuncelle) -->
+  <div class="nobet-kayan d-none" role="button" tabindex="0" onclick="nobetKayanAc()" onkeydown="if(event.key==='Enter'){nobetKayanAc()}" title="Nöbet Defteri'ni aç">
+    <span class="nk-etiket"><i class="bi bi-megaphone-fill"></i> NÖBET DEFTERİ <span class="nk-sayi"></span></span>
+    <span class="nk-pencere"><span class="nk-metin"></span></span>
+    <button type="button" class="nk-kapat" onclick="nobetKayanGizle(event)" title="Yeni not gelene kadar gizle" aria-label="Gizle"><i class="bi bi-x-lg"></i></button>
+  </div>
   <ul class="nav nav-tabs" id="anaSekme" role="tablist">
     <li class="nav-item"><button class="nav-link active" data-bs-toggle="tab" data-bs-target="#canli-sekme" type="button"><i class="bi bi-grid-3x3-gap-fill me-1"></i>Canlı</button></li>
     <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#kontrol-sekme" type="button"><i class="bi bi-speedometer2 me-1"></i>Kontrol Merkezi</button></li>
@@ -1118,6 +1180,7 @@
               <input class="form-check-input" type="checkbox" id="icerideSadeceZiyaretci" onchange="icerideCiz()">
               <label class="form-check-label small" for="icerideSadeceZiyaretci">Sadece ziyaretçiler</label>
             </div>
+            <button type="button" class="btn btn-sm btn-outline-danger" onclick="icerideTemizleAc()" data-rol-min="operatör" data-rol-davranis="gizle" title="Çıkışı okunmamış araçları listeden çıkar"><i class="bi bi-eraser"></i> İçeriyi Temizle</button>
             <button type="button" class="btn btn-sm btn-outline-secondary" onclick="icerideAraclariYukle()" title="Yenile"><i class="bi bi-arrow-clockwise"></i></button>
           </div>
         </div>

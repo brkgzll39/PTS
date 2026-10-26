@@ -773,6 +773,11 @@ class NobetNotuOkudum(BaseModel):
     not_idleri: List[int] = Field(min_length=1, max_length=500)
 
 
+class IceridenCikar(BaseModel):
+    """POST /araclar/iceriden-cikar (ve /geri-al): giriş kaydı id'leri."""
+    kayit_idleri: List[int] = Field(min_length=1, max_length=1000)
+
+
 # ---------------------- Vardiya çizelgesi (2026-10-12) ----------------------
 
 class VardiyaCizelgesiAy(BaseModel):

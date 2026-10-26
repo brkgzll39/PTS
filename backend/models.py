@@ -305,6 +305,11 @@ class Kayit(Base):
     # düzenlendiyse (plaka/yön/durum/kişi/not) kim ve ne zaman değiştirdi.
     duzenleyen = Column(String(80), nullable=True)
     duzenleme_tarihi = Column(DateTime, nullable=True)
+    # "İçeriden çıkar" (2026-10-26): çıkışı kameraya okunmayan aracın GİRİŞ
+    # kaydına görevlinin "çıktı" işareti. Sahte bir çıkış kaydı üretilmez;
+    # araç İçerideki Araçlar listesinden düşer, geçiş kayıtları değişmez.
+    elle_cikis_zamani = Column(DateTime, nullable=True)
+    elle_cikis_yapan = Column(String(80), nullable=True)
     olusturma_tarihi = Column(DateTime, default=datetime.now)
 
     kisi = relationship("Kisi", back_populates="kayitlar")
