@@ -827,7 +827,10 @@
     <!-- İçeridekiler -->
     <div id="kapiSekme_iceride" class="d-none">
       <div class="kapi-ozet" id="kapiOzet"></div>
-      <div class="text-end mb-2" data-rol-min="operatör" data-rol-davranis="gizle"><button type="button" class="kapi-kucuk-dugme" onclick="icerideTemizleAc()" title="Çıkışı okunmamış araçları listeden çıkar"><i class="bi bi-eraser"></i> İçeriyi Temizle</button></div>
+      <div class="kapi-temizle-satir" data-rol-min="operatör" data-rol-davranis="gizle">
+        <span>Çıkışı kameraya okunmadığı için hâlâ içeride görünen araç mı var?</span>
+        <button type="button" class="kapi-temizle-dugme" onclick="icerideTemizleAc()"><i class="bi bi-eraser"></i> İçeriyi Temizle</button>
+      </div>
       <div class="kapi-kart kapi-tablo">
         <div class="kapi-tbas"><span>Plaka</span><span>Kim / Not</span><span>Tür</span><span>Girdi</span><span>İçeride</span></div>
         <div id="kapiIcerideTablo"></div>

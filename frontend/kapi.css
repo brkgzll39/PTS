@@ -233,3 +233,12 @@ body.kapi-nobet .app-main { max-width: 1400px; margin: 0 auto; }
   .kapi-alan.tek { font-size: 24px; }
   .kapi-pencere .kapi-dugmeler { margin-top: 16px; }
 }
+
+/* İçeriyi Temizle (2026-10-26, app.js::icerideTemizleAc) */
+.kapi-temizle-satir { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 12px; margin: 0 0 14px; color: var(--k-soluk); font-size: 15px; }
+.kapi-temizle-dugme { border: 2px solid var(--k-kirmizi); background: #fff; color: var(--k-kirmizi); font-weight: 700; font-size: 17px; border-radius: 12px; padding: 10px 20px; }
+.kapi-temizle-dugme:hover, .kapi-temizle-dugme:focus-visible { background: var(--k-kirmizi); color: #fff; }
+@media (max-width: 700px) {
+  .kapi-temizle-satir span { display: none; }
+  .kapi-temizle-dugme { width: 100%; }
+}
