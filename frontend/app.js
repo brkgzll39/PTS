@@ -3115,6 +3115,9 @@ document.getElementById("nobetAra").addEventListener("input", () => {
 function _nobetDefteriniBaslat() {
   nobetOkunmamislariGoster();
   nobetKayanGuncelle();
+  okunamayanlariYukle();
+  clearInterval(_okunamayanZamanlayici);
+  _okunamayanZamanlayici = setInterval(okunamayanlariYukle, 20000);
   clearInterval(_nobetRozetZamanlayici);
   _nobetRozetZamanlayici = setInterval(() => { nobetRozetGuncelle(); nobetKayanGuncelle(); }, 60000);
 }
@@ -3280,6 +3283,185 @@ document.getElementById("beklenenForm")?.addEventListener("submit", async (e) =>
   if (tarih && !tarih.value) tarih.value = _yerelTarihMetni(new Date());
   const dugme = document.querySelector('[data-bs-target="#nobet-sekme"]');
   dugme?.addEventListener("shown.bs.tab", beklenenleriYukle);
+})();
+
+// ---------------------- KAPI KUTUSU (2026-10-28) ----------------------
+// Okunamayan geçişler (kutunun sensörü araç gördü, kamera plakayı okumadı):
+// İçerideki Araçlar sekmesinin ve Kapı Modu ana ekranının üstünde, görevli
+// plakayı fotoğraftan yazar ya da "araç değil" der (bkz. main.py "KAPI KUTUSU").
+let _okunamayanZamanlayici = null;
+
+async function okunamayanlariYukle() {
+  const alanlar = document.querySelectorAll(".okunamayan-alan");
+  if (!alanlar.length) return;
+  let liste;
+  try {
+    liste = await apiCagir("/kapi-kutusu/okunamayanlar");
+  } catch (e) {
+    return; // yardımcı gösterge; sessiz geç
+  }
+  const islem = rolYeterli("operatör");
+  const yonAdi = y => (y === "cikis" ? "Çıkış" : "Giriş");
+  const html = liste.length ? `
+    <div class="okunamayan-baslik"><i class="bi bi-exclamation-octagon-fill"></i> Okunamayan geçiş: ${liste.length}
+      <span class="small fw-normal">Sensör aracı gördü ama kamera plakayı okuyamadı. Fotoğraftan plakayı yazın.</span></div>
+    <div class="okunamayan-liste">${liste.map(o => `
+      <div class="okunamayan-satir" data-okunamayan-id="${Number(o.id)}">
+        ${o.goruntu_yolu ? `<img class="okunamayan-gorsel thumb" data-goruntu-yolu="${escapeHtml(o.goruntu_yolu)}" alt="Geçiş anı">`
+          : '<div class="okunamayan-gorsel bos"><i class="bi bi-camera-video-off"></i></div>'}
+        <div class="okunamayan-bilgi"><b>${escapeHtml(o.kamera_id)}</b> · ${yonAdi(o.yon)}
+          <div class="small text-muted">${escapeHtml(tarihFormatla(o.zaman))}${o.kutu ? " · " + escapeHtml(o.kutu) : ""}</div></div>
+        ${islem ? `<form class="okunamayan-form" onsubmit="okunamayanCoz(event, ${Number(o.id)})">
+          <input type="text" class="form-control form-control-sm text-uppercase" maxlength="15" placeholder="Plaka" required aria-label="Plaka">
+          <button class="btn btn-sm btn-primary" type="submit">Kaydet</button>
+          <button class="btn btn-sm btn-outline-secondary" type="button" onclick="okunamayanYokSay(${Number(o.id)})" title="Yaya, bisiklet ya da sensör hatası">Araç değil</button>
+        </form>` : ""}
+      </div>`).join("")}</div>` : "";
+  alanlar.forEach(alan => {
+    // Görevli plaka yazarken listeyi yeniden çizip yazdığını silme.
+    if (alan.contains(document.activeElement) && document.activeElement.tagName === "INPUT") return;
+    alan.innerHTML = html;
+    alan.classList.toggle("d-none", !liste.length);
+    korumaliGorselleriYukle(alan);
+  });
+}
+
+async function okunamayanCoz(e, id) {
+  e.preventDefault();
+  const girdi = e.target.querySelector("input");
+  const btn = e.target.querySelector('button[type="submit"]');
+  btn.disabled = true;
+  try {
+    const r = await apiCagir(`/kapi-kutusu/okunamayanlar/${id}/coz`, {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ plaka_no: girdi.value }),
+    });
+    toastGoster(`Geçiş kaydedildi (${girdi.value.toLocaleUpperCase("tr-TR")})`, r.yetki_durumu === "kara_liste" ? "hata" : "basari");
+    girdi.blur();
+    await okunamayanlariYukle();
+    if (typeof _icerideListeleriniYenile === "function") _icerideListeleriniYenile();
+  } catch (err) {
+    toastGoster(err.message, "hata");
+    btn.disabled = false;
+  }
+}
+
+async function okunamayanYokSay(id) {
+  try {
+    await apiCagir(`/kapi-kutusu/okunamayanlar/${id}/yok-say`, { method: "POST" });
+    okunamayanlariYukle();
+  } catch (err) { toastGoster(err.message, "hata"); }
+}
+
+// Kutu yönetimi (yönetici, Bariyer sekmesi)
+let _kapiKutulari = [];
+
+function _kutuBariyerAdresi(k) {
+  return `http://${k.son_ip || "<kutu-ip>"}/ac?anahtar=${k.anahtar}`;
+}
+
+async function kapiKutulariniYukle() {
+  const tbody = document.getElementById("kapiKutusuTablo");
+  if (!tbody || !rolYeterli("yonetici")) return;
+  try {
+    _kapiKutulari = await apiCagir("/kapi-kutulari");
+  } catch (e) {
+    _yuklemeHatasi("Kapı kutuları", e);
+    return;
+  }
+  tbody.innerHTML = _kapiKutulari.length ? _kapiKutulari.map(k => {
+    const durum = !k.aktif ? '<span class="badge bg-secondary">Pasif</span>'
+      : k.cevrimici ? '<span class="badge bg-success">Çevrimiçi</span>'
+      : `<span class="badge bg-danger">Çevrimdışı</span>`;
+    const girisler = k.girisler.length ? k.girisler.map(g =>
+      `<div class="small">${Number(g.giris)} → ${escapeHtml(g.kamera)} (${g.yon === "cikis" ? "çıkış" : "giriş"})</div>`).join("")
+      : '<span class="small text-muted">Eşleme yok</span>';
+    return `<tr>
+      <td class="fw-semibold">${escapeHtml(k.ad)}</td>
+      <td>${durum}<div class="small text-muted">${k.son_gorulme ? escapeHtml(tarihFormatla(k.son_gorulme)) : "hiç bağlanmadı"}${k.son_ip ? " · " + escapeHtml(k.son_ip) : ""}${k.surum ? " · v" + escapeHtml(k.surum) : ""}</div></td>
+      <td>${girisler}</td>
+      <td class="text-end text-nowrap"><button type="button" class="btn btn-sm btn-outline-primary" onclick="kapiKutusuDuzenleAc(${Number(k.id)})"><i class="bi bi-pencil"></i> Düzenle</button></td>
+    </tr>`;
+  }).join("") : '<tr><td colspan="4" class="text-muted text-center py-3">Henüz kutu yok</td></tr>';
+}
+
+async function kapiKutusuDuzenleAc(id) {
+  const k = id ? _kapiKutulari.find(x => x.id === id) : null;
+  document.getElementById("kkId").value = k ? k.id : "";
+  document.getElementById("kkBaslik").textContent = k ? k.ad : "Yeni kapı kutusu";
+  document.getElementById("kkAd").value = k ? k.ad : "";
+  document.getElementById("kkAktif").checked = k ? k.aktif : true;
+  document.getElementById("kkSonuc").textContent = "";
+  const kameralar = (await _kameraListesiniGetir()).map(c => c.ad || c.id);
+  const esleme = {};
+  (k ? k.girisler : []).forEach(g => { esleme[g.giris] = g; });
+  document.getElementById("kkGirisler").innerHTML = [1, 2, 3, 4, 5, 6, 7, 8].map(n => {
+    const g = esleme[n];
+    const secenek = ['<option value="">— kullanılmıyor —</option>',
+      ...[...new Set([...kameralar, ...(g ? [g.kamera] : [])])].map(ad =>
+        `<option value="${escapeHtml(ad)}"${g && g.kamera === ad ? " selected" : ""}>${escapeHtml(ad)}</option>`)].join("");
+    return `<div class="row g-2 align-items-center mb-1">
+      <div class="col-2 small fw-semibold">Giriş ${n}</div>
+      <div class="col-6"><select class="form-select form-select-sm" data-kk-kamera="${n}" aria-label="Giriş ${n} kamerası">${secenek}</select></div>
+      <div class="col-4"><select class="form-select form-select-sm" data-kk-yon="${n}" aria-label="Giriş ${n} yönü">
+        <option value="giris"${g && g.yon === "giris" ? " selected" : ""}>Giriş şeridi</option>
+        <option value="cikis"${g && g.yon === "cikis" ? " selected" : ""}>Çıkış şeridi</option></select></div>
+    </div>`;
+  }).join("");
+  _kapiKutusuAnahtariGoster(k);
+  bootstrap.Modal.getOrCreateInstance(document.getElementById("kapiKutusuModal")).show();
+}
+
+function _kapiKutusuAnahtariGoster(k) {
+  const alan = document.getElementById("kkAnahtarAlani");
+  alan.classList.toggle("d-none", !k);
+  if (!k) return;
+  alan.innerHTML = `<div class="fw-semibold mb-1">Kutunun web sayfasına (http://${escapeHtml(k.son_ip || "<kutu-ip>")}/) yazılacaklar</div>
+    <div>PTS adresi: <code>${escapeHtml(location.origin)}</code></div>
+    <div>Kutu anahtarı: <code>${escapeHtml(k.anahtar)}</code></div>
+    <div class="mt-2 fw-semibold">Bariyer adresi <span class="fw-normal text-muted">(Bariyer ekle → HTTP modu → URL)</span></div>
+    <div><code>${escapeHtml(_kutuBariyerAdresi(k))}</code></div>
+    <button type="button" class="btn btn-sm btn-outline-danger mt-2" onclick="kapiKutusuAnahtarYenile(${Number(k.id)})">Anahtarı yenile</button>
+    <span class="text-muted ms-1">(yalnız anahtar başkasının eline geçtiyse; sonra kutuya ve bariyer adresine yeni anahtar yazılmalı)</span>`;
+}
+
+async function kapiKutusuKaydet() {
+  const id = document.getElementById("kkId").value;
+  const girisler = [];
+  document.querySelectorAll("[data-kk-kamera]").forEach(sec => {
+    if (!sec.value) return;
+    const n = Number(sec.dataset.kkKamera);
+    girisler.push({ giris: n, kamera: sec.value, yon: document.querySelector(`[data-kk-yon="${n}"]`).value });
+  });
+  const govde = { ad: document.getElementById("kkAd").value, aktif: document.getElementById("kkAktif").checked, girisler };
+  const sonuc = document.getElementById("kkSonuc");
+  try {
+    const k = await apiCagir(id ? `/kapi-kutulari/${id}` : "/kapi-kutulari", {
+      method: id ? "PUT" : "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(govde),
+    });
+    await kapiKutulariniYukle();
+    document.getElementById("kkId").value = k.id;
+    document.getElementById("kkBaslik").textContent = k.ad;
+    _kapiKutusuAnahtariGoster(k);
+    sonuc.className = "small mt-2 text-success";
+    sonuc.textContent = id ? "Kaydedildi." : "Kutu eklendi. Aşağıdaki bilgileri kutunun sayfasına yazın.";
+  } catch (err) {
+    sonuc.className = "small mt-2 text-danger";
+    sonuc.textContent = err.message;
+  }
+}
+
+async function kapiKutusuAnahtarYenile(id) {
+  if (!(await onayAl("Yeni anahtar üretilsin mi? Eski anahtarla çalışan kutu ve bariyer adresi yeni anahtar yazılana kadar çalışmaz."))) return;
+  try {
+    const k = await apiCagir(`/kapi-kutulari/${id}/anahtar-yenile`, { method: "POST" });
+    await kapiKutulariniYukle();
+    _kapiKutusuAnahtariGoster(k);
+  } catch (err) { toastGoster(err.message, "hata"); }
+}
+
+(function () {
+  const dugme = document.querySelector('[data-bs-target="#bariyer-sekme"]');
+  dugme?.addEventListener("shown.bs.tab", kapiKutulariniYukle);
 })();
 
 // ---------------------- KAÇIRILAN GEÇİŞLER (2026-10-26) ----------------------

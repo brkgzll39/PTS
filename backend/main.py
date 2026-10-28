@@ -9699,6 +9699,306 @@ def beklenen_ziyaretci_iptal(beklenen_id: int, db: Session = Depends(get_db),
 
 
 # ==================================================================
+# KAPI KUTUSU (2026-10-28) -- nizamiyedeki KC868-A8 kutusu (kapi_kutusu/).
+# Kutu, döngü dedektörünün "araç var" sinyalini bildirir. Sinyalden
+# _KUTU_ESLESME_BEKLEME sonra aynı kamerada (ya da aynı nizamiyenin aynı
+# yönünde) yakın zamanlı bir kamera kaydı yoksa geçiş "okunamadı" sayılır ve
+# görevli plakayı fotoğraftan yazar (ya da "araç değil" der). Bariyer açma için
+# yeni bir şey gerekmez: Bariyer ayarlarında HTTP modu, adres
+# http://<kutu-ip>/ac?anahtar=<anahtar>.
+# ==================================================================
+_KUTU_ESLESME_ONCE = timedelta(seconds=30)   # kamera kaydı sinyalden bu kadar önce olabilir
+_KUTU_ESLESME_SONRA = timedelta(seconds=20)  # ... ya da bu kadar sonra
+_KUTU_ESLESME_BEKLEME = timedelta(seconds=25)
+_KUTU_CEVRIMICI_SN = 90  # kutu 30 sn'de bir kalp atışı gönderir
+
+
+def _kutu_girisleri(k: models.KapiKutusu) -> list:
+    try:
+        return json.loads(k.girisler or "[]")
+    except (TypeError, ValueError):
+        return []
+
+
+def _kutu_cevap(k: models.KapiKutusu, anahtar_goster: bool = False) -> dict:
+    simdi = datetime.now()
+    cevap = {
+        "id": k.id, "ad": k.ad, "aktif": bool(k.aktif), "girisler": _kutu_girisleri(k),
+        "son_gorulme": k.son_gorulme.isoformat() if k.son_gorulme else None,
+        "cevrimici": bool(k.son_gorulme and (simdi - k.son_gorulme).total_seconds() <= _KUTU_CEVRIMICI_SN),
+        "son_ip": k.son_ip, "surum": k.surum, "giris_durumu": k.giris_durumu,
+    }
+    if anahtar_goster:
+        cevap["anahtar"] = k.anahtar
+    return cevap
+
+
+def _kutu_anlik_goruntu(kamera_adi: str, olay_id: int) -> Optional[str]:
+    """Kameranın çalışan pipeline'ından son kareyi diske yazar (yoksa None)."""
+    for kam in _kameralari_oku():
+        if kam.get("ad") != kamera_adi:
+            continue
+        pipeline = _aktif_pipelineler.get(kam.get("id"))
+        if not pipeline or not pipeline.calisiyor:
+            return None
+        try:
+            kare = pipeline.son_goruntu_al()
+        except Exception:
+            return None
+        if not kare:
+            return None
+        yol = os.path.join(GORUNTU_KLASORU, f"kutu_{olay_id}_{int(datetime.now().timestamp())}_{uuid.uuid4().hex[:6]}.jpg")
+        try:
+            with open(yol, "wb") as f:
+                f.write(kare)
+        except OSError as exc:
+            logger.warning("Kapı kutusu görüntüsü yazılamadı: %s", exc)
+            return None
+        return yol
+    return None
+
+
+@app.post("/kapi-kutusu/olay")
+def kapi_kutusu_olay(paket: schemas.KutuOlayPaketi, request: Request,
+                     x_kutu_anahtar: Optional[str] = Header(None), db: Session = Depends(get_db)):
+    """Kutudan gelen olaylar ve 30 sn'lik kalp atışı (kimlik: X-Kutu-Anahtar)."""
+    gelen = (x_kutu_anahtar or "").encode()
+    kutu = next((k for k in db.query(models.KapiKutusu).filter(models.KapiKutusu.aktif == True).all()  # noqa: E712
+                 if gelen and hmac.compare_digest(k.anahtar.encode(), gelen)), None)
+    if kutu is None:
+        raise HTTPException(401, "Geçersiz kutu anahtarı")
+    simdi = datetime.now()
+    kutu.son_gorulme = simdi
+    kutu.son_ip = request.client.host if request.client else None
+    kutu.surum = paket.surum or None
+    kutu.giris_durumu = paket.girisler
+    if kutu.son_acilis != paket.acilis:  # kutu yeniden başladı: numaralar baştan
+        kutu.son_acilis = paket.acilis
+        kutu.son_sira = 0
+    eslemeler = {int(g.get("giris", 0)): g for g in _kutu_girisleri(kutu)}
+    yeni_olaylar = []
+    for o in sorted(paket.olaylar, key=lambda x: x.sira):
+        if o.sira <= (kutu.son_sira or 0):
+            continue  # yanıtı kaybolup yeniden gönderilen olay
+        kutu.son_sira = o.sira
+        zaman = simdi - timedelta(milliseconds=min(o.once_ms, 7 * 86400 * 1000))
+        if o.tur == "giris" and o.durum == "var" and o.giris in eslemeler:
+            g = eslemeler[o.giris]
+            olay = models.KutuOlayi(kutu_id=kutu.id, giris_no=o.giris, kamera_id=g["kamera"], yon=g["yon"], zaman=zaman)
+            db.add(olay)
+            yeni_olaylar.append((olay, o.once_ms))
+        elif o.tur == "buton":
+            _denetim_kaydet(db, f"kutu:{kutu.ad}", "kutu_buton_ac", f"{kutu.ad}: görevli düğmesiyle bariyer açıldı ({zaman:%d.%m.%Y %H:%M:%S})")
+    if paket.dusen:
+        logger.warning("Kapı kutusu %s: ağ yokken %d olay sığmadığı için atıldı", kutu.ad, paket.dusen)
+    db.commit()
+    for olay, once_ms in yeni_olaylar:
+        if once_ms <= 5000:  # birikmiş eski olayın "şimdiki" karesi anlamsız
+            olay.goruntu_yolu = _kutu_anlik_goruntu(olay.kamera_id, olay.id)
+    if yeni_olaylar:
+        db.commit()
+    return {"ok": True}
+
+
+def _kutu_olaylarini_eslestir(db: Session, simdi: Optional[datetime] = None) -> dict:
+    simdi = simdi or datetime.now()
+    O, K = models.KutuOlayi, models.Kayit
+    bekleyenler = (db.query(O).filter(O.durum == "bekliyor", O.zaman <= simdi - _KUTU_ESLESME_BEKLEME)
+                   .order_by(O.zaman, O.id).all())
+    sayac = {"eslesti": 0, "okunamadi": 0}
+    for olay in bekleyenler:
+        bas, son = olay.zaman - _KUTU_ESLESME_ONCE, olay.zaman + _KUTU_ESLESME_SONRA
+        kullanilmis = {i for (i,) in db.query(O.eslesen_kayit_id).filter(
+            O.eslesen_kayit_id.isnot(None), O.zaman >= bas - timedelta(minutes=2), O.zaman <= son + timedelta(minutes=2)).all()}
+        nizamiye = excel_export.nizamiye_grubu(olay.kamera_id)
+        adaylar = [k for k in db.query(K).filter(K.tarih_saat >= bas, K.tarih_saat <= son).all()
+                   if k.id not in kullanilmis and (k.kamera_id == olay.kamera_id or (
+                       nizamiye and excel_export.nizamiye_grubu(k.kamera_id or "") == nizamiye and k.yon == olay.yon))]
+        if adaylar:
+            en_yakin = min(adaylar, key=lambda k: abs((k.tarih_saat - olay.zaman).total_seconds()))
+            olay.durum, olay.eslesen_kayit_id = "eslesti", en_yakin.id
+            if olay.goruntu_yolu:  # kamera kaydının kendi görseli var
+                try:
+                    os.remove(olay.goruntu_yolu)
+                except OSError:
+                    pass
+                olay.goruntu_yolu = None
+            sayac["eslesti"] += 1
+        else:
+            olay.durum = "okunamadi"
+            sayac["okunamadi"] += 1
+            logger.info("Kapı kutusu: %s %s geçişi kamerada okunmadı (olay #%d)", olay.kamera_id, olay.yon, olay.id)
+        db.commit()
+    return sayac
+
+
+async def _kutu_eslestirme_dongu() -> None:
+    def tur():
+        db = SessionLocal()
+        try:
+            _kutu_olaylarini_eslestir(db)
+        finally:
+            db.close()
+    while True:
+        try:
+            await asyncio.to_thread(tur)
+        except Exception as exc:
+            logger.error("[kapi-kutusu] Eşleştirme hatası: %s", exc, exc_info=True)
+        await asyncio.sleep(5)
+
+
+@app.on_event("startup")
+async def _kutu_eslestirmeyi_baslat():
+    asyncio.ensure_future(_kutu_eslestirme_dongu())
+
+
+def _kutu_olayi_cevap(o: models.KutuOlayi, kutu_adlari: dict) -> dict:
+    return {
+        "id": o.id, "kutu": kutu_adlari.get(o.kutu_id), "giris_no": o.giris_no, "kamera_id": o.kamera_id,
+        "yon": o.yon, "zaman": o.zaman.isoformat(), "durum": o.durum, "goruntu_yolu": o.goruntu_yolu,
+        "eslesen_kayit_id": o.eslesen_kayit_id, "cozen": o.cozen,
+        "cozum_zamani": o.cozum_zamani.isoformat() if o.cozum_zamani else None, "cozum_kayit_id": o.cozum_kayit_id,
+    }
+
+
+@app.get("/kapi-kutusu/okunamayanlar")
+def kutu_okunamayanlar(durum: str = Query("okunamadi", pattern="^(okunamadi|tumu)$"), gun: int = Query(7, ge=1, le=90),
+                       db: Session = Depends(get_db), kullanici: models.Kullanici = Depends(_personel_girisi_gerekli)):
+    """Kamerada okunmamış geçişler. `tumu`: çözülen/yok sayılanlar da (son `gun` gün)."""
+    O = models.KutuOlayi
+    sorgu = db.query(O).filter(O.zaman >= datetime.now() - timedelta(days=gun))
+    sorgu = sorgu.filter(O.durum == "okunamadi") if durum == "okunamadi" else sorgu.filter(
+        O.durum.in_(("okunamadi", "cozuldu", "yok_sayildi")))
+    izinli = _kullanicinin_izinli_kamera_adlari(kullanici)
+    kutu_adlari = {k.id: k.ad for k in db.query(models.KapiKutusu).all()}
+    return [_kutu_olayi_cevap(o, kutu_adlari) for o in sorgu.order_by(desc(O.zaman)).limit(300).all()
+            if izinli is None or o.kamera_id in izinli]
+
+
+def _kutu_olayi_al(db: Session, olay_id: int, kullanici: models.Kullanici) -> models.KutuOlayi:
+    _rol_dogrula(kullanici, ROL_YONETICI, ROL_OPERATOR, ROL_GUVENLIK)
+    o = db.query(models.KutuOlayi).filter(models.KutuOlayi.id == olay_id).first()
+    if not o:
+        raise HTTPException(404, "Geçiş bulunamadı")
+    if o.durum != "okunamadi":
+        raise HTTPException(409, "Bu geçiş zaten işlenmiş")
+    izinli = _kullanicinin_izinli_kamera_adlari(kullanici)
+    if izinli is not None and o.kamera_id not in izinli:
+        raise HTTPException(403, "Bu kameraya erişiminiz yok")
+    return o
+
+
+@app.post("/kapi-kutusu/okunamayanlar/{olay_id}/coz")
+def kutu_okunamayan_coz(olay_id: int, istek: schemas.KutuOlayiCoz, db: Session = Depends(get_db),
+                        kullanici: models.Kullanici = Depends(_personel_girisi_gerekli)):
+    """Görevli plakayı yazar: geçişin olduğu ana tarihli bir geçiş kaydı açılır.
+    Bu geçmiş bir olay olduğu için LED'e yazılmaz, bariyer açılmaz, alarm üretilmez."""
+    o = _kutu_olayi_al(db, olay_id, kullanici)
+    plaka = re.sub(r"[^A-Za-z0-9 ]", "", istek.plaka_no).strip().upper()
+    yetki, kisi_id, kisi_tip = _plaka_yetki_kontrol(db, plaka, referans_zaman=o.zaman)
+    beklenen = _beklenen_ziyaretci_bul(db, plaka, simdi=o.zaman) if yetki in ("yetkisiz", "suresi_dolmus") else None
+    if beklenen is not None:
+        yetki = "ziyaretci_onayli"
+    not_metni = (istek.not_metni or "").strip() or (_beklenen_ziyaretci_notu(beklenen) if beklenen else None)
+    kayit = models.Kayit(
+        plaka_no=plaka, kamera_id=o.kamera_id, yon=o.yon, tarih_saat=o.zaman, goruntu_yolu=o.goruntu_yolu,
+        yetki_durumu=yetki, kisi_id=kisi_id, kisi_tip_anlik=kisi_tip, manuel_giris=True,
+        not_metni=not_metni, misafir_adi=beklenen.misafir_adi if beklenen else None,
+        duzenleyen=kullanici.kullanici_adi, duzenleme_tarihi=datetime.now(),
+    )
+    db.add(kayit)
+    db.flush()
+    o.durum, o.cozen, o.cozum_zamani, o.cozum_kayit_id = "cozuldu", kullanici.kullanici_adi, datetime.now(), kayit.id
+    db.commit()
+    _denetim_kaydet(db, kullanici.kullanici_adi, "kutu_okunamayan_coz",
+                    f"Geçiş #{o.id} ({o.kamera_id}, {o.zaman:%d.%m.%Y %H:%M:%S}) -> {plaka}, kayıt #{kayit.id}")
+    return {"ok": True, "kayit_id": kayit.id, "yetki_durumu": yetki}
+
+
+@app.post("/kapi-kutusu/okunamayanlar/{olay_id}/yok-say")
+def kutu_okunamayan_yok_say(olay_id: int, db: Session = Depends(get_db),
+                            kullanici: models.Kullanici = Depends(_personel_girisi_gerekli)):
+    """Araç değil (yaya, bisiklet, sensör hatası) ya da zaten kaydedilmiş."""
+    o = _kutu_olayi_al(db, olay_id, kullanici)
+    o.durum, o.cozen, o.cozum_zamani = "yok_sayildi", kullanici.kullanici_adi, datetime.now()
+    db.commit()
+    _denetim_kaydet(db, kullanici.kullanici_adi, "kutu_okunamayan_yok_say", f"Geçiş #{o.id} ({o.kamera_id}, {o.zaman:%d.%m.%Y %H:%M:%S})")
+    return {"ok": True}
+
+
+@app.get("/kapi-kutulari")
+def kapi_kutulari(db: Session = Depends(get_db), kullanici: models.Kullanici = Depends(_personel_girisi_gerekli)):
+    _rol_dogrula(kullanici, ROL_YONETICI)
+    return [_kutu_cevap(k, anahtar_goster=True) for k in db.query(models.KapiKutusu).order_by(models.KapiKutusu.ad).all()]
+
+
+def _kutu_ayarla(k: models.KapiKutusu, istek: schemas.KapiKutusuOlustur) -> None:
+    k.ad = istek.ad
+    k.aktif = istek.aktif
+    k.girisler = json.dumps([g.model_dump() for g in sorted(istek.girisler, key=lambda g: g.giris)], ensure_ascii=False)
+
+
+@app.post("/kapi-kutulari")
+def kapi_kutusu_ekle(istek: schemas.KapiKutusuOlustur, db: Session = Depends(get_db),
+                     kullanici: models.Kullanici = Depends(_personel_girisi_gerekli)):
+    _rol_dogrula(kullanici, ROL_YONETICI)
+    if db.query(models.KapiKutusu).filter(models.KapiKutusu.ad == istek.ad).first():
+        raise HTTPException(409, "Bu adla bir kutu zaten var")
+    k = models.KapiKutusu(anahtar=secrets.token_hex(16))
+    _kutu_ayarla(k, istek)
+    db.add(k)
+    db.commit()
+    _denetim_kaydet(db, kullanici.kullanici_adi, "kapi_kutusu_ekle", f"{k.ad} (id={k.id})")
+    db.refresh(k)
+    return _kutu_cevap(k, anahtar_goster=True)
+
+
+@app.put("/kapi-kutulari/{kutu_id}")
+def kapi_kutusu_guncelle(kutu_id: int, istek: schemas.KapiKutusuOlustur, db: Session = Depends(get_db),
+                         kullanici: models.Kullanici = Depends(_personel_girisi_gerekli)):
+    _rol_dogrula(kullanici, ROL_YONETICI)
+    k = db.query(models.KapiKutusu).filter(models.KapiKutusu.id == kutu_id).first()
+    if not k:
+        raise HTTPException(404, "Kutu bulunamadı")
+    if db.query(models.KapiKutusu).filter(models.KapiKutusu.ad == istek.ad, models.KapiKutusu.id != kutu_id).first():
+        raise HTTPException(409, "Bu adla bir kutu zaten var")
+    _kutu_ayarla(k, istek)
+    db.commit()
+    _denetim_kaydet(db, kullanici.kullanici_adi, "kapi_kutusu_guncelle", f"{k.ad} (id={k.id})")
+    db.refresh(k)
+    return _kutu_cevap(k, anahtar_goster=True)
+
+
+@app.post("/kapi-kutulari/{kutu_id}/anahtar-yenile")
+def kapi_kutusu_anahtar_yenile(kutu_id: int, db: Session = Depends(get_db),
+                               kullanici: models.Kullanici = Depends(_personel_girisi_gerekli)):
+    """Anahtar ele geçtiyse: yeni anahtar kutunun sayfasına ve bariyer adresine de yazılmalı."""
+    _rol_dogrula(kullanici, ROL_YONETICI)
+    k = db.query(models.KapiKutusu).filter(models.KapiKutusu.id == kutu_id).first()
+    if not k:
+        raise HTTPException(404, "Kutu bulunamadı")
+    k.anahtar = secrets.token_hex(16)
+    db.commit()
+    _denetim_kaydet(db, kullanici.kullanici_adi, "kapi_kutusu_anahtar_yenile", f"{k.ad} (id={k.id})")
+    db.refresh(k)
+    return _kutu_cevap(k, anahtar_goster=True)
+
+
+@app.delete("/kapi-kutulari/{kutu_id}")
+def kapi_kutusu_sil(kutu_id: int, db: Session = Depends(get_db),
+                    kullanici: models.Kullanici = Depends(_personel_girisi_gerekli)):
+    """Kutu pasif yapılır (geçmiş olayları ona bağlı kalır)."""
+    _rol_dogrula(kullanici, ROL_YONETICI)
+    k = db.query(models.KapiKutusu).filter(models.KapiKutusu.id == kutu_id).first()
+    if not k:
+        raise HTTPException(404, "Kutu bulunamadı")
+    k.aktif = False
+    db.commit()
+    _denetim_kaydet(db, kullanici.kullanici_adi, "kapi_kutusu_pasif", f"{k.ad} (id={k.id})")
+    return {"ok": True}
+
+
+# ==================================================================
 # NÖBET DEFTERİ -- vardiya devir-teslim notları (2026-10-12, kullanıcı isteği)
 # ==================================================================
 # Kararlar (kullanıcı): notları TÜM personel görür, her not bir kapı etiketi

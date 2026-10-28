@@ -807,6 +807,67 @@ class BeklenenZiyaretciOlustur(BaseModel):
         return self
 
 
+class KutuOlayGirdi(BaseModel):
+    sira: int = Field(ge=0)
+    tur: Literal["giris", "buton", "acma"]
+    giris: int = Field(ge=0, le=8)
+    durum: Literal["var", "yok"]
+    once_ms: int = Field(ge=0)
+    kaynak: Optional[str] = Field(None, max_length=10)
+
+
+class KutuOlayPaketi(BaseModel):
+    """POST /kapi-kutusu/olay gövdesi (kapi_kutusu/src/mantik.cpp::olayJson)."""
+    kutu: str = Field("", max_length=60)
+    surum: str = Field("", max_length=20)
+    acilis: int = Field(ge=0)
+    calisma_ms: int = Field(0, ge=0)
+    dusen: int = Field(0, ge=0)
+    girisler: int = Field(0, ge=0, le=255)
+    olaylar: List[KutuOlayGirdi] = Field(default_factory=list, max_length=50)
+
+
+class KutuGirisEslemesi(BaseModel):
+    giris: int = Field(ge=1, le=8)
+    kamera: str = Field(min_length=1, max_length=64)
+    yon: Literal["giris", "cikis"]
+
+
+class KapiKutusuOlustur(BaseModel):
+    ad: str = Field(min_length=1, max_length=60)
+    girisler: List[KutuGirisEslemesi] = Field(default_factory=list, max_length=8)
+    aktif: bool = True
+
+    @field_validator("ad")
+    @classmethod
+    def ad_temizle(cls, v):
+        v = v.strip()
+        if not v:
+            raise ValueError("Kutu adı boş olamaz")
+        return v
+
+    @field_validator("girisler")
+    @classmethod
+    def tekrar_yok(cls, v):
+        nolar = [g.giris for g in v]
+        if len(nolar) != len(set(nolar)):
+            raise ValueError("Aynı giriş iki kez eşlenemez")
+        return v
+
+
+class KutuOlayiCoz(BaseModel):
+    plaka_no: str = Field(min_length=2, max_length=15)
+    not_metni: Optional[str] = Field(None, max_length=500)
+
+    @field_validator("plaka_no")
+    @classmethod
+    def plaka_kontrol(cls, v):
+        v = plaka_normalize(v)
+        if len(v.replace(" ", "")) < 2:
+            raise ValueError("Geçerli bir plaka girin")
+        return v
+
+
 class IceridenCikar(BaseModel):
     """POST /araclar/iceriden-cikar (ve /geri-al): giriş kaydı id'leri."""
     kayit_idleri: List[int] = Field(min_length=1, max_length=1000)

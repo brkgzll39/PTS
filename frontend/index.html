@@ -25,6 +25,32 @@
 <div id="toastKonteyneri" class="toast-container position-fixed top-0 end-0 p-3" style="z-index:9999"></div>
 
 <!-- Plaka analiz modal -->
+<!-- KAPI KUTUSU düzenleme (2026-10-28, bkz. app.js::kapiKutusuDuzenleAc) -->
+<div class="modal fade" id="kapiKutusuModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-lg modal-dialog-centered modal-dialog-scrollable"><div class="modal-content">
+    <div class="modal-header"><h5 class="modal-title"><i class="bi bi-cpu me-2"></i><span id="kkBaslik">Kapı kutusu</span></h5>
+      <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Kapat"></button></div>
+    <div class="modal-body">
+      <input type="hidden" id="kkId">
+      <div class="row g-2 mb-2">
+        <div class="col-md-8"><label class="form-label small" for="kkAd">Kutu adı</label>
+          <input type="text" class="form-control" id="kkAd" maxlength="60" placeholder="Ana Kapı Kutusu"></div>
+        <div class="col-md-4 d-flex align-items-end"><div class="form-check mb-2">
+          <input class="form-check-input" type="checkbox" id="kkAktif" checked><label class="form-check-label" for="kkAktif">Aktif</label></div></div>
+      </div>
+      <div class="small fw-semibold mb-1">Girişler: hangi giriş hangi kameranın şeridindeki sensör?</div>
+      <div class="small text-muted mb-2">Eşlenmeyen girişler (ör. görevli düğmesi) geçiş sayılmaz.</div>
+      <div id="kkGirisler"></div>
+      <div id="kkAnahtarAlani" class="d-none mt-3 p-2 border rounded bg-light small"></div>
+      <div id="kkSonuc" class="small mt-2"></div>
+    </div>
+    <div class="modal-footer">
+      <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Kapat</button>
+      <button type="button" class="btn btn-primary" onclick="kapiKutusuKaydet()"><i class="bi bi-save me-1"></i>Kaydet</button>
+    </div>
+  </div></div>
+</div>
+
 <!-- İÇERİYİ TEMİZLE (2026-10-26): çıkışı kameraya okunmayıp günlerce "içeride"
      görünen araçları elle "çıktı" sayma (bkz. app.js::icerideTemizleAc,
      main.py::araclar_iceriden_cikar). Geçiş kayıtları silinmez. -->
@@ -814,6 +840,7 @@
   <div class="kapi-icerik" id="kapiIcerik">
     <!-- Kapı -->
     <div id="kapiSekme_kapi">
+      <div class="okunamayan-alan okunamayan-kapi d-none"></div>
       <div class="kapi-izgara">
         <div class="kapi-kart kapi-son" id="kapiSonKart"></div>
         <div class="kapi-kart kapi-liste">
@@ -1202,6 +1229,7 @@
          görevli onaylı ziyaretçi girişleri) + son 24 saatin onaylanmamış
          girişleri. Kurallar: main.py::_iceride_durumu_hesapla. -->
     <div class="tab-pane fade" id="iceride-sekme">
+      <div class="okunamayan-alan d-none"></div>
       <div class="card mb-3">
         <div class="card-header d-flex flex-wrap align-items-center gap-2">
           <span><i class="bi bi-car-front me-1"></i>İçerideki Araçlar</span>
@@ -1984,6 +2012,23 @@
               </table>
             </div>
           </div>
+        </div>
+      </div>
+      <!-- KAPI KUTULARI (2026-10-28): nizamiyedeki KC868-A8 kutuları (kapi_kutusu/ yazılımı).
+           Bkz. app.js::kapiKutulariniYukle, main.py "KAPI KUTUSU". -->
+      <div class="card mt-3" data-rol-min="yonetici" data-rol-davranis="gizle">
+        <div class="card-header d-flex align-items-center gap-2">
+          <span><i class="bi bi-cpu me-1"></i>Kapı Kutuları</span>
+          <button type="button" class="btn btn-sm btn-primary ms-auto" onclick="kapiKutusuDuzenleAc(null)"><i class="bi bi-plus-lg"></i> Yeni kutu</button>
+        </div>
+        <div class="card-body p-0">
+          <div class="table-responsive"><table class="table table-sm align-middle mb-0">
+            <thead class="table-light"><tr><th>Kutu</th><th>Durum</th><th>Girişler</th><th></th></tr></thead>
+            <tbody id="kapiKutusuTablo"><tr><td colspan="4" class="text-muted text-center py-3">Yükleniyor…</td></tr></tbody>
+          </table></div>
+          <div class="small text-muted px-3 py-2">Kutu, yerdeki döngü dedektörünün "araç var" sinyalini bildirir. Kamera o aracı
+            okumadıysa geçiş <b>İçerideki Araçlar</b> ekranında ve Kapı Modunda "okunamayan geçiş" olarak görevliye düşer.
+            Bariyeri kutuyla açmak için yukarıdan HTTP modunda bir bariyer ekleyip adresine kutunun "Bariyer adresi"ni yazın.</div>
         </div>
       </div>
     </div>

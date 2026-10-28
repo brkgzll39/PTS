@@ -8297,3 +8297,90 @@ def test_kacirilan_gecisler_ardisik_giris_ve_cikislari_sayar(client, operator_he
     plakalar = {(o["plaka_no"], o["tur"]) for o in veri["ornekler"]}
     assert {("34 KCR 01", "cikis"), ("34 KCR 02", "giris"), ("34 KCR 05", "cikis")} <= plakalar
     assert not any(p in ("34 KCR 03", "34 KCR 04") for p, _ in plakalar)
+
+
+# ---------------- Kapı kutusu (2026-10-28) ----------------
+
+def _kutu_olustur(client, header, ad="Test Kutu", girisler=None):
+    r = client.post("/kapi-kutulari", json={"ad": ad, "girisler": girisler if girisler is not None else [
+        {"giris": 1, "kamera": "Kutu Kapi Cikis", "yon": "cikis"}]}, headers=header)
+    assert r.status_code == 200, r.text
+    return r.json()
+
+
+def _kutu_gonder(client, anahtar, olaylar, acilis=1):
+    return client.post("/kapi-kutusu/olay", headers={"X-Kutu-Anahtar": anahtar},
+                       json={"kutu": "k", "surum": "1.0.0", "acilis": acilis, "girisler": 1, "olaylar": olaylar})
+
+
+def test_kutu_anahtari_ve_kalp_atisi(client, yetkili_header):
+    k = _kutu_olustur(client, yetkili_header, ad="Kalp Kutu")
+    assert len(k["anahtar"]) == 32 and k["cevrimici"] is False
+    assert _kutu_gonder(client, "yanlis", []).status_code == 401
+    assert client.post("/kapi-kutusu/olay", json={"acilis": 1}).status_code == 401
+    assert _kutu_gonder(client, k["anahtar"], []).status_code == 200
+    liste = {x["id"]: x for x in client.get("/kapi-kutulari", headers=yetkili_header).json()}
+    assert liste[k["id"]]["cevrimici"] is True and liste[k["id"]]["surum"] == "1.0.0"
+
+
+def test_kutu_gecisi_kamera_kaydiyla_eslesir_ya_da_okunamadi_olur(client, yetkili_header, operator_header):
+    from backend.database import SessionLocal
+    k = _kutu_olustur(client, yetkili_header, ad="Eslesme Kutu")
+    # 60 sn önce kamera bu çıkışı okumuş; kutu da 55 sn önce araç gördü -> eşleşir
+    kid = _kayit_ekle_db("34 KTU 01", "cikis", kamera="Kutu Kapi Cikis", once=timedelta(seconds=60))
+    assert _kutu_gonder(client, k["anahtar"], [
+        {"sira": 1, "tur": "giris", "giris": 1, "durum": "var", "once_ms": 55000},
+        {"sira": 2, "tur": "giris", "giris": 1, "durum": "yok", "once_ms": 52000},  # bırakma geçiş sayılmaz
+        {"sira": 3, "tur": "giris", "giris": 2, "durum": "var", "once_ms": 50000},  # eşlenmemiş giriş
+        # 40 sn önce ikinci araç: kamera okumadı
+        {"sira": 4, "tur": "giris", "giris": 1, "durum": "var", "once_ms": 40000},
+    ]).status_code == 200
+    # Aynı paket tekrar gelirse (yanıt kaybolduysa) çift kayıt olmaz
+    assert _kutu_gonder(client, k["anahtar"], [{"sira": 4, "tur": "giris", "giris": 1, "durum": "var", "once_ms": 41000}]).status_code == 200
+    db = SessionLocal()
+    try:
+        pts_main._kutu_olaylarini_eslestir(db)
+    finally:
+        db.close()
+    okunamayan = [o for o in client.get("/kapi-kutusu/okunamayanlar", headers=operator_header).json() if o["kutu"] == "Eslesme Kutu"]
+    assert len(okunamayan) == 1 and okunamayan[0]["kamera_id"] == "Kutu Kapi Cikis" and okunamayan[0]["yon"] == "cikis"
+    db = SessionLocal()
+    try:
+        from backend import models as _m
+        olaylar = db.query(_m.KutuOlayi).filter(_m.KutuOlayi.kutu_id == k["id"]).all()
+        assert sorted(o.durum for o in olaylar) == ["eslesti", "okunamadi"]
+        assert next(o for o in olaylar if o.durum == "eslesti").eslesen_kayit_id == kid
+    finally:
+        db.close()
+
+    # Görevli plakayı yazar: geçiş anına tarihli kayıt açılır, bariyer/LED tetiklenmez
+    oid = okunamayan[0]["id"]
+    r = client.post(f"/kapi-kutusu/okunamayanlar/{oid}/coz", json={"plaka_no": "34 ktu 02"}, headers=operator_header)
+    assert r.status_code == 200, r.text
+    kayit = client.get(f"/kayitlar/{r.json()['kayit_id']}", headers=operator_header).json()
+    assert (kayit["plaka_no"], kayit["yon"], kayit["kamera_id"]) == ("34 KTU 02", "cikis", "Kutu Kapi Cikis")
+    assert abs((datetime.now() - datetime.fromisoformat(kayit["tarih_saat"])).total_seconds() - 40) < 10
+    assert client.post(f"/kapi-kutusu/okunamayanlar/{oid}/coz", json={"plaka_no": "34 KTU 02"}, headers=operator_header).status_code == 409
+    assert not any(o["id"] == oid for o in client.get("/kapi-kutusu/okunamayanlar", headers=operator_header).json())
+
+
+def test_kutu_yok_say_ve_yetkiler(client, yetkili_header, operator_header, izleyici_header):
+    from backend.database import SessionLocal
+    k = _kutu_olustur(client, yetkili_header, ad="Yetki Kutu")
+    _kutu_gonder(client, k["anahtar"], [{"sira": 1, "tur": "giris", "giris": 1, "durum": "var", "once_ms": 90000}])
+    db = SessionLocal()
+    try:
+        pts_main._kutu_olaylarini_eslestir(db)
+    finally:
+        db.close()
+    oid = next(o["id"] for o in client.get("/kapi-kutusu/okunamayanlar", headers=operator_header).json() if o["kutu"] == "Yetki Kutu")
+    assert client.post(f"/kapi-kutusu/okunamayanlar/{oid}/yok-say", headers=izleyici_header).status_code == 403
+    assert client.post(f"/kapi-kutusu/okunamayanlar/{oid}/yok-say", headers=operator_header).status_code == 200
+    assert client.get("/kapi-kutulari", headers=operator_header).status_code == 403
+    assert client.post("/kapi-kutulari", json={"ad": "Yetki Kutu"}, headers=yetkili_header).status_code == 409
+    assert client.post("/kapi-kutulari", json={"ad": "Cift", "girisler": [
+        {"giris": 1, "kamera": "A", "yon": "giris"}, {"giris": 1, "kamera": "B", "yon": "cikis"}]}, headers=yetkili_header).status_code == 422
+    yeni = client.post(f"/kapi-kutulari/{k['id']}/anahtar-yenile", headers=yetkili_header).json()["anahtar"]
+    assert yeni != k["anahtar"] and _kutu_gonder(client, k["anahtar"], []).status_code == 401
+    assert client.delete(f"/kapi-kutulari/{k['id']}", headers=yetkili_header).status_code == 200
+    assert _kutu_gonder(client, yeni, []).status_code == 401  # pasif kutu kabul edilmez

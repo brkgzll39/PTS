@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Float, DateTime, Boolean, ForeignKey, Text, UniqueConstraint, Date
+from sqlalchemy import BigInteger, Column, Integer, String, Float, DateTime, Boolean, ForeignKey, Text, UniqueConstraint, Date
 from sqlalchemy.orm import relationship
 from datetime import datetime
 
@@ -574,6 +574,51 @@ class BeklenenZiyaretci(Base):
     ilk_gelis_kamera = Column(String(64), nullable=True)
     iptal = Column(Boolean, default=False)
     iptal_eden = Column(String(80), nullable=True)
+
+
+class KapiKutusu(Base):
+    """Nizamiyedeki "PTS Kapı Kutusu" (2026-10-28, kapi_kutusu/ yazılımı, KC868-A8).
+    Kutu, yerdeki döngü dedektörünün "araç var" sinyalini POST /kapi-kutusu/olay
+    ile bildirir; PTS bunu kamera okumasıyla eşleştirir, eşleşmezse "okunamayan
+    geçiş" açar (bkz. main.py "KAPI KUTUSU"). Bariyer açma, mevcut Bariyer
+    ayarlarının HTTP moduyla kutunun /ac adresine yapılır.
+
+    `girisler`: JSON dizi [{"giris": 1, "kamera": "Ana Kapı Çıkış", "yon": "cikis"}];
+    yalnız burada eşlenen girişler geçiş sayılır (diğerleri yok sayılır)."""
+    __tablename__ = "kapi_kutulari"
+
+    id = Column(Integer, primary_key=True, index=True)
+    ad = Column(String(60), nullable=False, unique=True)
+    anahtar = Column(String(64), nullable=False)
+    girisler = Column(Text, nullable=True)
+    aktif = Column(Boolean, default=True)
+    son_gorulme = Column(DateTime, nullable=True)
+    son_ip = Column(String(45), nullable=True)
+    surum = Column(String(20), nullable=True)
+    giris_durumu = Column(Integer, nullable=True)   # son bildirilen giriş bit maskesi
+    son_acilis = Column(BigInteger, nullable=True)  # kutunun açılış kimliği (yeniden başlayınca değişir)
+    son_sira = Column(Integer, default=0)           # bu açılışta işlenen son olay numarası
+    olusturma_tarihi = Column(DateTime, default=datetime.now)
+
+
+class KutuOlayi(Base):
+    """Kapı kutusunun bildirdiği bir araç geçişi ve kamera okumasıyla eşleşmesi.
+    durum: bekliyor (eşleşme zamanı gelmedi) | eslesti | okunamadi | cozuldu |
+    yok_sayildi. Okunamayan geçişin anlık kamera görüntüsü `goruntu_yolu`da."""
+    __tablename__ = "kutu_olaylari"
+
+    id = Column(Integer, primary_key=True, index=True)
+    kutu_id = Column(Integer, ForeignKey("kapi_kutulari.id"), nullable=False, index=True)
+    giris_no = Column(Integer, nullable=False)
+    kamera_id = Column(String(64), nullable=False)
+    yon = Column(String(10), nullable=False)
+    zaman = Column(DateTime, nullable=False, index=True)
+    durum = Column(String(15), nullable=False, default="bekliyor", index=True)
+    eslesen_kayit_id = Column(Integer, nullable=True, index=True)
+    goruntu_yolu = Column(String(255), nullable=True)
+    cozen = Column(String(80), nullable=True)
+    cozum_zamani = Column(DateTime, nullable=True)
+    cozum_kayit_id = Column(Integer, nullable=True)
 
 
 class NobetNotuOkuma(Base):

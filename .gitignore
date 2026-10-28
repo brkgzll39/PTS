@@ -28,3 +28,6 @@ lisans_ozel_anahtar.key
 *.key
 # HTTPS sertifikaları (2026-10-22) -- özel anahtarlar içerir
 sertifika/
+
+# Kapı kutusu derleme çıktısı
+kapi_kutusu/.pio/

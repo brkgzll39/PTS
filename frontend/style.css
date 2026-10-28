@@ -705,3 +705,17 @@ table td, table th {
   .nobet-kayan .nk-yeni { animation: none; }
 }
 .nobet-kayan .nk-beklenen { background: #0d6efd; color: #fff; border-radius: 4px; padding: .05rem .35rem; margin-right: .4rem; font-size: .7rem; font-weight: 700; }
+
+/* Okunamayan geçişler (kapı kutusu, 2026-10-28, app.js::okunamayanlariYukle) */
+.okunamayan-alan { background: #fff1f2; border: 1px solid #f5b5bd; border-left: 6px solid #c8102e; border-radius: 10px; padding: .6rem .8rem; margin-bottom: .9rem; }
+.okunamayan-baslik { color: #9f0c23; font-weight: 700; margin-bottom: .4rem; display: flex; flex-wrap: wrap; gap: .5rem; align-items: baseline; }
+.okunamayan-baslik .small { color: #7a3540; }
+.okunamayan-liste { display: grid; gap: .5rem; }
+.okunamayan-satir { display: flex; flex-wrap: wrap; align-items: center; gap: .7rem; background: #fff; border-radius: 8px; padding: .4rem; }
+.okunamayan-gorsel { width: 120px; height: 68px; object-fit: cover; border-radius: 6px; cursor: zoom-in; background: #e5e7eb; }
+.okunamayan-gorsel.bos { display: flex; align-items: center; justify-content: center; color: #9ca3af; font-size: 1.4rem; cursor: default; }
+.okunamayan-bilgi { flex: 1 1 160px; min-width: 0; }
+.okunamayan-form { display: flex; gap: .35rem; flex: 1 1 300px; }
+.okunamayan-form input { max-width: 11rem; }
+.okunamayan-kapi { margin: 0 0 14px; font-size: 1.05rem; }
+.okunamayan-kapi .okunamayan-gorsel { width: 160px; height: 90px; }

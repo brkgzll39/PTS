@@ -1,0 +1,53 @@
+name: Kapi Kutusu yazilimi
+
+# 2026-10-28: KC868-A8 kapı kutusu yazılımını (kapi_kutusu/) derler ve
+# mantık testlerini çalıştırır. Çıktı (firmware.bin) "kapi-kutusu" artifact'i
+# olarak yüklenir; karta USB ile ya da ESP Flash Download Tool ile yüklenir.
+on:
+  push:
+    paths: ["kapi_kutusu/**", ".github/workflows/kapi-kutusu.yml"]
+  workflow_dispatch:
+
+jobs:
+  derle:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Mantik testleri (bilgisayarda)
+        working-directory: kapi_kutusu
+        run: |
+          g++ -std=c++17 -Wall -Wextra -Werror -I src test/test_mantik.cpp src/mantik.cpp -o /tmp/test_mantik
+          /tmp/test_mantik
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - uses: actions/cache@v4
+        with:
+          path: ~/.platformio
+          key: pio-${{ hashFiles('kapi_kutusu/platformio.ini') }}
+
+      - name: PlatformIO
+        run: pip install platformio==6.1.16 esptool==4.8.1
+
+      - name: Derle (KC868-A8)
+        working-directory: kapi_kutusu
+        run: pio run
+
+      - name: Birlesik imaj (tek dosya, 0x0 adresine yazilir)
+        working-directory: kapi_kutusu
+        run: |
+          B=.pio/build/kc868_a8
+          BOOT_APP0=$(find ~/.platformio/packages/framework-arduinoespressif32 -name boot_app0.bin | head -1)
+          python -m esptool --chip esp32 merge_bin -o $B/pts-kapi-kutusu-tam.bin \
+            0x1000 $B/bootloader.bin 0x8000 $B/partitions.bin 0xe000 "$BOOT_APP0" 0x10000 $B/firmware.bin
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: kapi-kutusu
+          path: |
+            kapi_kutusu/.pio/build/kc868_a8/firmware.bin
+            kapi_kutusu/.pio/build/kc868_a8/pts-kapi-kutusu-tam.bin
