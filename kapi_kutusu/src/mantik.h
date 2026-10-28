@@ -114,4 +114,10 @@ std::string urlCoz(const std::string& s);
 // "192.168.1.50" -> true, dört sayı 0..255.
 bool ipGecerli(const std::string& s, uint8_t cikti[4] = nullptr);
 
+// Ağdan güncellemede yüklenen dosyanın ilk baytlarını denetler. Boş dize =
+// uygun (ESP32 uygulama imajı). Aksi halde kullanıcıya gösterilecek hata.
+// En sık hata, ilk kurulumdaki birleşik imajın (tam.bin) yüklenmesidir: o dosya
+// 0x1000 adresinden başladığı için ilk baytları 0xFF'tir.
+std::string guncellemeDosyasiKontrol(const uint8_t* ilk, size_t n);
+
 }  // namespace kutu

@@ -126,8 +126,23 @@ static int yardimcilar() {
   return 0;
 }
 
+static int guncelleme() {
+  uint8_t uygulama[16] = {0xE9, 0x06, 0x02, 0x20};
+  KONTROL(guncellemeDosyasiKontrol(uygulama, sizeof uygulama).empty());
+  uint8_t tam[16];
+  for (auto& b : tam) b = 0xFF;
+  KONTROL(guncellemeDosyasiKontrol(tam, sizeof tam).find("firmware.bin") != std::string::npos);
+  uint8_t zip[4] = {'P', 'K', 3, 4};
+  KONTROL(!guncellemeDosyasiKontrol(zip, sizeof zip).empty());
+  uint8_t s3[16] = {0xE9};
+  s3[12] = 9;  // ESP32-S3
+  KONTROL(guncellemeDosyasiKontrol(s3, sizeof s3).find("başka bir çip") != std::string::npos);
+  KONTROL(!guncellemeDosyasiKontrol(uygulama, 0).empty());
+  return 0;
+}
+
 int main() {
-  if (filtre() || kuyruk() || role() || geri_cekilme() || json() || yardimcilar()) return 1;
+  if (filtre() || kuyruk() || role() || geri_cekilme() || json() || yardimcilar() || guncelleme()) return 1;
   std::printf("Tüm testler geçti (%d kontrol)\n", basarili);
   return 0;
 }

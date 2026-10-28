@@ -206,4 +206,15 @@ bool ipGecerli(const std::string& s, uint8_t cikti[4]) {
   return true;
 }
 
+std::string guncellemeDosyasiKontrol(const uint8_t* ilk, size_t n) {
+  if (n == 0) return "Dosya boş.";
+  if (ilk[0] == 0xFF)
+    return "Bu ilk kurulum dosyası (pts-kapi-kutusu-tam.bin). Ağdan güncellemede firmware.bin dosyasını yükleyin.";
+  if (ilk[0] != 0xE9) return "Bu bir ESP32 yazılım dosyası değil. firmware.bin dosyasını yükleyin.";
+  // esp_image_header_t: 12. bayttan itibaren 2 baytlık çip kimliği (ESP32 = 0).
+  if (n >= 14 && (ilk[12] | (ilk[13] << 8)) != 0)
+    return "Bu dosya başka bir çip için derlenmiş (ESP32 değil).";
+  return "";
+}
+
 }  // namespace kutu

@@ -15,6 +15,8 @@ Kutunun görevleri:
   Bu, PTS kapalı olsa da çalışır.
 - **Ağ yoksa biriktirir.** Ağ yokken en çok 300 olayı biriktirir, bağlantı gelince
   gönderir.
+- **Ağdan güncellenir.** Yeni yazılım kutunun kendi web sayfasından yüklenir; USB
+  yalnızca ilk kurulumda gerekir.
 
 > Bu sürümde kutu plakayı **kendisi tanımaz**. Plakayı PTS tanır. PTS kapalıyken
 > tanıdık araca bariyeri kendiliğinden açmak için kameranın kendi plaka tanıması
@@ -80,7 +82,7 @@ Derlenmiş yazılım GitHub → Actions → **Kapi Kutusu yazilimi** → son ça
 **kapi-kutusu** artifact'inde bulunur.
 
 - **`pts-kapi-kutusu-tam.bin`**: ilk yükleme. Tek dosyadır, **0x0** adresine yazılır.
-- `firmware.bin`: güncelleme. **0x10000** adresine yazılır.
+- `firmware.bin`: güncelleme. Kutunun web sayfasından yüklenir (aşağıda).
 
 Windows'ta en kolay yol:
 
@@ -95,6 +97,25 @@ cd kapi_kutusu
 pio run -t upload
 pio device monitor     # seri ekran: DURUM, SIFIRLA komutları
 ```
+
+### Ağdan güncelleme
+
+1. GitHub'dan yeni **kapi-kutusu** dosyasını indirip açın.
+2. Kutunun sayfasında (`http://<kutu-ip>/`) en alttaki **Yazılım güncelleme**
+   bölümünde **firmware.bin** dosyasını seçin ve **Güncellemeyi yükle**'ye basın.
+3. Yükleme ~1 dk sürer. Bitince kutu yeniden başlar ve sayfa kendiliğinden yenilenir.
+   Sayfanın başlığında yeni sürüm numarası görünür.
+
+- Ayarlar (PTS adresi, anahtar, parola) korunur.
+- Yanlış dosya (ör. `tam.bin`, zip ya da başka bir kartın yazılımı) yüklenirse
+  kutu daha flash'a yazmadan reddeder ve eski yazılımla çalışmaya devam eder.
+  Yükleme yarıda kesilirse de eski yazılım çalışmaya devam eder.
+- Güncelleme sırasında kutunun elektriğini kesmeyin.
+- Yeni yazılım hiç açılmazsa (çok olası değil), kutu USB ile `tam.bin` yazılarak
+  kurtarılır. Bu durumda ayarlar yeniden yapılır.
+
+> **1.0.0'dan geçiş:** 1.1.0 ile kartın bölüm tablosu değişti. 1.0.0 yüklü bir karta
+> 1.1.0 bir kez **USB ile `tam.bin`** olarak yazılmalıdır. Sonrası ağdan yapılır.
 
 ## 4. Ayarlar
 

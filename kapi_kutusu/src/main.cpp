@@ -7,6 +7,7 @@
 //   * PTS'nin "aç" komutuyla bariyer rölesini kısa süre çekmek (kuru kontak).
 //   * Görevli düğmesine basılınca bariyeri yerelde açmak (PTS kapalı olsa da).
 //   * Ağ yokken olayları biriktirip bağlantı gelince göndermek.
+//   * Kendi web sayfasından yazılım güncellemesi almak (firmware.bin).
 //
 // Ayarlar kutunun web sayfasından yapılır: http://<kutu-ip>/
 // Karar veren mantık mantik.cpp'dedir ve bilgisayarda test edilir.
@@ -17,6 +18,7 @@
 #include <Preferences.h>
 #include <WebServer.h>
 #include <WiFi.h>
+#include <Update.h>
 #include <WiFiClientSecure.h>
 #include <Wire.h>
 #include <esp_task_wdt.h>
@@ -26,7 +28,7 @@
 #include "kart.h"
 #include "mantik.h"
 
-#define SURUM "1.0.0"
+#define SURUM "1.1.0"
 
 using kutu::Olay;
 using kutu::OlayTuru;
@@ -105,6 +107,9 @@ static uint32_t i2c_hata = 0;
 static uint32_t son_basarili_ms = 0;  // 0 = hiç
 static std::string son_hata = "henüz gönderilmedi";
 static bool yeniden_baslat = false;
+static std::string guncelleme_hatasi;
+static bool guncelleme_reddedildi = false;
+static bool guncelleme_ilk_parca = true;
 static uint32_t yeniden_baslat_ms = 0;
 
 static WebServer sunucu(80);
@@ -330,6 +335,11 @@ static void anaSayfa() {
   p += "<fieldset><legend>Bu sayfanın parolası (kullanıcı: admin)</legend><label>Yeni parola <small>(değiştirmeyecekseniz boş bırakın)</small></label>"
        "<input name=parola type=password autocomplete=new-password minlength=8></fieldset>";
   p += "<button>Kaydet ve yeniden başlat</button></form>";
+  p += "<form method=post action=/guncelle enctype=multipart/form-data onsubmit=\"this.querySelector('button').disabled=true;"
+       "this.querySelector('button').textContent='Yükleniyor, kutuyu kapatmayın…'\"><fieldset><legend>Yazılım güncelleme</legend>"
+       "<p>Şu anki sürüm: <b>v" SURUM "</b>. GitHub'dan indirilen <b>firmware.bin</b> dosyasını seçin "
+       "(ilk kurulumdaki <i>tam.bin</i> değil). Ayarlar korunur; yükleme bitince kutu yeniden başlar (~1 dk).</p>"
+       "<input type=file name=dosya accept=.bin required><button>Güncellemeyi yükle</button></fieldset></form>";
   p += "<form method=post action=/sifirla onsubmit=\"return confirm('Tüm ayarlar silinsin mi?')\"><button>Fabrika ayarlarına dön</button></form></body></html>";
   sunucu.send(200, "text/html; charset=utf-8", p.c_str());
 }
@@ -401,6 +411,61 @@ static void durumJson() {
   sunucu.send(200, "application/json", b);
 }
 
+static void yukleGuncelleme() {
+  HTTPUpload& yukleme = sunucu.upload();
+  switch (yukleme.status) {
+    case UPLOAD_FILE_START:
+      guncelleme_hatasi.clear();
+      guncelleme_ilk_parca = true;
+      guncelleme_reddedildi = !(ayar.parola.empty() || sunucu.authenticate("admin", ayar.parola.c_str()));
+      if (guncelleme_reddedildi) return;
+      Serial.printf("Güncelleme başladı: %s\n", yukleme.filename.c_str());
+      if (!Update.begin(UPDATE_SIZE_UNKNOWN, U_FLASH)) guncelleme_hatasi = Update.errorString();
+      break;
+    case UPLOAD_FILE_WRITE:
+      if (guncelleme_reddedildi || !guncelleme_hatasi.empty()) return;
+      if (guncelleme_ilk_parca) {
+        guncelleme_ilk_parca = false;
+        guncelleme_hatasi = kutu::guncellemeDosyasiKontrol(yukleme.buf, yukleme.currentSize);
+        if (!guncelleme_hatasi.empty()) {
+          Update.abort();
+          return;
+        }
+      }
+      if (Update.write(yukleme.buf, yukleme.currentSize) != yukleme.currentSize) guncelleme_hatasi = Update.errorString();
+      esp_task_wdt_reset();
+      break;
+    case UPLOAD_FILE_END:
+      if (guncelleme_reddedildi || !guncelleme_hatasi.empty()) return;
+      if (guncelleme_ilk_parca) guncelleme_hatasi = "Dosya boş.";
+      else if (!Update.end(true)) guncelleme_hatasi = Update.errorString();  // imajın sağlamasını da denetler
+      break;
+    case UPLOAD_FILE_ABORTED:
+      if (!guncelleme_reddedildi) Update.abort();
+      guncelleme_hatasi = "Yükleme yarıda kesildi.";
+      break;
+    default:
+      break;
+  }
+}
+
+static void sonucGuncelleme() {
+  if (!yoneticiMi()) return;  // parola yanlışsa yukleGuncelleme zaten hiçbir şey yazmadı
+  if (!guncelleme_hatasi.empty()) {
+    Serial.printf("Güncelleme başarısız: %s\n", guncelleme_hatasi.c_str());
+    sunucu.send(400, "text/html; charset=utf-8",
+                ("<meta charset=utf-8><p><b>Güncelleme yapılmadı:</b> " + kutu::htmlKacis(guncelleme_hatasi) +
+                 "</p><p>Kutu eski yazılımla çalışmaya devam ediyor.</p><a href=/>Geri</a>").c_str());
+    return;
+  }
+  Serial.println("Güncelleme tamam, yeniden başlıyor.");
+  sunucu.send(200, "text/html; charset=utf-8",
+              "<meta charset=utf-8><meta http-equiv=refresh content='25;url=/'><p>Güncelleme yüklendi. "
+              "Kutu yeniden başlıyor; bu sayfa birazdan kendiliğinden yenilenir.</p>");
+  yeniden_baslat = true;
+  yeniden_baslat_ms = millis();
+}
+
 static void webiBaslat() {
   static const char* basliklar[] = {"X-Kutu-Anahtar"};
   sunucu.collectHeaders(basliklar, 1);
@@ -414,6 +479,10 @@ static void webiBaslat() {
     sunucu.sendHeader("Location", "/");
     sunucu.send(303);
   });
+  // Ağdan güncelleme: dosya parça parça gelir (yukleGuncelleme), bitince
+  // sonucGuncelleme yanıt verir. Doğrulama yükleme BAŞINDA yapılır, çünkü
+  // parola yanlışsa ya da dosya yanlışsa flash'a tek bayt yazılmamalı.
+  sunucu.on("/guncelle", HTTP_POST, sonucGuncelleme, yukleGuncelleme);
   sunucu.on("/sifirla", HTTP_POST, [] {
     if (!yoneticiMi()) return;
     tercih.begin("kutu", false);
