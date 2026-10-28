@@ -20,15 +20,33 @@ Kutunun görevleri:
 > tanıdık araca bariyeri kendiliğinden açmak için kameranın kendi plaka tanıması
 > (Dahua ANPR) gerekir. Bu sonraki sürümün işi.
 
-## 1. Bağlantı
+## 1. Parça listesi (bir şerit)
+
+| Parça | Not |
+|---|---|
+| KinCony **KC868-A8** (ESP32 + Ethernet). A8v3 ya da A8M değil | Kutunun beyni |
+| **Loop (manyetik araç) dedektörü, 12V**, röle çıkışlı, "varlık (presence)" modlu | 12/24V AC/DC yazanlar da olur |
+| Loop kablosu (1,5 mm² tek damarlı, özel loop kablosu) | Bir döngü + bağlantı için ~20-30 m |
+| **12V DC DIN ray güç kaynağı**, en az 2 A (ör. Mean Well HDR-30-12) | Kart 12V ister: **24V vermeyin** |
+| IP65 dış mekân pano kutusu, DIN ray, klemensler | |
+| Cat6 Ethernet kablosu (dış mekân), gerekirse ağ anahtarı portu | |
+| Görevli düğmesi (isteğe bağlı, NO kontaklı buton) | |
+| Bariyer kullanılacaksa: 24V DC motorlu, kuru kontak "aç" girişli, fotoselli bariyer | Bariyer kendi adaptörüyle beslenir |
+
+Gereken aletler: dizüstü bilgisayar ve kartın USB kablosu, multimetre, tornavida
+takımı, kablo soyucu. Asfalt kesimi için bariyerci ya da elektrikçi.
+
+> 220V bağlantısını (güç kaynağının girişi, sigorta) bir elektrikçi yapmalıdır.
+
+## 2. Bağlantı
 
 ```
-[Döngü (asfalt)] -> [Loop dedektörü 24V] --röle (NO)--> [KC868 giriş 1 + GND]
+[Döngü (asfalt)] -> [Loop dedektörü 12V] --röle (NO)--> [KC868 giriş 1 + GND]
 [Görevli düğmesi (isteğe bağlı)]         -------------> [KC868 giriş 8 + GND]
 [KC868 röle 1: COM + NO] --kuru kontak--> [Bariyer kartı "AÇ/START" girişi]
 [Fotosel]                ------------->   [Bariyer kartı güvenlik girişi]  (kutudan bağımsız)
 [KC868 Ethernet]         ------------->   [Ağ anahtarı / PTS sunucusu]
-[24V DC güç kaynağı]     ------------->   [KC868 + loop dedektörü]
+[12V DC güç kaynağı]     ------------->   [KC868 12V girişi + loop dedektörü]
 ```
 
 - KC868 girişleri **GND'ye kısa devre** edilince aktif olur. Loop dedektörünün
@@ -37,8 +55,26 @@ Kutunun görevleri:
   girişine yalnızca bir kontak verir (röle COM + NO).
 - **Fotosel kutuya değil bariyere bağlanır.** Kolun araca inmesini bariyer kendisi
   engeller.
+- Loop dedektörünü **varlık (presence)** moduna alın: araç döngünün üstündeyken
+  röle çekili kalsın. "Darbe (pulse)" modunda da çalışır, ama varlık modu daha
+  güvenilirdir.
 
-## 2. Yazılımın karta yüklenmesi
+### Döngünün döşenmesi (genel kurallar: dedektörün kılavuzu önceliklidir)
+
+- **Yer:** kameranın plakayı okuduğu noktanın altı. Kutu "araç var" dediği anda
+  kamera da o aracı görüyor olmalı.
+- **Boyut:** şerit genişliğinden her iki yanda ~30-50 cm içeride, yol yönünde
+  ~1,5-2 m uzunlukta bir dikdörtgen.
+- **Sarım:** çevre 6-10 m ise 3 tur. Daha küçükse 4 tur, daha büyükse 2 tur.
+- **Kanal:** 3-5 cm derinlik. Köşeler 45° kesilir ki kablo keskin bükülmesin.
+  Kablo yerleştirilip kanal bitüm ya da epoksi dolguyla kapatılır.
+- **Bağlantı kablosu:** döngüden dedektöre giden iki uç metre başına en az 20 kez
+  birbirine burulur ve olabildiğince kısa tutulur.
+- **Uzaklık:** başka bir döngüden ve büyük metal parçalardan (ızgara, bariyer
+  gövdesi) en az 1 m uzakta olmalı. İki döngü yan yanaysa dedektörlerin frekansı
+  farklı ayarlanır.
+
+## 3. Yazılımın karta yüklenmesi
 
 Derlenmiş yazılım GitHub → Actions → **Kapi Kutusu yazilimi** → son çalışma →
 **kapi-kutusu** artifact'inde bulunur.
@@ -60,7 +96,7 @@ pio run -t upload
 pio device monitor     # seri ekran: DURUM, SIFIRLA komutları
 ```
 
-## 3. Ayarlar
+## 4. Ayarlar
 
 1. Kutuyu ağa bağlayın. Kutu adresini DHCP'den alır.
    - Adres modemin/anahtarın listesinde **pts-kapi-kutusu** adıyla görünür.
@@ -90,7 +126,20 @@ PTS HTTPS ile çalışıyorsa PTS adresini `https://...` yazın. Bu durumda bağ
   kütüphanesi sertifikayı IP adresine göre doğrulayamaz. Bağlantı yine şifreli
   kalır, sayfa bunun için bir uyarı gösterir.
 
-## 4. Sorun giderme
+## 5. Masa başı deneme (sahaya çıkmadan)
+
+1. Karta yazılımı yükleyin (bölüm 3), 12V verin, Ethernet'i takın.
+2. Kutu sayfasını açın ve ayarları yapın (bölüm 4).
+3. **Giriş denemesi:** IN1 ile GND arasına bir kabloyla kısa süre dokunun.
+   - Sayfada "Girişler 1" yeşil yanmalı.
+   - ~30 sn sonra PTS'de bir "okunamayan geçiş" görünmeli. O an kamera araç okumadığı için bu beklenen sonuçtur.
+   - Denemeden sonra "Araç değil" deyip kapatın.
+4. **Röle denemesi:** sayfada **Bariyeri şimdi aç**'a basın. Röle tık sesi çıkarır.
+   COM-NO arası multimetrede kısa süre kısa devre görünür.
+5. Hepsi çalışıyorsa kutuyu sahaya kurun. Önce yalnız döngü ve dedektör bağlanır,
+   birkaç gün "okunamayan geçiş" sayısı izlenir. Bariyer sonra eklenir.
+
+## 6. Sorun giderme
 
 | Belirti | Bakılacak yer |
 |---|---|
@@ -104,7 +153,7 @@ PTS HTTPS ile çalışıyorsa PTS adresini `https://...` yazın. Bu durumda bağ
 Ayarları silmek için kutu sayfasındaki **Fabrika ayarlarına dön** düğmesini
 kullanın ya da seri ekrana `SIFIRLA` yazın.
 
-## 5. Donanım olmadan deneme
+## 7. Donanım olmadan deneme
 
 ```
 python kapi_kutusu/araclar/sahte_kutu.py --pts https://127.0.0.1:8000 --anahtar <ANAHTAR>
