@@ -46,3 +46,22 @@ def test_sifirla_demo_olmayan_klasoru_silmez(demo, tmp_path):
     with pytest.raises(SystemExit, match="demo klasörü değil"):
         demo.main(["--klasor", str(tmp_path), "--sifirla"])
     assert (tmp_path / "onemli.txt").exists()
+
+
+def test_gercek_fotograflar_kullanilir(demo, tmp_path):
+    from PIL import Image
+    Image.new("RGB", (1600, 1000), (200, 30, 30)).save(tmp_path / "kirmizi.jpg")
+    Image.new("RGB", (800, 1200), (30, 30, 200)).save(tmp_path / "mavi.png")
+    (tmp_path / "not.txt").write_text("fotoğraf değil")
+    assert demo.fotograflari_yukle(str(tmp_path)) == 2
+    try:
+        a = Image.open(io.BytesIO(demo.arac_gorseli("34 AB 123", False, 1, kamera="Ana Kapı Giriş")))
+        b = Image.open(io.BytesIO(demo.arac_gorseli("34 AB 123", False, 2)))
+        assert a.size == (960, 540)
+        assert a.getpixel((480, 400)) == b.getpixel((480, 400))  # aynı plaka -> aynı fotoğraf
+        gece = Image.open(io.BytesIO(demo.arac_gorseli("34 AB 123", True, 1))).convert("RGB")
+        r, g, b2 = gece.getpixel((480, 400))
+        assert r == g == b2  # gece: IR kamera gibi gri
+    finally:
+        demo.FOTOGRAFLAR.clear()
+    assert demo.fotograflari_yukle(str(tmp_path / "yok")) == 0

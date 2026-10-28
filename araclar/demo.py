@@ -85,8 +85,39 @@ def _yazi_tipi(boyut: int):
         return ImageFont.load_default()
 
 
+# Gerçek araç fotoğrafları (2026-10-28): --fotograflar ile verilen klasördeki
+# jpg/png dosyaları çizilmiş araç yerine kullanılır. Aynı plaka hep aynı
+# fotoğrafı alır; fotoğraftaki plaka kayıttakiyle aynı değildir.
+FOTOGRAFLAR: list = []
+
+
+def fotograflari_yukle(klasor: str) -> int:
+    FOTOGRAFLAR.clear()
+    if klasor and os.path.isdir(klasor):
+        FOTOGRAFLAR.extend(sorted(os.path.join(klasor, f) for f in os.listdir(klasor)
+                                  if f.lower().endswith((".jpg", ".jpeg", ".png", ".webp"))))
+    return len(FOTOGRAFLAR)
+
+
+def _fotograf_karesi(plaka: str, gece: bool, zaman, kamera: str) -> bytes:
+    from PIL import Image, ImageDraw, ImageOps
+    yol = FOTOGRAFLAR[sum(map(ord, plaka)) % len(FOTOGRAFLAR)]
+    im = ImageOps.fit(ImageOps.exif_transpose(Image.open(yol)).convert("RGB"), (960, 540))
+    if gece:
+        im = ImageOps.autocontrast(im.convert("L"), cutoff=2).convert("RGB")   # IR kamera gibi
+    d = ImageDraw.Draw(im)
+    d.text((14, 12), f"{kamera}  {(zaman or datetime.now()):%d.%m.%Y %H:%M:%S}", font=_yazi_tipi(16),
+           fill=(255, 255, 255), stroke_width=2, stroke_fill=(0, 0, 0))
+    tampon = io.BytesIO()
+    im.save(tampon, "JPEG", quality=85)
+    return tampon.getvalue()
+
+
 def arac_gorseli(plaka: str, gece: bool, tohum, zaman: datetime = None, kamera: str = "") -> bytes:
-    """Kamera karesini andıran sentetik görüntü (araç önü + Türk plakası)."""
+    """Kamera karesini andıran görüntü: verilen gerçek fotoğraflardan biri, yoksa
+    sentetik bir çizim (araç önü + Türk plakası)."""
+    if FOTOGRAFLAR:
+        return _fotograf_karesi(plaka, gece, zaman, kamera)
     from PIL import Image, ImageDraw, ImageFilter
     r = random.Random(tohum)
     g, y = 960, 540
@@ -309,9 +340,15 @@ def main(argv=None) -> int:
     ap.add_argument("--klasor", default=os.path.join(KOK, "demo"))
     ap.add_argument("--sifirla", action="store_true", help="demo verisini silip baştan üret")
     ap.add_argument("--canli-aralik", type=float, default=25, help="canlı geçişler arası ortalama sn (0 = kapalı)")
+    ap.add_argument("--fotograflar", help="gerçek araç fotoğrafları klasörü (jpg/png); yoksa çizim kullanılır")
     ap.add_argument("--yalniz-hazirla", action="store_true", help=argparse.SUPPRESS)
     args = ap.parse_args(argv)
     demo = os.path.abspath(args.klasor)
+    if args.fotograflar:
+        adet = fotograflari_yukle(args.fotograflar)
+        if not adet:
+            raise SystemExit(f"{args.fotograflar} klasöründe jpg/png fotoğraf yok")
+        print(f"{adet} gerçek araç fotoğrafı kullanılacak (eski kayıtlar için --sifirla ile birlikte verin)")
     if os.path.abspath(demo) == KOK:
         raise SystemExit("Demo klasörü proje klasörünün kendisi olamaz")
     if args.sifirla and os.path.isdir(demo):
