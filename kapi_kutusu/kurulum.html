@@ -1,0 +1,501 @@
+<title>Kapı Kutusu Kurulumu</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@500&display=swap">
+<style>
+/* Layout: tek sütunlu saha kılavuzu; her bölüm bir çizim + kısa adımlar. Çizimler saha şemaları gibi: ince çizgi, klemens etiketleri, renkli kablolar. */
+:root {
+  --bg: #f3f5f7;
+  --paper: #ffffff;
+  --fg: #17212b;
+  --muted: #5b6875;
+  --line: #d5dce3;
+  --road: #e2e6ea;
+  --accent: #b86e00;      /* sensör / döngü: sarı-turuncu ikaz rengi */
+  --accent-soft: #fff1d6;
+  --v12: #c62828;         /* +12V kablosu */
+  --gnd: #2b3440;         /* GND kablosu */
+  --sig: #1d5fd1;         /* sinyal */
+  --ok: #17803d;
+  --font-display: "Barlow Condensed", "Arial Narrow", sans-serif;
+  --font-body: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #11161c; --paper: #182029; --fg: #e6ebf0; --muted: #9aa7b4; --line: #2c3743; --road: #222c37;
+    --accent: #f0a63a; --accent-soft: #3a2a10; --v12: #ff6b6b; --gnd: #c9d3dd; --sig: #6ea0ff; --ok: #4cc47a;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #11161c; --paper: #182029; --fg: #e6ebf0; --muted: #9aa7b4; --line: #2c3743; --road: #222c37;
+  --accent: #f0a63a; --accent-soft: #3a2a10; --v12: #ff6b6b; --gnd: #c9d3dd; --sig: #6ea0ff; --ok: #4cc47a;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body {
+  background: var(--bg); color: var(--fg); font: 15px/1.6 var(--font-body);
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 28px 48px;
+}
+.sayfa { max-width: 980px; margin: 0 auto; display: grid; gap: 28px; }
+header { display: grid; gap: 8px; }
+.etiket { font: 600 12px/1 var(--font-body); letter-spacing: .12em; text-transform: uppercase; color: var(--accent); }
+h1 { font: 700 clamp(34px, 6vw, 52px)/1 var(--font-display); margin: 0; text-wrap: balance; }
+h2 { font: 700 28px/1.1 var(--font-display); margin: 0; text-wrap: balance; }
+h3 { font: 600 16px/1.3 var(--font-body); margin: 0; }
+p { margin: 0; max-width: 68ch; }
+.ozet { color: var(--muted); font-size: 16px; }
+.uyari { display: flex; gap: 10px; align-items: flex-start; background: var(--accent-soft); border: 1px solid var(--accent);
+  border-radius: 8px; padding: 10px 14px; max-width: 68ch; }
+.uyari b { color: var(--accent); }
+section { background: var(--paper); border: 1px solid var(--line); border-radius: 12px; padding: 22px max(18px, 2.5vw); display: grid; gap: 16px; }
+.bolum-bas { display: flex; gap: 12px; align-items: baseline; flex-wrap: wrap; }
+.bolum-no { font: 700 15px/1 var(--font-mono); color: var(--paper); background: var(--fg); border-radius: 6px; padding: 5px 8px; }
+figure { margin: 0; display: grid; gap: 8px; }
+.cizim { overflow-x: auto; border: 1px solid var(--line); border-radius: 8px; background: var(--bg); }
+.cizim svg { display: block; width: 100%; height: auto; min-width: 640px; color: var(--fg); }
+figcaption { color: var(--muted); font-size: 13.5px; max-width: 80ch; }
+ol.adimlar { margin: 0; padding-left: 1.3em; display: grid; gap: 6px; max-width: 72ch; }
+ol.adimlar li::marker { font-family: var(--font-mono); color: var(--accent); }
+.tablo { overflow-x: auto; }
+table { border-collapse: collapse; width: 100%; font-size: 14px; }
+th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
+th { font-size: 12px; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); font-weight: 600; }
+td.fiyat { font-variant-numeric: tabular-nums; white-space: nowrap; color: var(--muted); }
+code, .mono { font-family: var(--font-mono); font-size: 13px; }
+code { background: var(--bg); border: 1px solid var(--line); border-radius: 4px; padding: 1px 5px; }
+.lejant { display: flex; flex-wrap: wrap; gap: 14px; font-size: 13px; color: var(--muted); }
+.lejant span { display: inline-flex; align-items: center; gap: 6px; }
+.lejant i { display: inline-block; width: 26px; height: 0; border-top: 3px solid; }
+.iki { display: grid; grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); gap: 16px; align-items: start; }
+@media (max-width: 760px) { .iki { grid-template-columns: minmax(0, 1fr); } }
+
+/* SVG sınıfları (sayfa CSS'inden) */
+.k { fill: var(--paper); stroke: currentColor; stroke-width: 1.4; }
+.k-vurgu { fill: var(--accent-soft); stroke: var(--accent); stroke-width: 2; }
+.k-pano { fill: none; stroke: var(--muted); stroke-width: 1.2; stroke-dasharray: 6 5; }
+.t { fill: currentColor; font: 500 13px var(--font-body); }
+.t-b { fill: currentColor; font: 600 14px var(--font-body); }
+.t-k { fill: var(--muted); font: 12px var(--font-body); }
+.t-m { fill: currentColor; font: 500 11.5px var(--font-mono); }
+.t-a { fill: var(--accent); font: 600 12.5px var(--font-body); }
+.t-r { fill: var(--v12); font: 600 12px var(--font-mono); }
+.ok { fill: none; stroke: currentColor; stroke-width: 1.5; }
+.ok-a { fill: none; stroke: var(--accent); stroke-width: 2; }
+.ok-s { fill: none; stroke: var(--sig); stroke-width: 2; }
+.ok-k { fill: none; stroke: currentColor; stroke-width: 1.2; stroke-dasharray: 5 4; }
+.kb-v { fill: none; stroke: var(--v12); stroke-width: 2.6; }
+.kb-g { fill: none; stroke: var(--gnd); stroke-width: 2.6; }
+.kb-s { fill: none; stroke: var(--sig); stroke-width: 2.6; }
+.kb-a { fill: none; stroke: var(--accent); stroke-width: 2.6; }
+.klemens { fill: var(--paper); stroke: currentColor; stroke-width: 1.2; }
+.yol { fill: var(--road); }
+.serit { stroke: var(--muted); stroke-width: 2; stroke-dasharray: 18 14; fill: none; }
+.dongu { fill: none; stroke: var(--accent); stroke-width: 3; }
+.olcu { stroke: var(--muted); stroke-width: 1; fill: none; }
+.asfalt { fill: var(--road); stroke: var(--muted); stroke-width: 1; }
+.dolgu { fill: var(--gnd); opacity: .75; }
+.tel { fill: var(--accent); }
+.isaret-ok { fill: currentColor; }
+.isaret-a { fill: var(--accent); }
+.isaret-s { fill: var(--sig); }
+</style>
+
+<div class="sayfa">
+  <header>
+    <div class="etiket">PTS · Saha kılavuzu</div>
+    <h1>Kapı Kutusu Kurulumu</h1>
+    <p class="ozet">Bir şeride döngü dedektörü ve KC868-A8 kutusunun kurulması: neyin nereye bağlandığı, döngünün nasıl döşendiği ve sahaya çıkmadan nasıl denendiği.</p>
+    <div class="uyari"><span aria-hidden="true">⚠</span><p><b>Kart 12V ile çalışır.</b> KC868-A8'e 24V vermeyin; röleleri ısınıp bozulur. 220V bağlantısını (güç kaynağının girişi ve sigorta) bir elektrikçi yapmalıdır.</p></div>
+  </header>
+
+  <!-- 1. Büyük resim -->
+  <section aria-labelledby="b1">
+    <div class="bolum-bas"><span class="bolum-no">1</span><h2 id="b1">Parçalar birbirine nasıl bağlanıyor</h2></div>
+    <figure>
+      <div class="cizim">
+        <svg viewBox="0 0 920 380" role="img" aria-label="Döngü dedektörü araç sinyalini kutuya verir, kutu bunu ağ üzerinden PTS'ye bildirir. PTS kamera kaydıyla eşleştiremezse okunamayan geçiş açar. PTS'nin aç komutuyla kutunun rölesi bariyeri açar; fotosel doğrudan bariyere bağlıdır.">
+          <defs>
+            <marker id="ok1" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="isaret-ok"/></marker>
+            <marker id="ok1a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="isaret-a"/></marker>
+            <marker id="ok1s" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="isaret-s"/></marker>
+          </defs>
+          <!-- kutular -->
+          <rect class="k" x="20" y="20" width="150" height="50" rx="6"/>
+          <text class="t-b" x="95" y="43" text-anchor="middle">Kamera</text>
+          <text class="t-k" x="95" y="60" text-anchor="middle">plakayı okur</text>
+
+          <rect class="k-vurgu" x="20" y="268" width="150" height="72" rx="6" stroke-dasharray="7 5"/>
+          <text class="t-b" x="95" y="298" text-anchor="middle">Döngü</text>
+          <text class="t-k" x="95" y="316" text-anchor="middle">asfaltın altında</text>
+
+          <rect class="k" x="260" y="268" width="150" height="72" rx="6"/>
+          <text class="t-b" x="335" y="298" text-anchor="middle">Loop dedektörü</text>
+          <text class="t-k" x="335" y="316" text-anchor="middle">12V, röle çıkışlı</text>
+
+          <rect class="k-vurgu" x="460" y="150" width="180" height="90" rx="8"/>
+          <text class="t-b" x="550" y="186" text-anchor="middle">Kapı Kutusu</text>
+          <text class="t-k" x="550" y="204" text-anchor="middle">KC868-A8</text>
+          <text class="t-k" x="550" y="222" text-anchor="middle">giriş 1 · röle 1</text>
+
+          <rect class="k" x="740" y="20" width="160" height="90" rx="6"/>
+          <text class="t-b" x="820" y="52" text-anchor="middle">PTS sunucusu</text>
+          <text class="t-k" x="820" y="70" text-anchor="middle">sinyali kamera</text>
+          <text class="t-k" x="820" y="86" text-anchor="middle">kaydıyla eşleştirir</text>
+          <text class="t-a" x="820" y="132" text-anchor="middle">eşleşmezse: okunamayan geçiş</text>
+          <text class="t-k" x="820" y="148" text-anchor="middle">→ görevlinin ekranına düşer</text>
+
+          <rect class="k" x="740" y="268" width="160" height="82" rx="6"/>
+          <text class="t-b" x="820" y="300" text-anchor="middle">Bariyer</text>
+          <text class="t-k" x="820" y="318" text-anchor="middle">"aç" girişi + fotosel</text>
+
+          <rect class="k" x="440" y="298" width="110" height="42" rx="6"/>
+          <text class="t" x="495" y="324" text-anchor="middle">Görevli düğmesi</text>
+
+          <rect class="k" x="580" y="306" width="110" height="42" rx="6"/>
+          <text class="t" x="635" y="332" text-anchor="middle">Fotosel</text>
+
+          <!-- oklar -->
+          <line class="ok" x1="170" y1="40" x2="738" y2="40" marker-end="url(#ok1)"/>
+          <text class="t-k" x="455" y="32" text-anchor="middle">görüntü (RTSP, ağ üzerinden)</text>
+
+          <line class="ok-a" x1="170" y1="304" x2="258" y2="304" marker-end="url(#ok1a)"/>
+          <text class="t-k" x="214" y="296" text-anchor="middle">metal algılar</text>
+
+          <path class="ok-s" d="M335,268 V195 H458" marker-end="url(#ok1s)"/>
+          <text class="t-k" x="344" y="186">röle: "araç var"</text>
+
+          <path class="ok-s" d="M560,150 V76 H738" marker-end="url(#ok1s)"/>
+          <text class="t-k" x="650" y="70" text-anchor="middle">"araç geçti" (Ethernet)</text>
+
+          <path class="ok" d="M740,100 H620 V148" marker-end="url(#ok1)"/>
+          <text class="t-k" x="684" y="94" text-anchor="middle">"bariyeri aç"</text>
+
+          <path class="ok-a" d="M640,214 H702 V286 H738" marker-end="url(#ok1a)"/>
+          <text class="t-k" x="708" y="252">kuru kontak</text>
+
+          <line class="ok" x1="495" y1="298" x2="495" y2="242" marker-end="url(#ok1)"/>
+          <text class="t-k" x="502" y="274">yerelde aç</text>
+
+          <line class="ok" x1="690" y1="330" x2="738" y2="330" marker-end="url(#ok1)"/>
+          <text class="t-k" x="714" y="364" text-anchor="middle">güvenlik</text>
+        </svg>
+      </div>
+      <figcaption>Kutu plakayı tanımaz; yalnızca "şu an bir araç geçti" der. Plakayı PTS tanır. Fotosel kutuya değil bariyere bağlanır, böylece kol araca inmez.</figcaption>
+    </figure>
+  </section>
+
+  <!-- 2. Parçalar -->
+  <section aria-labelledby="b2">
+    <div class="bolum-bas"><span class="bolum-no">2</span><h2 id="b2">Alınacaklar (bir şerit)</h2></div>
+    <div class="tablo"><table>
+      <thead><tr><th>Parça</th><th>Dikkat</th><th>Yaklaşık fiyat</th></tr></thead>
+      <tbody>
+        <tr><td><b>KinCony KC868-A8</b></td><td>Düz A8. A8v3 ve A8M farklı kartlar</td><td class="fiyat">~55 $ + kargo</td></tr>
+        <tr><td><b>Loop dedektörü, 12V</b>, röle çıkışlı</td><td>"Varlık (presence)" modu olmalı. "12/24V" yazanlar da olur</td><td class="fiyat">3.000–3.500 TL</td></tr>
+        <tr><td><b>Loop kablosu</b>, 1,5 mm²</td><td>Bir döngü için ~20–30 m; 100 m'lik rulo birkaç döngüye yeter</td><td class="fiyat">~1.900 TL / 100 m</td></tr>
+        <tr><td><b>12V DC güç kaynağı</b>, DIN ray, en az 2 A</td><td>Örn. Mean Well HDR-30-12. 24V değil</td><td class="fiyat">tahmini 500–1.000 TL</td></tr>
+        <tr><td>IP65 pano kutusu, DIN ray, klemensler</td><td>Dış mekân, yağmur almayacak yere</td><td class="fiyat">tahmini 1.000–1.500 TL</td></tr>
+        <tr><td>Dış mekân Cat6 kablo</td><td>Ağ anahtarında boş bir port</td><td class="fiyat">mesafeye göre</td></tr>
+        <tr><td>Görevli düğmesi (isteğe bağlı)</td><td>Normalde açık (NO) kontak</td><td class="fiyat">düşük</td></tr>
+        <tr><td>Bariyer (sonra)</td><td>24V DC motorlu, kuru kontak "aç" girişli, fotoselli. Kendi adaptörüyle beslenir</td><td class="fiyat">34.000–45.000 TL</td></tr>
+      </tbody>
+    </table></div>
+    <p class="ozet">Aletler: dizüstü bilgisayar ve kartın USB kablosu, multimetre, tornavida takımı, kablo soyucu. Asfalt kesimini bariyerci ya da elektrikçi yapar.</p>
+  </section>
+
+  <!-- 3. Döngü -->
+  <section aria-labelledby="b3">
+    <div class="bolum-bas"><span class="bolum-no">3</span><h2 id="b3">Döngüyü yola döşeme</h2></div>
+    <figure>
+      <div class="cizim">
+        <svg viewBox="0 0 900 430" role="img" aria-label="Üstten görünüş: döngü, kameranın okuduğu noktada şeridin iki yanından 30-50 cm içeride, yol yönünde 1,5-2 m uzunlukta dikdörtgen. Köşeleri 45 derece kesik. Dedektöre giden kablo burularak panoya gider.">
+          <defs>
+            <marker id="ok3" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="isaret-ok"/></marker>
+          </defs>
+          <rect class="yol" x="40" y="60" width="820" height="280"/>
+          <line class="serit" x1="40" y1="60" x2="860" y2="60"/>
+          <line class="serit" x1="40" y1="340" x2="860" y2="340"/>
+          <text class="t-k" x="52" y="84">şerit kenarı</text>
+          <line class="ok" x1="90" y1="200" x2="200" y2="200" marker-end="url(#ok3)"/>
+          <text class="t-k" x="90" y="190">araç yönü</text>
+
+          <!-- döngü: köşeleri 45° kesik -->
+          <polygon class="dongu" points="324,100 516,100 540,124 540,276 516,300 324,300 300,276 300,124"/>
+          <polygon class="dongu" points="330,108 510,108 532,130 532,270 510,292 330,292 308,270 308,130" opacity=".55"/>
+          <polygon class="dongu" points="336,116 504,116 524,136 524,264 504,284 336,284 316,264 316,136" opacity=".35"/>
+          <text class="t-a" x="420" y="196" text-anchor="middle">3 tur kablo</text>
+          <text class="t-k" x="420" y="214" text-anchor="middle">köşeler 45° kesik</text>
+
+          <!-- ölçüler -->
+          <line class="olcu" x1="300" y1="30" x2="540" y2="30"/>
+          <line class="olcu" x1="300" y1="22" x2="300" y2="38"/><line class="olcu" x1="540" y1="22" x2="540" y2="38"/>
+          <text class="t" x="420" y="22" text-anchor="middle">1,5 – 2 m (yol yönünde)</text>
+          <line class="olcu" x1="270" y1="60" x2="270" y2="100"/>
+          <line class="olcu" x1="262" y1="60" x2="278" y2="60"/><line class="olcu" x1="262" y1="100" x2="278" y2="100"/>
+          <text class="t" x="258" y="86" text-anchor="end">30–50 cm</text>
+          <line class="olcu" x1="270" y1="300" x2="270" y2="340"/>
+          <line class="olcu" x1="262" y1="300" x2="278" y2="300"/><line class="olcu" x1="262" y1="340" x2="278" y2="340"/>
+          <text class="t" x="258" y="326" text-anchor="end">30–50 cm</text>
+
+          <!-- kamera -->
+          <rect class="k" x="560" y="372" width="120" height="44" rx="6"/>
+          <text class="t" x="620" y="399" text-anchor="middle">Kamera direği</text>
+          <line class="ok-k" x1="600" y1="372" x2="470" y2="300"/>
+          <line class="ok-k" x1="640" y1="372" x2="528" y2="288"/>
+          <text class="t-k" x="568" y="214">okuma noktası</text>
+          <text class="t-k" x="568" y="230">döngünün üstü</text>
+
+          <!-- burulmuş bağlantı kablosu -->
+          <polyline class="ok-a" points="532,276 560,300 576,292 592,316 608,308 624,332 640,324 656,348 672,340 688,364 704,356 720,372 740,380"/>
+          <text class="t-a" x="850" y="284" text-anchor="end">metre başına ≥20 kez burulmuş</text>
+          <text class="t-k" x="850" y="300" text-anchor="end">olabildiğince kısa</text>
+          <rect class="k" x="740" y="366" width="140" height="44" rx="6"/>
+          <text class="t" x="810" y="393" text-anchor="middle">Pano (kutu)</text>
+        </svg>
+      </div>
+      <figcaption>Üstten görünüş. Döngü kameranın plakayı okuduğu yerin altına döşenir: kutu "araç var" dediği anda kamera da o aracı görmelidir. Başka bir döngüden ve büyük metal parçalardan (ızgara, bariyer gövdesi) en az 1 m uzakta olmalı.</figcaption>
+    </figure>
+
+    <div class="iki">
+      <figure>
+        <div class="cizim">
+          <svg viewBox="0 0 460 220" role="img" aria-label="Kanal kesiti: asfaltta 3-5 cm derin dar kanal, dibinde 3 tur kablo, üstü bitüm ya da epoksi dolgu." style="min-width: 0">
+            <rect class="asfalt" x="20" y="40" width="190" height="160"/>
+            <rect class="asfalt" x="250" y="40" width="190" height="160"/>
+            <rect class="asfalt" x="210" y="150" width="40" height="50"/>
+            <rect class="dolgu" x="210" y="40" width="40" height="52"/>
+            <circle class="tel" cx="230" cy="102" r="7"/>
+            <circle class="tel" cx="230" cy="118" r="7"/>
+            <circle class="tel" cx="230" cy="134" r="7"/>
+            <line class="olcu" x1="270" y1="40" x2="300" y2="40"/>
+            <line class="olcu" x1="270" y1="150" x2="300" y2="150"/>
+            <line class="olcu" x1="290" y1="40" x2="290" y2="150"/>
+            <text class="t" x="300" y="100">3–5 cm</text>
+            <text class="t-k" x="20" y="28">asfalt yüzeyi</text>
+            <line class="olcu" x1="160" y1="66" x2="208" y2="66"/>
+            <text class="t" x="154" y="70" text-anchor="end">dolgu</text>
+            <line class="olcu" x1="160" y1="118" x2="220" y2="118"/>
+            <text class="t-a" x="154" y="122" text-anchor="end">3 tur kablo</text>
+          </svg>
+        </div>
+        <figcaption>Kanal kesiti (ölçekli değil). Kablo yerleştirilir, kanal bitüm ya da epoksiyle kapatılır.</figcaption>
+      </figure>
+      <ol class="adimlar">
+        <li>Kameranın okuduğu noktayı işaretleyin; döngü bunun altına gelecek.</li>
+        <li>Asfaltı dikdörtgen biçiminde kestirin, köşeleri 45° kesik olsun.</li>
+        <li>Kabloyu kanala 3 tur sarın (çevre 6 m'den kısaysa 4, 10 m'den uzunsa 2 tur).</li>
+        <li>İki ucu burarak panoya kadar götürün.</li>
+        <li>Kanalı dolguyla kapatın. Dolgu kuruyana kadar araç geçmesin.</li>
+      </ol>
+    </div>
+  </section>
+
+  <!-- 4. Pano bağlantısı -->
+  <section aria-labelledby="b4">
+    <div class="bolum-bas"><span class="bolum-no">4</span><h2 id="b4">Panonun içindeki bağlantılar</h2></div>
+    <div class="lejant" aria-hidden="true">
+      <span><i style="border-color: var(--v12)"></i>+12V</span>
+      <span><i style="border-color: var(--gnd)"></i>GND (eksi)</span>
+      <span><i style="border-color: var(--sig)"></i>sinyal</span>
+      <span><i style="border-color: var(--accent)"></i>bariyere giden kontak / döngü</span>
+    </div>
+    <figure>
+      <div class="cizim">
+        <svg viewBox="0 0 920 470" role="img" aria-label="Pano bağlantısı: 12V güç kaynağı kartı ve dedektörü besler. Dedektörün COM ucu kartın GND'sine, NO ucu IN1'e gider. Görevli düğmesi IN8 ile GND arasına bağlanır. Kartın röle 1 COM ve NO uçları bariyer kartının COM ve START girişlerine gider. Ethernet ağ anahtarına bağlanır.">
+          <rect class="k-pano" x="18" y="40" width="640" height="410" rx="10"/>
+          <text class="t-k" x="30" y="440">IP65 pano kutusu</text>
+
+          <!-- 220V -->
+          <line data-adim="1" class="ok" x1="125" y1="8" x2="125" y2="58"/>
+          <text class="t-k" x="134" y="22">220V · elektrikçi, sigortalı</text>
+
+          <!-- güç kaynağı -->
+          <rect class="k" x="40" y="60" width="170" height="110" rx="6"/>
+          <text class="t-b" x="125" y="100" text-anchor="middle">Güç kaynağı</text>
+          <text class="t-r" x="125" y="120" text-anchor="middle">12V DC · ≥2 A</text>
+          <rect class="klemens" x="196" y="86" width="14" height="18"/><text class="t-m" x="190" y="99" text-anchor="end">+V</text>
+          <rect class="klemens" x="196" y="126" width="14" height="18"/><text class="t-m" x="190" y="139" text-anchor="end">−V</text>
+
+          <!-- dedektör -->
+          <rect class="k" x="40" y="250" width="170" height="170" rx="6"/>
+          <text class="t-b" x="125" y="240" text-anchor="middle">Loop dedektörü</text>
+          <rect class="klemens" x="196" y="266" width="14" height="18"/><text class="t-m" x="190" y="279" text-anchor="end">+12V</text>
+          <rect class="klemens" x="196" y="296" width="14" height="18"/><text class="t-m" x="190" y="309" text-anchor="end">GND</text>
+          <rect class="klemens" x="196" y="346" width="14" height="18"/><text class="t-m" x="190" y="359" text-anchor="end">COM</text>
+          <rect class="klemens" x="196" y="376" width="14" height="18"/><text class="t-m" x="190" y="389" text-anchor="end">NO</text>
+          <rect class="klemens" x="40" y="311" width="14" height="18"/><text class="t-m" x="60" y="324">L1</text>
+          <rect class="klemens" x="40" y="341" width="14" height="18"/><text class="t-m" x="60" y="354">L2</text>
+          <text class="t-k" x="125" y="410" text-anchor="middle">varlık modu</text>
+          <polyline data-adim="4" class="kb-a" points="40,320 30,326 22,320 14,326 6,320"/>
+          <polyline data-adim="4" class="kb-a" points="40,350 30,344 22,350 14,344 6,350"/>
+          <text class="t-a" x="4" y="378">döngü</text>
+
+          <!-- düğme -->
+          <rect class="k" x="262" y="214" width="84" height="66" rx="6"/>
+          <text class="t" x="304" y="242" text-anchor="middle">Görevli</text>
+          <text class="t" x="304" y="258" text-anchor="middle">düğmesi</text>
+
+          <!-- KC868 -->
+          <rect class="k-vurgu" x="380" y="60" width="250" height="370" rx="8"/>
+          <text class="t-b" x="505" y="196" text-anchor="middle">KinCony KC868-A8</text>
+          <text class="t-k" x="505" y="214" text-anchor="middle">Kapı Kutusu yazılımı</text>
+          <rect class="klemens" x="380" y="86" width="14" height="18"/><text class="t-m" x="400" y="99">12V</text>
+          <rect class="klemens" x="380" y="126" width="14" height="18"/><text class="t-m" x="400" y="139">GND</text>
+          <rect class="klemens" x="380" y="226" width="14" height="18"/><text class="t-m" x="400" y="239">IN8</text>
+          <rect class="klemens" x="380" y="256" width="14" height="18"/><text class="t-m" x="400" y="269">GND</text>
+          <rect class="klemens" x="380" y="346" width="14" height="18"/><text class="t-m" x="400" y="359">GND</text>
+          <rect class="klemens" x="380" y="376" width="14" height="18"/><text class="t-m" x="400" y="389">IN1</text>
+          <rect class="klemens" x="616" y="136" width="14" height="18"/><text class="t-m" x="610" y="149" text-anchor="end">Röle 1 COM</text>
+          <rect class="klemens" x="616" y="166" width="14" height="18"/><text class="t-m" x="610" y="179" text-anchor="end">Röle 1 NO</text>
+          <rect class="klemens" x="616" y="316" width="14" height="22"/><text class="t-m" x="610" y="331" text-anchor="end">Ethernet</text>
+
+          <!-- güç kabloları -->
+          <line data-adim="2" class="kb-v" x1="210" y1="95" x2="380" y2="95"/>
+          <line data-adim="2" class="kb-g" x1="210" y1="135" x2="380" y2="135"/>
+          <path data-adim="3" class="kb-v" d="M232,95 V275 H210"/>
+          <path data-adim="3" class="kb-g" d="M248,135 V305 H210"/>
+          <circle data-adim="3" cx="232" cy="95" r="3.5" fill="var(--v12)"/>
+          <circle data-adim="3" cx="248" cy="135" r="3.5" fill="var(--gnd)"/>
+
+          <!-- sinyal -->
+          <line data-adim="5" class="kb-g" x1="210" y1="355" x2="380" y2="355"/>
+          <line data-adim="5" class="kb-s" x1="210" y1="385" x2="380" y2="385"/>
+          <text class="t-k" x="295" y="378" text-anchor="middle">araç varken kapanır</text>
+          <path data-adim="6" class="kb-s" d="M346,235 H380"/>
+          <path data-adim="6" class="kb-g" d="M346,265 H380"/>
+
+          <!-- bariyer -->
+          <rect class="k" x="740" y="110" width="160" height="110" rx="6"/>
+          <text class="t-b" x="820" y="100" text-anchor="middle">Bariyer kartı</text>
+          <rect class="klemens" x="740" y="136" width="14" height="18"/><text class="t-m" x="760" y="149">COM</text>
+          <rect class="klemens" x="740" y="166" width="14" height="18"/><text class="t-m" x="760" y="179">START / AÇ</text>
+          <text class="t-k" x="820" y="206" text-anchor="middle">fotosel buraya</text>
+          <line data-adim="7" class="kb-a" x1="630" y1="145" x2="740" y2="145"/>
+          <line data-adim="7" class="kb-a" x1="630" y1="175" x2="740" y2="175"/>
+          <text class="t-k" x="685" y="196" text-anchor="middle">kuru kontak</text>
+
+          <!-- ağ -->
+          <rect class="k" x="740" y="300" width="160" height="56" rx="6"/>
+          <text class="t" x="820" y="324" text-anchor="middle">Ağ anahtarı</text>
+          <text class="t-k" x="820" y="342" text-anchor="middle">→ PTS sunucusu</text>
+          <line data-adim="9" class="ok" x1="630" y1="327" x2="740" y2="327"/>
+          <text class="t-k" x="685" y="318" text-anchor="middle">Cat6</text>
+        </svg>
+      </div>
+      <figcaption>Kartın girişleri GND'ye kısa devre edilince aktif olur: dedektörün rölesi araç varken COM ile NO'yu birleştirir, bu da IN1'i GND'ye bağlar. Röle 1 bariyerin elektriğine dokunmaz; yalnızca "aç" düğmesinin yerine geçen bir kontak verir.</figcaption>
+    </figure>
+  </section>
+
+  <!-- 5. Yazılım ve ayar -->
+  <section aria-labelledby="b5">
+    <div class="bolum-bas"><span class="bolum-no">5</span><h2 id="b5">Yazılımı yükleme ve ayarlar (masada)</h2></div>
+    <figure>
+      <div class="cizim">
+        <svg viewBox="0 0 920 170" role="img" aria-label="Ayar sırası: yazılım karta yüklenir; PTS'de kutu eklenir ve adresle anahtar alınır; bu bilgiler kutunun web sayfasına yazılır; kutu PTS'de çevrimiçi görünür.">
+          <defs>
+            <marker id="ok5" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="isaret-ok"/></marker>
+          </defs>
+          <rect class="k" x="20" y="40" width="190" height="80" rx="6"/>
+          <text class="t-b" x="115" y="70" text-anchor="middle">Bilgisayar</text>
+          <text class="t-k" x="115" y="88" text-anchor="middle">Flash Download Tool</text>
+          <text class="t-m" x="115" y="106" text-anchor="middle">tam.bin → 0x0</text>
+
+          <rect class="k" x="250" y="40" width="190" height="80" rx="6"/>
+          <text class="t-b" x="345" y="70" text-anchor="middle">PTS</text>
+          <text class="t-k" x="345" y="88" text-anchor="middle">Bariyer → Kapı Kutuları</text>
+          <text class="t-k" x="345" y="106" text-anchor="middle">→ Yeni kutu</text>
+
+          <rect class="k-vurgu" x="480" y="40" width="190" height="80" rx="6"/>
+          <text class="t-b" x="575" y="70" text-anchor="middle">Kutu sayfası</text>
+          <text class="t-m" x="575" y="88" text-anchor="middle">http://&lt;kutu-ip&gt;/</text>
+          <text class="t-k" x="575" y="106" text-anchor="middle">parola · adres · anahtar</text>
+
+          <rect class="k" x="710" y="40" width="190" height="80" rx="6"/>
+          <text class="t-b" x="805" y="70" text-anchor="middle">PTS</text>
+          <text class="t-k" x="805" y="88" text-anchor="middle">kutu "Çevrimiçi"</text>
+          <text class="t-k" x="805" y="106" text-anchor="middle">giriş 1 = şeridin kamerası</text>
+
+          <line class="ok" x1="210" y1="80" x2="248" y2="80" marker-end="url(#ok5)"/>
+          <line class="ok" x1="440" y1="80" x2="478" y2="80" marker-end="url(#ok5)"/>
+          <text class="t-k" x="459" y="140" text-anchor="middle">adres + anahtar</text>
+          <line class="ok" x1="670" y1="80" x2="708" y2="80" marker-end="url(#ok5)"/>
+          <text class="t-k" x="689" y="140" text-anchor="middle">kalp atışı / 30 sn</text>
+          <text class="t-k" x="229" y="30" text-anchor="middle">USB</text>
+        </svg>
+      </div>
+    </figure>
+    <ol class="adimlar">
+      <li>GitHub → Actions → <b>Kapi Kutusu yazilimi</b> → son çalışma → <b>kapi-kutusu</b> dosyasını indirin.</li>
+      <li>Kartı USB ile bağlayın (CH340 sürücüsü gerekir). Espressif <b>Flash Download Tool</b> ile <code>pts-kapi-kutusu-tam.bin</code> dosyasını <code>0x0</code> adresine yazın.</li>
+      <li>Karta 12V verin, Ethernet'i takın. Kutu adresini DHCP'den alır; modemin listesinde <code>pts-kapi-kutusu</code> adıyla görünür.</li>
+      <li>PTS'de <b>Bariyer → Kapı Kutuları → Yeni kutu</b>: giriş 1'i şeridin kamerasıyla ve yönüyle (giriş/çıkış şeridi) eşleyin. Kaydedince PTS adresi ve anahtar görünür.</li>
+      <li>Tarayıcıda <code>http://&lt;kutu-ip&gt;/</code> adresini açın: yönetici parolası belirleyin (kullanıcı adı <code>admin</code>), PTS adresini ve anahtarı yazın, kaydedin.</li>
+      <li>Kutu sayfasında "PTS: bağlı", PTS'de kutu "Çevrimiçi" görünmeli.</li>
+    </ol>
+    <p><b>Sonraki güncellemeler USB'siz yapılır:</b> kutu sayfasının en altındaki <b>Yazılım güncelleme</b> bölümünden <code>firmware.bin</code> dosyasını yükleyin. Ayarlar korunur; kutu ~1 dakikada yeniden başlar. Yanlış dosya seçerseniz (ör. <code>tam.bin</code>) kutu yazmadan reddeder. USB yalnızca ilk kurulumda gerekir.</p>
+  </section>
+
+  <!-- 6. Deneme -->
+  <section aria-labelledby="b6">
+    <div class="bolum-bas"><span class="bolum-no">6</span><h2 id="b6">Sahaya çıkmadan deneyin</h2></div>
+    <figure>
+      <div class="cizim">
+        <svg viewBox="0 0 920 190" role="img" aria-label="Masa başı deneme: IN1 ile GND arasına kabloyla dokunulur; kutu sayfasında giriş 1 yeşil yanar; yaklaşık 30 saniye sonra PTS'de okunamayan geçiş görünür.">
+          <defs>
+            <marker id="ok6" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="isaret-ok"/></marker>
+          </defs>
+          <!-- klemensler ve köprü kablo -->
+          <rect class="k-vurgu" x="20" y="36" width="200" height="120" rx="8"/>
+          <text class="t-b" x="120" y="62" text-anchor="middle">KC868-A8</text>
+          <rect class="klemens" x="60" y="92" width="16" height="22"/><text class="t-m" x="68" y="134" text-anchor="middle">GND</text>
+          <rect class="klemens" x="150" y="92" width="16" height="22"/><text class="t-m" x="158" y="134" text-anchor="middle">IN1</text>
+          <path class="kb-s" d="M68,92 C68,70 158,70 158,92"/>
+          <text class="t-k" x="113" y="84" text-anchor="middle">kabloyla dokunun</text>
+
+          <!-- sayfa -->
+          <rect class="k" x="300" y="36" width="250" height="120" rx="8"/>
+          <text class="t-b" x="425" y="62" text-anchor="middle">Kutu sayfası</text>
+          <text class="t-k" x="318" y="92">Girişler:</text>
+          <rect x="378" y="78" width="24" height="22" rx="4" fill="var(--ok)"/><text x="390" y="94" text-anchor="middle" fill="#fff" class="t-m">1</text>
+          <rect x="406" y="78" width="24" height="22" rx="4" fill="var(--road)"/><text class="t-m" x="418" y="94" text-anchor="middle">2</text>
+          <rect x="434" y="78" width="24" height="22" rx="4" fill="var(--road)"/><text class="t-m" x="446" y="94" text-anchor="middle">3</text>
+          <rect x="462" y="78" width="24" height="22" rx="4" fill="var(--road)"/><text class="t-m" x="474" y="94" text-anchor="middle">…</text>
+          <text class="t-k" x="318" y="128">"Bariyeri şimdi aç" → röle tık eder</text>
+
+          <!-- PTS -->
+          <rect class="k" x="630" y="36" width="270" height="120" rx="8"/>
+          <text class="t-b" x="765" y="62" text-anchor="middle">PTS · İçerideki Araçlar</text>
+          <rect x="648" y="78" width="234" height="34" rx="5" fill="var(--accent-soft)" stroke="var(--v12)" stroke-width="1.4"/>
+          <text class="t-r" x="660" y="100">Okunamayan geçiş: 1</text>
+          <text class="t-k" x="648" y="136">"Araç değil" deyip kapatın</text>
+
+          <line class="ok" x1="220" y1="96" x2="298" y2="96" marker-end="url(#ok6)"/>
+          <text class="t-k" x="259" y="88" text-anchor="middle">hemen</text>
+          <line class="ok" x1="550" y1="96" x2="628" y2="96" marker-end="url(#ok6)"/>
+          <text class="t-k" x="589" y="88" text-anchor="middle">~30 sn</text>
+        </svg>
+      </div>
+      <figcaption>Okunamayan geçiş bu denemede beklenen sonuçtur: o an kamera bir araç okumadı. Uyarı çıkıyorsa sinyal kutudan PTS'ye kadar doğru gidiyor demektir.</figcaption>
+    </figure>
+    <p>Hepsi çalışınca kutuyu sahaya kurun. Önce yalnız döngü ve dedektörü bağlayıp birkaç gün "okunamayan geçiş" sayısını izleyin; bariyeri sonra ekleyin. PTS'de HTTP modunda bir bariyer ekleyip adresine kutunun bariyer adresini yazmanız yeterli.</p>
+  </section>
+
+  <!-- 7. Sorun giderme -->
+  <section aria-labelledby="b7">
+    <div class="bolum-bas"><span class="bolum-no">7</span><h2 id="b7">Bir şey çalışmazsa</h2></div>
+    <div class="tablo"><table>
+      <thead><tr><th>Belirti</th><th>Bakılacak yer</th></tr></thead>
+      <tbody>
+        <tr><td>Kutu sayfası açılmıyor</td><td>Ethernet ışığı; kutu adresi (seri ekranda <code>DURUM</code> yazın)</td></tr>
+        <tr><td>"PTS anahtarı reddetti"</td><td>Kutudaki anahtar PTS'dekiyle aynı mı, kutu PTS'de Aktif mi</td></tr>
+        <tr><td>"PTS'ye bağlanılamadı"</td><td>PTS adresi ve port (8000), güvenlik duvarı, http/https doğru mu</td></tr>
+        <tr><td>Giriş ışığı yanmıyor</td><td>Dedektörün COM/NO bağlantısı, GND, dedektörün varlık modu ve hassasiyeti</td></tr>
+        <tr><td>Her araçta "okunamayan geçiş"</td><td>PTS'deki giriş–kamera eşlemesi, kamera saati, döngünün okuma noktasının altında olması</td></tr>
+        <tr><td>Bariyer açılmıyor</td><td>Kutu sayfasında "Bariyeri şimdi aç"; röle 1'in bariyerin START girişine bağlı olması</td></tr>
+      </tbody>
+    </table></div>
+  </section>
+</div>
