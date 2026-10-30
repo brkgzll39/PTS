@@ -430,6 +430,7 @@ function _kapiListeCiz() {
       const kim = k.kisi_adi || k.misafir_adi;
       const not = _kapiEkNot(k.not_metni, kim, k.kisi_departman);
       const alt = [kim ? `<b>${escapeHtml(kim)}</b>` : "", escapeHtml(tur.etiket),
+        k.sonradan_aktarildi ? '<i class="bi bi-sd-card"></i> Sunucu kapalıyken' : "",
         not ? `<i class="bi bi-chat-left-text"></i> ${escapeHtml(not)}` : ""].filter(Boolean).join(" · ");
       return `<button type="button" class="kapi-satir ${gosterilen && gosterilen.id === k.id ? "secili" : ""}" data-kapi-kayit="${k.id}">
         <span class="serit ks-${tur.sinif}"></span>

@@ -91,6 +91,9 @@
             <span class="dugme">Kontrol ettim</span>'e basın.</li>
           <!--MODUL:resmi_arac--><li><b>Resmi araç uyarısı</b>: Kurumun resmi aracı görev emri olmadan ya da mesai dışında çıktı veya görev süresinden geç döndü
             (bkz. <a href="#resmi-arac-kapi">Resmi Araçlar</a>). <span class="dugme">Görev bilgisi gir</span> ile çıkışı işleyin.</li><!--/MODUL-->
+          <li><b>Sunucu kapalı kaldı</b>: Sunucu bilgisayarı kapatılmış ya da uykuya alınmış. Bu sürede geçişler canlı kaydedilemedi;
+            kameranın kendi hafızasından alınabilenler sisteme eklendi (listede <i class="bi bi-sd-card"></i> "Sunucu kapalıyken" yazar).
+            Kimin, neden kapattığını amirinize bildirin, sonra <span class="dugme">Kontrol ettim</span>'e basın.</li>
           <li><b>Okunamayan geçiş</b> (Kapı Kutusu kuruluysa): Yerdeki sensör araç gördü ama kamera plakayı okuyamadı. Fotoğrafa bakıp plakayı
             yazın ya da "araç değil" deyin.</li>
         </ul>
@@ -259,6 +262,7 @@
             <tr><td>Şüpheli araç</td><td>Aynı tanımsız araç bir saat içinde defalarca reddedildi.</td></tr>
             <tr><td>Klon plaka şüphesi</td><td>Aynı plaka kısa sürede iki ayrı kapıda okundu (başka araçta aynı plaka olabilir).</td></tr>
             <!--MODUL:resmi_arac--><tr><td>Resmi araç</td><td>Görevsiz çıkış, geç dönüş, mesai dışı hareket.</td></tr><!--/MODUL-->
+            <tr><td>Sunucu kapalı kaldı</td><td>Sunucu 3 dakikadan uzun kapalı kaldı ya da uykuya alındı; ardından kameradan kaç geçiş aktarıldığı da bildirilir.</td></tr>
             <tr><td>Kamera arızası</td><td>Kamera bağlantısı koptu ya da görüntü gelmiyor.</td></tr>
             <tr><td>Bariyer otomatik açılamadı</td><td>Tanımlı araç için bariyer komutu başarısız oldu.</td></tr>
           </tbody>
@@ -278,6 +282,22 @@
           <b>Okuma Kalitesi</b> ve <b>Kamera Karşılaştırma</b> kartları hangi kameranın ne kadar iyi okuduğunu gösterir.</p>
         <div class="ipucu">Aynı nizamiyenin kameralarına ortak bir başlangıç verin ("Nizamiye Giriş", "Nizamiye Çıkış"): sistem bunları tek
           nizamiye sayar, raporlarda birlikte gösterir.</div>
+
+        <h3 id="sunucu-kesintisi">Sunucu kapanırsa: kameradan geçiş aktarma</h3>
+        <p>Dahua ANPR kameraları plakaları kendi hafıza kartına da kaydeder; sunucu kapalıyken de bunu sürdürür. Sunucu her dakika
+          "çalışıyorum" işareti bırakır. Yeniden açıldığında (ya da uykudan döndüğünde) arada 3 dakikadan uzun boşluk varsa:</p>
+        <ol class="adim">
+          <li>"Sunucu kapalıydı" alarmı ve bildirimi verilir (kapanma ve açılma saatiyle).</li>
+          <li><b>Kameranın kendi plaka okuması</b> açık her kameradan o aralığın kayıtları istenir; sistemde olmayan geçişler gerçek
+            saatleriyle eklenir. Bariyer açılmaz, LED'e yazılmaz; kara listedeki araç için ayrıca alarm üretilir.</li>
+          <li>Kameralar ekranındaki <b>Sunucu Kesintileri</b> kartında aralık, süre ve aktarılan geçiş sayısı görünür. Kamera o an
+            ulaşılamadıysa (elektrik kesintisinden sonra kamera geç açıldıysa) <span class="dugme">Yeniden dene</span>.</li>
+        </ol>
+        <p>İstediğiniz bir aralığı elle de alabilirsiniz: Kameralar listesinde kameranın satırındaki <span class="dugme"><i class="bi bi-broadcast"></i></span> düğmesiyle açılan pencerede
+          "Kameranın hafızasındaki geçişler" bölümünden tarih aralığı seçip <span class="dugme">Önizle</span>, sonra <span class="dugme">Aktar</span>.
+          Önizleme kameranın ham yanıtını da gösterir; kamera sorguyu kabul etmezse teşhis için bu yanıtı destek ekibine iletin.</p>
+        <div class="dikkat">Bunun için kameranın kartında ANPR kayıtlarının tutulması (kameranın Depolama ayarı) ve kamera saatinin doğru
+          olması gerekir. Kamera saati yanlışsa geçişler yanlış saatle eklenir.</div>
 
         <h3 id="bariyer">Bariyer Kontrolü ve Kapı Kutuları</h3>
         <p><b>Yeni Bariyer Ekle</b>: bariyerin açma komutu (HTTP adresi). "Otomatik aç" işaretliyse tanımlı araç girişinde bariyer kendiliğinden açılır.

@@ -625,6 +625,7 @@ function alarmTipiEtiketi(tip) {
     supheli_arac: "Şüpheli araç (tekrarlı red)",
     klon_plaka: "Klon plaka şüphesi",
     resmi_arac: "Resmi araç (görevsiz / mesai dışı / geç dönüş)",
+    sunucu_kesintisi: "Sunucu kapalı kaldı",
     kamera_arizasi: "Kamera arızası / bağlantı sorunu",
     // 2026-09-25 (sistem taraması): bu iki alarm tipi backend'de üretiliyor
     // ama burada etiketi yoktu -- panelde ham "bariyer_hatasi" metni görünüyordu.
@@ -665,7 +666,11 @@ function kayitIsimGoster(kayit) {
 // HİÇBİR karede doğrulanmadan tek başına kesinleşmiş -- yanlış okuma riski
 // daha yüksek, operatör dikkat etsin diye ayrıca işaretlenir. >=2: birden
 // fazla karenin oydaşmasıyla kesinleşmiş, daha güvenilir.
-function dogrulamaRozeti(kareSayisi, farkliOkumaSayisi, kameraOkumasi) {
+function dogrulamaRozeti(kareSayisi, farkliOkumaSayisi, kameraOkumasi, sonradanAktarildi) {
+  // 2026-10-30: sunucu kapalıyken kameranın kendi hafızasına yazdığı, sonradan alınan geçiş.
+  if (sonradanAktarildi) {
+    return '<span class="badge text-bg-secondary" title="Sunucu kapalıyken kameranın kendi hafızasına kaydettiği geçiş; sunucu açılınca kameradan alındı. Plaka kameranın okumasıdır.">Sunucu kapalıyken (kameradan)</span>';
+  }
   if (kareSayisi === null || kareSayisi === undefined) return '<span class="text-muted small">-</span>';
   // 2026-10-12: kameranın kendi ANPR'ı kayıttan FARKLI bir plaka okuduysa
   // (bkz. backend/models.py::Kayit.kamera_okumasi) iki okumadan biri yanlıştır
@@ -2093,6 +2098,7 @@ function kameraDahuaAc(id) {
   document.getElementById("kameraDahuaOlaylar").value = ayar.olaylar || "";
   document.getElementById("kameraDahuaPort").value = ayar.http_port || "";
   document.getElementById("kameraDahuaTestSonuc").innerHTML = "";
+  _dahuaGecmisVarsayilan();
   document.getElementById("kameraDahuaDurum").innerHTML = '<span class="text-muted">Yükleniyor…</span>';
   bootstrap.Modal.getOrCreateInstance(document.getElementById("kameraDahuaModal")).show();
   _kameraDahuaDurumunuGoster();
@@ -3792,6 +3798,72 @@ document.getElementById("resmiMesaiForm")?.addEventListener("submit", async (e) 
   }));
 })();
 
+// ---------------------- SUNUCU KESİNTİSİ (2026-10-30) ----------------------
+function _dahuaGecmisVarsayilan() {
+  const bit = new Date(), bas = new Date(bit.getTime() - 24 * 3600 * 1000);
+  const yaz = d => `${_yerelTarihMetni(d)}T${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+  document.getElementById("dahuaGecmisBas").value = yaz(bas);
+  document.getElementById("dahuaGecmisBit").value = yaz(bit);
+  document.getElementById("dahuaGecmisSonuc").innerHTML = "";
+  document.getElementById("dahuaGecmisAktarBtn").disabled = true;
+}
+
+async function dahuaGecmis(aktar) {
+  const el = document.getElementById("dahuaGecmisSonuc");
+  const govde = { baslangic: document.getElementById("dahuaGecmisBas").value, bitis: document.getElementById("dahuaGecmisBit").value, aktar };
+  if (aktar && !(await onayAl("Kameranın bu aralıktaki, sistemde olmayan geçişleri gerçek saatleriyle eklenecek. Bariyer açılmaz; kara listedeki araçlar için alarm üretilir.",
+    { baslik: "Geçişler aktarılsın mı?", onayMetni: "Aktar", guvenli: true }))) return;
+  el.innerHTML = '<span class="spinner-border spinner-border-sm"></span> Kamera sorgulanıyor…';
+  try {
+    const r = await apiCagir(`/kameralar/${encodeURIComponent(_kameraDahuaId)}/dahua-gecmis`, {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(govde),
+    });
+    const ham = (r.ham || []).map(h => `<div class="text-muted">${escapeHtml(h.yontem)} · HTTP ${h.http ?? "—"}</div><pre class="bg-light p-2 mb-1" style="white-space:pre-wrap">${escapeHtml(h.ornek || "")}</pre>`).join("");
+    const liste = (r.onizleme || []).map(o => `<tr class="${o.zaten_var ? "text-muted" : ""}"><td class="fw-bold">${escapeHtml(o.plaka_no)}</td>
+      <td>${escapeHtml(tarihFormatla(o.zaman))}</td><td>${o.zaten_var ? "sistemde var" : '<span class="text-success">aktarılacak</span>'}${o.fotograf ? ' · <i class="bi bi-image"></i>' : ""}</td></tr>`).join("");
+    el.innerHTML = r.basarili ? `
+      <div class="alert ${aktar ? "alert-success" : "alert-info"} py-2 mb-2">
+        Kamerada <b>${r.bulunan}</b> geçiş bulundu (${escapeHtml(r.yontem || "")}).
+        ${aktar ? `<b>${r.aktarilan}</b> geçiş eklendi${r.kara_liste ? `, <b>${r.kara_liste}</b> kara liste alarmı` : ""}; ${r.zaten_vardi} tanesi zaten sistemdeydi.`
+               : `<b>${r.aktarilan}</b> tanesi sistemde yok ve aktarılabilir; ${r.zaten_vardi} tanesi zaten var.`}</div>
+      ${liste ? `<div class="table-responsive" style="max-height:260px"><table class="table table-sm mb-2"><tbody>${liste}</tbody></table></div>` : ""}
+      ${ham ? `<details><summary>Kameranın ham yanıtı (teşhis)</summary>${ham}</details>` : ""}`
+      : `<div class="alert alert-danger py-2 mb-2">${escapeHtml(r.hata || "Kamera kayıtları alınamadı")}</div>${ham ? `<details open><summary>Kameranın ham yanıtı (teşhis)</summary>${ham}</details>` : ""}`;
+    document.getElementById("dahuaGecmisAktarBtn").disabled = aktar || !r.basarili || !r.aktarilan;
+    if (aktar) sunucuKesintileriYukle();
+  } catch (e) {
+    el.innerHTML = `<div class="alert alert-danger py-2">${escapeHtml(e.message)}</div>`;
+  }
+}
+
+async function sunucuKesintileriYukle() {
+  const tablo = document.getElementById("sunucuKesintiTablo");
+  if (!tablo) return;
+  let liste;
+  try { liste = await apiCagir("/sunucu-kesintileri"); } catch (e) { tablo.innerHTML = `<tr><td colspan="5" class="text-danger small p-3">${escapeHtml(e.message)}</td></tr>`; return; }
+  const durumlar = { bekliyor: ["Kameralar sorgulanıyor", "secondary"], tamamlandi: ["Tamamlandı", "success"],
+    kismi: ["Bazı kameralardan alınamadı", "warning"], kamera_yok: ["Kameradan alınamaz (Dahua okuması kapalı)", "light"] };
+  tablo.innerHTML = liste.length ? liste.map(k => {
+    const [ad, renk] = durumlar[k.durum] || [k.durum, "secondary"];
+    const ayrinti = (k.ayrinti || []).map(a => `${escapeHtml(a.kamera)}: ${a.basarili ? `${a.aktarilan} aktarıldı` : escapeHtml(a.hata || "alınamadı")}`).join("<br>");
+    return `<tr><td class="text-nowrap">${escapeHtml(tarihFormatla(k.baslangic))} – ${escapeHtml(tarihFormatla(k.bitis))}</td>
+      <td class="text-nowrap">${escapeHtml(k.sure)}</td>
+      <td><b>${k.aktarilan}</b>${k.kara_liste ? ` <span class="badge text-bg-danger">${k.kara_liste} kara liste</span>` : ""}${ayrinti ? `<div class="small text-muted">${ayrinti}</div>` : ""}</td>
+      <td><span class="badge text-bg-${renk}${renk === "light" ? " border" : ""}">${escapeHtml(ad)}</span></td>
+      <td class="text-end">${rolYeterli("yonetici") && k.durum !== "bekliyor" ? `<button class="btn btn-sm btn-outline-primary" onclick="sunucuKesintisiYenidenDene(${Number(k.id)})">Yeniden dene</button>` : ""}</td></tr>`;
+  }).join("") : '<tr><td colspan="5" class="text-muted small p-3">Kayıtlı kesinti yok.</td></tr>';
+}
+
+async function sunucuKesintisiYenidenDene(id) {
+  try {
+    await apiCagir(`/sunucu-kesintileri/${id}/yeniden-dene`, { method: "POST" });
+    toastGoster("Kameralar yeniden sorgulanıyor; birkaç dakika içinde sonuç burada görünür.", "bilgi");
+    sunucuKesintileriYukle();
+  } catch (e) { toastGoster(e.message, "hata"); }
+}
+
+document.querySelector('[data-bs-target="#kamera-sekme"]')?.addEventListener("shown.bs.tab", sunucuKesintileriYukle);
+
 // ---------------------- KAPI KUTUSU (2026-10-28) ----------------------
 // Okunamayan geçişler (kutunun sensörü araç gördü, kamera plakayı okumadı):
 // İçerideki Araçlar sekmesinin ve Kapı Modu ana ekranının üstünde, görevli
@@ -3840,6 +3912,9 @@ async function klonUyarilariYukle() {
   if (!document.body.classList.contains("kapi-modu")) return;
   _kapiAlarmAlani("kapiKlonAlani", "klon_plaka", '<i class="bi bi-shield-exclamation"></i> Klon plaka şüphesi',
     "Aynı plaka kısa sürede iki ayrı kapıda okundu. Aracı ve sürücüyü kontrol edin.");
+  // SUNUCU KESİNTİSİ (2026-10-30): sunucu kapalı kaldıysa görevli bilsin.
+  _kapiAlarmAlani("kapiKesintiAlani", "sunucu_kesintisi", '<i class="bi bi-power"></i> Sunucu kapalı kaldı',
+    "Bu sürede geçişler canlı kaydedilemedi; kameranın hafızasından alınabilenler sisteme eklenir. Kimin kapattığını amirinize bildirin.");
   // RESMİ ARAÇ (2026-10-30): görev emirsiz çıkış, mesai dışı hareket, geç dönüş.
   if (_resmiModulAcik) {
     _kapiAlarmAlani("kapiResmiAlani", "resmi_arac", '<i class="bi bi-briefcase-fill"></i> Resmi araç uyarısı',
@@ -3867,7 +3942,7 @@ async function _kapiAlarmAlani(alanId, tip, baslik, aciklama, ekDugme = () => ""
       <span class="small fw-normal">${escapeHtml(aciklama)}</span></div>
     <div class="okunamayan-liste">${liste.map(a => `
       <div class="okunamayan-satir">
-        <div class="okunamayan-bilgi"><b>${escapeHtml(a.plaka_no)}</b>
+        <div class="okunamayan-bilgi">${a.plaka_no && a.plaka_no !== "-" ? `<b>${escapeHtml(a.plaka_no)}</b>` : ""}
           <div class="small">${escapeHtml(a.mesaj)}</div></div>
         <div class="d-flex gap-2">${ekDugme(a)}
         ${islem ? `<button type="button" class="btn btn-sm btn-outline-danger" onclick="klonKontrolEdildi(${Number(a.id)})">Kontrol ettim</button>` : ""}</div>
@@ -4280,7 +4355,7 @@ async function kayitlariYukle(sifirla = true) {
         <td class="small">${kayitIsimGoster(k)}</td>
         <td class="small">${k.surucu_adi ? escapeHtml(k.surucu_adi) : '<span class="text-muted">-</span>'}</td>
         <td>${k.vardiya_adi ? `<span class="badge bg-info text-dark">${escapeHtml(k.vardiya_adi)}</span>` : '<span class="text-muted small">-</span>'}</td>
-        ${rolYeterli("yonetici") ? `<td>${dogrulamaRozeti(k.dogrulama_kare_sayisi, k.farkli_okuma_sayisi, k.kamera_okumasi)}</td>` : ""}
+        ${rolYeterli("yonetici") ? `<td>${dogrulamaRozeti(k.dogrulama_kare_sayisi, k.farkli_okuma_sayisi, k.kamera_okumasi, k.sonradan_aktarildi)}</td>` : ""}
         <td class="text-nowrap">
           <button class="btn btn-sm btn-outline-danger" onclick="kayitPdfIndir(${k.id})" title="PDF indir" aria-label="PDF indir"><i class="bi bi-file-earmark-pdf"></i></button>
           ${rolYeterli("operatör") ? `<button class="btn btn-sm btn-outline-primary ms-1" onclick="kayitDuzenleAc(${k.id})" title="Kaydı düzenle" aria-label="Kaydı düzenle"><i class="bi bi-pencil"></i></button>` : ""}
@@ -5880,7 +5955,7 @@ async function plakaAnalizAc(plaka) {
         <td>${durumRozeti(k.yetki_durumu, k.kisi_tip_anlik, k.kisi_departman)}</td>
         <td class="small">${kayitIsimGoster(k)}</td>
         <td>${k.vardiya_adi ? `<span class="badge bg-info text-dark">${escapeHtml(k.vardiya_adi)}</span>` : '<span class="text-muted small">-</span>'}</td>
-        <td>${dogrulamaRozeti(k.dogrulama_kare_sayisi, k.farkli_okuma_sayisi, k.kamera_okumasi)}</td>
+        <td>${dogrulamaRozeti(k.dogrulama_kare_sayisi, k.farkli_okuma_sayisi, k.kamera_okumasi, k.sonradan_aktarildi)}</td>
         <td class="small">${k.manuel_giris ? '<span class="badge bg-secondary d-block mb-1">Manuel</span>' : ""}${k.not_metni ? escapeHtml(k.not_metni) : (k.manuel_giris ? "" : '<span class="text-muted">-</span>')}</td>
         <td class="text-nowrap">
           ${rolYeterli("operatör") ? `<button class="btn btn-sm btn-outline-primary" onclick="kayitDuzenleAc(${k.id})" title="Kaydı düzenle" aria-label="Kaydı düzenle"><i class="bi bi-pencil"></i></button>` : ""}
@@ -7154,7 +7229,7 @@ async function bildirimAyarlariYukle() {
     const tetikleyiciEtiketleri = {
       hepsi: "Hepsi", yetkisiz: "Yetkisiz araç", kara_liste: "Kara liste",
       suresi_dolmus: "Süresi dolmuş", supheli_arac: "Şüpheli araç", klon_plaka: "Klon plaka şüphesi",
-      resmi_arac: "Resmi araç uyarısı", bariyer_hatasi: "Bariyer hatası", kamera_arizasi: "Kamera arızası",
+      resmi_arac: "Resmi araç uyarısı", sunucu_kesintisi: "Sunucu kapalı kaldı", bariyer_hatasi: "Bariyer hatası", kamera_arizasi: "Kamera arızası",
       disk_hatasi: "Disk hatası", yedek_bozuk: "Otomatik yedek bozuk", yedek_hatasi: "Otomatik yedek alınamadı",
       disk_doluyor: "Disk doluluk erken uyarısı", sertifika_bitiyor: "HTTPS sertifikası bitiyor", gunluk_ozet: "Günlük özet (her sabah)",
     };

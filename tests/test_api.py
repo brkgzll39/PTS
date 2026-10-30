@@ -8745,3 +8745,67 @@ def test_kullanim_kilavuzu_resmi_arac_modulu_acikken(client, resmi_modul, operat
     h = client.get("/kilavuz/icerik", headers=operator_header).json()["html"]
     assert 'id="resmi-araclar"' in h and 'id="resmi-arac-kapi"' in h and "Mesai Saatleri</b> kartında" not in h
     assert "Mesai Saatleri</b> kartında" in client.get("/kilavuz/icerik", headers=yetkili_header).json()["html"]
+
+
+# ---------------- Sunucu kesintisi: kameranın hafızasından geçiş aktarma (2026-10-30) ----------------
+
+@pytest.fixture
+def dahua_kamera(monkeypatch):
+    kameralar = pts_main._kameralari_oku()
+    kamera = {"id": "kesinti-kam", "ad": "Kesinti Nizamiye Giriş", "rtsp_url": "rtsp://admin:x@10.0.0.9/cam",
+              "yon": "giris", "aktif": False, "dahua_anpr": {"aktif": True, "olaylar": "TrafficJunction", "http_port": 80}}
+    pts_main._kameralari_yaz(kameralar + [kamera])
+    simdi = datetime.now().replace(microsecond=0)
+    kayitlar = [{"plaka": "34 KSN 01", "zaman": simdi - timedelta(hours=2), "dosya": None},
+                {"plaka": "34 KSN 02", "zaman": simdi - timedelta(hours=1), "dosya": None},
+                {"plaka": "34 KSN 03", "zaman": simdi - timedelta(minutes=50), "dosya": None}]
+    monkeypatch.setattr("backend.dahua_kayit.kayitlari_getir",
+                        lambda *a, **k: {"basarili": True, "yontem": "recordFinder", "kayitlar": kayitlar, "ham": [], "hata": None})
+    yield kamera, simdi
+    pts_main._kameralari_yaz(kameralar)
+
+
+def test_kameradan_gecmis_onizle_ve_aktar(client, yetkili_header, operator_header, dahua_kamera):
+    kamera, simdi = dahua_kamera
+    _kayit_ekle_db("34 KSN 01", "giris", kamera="Kesinti Nizamiye Giriş", once=timedelta(hours=2, seconds=-40))  # zaten var
+    client.post("/kara-listesi", json={"plaka_no": "34 KSN 03", "sebep": "test"}, headers=operator_header)
+    govde = {"baslangic": (simdi - timedelta(hours=3)).isoformat(), "bitis": simdi.isoformat()}
+    assert client.post("/kameralar/kesinti-kam/dahua-gecmis", json=govde, headers=operator_header).status_code == 403
+    r = client.post("/kameralar/kesinti-kam/dahua-gecmis", json=govde, headers=yetkili_header)
+    assert r.status_code == 200, r.text
+    o = r.json()
+    assert (o["aktarilan"], o["zaten_vardi"]) == (2, 1) and len(o["onizleme"]) == 3
+    assert not client.get("/kayitlar?plaka=34 KSN 02", headers=yetkili_header).json()  # önizleme kayıt eklemez
+    r = client.post("/kameralar/kesinti-kam/dahua-gecmis", json={**govde, "aktar": True}, headers=yetkili_header).json()
+    assert (r["aktarilan"], r["zaten_vardi"], r["kara_liste"]) == (2, 1, 1)
+    k = client.get("/kayitlar?plaka=34 KSN 02", headers=yetkili_header).json()[0]
+    assert k["sonradan_aktarildi"] is True and k["kamera_id"] == "Kesinti Nizamiye Giriş" and k["yon"] == "giris"
+    assert k["tarih_saat"].startswith((simdi - timedelta(hours=1)).strftime("%Y-%m-%dT%H:%M"))
+    alarm = [a for a in client.get("/alarmlar?alarm_tipi=kara_liste&limit=500", headers=yetkili_header).json() if a["plaka_no"] == "34 KSN 03"]
+    assert alarm and "sunucu kapalıyken" in alarm[0]["mesaj"]
+    # İkinci aktarımda hepsi zaten var
+    r = client.post("/kameralar/kesinti-kam/dahua-gecmis", json={**govde, "aktar": True}, headers=yetkili_header).json()
+    assert (r["aktarilan"], r["zaten_vardi"]) == (0, 3)
+
+
+def test_sunucu_kesintisi_tespit_ve_otomatik_aktarim(client, yetkili_header, dahua_kamera, monkeypatch):
+    kamera, simdi = dahua_kamera
+    yeni = [{"plaka": "34 KSN 11", "zaman": simdi - timedelta(hours=2, minutes=30), "dosya": None}]
+    monkeypatch.setattr("backend.dahua_kayit.kayitlari_getir",
+                        lambda *a, **k: {"basarili": True, "yontem": "recordFinder", "kayitlar": yeni, "ham": [], "hata": None})
+    monkeypatch.setattr(pts_main.threading, "Thread",
+                        lambda target, args=(), daemon=None: type("T", (), {"start": lambda self: target(*args)})())
+    pts_main._kesinti_kaydet(simdi - timedelta(hours=3), simdi, "KAPALIYDI")
+    kesinti = client.get("/sunucu-kesintileri", headers=yetkili_header).json()[0]
+    assert kesinti["durum"] == "tamamlandi" and kesinti["aktarilan"] == 1 and kesinti["sure"] == "3 sa 0 dk"
+    assert kesinti["ayrinti"][0]["kamera"] == "Kesinti Nizamiye Giriş"
+    mesajlar = [a["mesaj"] for a in client.get("/alarmlar?alarm_tipi=sunucu_kesintisi&limit=500", headers=yetkili_header).json()]
+    assert any(m.startswith("SUNUCU KAPALIYDI") for m in mesajlar) and any("geçiş aktarıldı" in m for m in mesajlar)
+
+
+def test_nabiz_dosyasi_yaz_oku(tmp_path, monkeypatch):
+    monkeypatch.setattr(pts_main, "_NABIZ_DOSYASI", str(tmp_path / "nabiz.json"))
+    assert pts_main._nabiz_oku() is None
+    an = datetime(2026, 10, 30, 2, 14, 5)
+    pts_main._nabiz_yaz(an)
+    assert pts_main._nabiz_oku() == an

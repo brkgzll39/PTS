@@ -259,6 +259,9 @@ class Kayit(Base):
     # ("16 AC 9302"); aynıysa ya da kamera okuması yoksa None. Doluysa kayıt
     # panelde "Kontrol gerekli" diye işaretlenir -- iki okumadan biri yanlıştır.
     kamera_okumasi = Column(String(20), nullable=True)
+    # SUNUCU KESİNTİSİ (2026-10-30): sunucu kapalıyken kameranın kendi hafızasına
+    # yazdığı ve sunucu açılınca kameradan alınan geçiş (bkz. main.py "SUNUCU KESİNTİSİ").
+    sonradan_aktarildi = Column(Boolean, nullable=True)
     # Tek seferlik, bu kayda özel not (örn. "görevli tarafından elle içeri
     # alındı, sebep: teslimat"). Kişinin KENDİ profilindeki kalıcı notlar
     # (bkz. Kisi.aciklama) ile KARIŞTIRILMAMALI -- bu SADECE bu tekil geçişe
@@ -576,6 +579,21 @@ class BeklenenZiyaretci(Base):
     iptal_eden = Column(String(80), nullable=True)
     # Misafir daveti (2026-10-30): öz-hizmet hesabının kendi oluşturduğu kayıt.
     davet_eden_kullanici_id = Column(Integer, nullable=True, index=True)
+
+
+class SunucuKesintisi(Base):
+    """Sunucunun kapalı kaldığı aralık (2026-10-30). Açılışta son "nabız" ile şimdi
+    arasından tespit edilir; kameraların hafızasındaki geçişler bu aralık için
+    alınır (bkz. main.py "SUNUCU KESİNTİSİ")."""
+    __tablename__ = "sunucu_kesintileri"
+
+    id = Column(Integer, primary_key=True, index=True)
+    baslangic = Column(DateTime, nullable=False, index=True)   # son nabız
+    bitis = Column(DateTime, nullable=False)                   # yeniden açılış
+    durum = Column(String(20), default="bekliyor")             # bekliyor | tamamlandi | kamera_yok | kismi
+    aktarilan = Column(Integer, default=0)
+    kara_liste = Column(Integer, default=0)
+    ayrinti = Column(Text, nullable=True)                      # kamera başına sonuç (JSON)
 
 
 class ResmiArac(Base):

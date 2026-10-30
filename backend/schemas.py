@@ -537,6 +537,7 @@ class KayitCevap(BaseModel):
     harici_katkili: Optional[bool] = None
     # Kameranın kendi okuması kayıttan farklıysa -- bkz. models.Kayit.kamera_okumasi.
     kamera_okumasi: Optional[str] = None
+    sonradan_aktarildi: Optional[bool] = None  # sunucu kapalıyken kameranın hafızasından alındı
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -950,3 +951,10 @@ class GorevEmriGuncelle(BaseModel):
         if isinstance(v, str):
             v = v.strip()
         return v or None
+
+
+class DahuaGecmisIstek(BaseModel):
+    """POST /kameralar/{id}/dahua-gecmis: kameranın hafızasındaki geçişler."""
+    baslangic: datetime
+    bitis: datetime
+    aktar: bool = False

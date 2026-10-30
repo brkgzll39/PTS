@@ -788,6 +788,22 @@
       </div>
       <div id="kameraDahuaTestSonuc" class="mb-3"></div>
       <div id="kameraDahuaDurum" class="small"></div>
+      <hr>
+      <h6 class="mb-1"><i class="bi bi-sd-card me-1"></i>Kameranın hafızasındaki geçişler</h6>
+      <p class="small text-muted mb-2">Sunucu kapalıyken kamera plakaları kendi kartına kaydetmeye devam eder. Sunucu açılınca
+        kapalı kalınan süre kendiliğinden alınır; burada istediğiniz aralığı elle önizleyip aktarabilirsiniz. Sistemde zaten
+        olan geçişler atlanır; aktarılanlar bariyer açmaz.</p>
+      <div class="row g-2 align-items-end mb-2">
+        <div class="col-sm-4"><label class="form-label small mb-1" for="dahuaGecmisBas">Başlangıç</label>
+          <input type="datetime-local" class="form-control form-control-sm" id="dahuaGecmisBas"></div>
+        <div class="col-sm-4"><label class="form-label small mb-1" for="dahuaGecmisBit">Bitiş</label>
+          <input type="datetime-local" class="form-control form-control-sm" id="dahuaGecmisBit"></div>
+        <div class="col-sm-4 d-flex gap-2">
+          <button type="button" class="btn btn-sm btn-outline-primary flex-fill" onclick="dahuaGecmis(false)"><i class="bi bi-search"></i> Önizle</button>
+          <button type="button" class="btn btn-sm btn-primary flex-fill" id="dahuaGecmisAktarBtn" onclick="dahuaGecmis(true)" disabled><i class="bi bi-download"></i> Aktar</button>
+        </div>
+      </div>
+      <div id="dahuaGecmisSonuc" class="small"></div>
     </div>
     <div class="modal-footer">
       <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Kapat</button>
@@ -958,6 +974,7 @@
     <div id="kapiSekme_kapi">
       <div class="okunamayan-alan okunamayan-kapi d-none" id="kapiKlonAlani" data-klon></div>
       <div class="okunamayan-alan okunamayan-kapi d-none" id="kapiResmiAlani" data-klon></div>
+      <div class="okunamayan-alan okunamayan-kapi d-none" id="kapiKesintiAlani" data-klon></div>
       <div class="okunamayan-alan okunamayan-kapi d-none"></div>
       <div class="kapi-izgara">
         <div class="kapi-kart kapi-son" id="kapiSonKart"></div>
@@ -1942,6 +1959,15 @@
       <div class="row g-3">
         <div class="col-lg-5"><div class="card"><div class="card-header"><i class="bi bi-camera-video-fill me-1"></i>Kamera Ekle</div><div class="card-body"><form id="kameraForm" data-rol-min="operatör"><div class="mb-3"><label class="form-label small" for="kameraAd">Kamera adı</label><input class="form-control" id="kameraAd" placeholder="Nizamiye Giriş" required></div><div class="mb-3"><label class="form-label small" for="kameraRtsp">RTSP adresi</label><input class="form-control" id="kameraRtsp" placeholder="rtsp://kullanici:sifre@192.168.1.20:554/..." required></div><div class="mb-3"><label class="form-label small" for="kameraYon">Yön</label><select class="form-select" id="kameraYon"><option value="giris">Giriş</option><option value="cikis">Çıkış</option></select></div><button class="btn btn-primary" type="submit"><i class="bi bi-plus-circle"></i> Kamerayı Kaydet</button></form><div id="kameraSonuc" class="small mt-3"></div></div></div></div>
         <div class="col-lg-7"><div class="card"><div class="card-header d-flex justify-content-between"><span><i class="bi bi-list-ul me-1"></i>Tanımlı Kameralar</span><div class="d-flex gap-2 align-items-center"><span id="kameraSayac" class="small text-muted">-</span><button class="btn btn-sm btn-outline-info" onclick="tumKameralarSaglikKontrol()" title="Tüm kameraları ping'le"><i class="bi bi-activity"></i> Sağlık</button></div></div><div class="card-body p-0"><div class="table-responsive"><table class="table table-hover mb-0 align-middle"><thead class="table-light"><tr><th>Ad</th><th>Yön</th><th>RTSP adresi</th><th>Pipeline</th><th>TCP</th><th></th></tr></thead><tbody id="kameralarTablo"></tbody></table></div></div></div></div>
+        <!-- SUNUCU KESİNTİSİ (2026-10-30): kapalı kalınan süreler ve kameradan aktarılan geçişler -->
+        <div class="col-12"><div class="card"><div class="card-header d-flex justify-content-between align-items-center">
+          <span><i class="bi bi-power me-1"></i>Sunucu Kesintileri</span>
+          <button class="btn btn-sm btn-outline-secondary" onclick="sunucuKesintileriYukle()" title="Yenile" aria-label="Yenile"><i class="bi bi-arrow-clockwise"></i></button></div>
+          <div class="card-body p-0"><div class="table-responsive"><table class="table table-sm mb-0 align-middle">
+            <thead class="table-light"><tr><th>Kapalı kaldığı aralık</th><th>Süre</th><th>Kameradan aktarılan</th><th>Durum</th><th></th></tr></thead>
+            <tbody id="sunucuKesintiTablo"></tbody></table></div>
+            <div class="small text-muted px-3 py-2">Sunucu 3 dakikadan uzun kapalı kalırsa (ya da uykuya alınırsa) kaydedilir ve bildirim gider.
+              "Kameranın kendi plaka okuması" açık kameralardan o aralığın geçişleri kendiliğinden alınır.</div></div></div></div>
         <!-- 2026-09-25: kamera başına okuma kalitesi (bkz. main.py::kamera_okuma_kalitesi,
              backend/okuma_kalitesi.py) -- hangi kameranın zayıf okuduğunu ve
              neyin düzeltilmesi gerektiğini tek bakışta gösterir. -->
@@ -2523,6 +2549,7 @@
                     <option value="supheli_arac">Sadece şüpheli araç (tekrarlı red)</option>
                     <option value="klon_plaka">Sadece klon plaka şüphesi</option>
                     <option value="resmi_arac">Sadece resmi araç uyarıları</option>
+                    <option value="sunucu_kesintisi">Sadece sunucu kesintileri</option>
                     <option value="bariyer_hatasi">Sadece bariyer açma hatası</option>
                     <option value="kamera_arizasi">Sadece kamera arızası</option>
                     <option value="disk_hatasi">Sadece disk/görsel yazma hatası</option>

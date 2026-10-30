@@ -219,6 +219,8 @@ def _veritabani_migrasyon() -> None:
         # "İçeriden çıkar" (2026-10-26) -- bkz. models.Kayit.elle_cikis_zamani.
         f"ALTER TABLE plaka_kayitlari ADD {col_kw}elle_cikis_zamani DATETIME",
         f"ALTER TABLE plaka_kayitlari ADD {col_kw}elle_cikis_yapan VARCHAR(80)",
+        # Sunucu kesintisi (2026-10-30) -- bkz. models.Kayit.sonradan_aktarildi.
+        f"ALTER TABLE plaka_kayitlari ADD {col_kw}sonradan_aktarildi {bool_tip}{bit_sonu}",
         # Resmi araç (2026-10-30) -- bkz. models.GorevEmri.cikis_kayit_id.
         f"ALTER TABLE gorev_emirleri ADD {col_kw}cikis_kayit_id INTEGER",
         f"ALTER TABLE gorev_emirleri ADD {col_kw}sonradan_giren VARCHAR(80)",
@@ -10357,6 +10359,267 @@ def resmi_arac_raporu(ay: str = Query(..., pattern=r"^\d{4}-(0[1-9]|1[0-2])$"), 
     dosya_yolu = _gecici_rapor_yolu(f"resmi_arac_{ay}", "xlsx")
     excel_export.resmi_arac_raporu_olustur(rapor, dosya_yolu)
     return _indirip_sil(dosya_yolu, f"resmi_arac_raporu_{ay}.xlsx", _XLSX_MEDIA)
+
+
+# ==================================================================
+# SUNUCU KESİNTİSİ (2026-10-30, kullanıcı: "sunucu bilgisayarı yetkisiz kişilerce
+# kapatıldı. ANPR kamerası geçişleri kaydedip sunucu tekrar açıldığında sisteme
+# geçişleri yansıtsın"). Sunucu her dakika bir "nabız" zamanı yazar. Açılışta
+# (ya da bilgisayar uykudan dönünce) son nabızla şimdi arasında boşluk varsa:
+#   1) "Sunucu … arası kapalıydı" alarmı + bildirim (yetkisiz kapatmanın izi),
+#   2) Dahua okuması açık her kameradan o aralığın kendi hafızasındaki plaka
+#      kayıtları istenir (bkz. backend/dahua_kayit.py) ve sistemde olmayan
+#      geçişler gerçek saatleriyle eklenir. Bunlar geçmiş olaylardır: LED'e
+#      yazılmaz, bariyer açılmaz; kara listedeki araç için ayrıca alarm üretilir.
+# Kesintiler Kameralar ekranında listelenir; aktarım elle de tekrarlanabilir.
+# ==================================================================
+_NABIZ_DOSYASI = os.getenv("PTS_NABIZ_FILE") or os.path.join(os.path.dirname(SISTEM_AYARLARI_DOSYASI), "sunucu_nabiz.json")
+_NABIZ_ARALIK_SN = 60
+_KESINTI_ESIK = timedelta(minutes=3)        # bundan kısa kapanma (güncelleme, yeniden başlatma) sayılmaz
+_KESINTI_EN_UZUN = timedelta(days=7)        # kameradan en fazla bu kadar geriye gidilir
+_AKTARIM_ESLESME = timedelta(seconds=120)   # aynı plaka bu kadar yakın zamanda kayıtlıysa zaten var
+_AKTARIM_DENEME = 6                         # kamera henüz açılmadıysa (elektrik kesintisi) yeniden dene
+_AKTARIM_DENEME_ARALIK_SN = 90
+
+
+def _nabiz_oku() -> Optional[datetime]:
+    try:
+        with open(_NABIZ_DOSYASI, encoding="utf-8") as f:
+            return datetime.fromisoformat(json.load(f)["zaman"])
+    except (OSError, ValueError, KeyError, TypeError):
+        return None
+
+
+def _nabiz_yaz(zaman: Optional[datetime] = None) -> None:
+    gecici = _NABIZ_DOSYASI + ".tmp"
+    try:
+        with open(gecici, "w", encoding="utf-8") as f:
+            json.dump({"zaman": (zaman or datetime.now()).isoformat(timespec="seconds")}, f)
+        os.replace(gecici, _NABIZ_DOSYASI)
+    except OSError as exc:
+        logger.warning("Sunucu nabız dosyası yazılamadı: %s", exc)
+
+
+def _sure_metni(sure: timedelta) -> str:
+    dk = int(sure.total_seconds() // 60)
+    if dk >= 1440:
+        return f"{dk // 1440} gün {dk % 1440 // 60} sa"
+    return f"{dk // 60} sa {dk % 60} dk" if dk >= 60 else f"{dk} dk"
+
+
+def _dahua_kayitli_kameralar() -> list:
+    if not _modul_acik_mi("dahua_anpr"):
+        return []
+    return [k for k in _kameralari_oku() if (k.get("dahua_anpr") or {}).get("aktif") and k.get("rtsp_url")]
+
+
+def _gecmis_gecisleri_aktar(db: Session, kamera: dict, bas: datetime, bit: datetime,
+                            yalniz_onizle: bool = False) -> dict:
+    """Kameranın hafızasındaki `bas`–`bit` geçişlerini alır; sistemde olmayanları ekler."""
+    from backend import dahua_kayit
+
+    ayar = kamera.get("dahua_anpr") or {}
+    s = dahua_kayit.kayitlari_getir(kamera.get("rtsp_url", ""), bas, bit, ayar.get("http_port"), ayar.get("olaylar"))
+    sonuc = {"kamera": kamera.get("ad"), "basarili": s["basarili"], "yontem": s["yontem"], "hata": s["hata"],
+             "bulunan": len(s["kayitlar"]), "aktarilan": 0, "zaten_vardi": 0, "kara_liste": 0, "ham": s["ham"]}
+    if not s["basarili"]:
+        return sonuc
+    yon = kamera.get("yon") if kamera.get("yon") in ("giris", "cikis") else "giris"
+    kamera_ad = _kamera_adini_kayit_icin_temizle(kamera.get("ad"))
+    K = models.Kayit
+    onizleme = []
+    for r in s["kayitlar"]:
+        plaka, zaman = r["plaka"], r["zaman"]
+        if zaman > datetime.now() + timedelta(minutes=1):
+            continue
+        var = (db.query(K.id).filter(_plaka_normalize_sql(K.plaka_no) == _plaka_normalize(plaka),
+                                     K.tarih_saat >= zaman - _AKTARIM_ESLESME, K.tarih_saat <= zaman + _AKTARIM_ESLESME)
+               .first())
+        if yalniz_onizle:
+            if len(onizleme) < 300:
+                onizleme.append({"plaka_no": plaka, "zaman": zaman.isoformat(), "zaten_var": var is not None,
+                                 "fotograf": bool(r.get("dosya"))})
+            sonuc["zaten_vardi" if var else "aktarilan"] += 1
+            continue
+        if var:
+            sonuc["zaten_vardi"] += 1
+            continue
+        yetki, kisi_id, kisi_tip = _plaka_yetki_kontrol(db, plaka, referans_zaman=zaman)
+        beklenen = _beklenen_ziyaretci_bul(db, plaka, simdi=zaman) if yetki in ("yetkisiz", "suresi_dolmus") else None
+        if beklenen is not None:
+            yetki = "ziyaretci_onayli"
+        goruntu_yolu = None
+        jpeg = dahua_kayit.goruntu_indir(kamera.get("rtsp_url", ""), r.get("dosya"), ayar.get("http_port")) if r.get("dosya") else None
+        if jpeg:
+            goruntu_yolu = os.path.join(GORUNTU_KLASORU, f"aktarim_{zaman:%Y%m%d_%H%M%S}_{uuid.uuid4().hex[:6]}.jpg")
+            try:
+                with open(goruntu_yolu, "wb") as f:
+                    f.write(jpeg)
+            except OSError:
+                goruntu_yolu = None
+        kayit = K(plaka_no=plaka, kamera_id=kamera_ad, yon=yon, tarih_saat=zaman, goruntu_yolu=goruntu_yolu,
+                  yetki_durumu=yetki, kisi_id=kisi_id, kisi_tip_anlik=kisi_tip, harici_katkili=True,
+                  sonradan_aktarildi=True, misafir_adi=beklenen.misafir_adi if beklenen else None,
+                  not_metni=(_beklenen_ziyaretci_notu(beklenen) if beklenen
+                             else (_kisinin_otomatik_notu(db, kisi_id) if kisi_id else None)))
+        db.add(kayit)
+        db.flush()
+        if yetki == "kara_liste":
+            sonuc["kara_liste"] += 1
+            db.add(models.Alarm(kayit_id=kayit.id, plaka_no=plaka, alarm_tipi="kara_liste", tarih_saat=zaman,
+                                mesaj=f"KARA LİSTEDEKİ ARAÇ (sunucu kapalıyken): {plaka} {zaman:%d.%m %H:%M} {kamera_ad}"[:255]))
+        try:
+            resmi = _resmi_arac_kontrol(db, kayit)
+            if resmi:
+                db.add(models.Alarm(kayit_id=kayit.id, plaka_no=plaka, alarm_tipi="resmi_arac", tarih_saat=zaman,
+                                    mesaj=f"{resmi} (sunucu kapalıyken)"[:255]))
+        except Exception as exc:
+            logger.error("Aktarılan geçişte resmi araç kontrolü hatası: %s", exc)
+        sonuc["aktarilan"] += 1
+    if yalniz_onizle:
+        sonuc["onizleme"] = onizleme
+    else:
+        db.commit()
+    return sonuc
+
+
+def _kesinti_aktarimi(kesinti_id: int) -> None:
+    """Arka planda: kesinti aralığının geçişlerini her Dahua kamerasından alır."""
+    db = SessionLocal()
+    try:
+        k = db.get(models.SunucuKesintisi, kesinti_id)
+        if k is None:
+            return
+        kameralar = _dahua_kayitli_kameralar()
+        if not kameralar:
+            k.durum = "kamera_yok"
+            db.commit()
+            return
+        bas = max(k.baslangic - timedelta(minutes=1), k.bitis - _KESINTI_EN_UZUN)
+        bit = k.bitis + timedelta(minutes=2)  # açılışın ilk dakikalarındaki pipeline boşluğu
+        ayrinti, aktarilan, kara = [], 0, 0
+        for kamera in kameralar:
+            sonuc = None
+            for deneme in range(_AKTARIM_DENEME):
+                sonuc = _gecmis_gecisleri_aktar(db, kamera, bas, bit)
+                if sonuc["basarili"] or "bağlanılamadı" not in (sonuc["hata"] or ""):
+                    break
+                time.sleep(_AKTARIM_DENEME_ARALIK_SN)  # kamera elektrik kesintisinden sonra henüz açılmamış olabilir
+            sonuc.pop("ham", None)
+            ayrinti.append(sonuc)
+            aktarilan += sonuc["aktarilan"]
+            kara += sonuc["kara_liste"]
+        k = db.get(models.SunucuKesintisi, kesinti_id)
+        k.aktarilan, k.kara_liste = aktarilan, kara
+        k.ayrinti = json.dumps(ayrinti, ensure_ascii=False)
+        k.durum = "tamamlandi" if all(a["basarili"] for a in ayrinti) else "kismi"
+        mesaj = (f"Sunucu kesintisi ({k.baslangic:%d.%m %H:%M}–{k.bitis:%H:%M}): kameralardan {aktarilan} geçiş aktarıldı"
+                 + (f", {kara} kara liste" if kara else "")
+                 + ("" if k.durum == "tamamlandi" else "; bazı kameralardan alınamadı"))
+        db.add(models.Alarm(plaka_no="-", alarm_tipi="sunucu_kesintisi", mesaj=mesaj[:255]))
+        db.commit()
+        logger.warning(mesaj)
+        _bildirim_tetikle(db, "sunucu_kesintisi", {"olay": "sunucu_kesintisi", "alarm_tipi": "sunucu_kesintisi",
+                                                   "plaka_no": "-", "mesaj": mesaj})
+    except Exception:
+        logger.exception("Sunucu kesintisi aktarımı başarısız")
+    finally:
+        db.close()
+
+
+def _kesinti_kaydet(onceki: datetime, simdi: datetime, neden: str) -> None:
+    db = SessionLocal()
+    try:
+        k = models.SunucuKesintisi(baslangic=onceki, bitis=simdi)
+        db.add(k)
+        mesaj = (f"SUNUCU {neden}: {onceki:%d.%m.%Y %H:%M} – {simdi:%d.%m.%Y %H:%M} arası "
+                 f"({_sure_metni(simdi - onceki)}) geçişler canlı kaydedilemedi")
+        db.add(models.Alarm(plaka_no="-", alarm_tipi="sunucu_kesintisi", mesaj=mesaj[:255]))
+        db.commit()
+        logger.warning(mesaj)
+        _denetim_kaydet(db, "sistem", "sunucu_kesintisi", mesaj)
+        _bildirim_tetikle(db, "sunucu_kesintisi", {"olay": "sunucu_kesintisi", "alarm_tipi": "sunucu_kesintisi",
+                                                   "plaka_no": "-", "mesaj": mesaj})
+        threading.Thread(target=_kesinti_aktarimi, args=(k.id,), daemon=True).start()
+    except Exception:
+        db.rollback()
+        logger.exception("Sunucu kesintisi kaydedilemedi")
+    finally:
+        db.close()
+
+
+async def _nabiz_dongu() -> None:
+    onceki = datetime.now()
+    while True:
+        await asyncio.sleep(_NABIZ_ARALIK_SN)
+        simdi = datetime.now()
+        # Süreç çalışırken bilgisayar uykuya/beklemeye alındıysa da kesintidir.
+        if simdi - onceki > _KESINTI_ESIK + timedelta(seconds=_NABIZ_ARALIK_SN):
+            await asyncio.get_event_loop().run_in_executor(None, _kesinti_kaydet, onceki, simdi, "UYKUDAYDI / DONDU")
+        _nabiz_yaz(simdi)
+        onceki = simdi
+
+
+@app.on_event("startup")
+async def _sunucu_kesintisi_baslangic():
+    onceki = _nabiz_oku()
+    simdi = datetime.now()
+    _nabiz_yaz(simdi)
+    asyncio.ensure_future(_nabiz_dongu())
+    if onceki is not None and simdi - onceki >= _KESINTI_ESIK:
+        _kesinti_kaydet(onceki, simdi, "KAPALIYDI")
+
+
+def _kesinti_cevap(k: models.SunucuKesintisi) -> dict:
+    try:
+        ayrinti = json.loads(k.ayrinti) if k.ayrinti else []
+    except ValueError:
+        ayrinti = []
+    return {"id": k.id, "baslangic": k.baslangic.isoformat(), "bitis": k.bitis.isoformat(),
+            "sure": _sure_metni(k.bitis - k.baslangic), "durum": k.durum, "aktarilan": k.aktarilan or 0,
+            "kara_liste": k.kara_liste or 0, "ayrinti": ayrinti}
+
+
+@app.get("/sunucu-kesintileri")
+def sunucu_kesintileri(db: Session = Depends(get_db), kullanici: models.Kullanici = Depends(_personel_girisi_gerekli)):
+    _rol_dogrula(kullanici, ROL_YONETICI, ROL_OPERATOR, ROL_IZLEYICI)
+    S = models.SunucuKesintisi
+    return [_kesinti_cevap(k) for k in db.query(S).order_by(desc(S.baslangic)).limit(50).all()]
+
+
+@app.post("/sunucu-kesintileri/{kesinti_id}/yeniden-dene")
+def sunucu_kesintisi_yeniden(kesinti_id: int, db: Session = Depends(get_db),
+                             kullanici: models.Kullanici = Depends(_personel_girisi_gerekli)):
+    """Kamera o an ulaşılamadıysa aktarımı tekrar başlatır (zaten kayıtlı geçişler atlanır)."""
+    _rol_dogrula(kullanici, ROL_YONETICI)
+    k = db.get(models.SunucuKesintisi, kesinti_id)
+    if k is None:
+        raise HTTPException(404, "Kesinti bulunamadı")
+    k.durum = "bekliyor"
+    db.commit()
+    _denetim_kaydet(db, kullanici.kullanici_adi, "sunucu_kesintisi_aktar", f"#{k.id} yeniden denendi")
+    threading.Thread(target=_kesinti_aktarimi, args=(k.id,), daemon=True).start()
+    return _kesinti_cevap(k)
+
+
+@app.post("/kameralar/{kamera_id}/dahua-gecmis")
+async def kamera_dahua_gecmis(kamera_id: str, istek: schemas.DahuaGecmisIstek, db: Session = Depends(get_db),
+                              kullanici: models.Kullanici = Depends(_personel_girisi_gerekli)):
+    """Kameranın hafızasındaki geçişler: `aktar` false ise yalnız önizleme (+ ham yanıtlar), true ise eksikleri ekler."""
+    _rol_dogrula(kullanici, ROL_YONETICI)
+    kamera = next((k for k in _kameralari_oku() if k["id"] == kamera_id), None)
+    if not kamera:
+        raise HTTPException(404, "Kamera bulunamadı")
+    bas, bit = istek.baslangic.replace(tzinfo=None), istek.bitis.replace(tzinfo=None)
+    if bit <= bas or bit - bas > _KESINTI_EN_UZUN:
+        raise HTTPException(400, "Aralık en fazla 7 gün olmalı ve bitiş başlangıçtan sonra olmalı")
+    kamera = {**kamera, "dahua_anpr": {**(kamera.get("dahua_anpr") or {}), "aktif": True}}
+    sonuc = await asyncio.get_event_loop().run_in_executor(
+        None, lambda: _gecmis_gecisleri_aktar(db, kamera, bas, bit, yalniz_onizle=not istek.aktar))
+    if istek.aktar:
+        _denetim_kaydet(db, kullanici.kullanici_adi, "kamera_gecmis_aktar",
+                        f"{kamera.get('ad')} {bas:%d.%m.%Y %H:%M}-{bit:%d.%m.%Y %H:%M}: {sonuc['aktarilan']} geçiş aktarıldı")
+    return sonuc
 
 
 # ==================================================================
