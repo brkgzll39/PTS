@@ -609,6 +609,11 @@ class GorevEmri(Base):
     bitis = Column(DateTime, nullable=False, index=True)
     olusturan_adi = Column(String(80), nullable=False)
     olusturma_zamani = Column(DateTime, default=datetime.now)
+    # Kamera çıkışı gördükten SONRA güvenliğin girdiği görev (2026-10-30): o
+    # çıkış kaydına bağlanır; kim girdiyse raporda "sonradan girildi" yazılır.
+    cikis_kayit_id = Column(Integer, nullable=True, index=True)
+    sonradan_giren = Column(String(80), nullable=True)
+    guncelleyen = Column(String(80), nullable=True)
     cikis_zamani = Column(DateTime, nullable=True)    # görev kapsamındaki ilk çıkış
     donus_zamani = Column(DateTime, nullable=True)    # çıkıştan sonraki ilk giriş
     iptal = Column(Boolean, default=False)

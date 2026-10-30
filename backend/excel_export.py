@@ -295,12 +295,14 @@ def resmi_arac_raporu_olustur(rapor: dict, dosya_yolu: str) -> str:
     wb = Workbook()
     ws = wb.active
     ws.title = "Özet"
-    basliklar = ["Plaka", "Araç", "Birim", "Çıkış", "Görevli", "Görevsiz", "Mesai Dışı", "Geç Dönüş", "Dışarıda (toplam)"]
+    basliklar = ["Plaka", "Araç", "Birim", "Çıkış", "Görevli", "Görevsiz", "Sonradan Girilen", "Mesai Dışı", "Geç Dönüş",
+                 "Dışarıda (toplam)"]
     ws.append(basliklar)
     _baslik_satiri_bicimlendir(ws, len(basliklar))
     for o in rapor["ozet"]:
         ws.append([_guvenli_hucre(o["plaka_no"]), _guvenli_hucre(o["ad"]), _guvenli_hucre(o["birim"] or ""),
-                   o["cikis"], o["gorevli"], o["gorevsiz"], o["mesai_disi"], o["gec_donus"], _sure(o["disarida_dk"])])
+                   o["cikis"], o["gorevli"], o["gorevsiz"], o["sonradan"], o["mesai_disi"], o["gec_donus"],
+                   _sure(o["disarida_dk"])])
     ws.append([])
     ws.append([f"Dönem: {rapor['ay']} · Mesai: {rapor['mesai']} · Görev payı: {rapor['tolerans_dk']} dk"])
     for i, baslik in enumerate(basliklar, 1):
@@ -322,6 +324,8 @@ def resmi_arac_raporu_olustur(rapor: dict, dosya_yolu: str) -> str:
             durumlar.append("Geç dönüş")
         if not s["donus"]:
             durumlar.append("Dönüş kaydı yok")
+        if s.get("sonradan_giren"):
+            durumlar.append(f"Çıkıştan sonra girildi ({s['sonradan_giren']})")
         ws2.append([_guvenli_hucre(s["plaka_no"]), _guvenli_hucre(s["ad"]), s["gun"], _saat(s["cikis"]), _saat(s["donus"]),
                     _sure(s["sure_dk"]), f"#{s['gorev_emri_id']}" if s["gorev_emri_id"] else "",
                     _guvenli_hucre(s["gorevli"] or ""), _guvenli_hucre(s["guzergah"] or ""),

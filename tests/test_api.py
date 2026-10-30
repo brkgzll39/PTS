@@ -8626,3 +8626,68 @@ def test_resmi_arac_aylik_rapor_json_ve_excel(client, operator_header, izleyici_
     x = client.get(f"/resmi-araclar/rapor?ay={ay}&bicim=xlsx", headers=operator_header)
     assert x.status_code == 200 and x.content[:2] == b"PK"
     assert client.get("/resmi-araclar/rapor?ay=2026-13", headers=operator_header).status_code == 422
+
+
+def test_resmi_arac_guvenlik_kamera_cikisindan_sonra_gorev_girer_ve_duzenler(client, operator_header, yetkili_header, resmi_modul):
+    assert resmi_modul(resmi_mesai_baslangic="00:00", resmi_mesai_bitis="23:59", resmi_mesai_gunleri="0,1,2,3,4,5,6").status_code == 200
+    guvenlik = _rol_ile_kullanici_olustur_ve_giris_yap(client, yetkili_header, "resmi-guvenlik", "güvenlik")
+    a = _resmi_arac(client, operator_header, "06 RSM 07")
+    # Kamera çıkışı görür: görev emri yok -> alarm
+    k = _manuel_gecis(client, operator_header, "06 RSM 07", "Resmi Ana Cikis", "cikis")
+    alarm = _resmi_alarmlari(client, operator_header, "06 RSM 07")[0]
+    assert alarm["okundu"] is False
+    arac = next(x for x in client.get("/resmi-araclar", headers=guvenlik).json() if x["id"] == a["id"])
+    assert arac["gorevsiz_cikis_kayit_id"] == k["id"]
+    # Güvenlik çıkışa görev bilgisini girer (geçmiş dönüş saati de olabilir)
+    donus = datetime.now() + timedelta(hours=3)
+    r = client.post("/gorev-emirleri", json={"kayit_id": k["id"], "gorevli": "Veli Şoför", "guzergah": "Liman",
+                                             "bitis": donus.isoformat()}, headers=guvenlik)
+    assert r.status_code == 200, r.text
+    g = r.json()
+    assert g["sonradan_giren"] == "resmi-guvenlik" and g["cikis_kayit_id"] == k["id"] and g["durum"] == "görevde"
+    assert _resmi_alarmlari(client, operator_header, "06 RSM 07")[0]["okundu"] is True
+    assert next(x for x in client.get("/resmi-araclar", headers=guvenlik).json() if x["id"] == a["id"])["gorevsiz_cikis_kayit_id"] is None
+    # Aynı çıkışa ikinci görev yok; resmi olmayan / giriş kaydına görev yok
+    assert client.post("/gorev-emirleri", json={"kayit_id": k["id"], "gorevli": "X", "bitis": donus.isoformat()},
+                       headers=guvenlik).status_code == 409
+    giris = _manuel_gecis(client, operator_header, "34 NRM 01", "Resmi Ana Giris", "giris")
+    assert client.post("/gorev-emirleri", json={"kayit_id": giris["id"], "gorevli": "X", "bitis": donus.isoformat()},
+                       headers=guvenlik).status_code == 404
+    # Düzenleme: görevli ve dönüş saati değişir, iz kalır
+    r = client.put(f"/gorev-emirleri/{g['id']}", json={"gorevli": "Veli Kaya", "guzergah": "Liman / Gümrük",
+                                                       "bitis": (donus + timedelta(hours=1)).isoformat()}, headers=guvenlik)
+    assert r.status_code == 200 and r.json()["gorevli"] == "Veli Kaya" and r.json()["guncelleyen"] == "resmi-guvenlik"
+    eski = (datetime.now() - timedelta(days=2)).isoformat()
+    assert client.put(f"/gorev-emirleri/{g['id']}", json={"gorevli": "V", "bitis": eski}, headers=guvenlik).status_code == 400
+    # Dönüşte geç dönüş alarmı yok (süre içinde); raporda görevli ve "sonradan" sayılır
+    _manuel_gecis(client, operator_header, "06 RSM 07", "Resmi Ana Giris", "giris")
+    assert len(_resmi_alarmlari(client, operator_header, "06 RSM 07")) == 1
+    o = next(x for x in client.get(f"/resmi-araclar/rapor?ay={datetime.now():%Y-%m}", headers=operator_header).json()["ozet"]
+             if x["plaka_no"] == "06 RSM 07")
+    assert (o["gorevli"], o["gorevsiz"], o["sonradan"]) == (1, 0, 1)
+    # Güvenlik çıkıştan önce de görev girebilir
+    simdi = datetime.now()
+    assert _gorev(client, guvenlik, a["id"], simdi, simdi + timedelta(hours=1)).status_code == 200
+
+
+def test_resmi_arac_donmus_araca_sonradan_gorev_donuste_biter(client, operator_header, resmi_modul):
+    assert resmi_modul(resmi_mesai_baslangic="00:00", resmi_mesai_bitis="23:59", resmi_mesai_gunleri="0,1,2,3,4,5,6").status_code == 200
+    _resmi_arac(client, operator_header, "06 RSM 08")
+    cikis = _kayit_ekle_db("06 RSM 08", "cikis", kamera="Resmi Ana Cikis", once=timedelta(hours=3))
+    _kayit_ekle_db("06 RSM 08", "giris", kamera="Resmi Ana Giris", once=timedelta(hours=1))
+    r = client.post("/gorev-emirleri", json={"kayit_id": cikis, "gorevli": "Ayşe", "bitis": (datetime.now() + timedelta(hours=5)).isoformat()},
+                    headers=operator_header)
+    assert r.status_code == 200, r.text
+    g = r.json()
+    assert g["durum"] == "tamamlandı" and g["bitis"] == g["donus_zamani"]
+
+
+def test_resmi_arac_gorevle_cikan_araca_cikisi_isle_onerilmez(client, operator_header, resmi_modul):
+    a = _resmi_arac(client, operator_header, "06 RSM 09")
+    simdi = datetime.now()
+    assert _gorev(client, operator_header, a["id"], simdi - timedelta(minutes=5), simdi + timedelta(hours=1)).status_code == 200
+    k = _manuel_gecis(client, operator_header, "06 RSM 09", "Resmi Ana Cikis", "cikis")
+    arac = next(x for x in client.get("/resmi-araclar", headers=operator_header).json() if x["id"] == a["id"])
+    assert arac["konum"] == "disarida" and arac["gorevsiz_cikis_kayit_id"] is None
+    assert client.post("/gorev-emirleri", json={"kayit_id": k["id"], "gorevli": "X", "bitis": (simdi + timedelta(hours=2)).isoformat()},
+                       headers=operator_header).status_code == 409

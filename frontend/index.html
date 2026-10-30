@@ -50,6 +50,35 @@
   </div>
 </div>
 
+<!-- RESMİ ARAÇ ÇIKIŞI (2026-10-30): yeni görev, kameranın kaydettiği çıkışa görev
+     bilgisi ya da var olan görevi düzenleme (bkz. app.js::gorevModalAc). -->
+<div class="modal fade" id="gorevModal" tabindex="-1" aria-labelledby="gorevModalBaslik" aria-hidden="true">
+  <div class="modal-dialog">
+    <form class="modal-content" id="gorevModalForm">
+      <div class="modal-header"><h5 class="modal-title" id="gorevModalBaslik">Resmi araç çıkışı</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Kapat"></button></div>
+      <div class="modal-body">
+        <input type="hidden" id="gmKayit"><input type="hidden" id="gmGorev">
+        <div class="alert alert-secondary py-2 small d-none" id="gmCikisBilgi"></div>
+        <div class="mb-2" id="gmAracAlani"><label class="form-label small" for="gmArac">Araç</label>
+          <select class="form-select" id="gmArac"></select></div>
+        <div class="mb-2" id="gmBaslangicAlani"><label class="form-label small" for="gmBaslangic">Çıkış (görev başlangıcı)</label>
+          <input type="datetime-local" class="form-control" id="gmBaslangic"></div>
+        <div class="mb-2"><label class="form-label small" for="gmGorevli">Görevli / sürücü</label>
+          <input type="text" class="form-control" id="gmGorevli" maxlength="100" required></div>
+        <div class="mb-2"><label class="form-label small" for="gmGuzergah">Güzergah / görev yeri</label>
+          <input type="text" class="form-control" id="gmGuzergah" maxlength="200"></div>
+        <div class="mb-2"><label class="form-label small" for="gmBitis">Tahmini dönüş</label>
+          <input type="datetime-local" class="form-control" id="gmBitis" required></div>
+        <div class="mb-1"><label class="form-label small" for="gmAciklama">Açıklama</label>
+          <input type="text" class="form-control" id="gmAciklama" maxlength="300" placeholder="Görev belgesi no vb."></div>
+      </div>
+      <div class="modal-footer"><button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Vazgeç</button>
+        <button type="submit" class="btn btn-primary">Kaydet</button></div>
+    </form>
+  </div>
+</div>
+
 <div class="modal fade" id="kapiKutusuModal" tabindex="-1" aria-hidden="true">
   <div class="modal-dialog modal-lg modal-dialog-centered modal-dialog-scrollable"><div class="modal-content">
     <div class="modal-header"><h5 class="modal-title"><i class="bi bi-cpu me-2"></i><span id="kkBaslik">Kapı kutusu</span></h5>
@@ -879,6 +908,7 @@
     </div>
     <span class="kapi-vardiya d-none" id="kapiVardiya"></span>
     <div class="kapi-sag"><b id="kapiKullanici"></b><br><span id="kapiSaat"></span></div>
+    <button class="kapi-kucuk-dugme d-none resmi-modul" onclick="gorevModalAc()" title="Resmi araç çıkışı (görev) kaydet"><i class="bi bi-briefcase"></i> Resmi Araç</button>
     <button class="kapi-kucuk-dugme" onclick="gorunumDegistir('klasik')" title="Tüm menülerin olduğu klasik panel"><i class="bi bi-grid-3x3-gap"></i> Gelişmiş</button>
     <button class="kapi-kucuk-dugme d-none" id="kapiFarkliKullanici" onclick="farkliKullaniciylaGiris()" title="Başka bir hesapla giriş"><i class="bi bi-person-gear"></i></button>
     <button class="kapi-kucuk-dugme" id="kapiCikis" onclick="oturumKapat()" title="Çıkış"><i class="bi bi-box-arrow-right"></i></button>

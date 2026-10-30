@@ -285,10 +285,11 @@ def veri_uret(m, demo: str) -> dict:
                 bit = bas + timedelta(hours=r.randint(2, 4))
                 cikis = bas + timedelta(minutes=r.randint(0, 20))
                 donus = bit - timedelta(minutes=r.randint(-50 if i == 2 else 0, 40))
+                ck = kayit(a.plaka_no, cikis, "cikis", rk[a.plaka_no])
+                db.flush()
                 db.add(models.GorevEmri(resmi_arac_id=a.id, gorevli=soforler[i], guzergah=r.choice(yerler), baslangic=bas,
                                         bitis=bit, olusturan_adi="demo", olusturma_zamani=bas - timedelta(hours=18),
-                                        cikis_zamani=cikis, donus_zamani=donus))
-                kayit(a.plaka_no, cikis, "cikis", rk[a.plaka_no])
+                                        cikis_zamani=cikis, donus_zamani=donus, cikis_kayit_id=ck.id))
                 kayit(a.plaka_no, donus, "giris", rk[a.plaka_no])
         dun = (simdi - timedelta(days=1)).replace(hour=20, minute=41)
         k = kayit(resmi[1].plaka_no, dun, "cikis", rk[resmi[1].plaka_no])
@@ -297,10 +298,11 @@ def veri_uret(m, demo: str) -> dict:
         db.add(models.Alarm(kayit_id=k.id, plaka_no=k.plaka_no, alarm_tipi="resmi_arac", tarih_saat=dun,
                             mesaj=f"GÖREVSİZ ÇIKIŞ: {k.plaka_no} – {resmi[1].ad} {dun:%d.%m %H:%M} mesai dışında, görev emri olmadan çıktı"))
         bas = simdi - timedelta(hours=1, minutes=10)
+        ck = kayit(resmi[0].plaka_no, bas + timedelta(minutes=5), "cikis", rk[resmi[0].plaka_no])
+        db.flush()
         db.add(models.GorevEmri(resmi_arac_id=resmi[0].id, gorevli=soforler[0], guzergah="Valilik", baslangic=bas,
                                 bitis=simdi + timedelta(hours=2), olusturan_adi="demo", olusturma_zamani=bas - timedelta(hours=3),
-                                cikis_zamani=bas + timedelta(minutes=5)))
-        kayit(resmi[0].plaka_no, bas + timedelta(minutes=5), "cikis", rk[resmi[0].plaka_no])
+                                cikis_zamani=bas + timedelta(minutes=5), cikis_kayit_id=ck.id))
         db.add(models.GorevEmri(resmi_arac_id=resmi[2].id, gorevli=soforler[2], guzergah="Saha - Kuyu 7",
                                 baslangic=simdi + timedelta(hours=1), bitis=simdi + timedelta(hours=5), olusturan_adi="demo"))
         db.commit()

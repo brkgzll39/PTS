@@ -907,12 +907,36 @@ class ResmiAracOlustur(BaseModel):
 
 
 class GorevEmriOlustur(BaseModel):
-    """POST /gorev-emirleri: resmi aracın bu aralıktaki çıkışı görevli sayılır."""
-    resmi_arac_id: int
+    """POST /gorev-emirleri: resmi aracın bu aralıktaki çıkışı görevli sayılır.
+    `kayit_id` verilirse (kameranın zaten kaydettiği çıkış) görev o çıkışa
+    bağlanır: araç ve başlangıç kayıttan alınır."""
+    resmi_arac_id: Optional[int] = None
+    kayit_id: Optional[int] = None
     gorevli: str = Field(min_length=1, max_length=100)
     guzergah: Optional[str] = Field(None, max_length=200)
     aciklama: Optional[str] = Field(None, max_length=300)
-    baslangic: datetime
+    baslangic: Optional[datetime] = None
+    bitis: datetime
+
+    @model_validator(mode="after")
+    def kaynak_kontrol(self):
+        if self.kayit_id is None and (self.resmi_arac_id is None or self.baslangic is None):
+            raise ValueError("Araç ve başlangıç ya da çıkış kaydı (kayit_id) gerekli")
+        return self
+
+    @field_validator("gorevli", "guzergah", "aciklama", mode="before")
+    @classmethod
+    def bos_metin(cls, v):
+        if isinstance(v, str):
+            v = v.strip()
+        return v or None
+
+
+class GorevEmriGuncelle(BaseModel):
+    """PUT /gorev-emirleri/{id}: görevli, güzergah, açıklama ve dönüş saati düzeltilir."""
+    gorevli: str = Field(min_length=1, max_length=100)
+    guzergah: Optional[str] = Field(None, max_length=200)
+    aciklama: Optional[str] = Field(None, max_length=300)
     bitis: datetime
 
     @field_validator("gorevli", "guzergah", "aciklama", mode="before")

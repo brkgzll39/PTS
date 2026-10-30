@@ -3411,7 +3411,9 @@ async function resmiAraclariYukle() {
       <td>${escapeHtml(a.ad)}${a.birim ? `<div class="small text-muted">${escapeHtml(a.birim)}</div>` : ""}${a.aktif ? "" : ' <span class="badge text-bg-light border">pasif</span>'}</td>
       <td>${konum}${a.son_gecis ? `<div class="small text-muted">${_kisaZaman(a.son_gecis)}</div>` : ""}</td>
       <td>${gorev}</td>
-      <td class="text-end">${duzenle ? `<button class="btn btn-sm btn-outline-secondary" onclick="resmiAracModalAc(${Number(a.id)})" title="Düzenle" aria-label="Düzenle"><i class="bi bi-pencil"></i></button>` : ""}</td>
+      <td class="text-end text-nowrap">${a.gorevsiz_cikis_kayit_id && rolYeterli("güvenlik") ? `<button class="btn btn-sm btn-primary me-1" data-kayit="${Number(a.gorevsiz_cikis_kayit_id)}"
+          data-plaka="${escapeHtml(a.plaka_no)}" data-zaman="${escapeHtml(a.son_gecis)}" title="Kameranın kaydettiği çıkışa görev bilgisi gir"
+          onclick="gorevModalAc({ kayitId: Number(this.dataset.kayit), plaka: this.dataset.plaka, cikis: this.dataset.zaman })">Çıkışı işle</button>` : ""}${duzenle ? `<button class="btn btn-sm btn-outline-secondary" onclick="resmiAracModalAc(${Number(a.id)})" title="Aracı düzenle" aria-label="Aracı düzenle"><i class="bi bi-pencil"></i></button>` : ""}</td>
     </tr>`;
   }).join("") : '<tr><td colspan="5" class="text-muted small p-3">Henüz resmi araç yok. "Araç ekle" ile kurumun araçlarını girin.</td></tr>';
   const sec = document.getElementById("geArac");
@@ -3463,13 +3465,14 @@ async function gorevEmirleriniYukle() {
     return;
   }
   const iptal = rolYeterli("operatör");
+  _gorevListesi = liste;
   tablo.innerHTML = liste.length ? liste.map(g => `<tr>
       <td class="text-nowrap"><b>${escapeHtml(g.plaka_no || "")}</b><div class="small text-muted">${escapeHtml(g.arac_adi || "")}</div></td>
       <td>${escapeHtml(g.gorevli)}${g.guzergah ? `<div class="small text-muted">${escapeHtml(g.guzergah)}</div>` : ""}</td>
       <td class="small text-nowrap">${_kisaZaman(g.baslangic)}<br>${_kisaZaman(g.bitis)}</td>
       <td class="small text-nowrap">${g.cikis_zamani ? "↑ " + _kisaZaman(g.cikis_zamani) : "-"}<br>${g.donus_zamani ? "↓ " + _kisaZaman(g.donus_zamani) : ""}</td>
-      <td>${_gorevRozet(g)}</td>
-      <td class="text-end">${iptal && g.durum === "bekliyor" ? `<button class="btn btn-sm btn-outline-danger" onclick="gorevEmriIptal(${Number(g.id)})">İptal</button>` : ""}</td>
+      <td>${_gorevRozet(g)}${g.sonradan_giren ? `<div class="small text-muted" title="Kamera çıkışı gördükten sonra girildi">sonradan: ${escapeHtml(g.sonradan_giren)}</div>` : ""}</td>
+      <td class="text-end text-nowrap">${g.durum !== "iptal" && rolYeterli("güvenlik") ? `<button class="btn btn-sm btn-outline-secondary me-1" onclick="gorevModalAc({ gorevId: ${Number(g.id)} })" title="Düzenle" aria-label="Düzenle"><i class="bi bi-pencil"></i></button>` : ""}${iptal && g.durum === "bekliyor" ? `<button class="btn btn-sm btn-outline-danger" onclick="gorevEmriIptal(${Number(g.id)})">İptal</button>` : ""}</td>
     </tr>`).join("") : '<tr><td colspan="6" class="text-muted small p-3">Görev emri yok.</td></tr>';
 }
 
@@ -3511,6 +3514,77 @@ document.getElementById("gorevEmriForm")?.addEventListener("submit", async (e) =
   }
 });
 
+// Resmi araç çıkışı penceresi: { kayitId, plaka, cikis } kameranın kaydettiği
+// çıkışa görev bilgisi; { gorevId } var olan görevi düzenler; boş: yeni görev.
+let _gorevListesi = [];
+
+async function gorevModalAc(secenek = {}) {
+  const $ = id => document.getElementById(id);
+  let gorev = secenek.gorevId ? _gorevListesi.find(g => g.id === secenek.gorevId) : null;
+  if (secenek.gorevId && !gorev) {
+    try { gorev = (await apiCagir("/gorev-emirleri")).find(g => g.id === secenek.gorevId); } catch (e) { /* aşağıda */ }
+    if (!gorev) { toastGoster("Görev bulunamadı", "hata"); return; }
+  }
+  const yeni = !gorev && !secenek.kayitId;
+  if (yeni) {
+    try { _resmiAraclar = await apiCagir("/resmi-araclar"); } catch (e) { toastGoster(e.message, "hata"); return; }
+    $("gmArac").innerHTML = _resmiAraclar.filter(a => a.aktif)
+      .map(a => `<option value="${Number(a.id)}">${escapeHtml(a.plaka_no)} — ${escapeHtml(a.ad)}</option>`).join("");
+  }
+  $("gmAracAlani").classList.toggle("d-none", !yeni);
+  $("gmBaslangicAlani").classList.toggle("d-none", !yeni);
+  $("gmArac").required = $("gmBaslangic").required = yeni;
+  $("gmKayit").value = secenek.kayitId || "";
+  $("gmGorev").value = gorev ? gorev.id : "";
+  const bilgi = $("gmCikisBilgi");
+  if (gorev) {
+    bilgi.innerHTML = `<b>${escapeHtml(gorev.plaka_no || "")}</b> · görev #${Number(gorev.id)}` +
+      (gorev.cikis_zamani ? ` · çıkış ${escapeHtml(_kisaZaman(gorev.cikis_zamani))}` : "");
+  } else if (secenek.kayitId) {
+    bilgi.innerHTML = `<b>${escapeHtml(secenek.plaka || "")}</b> kameradan çıkış olarak kaydedildi` +
+      (secenek.cikis ? ` (${escapeHtml(_kisaZaman(secenek.cikis))})` : "") + ". Görev bilgisini girin.";
+  }
+  bilgi.classList.toggle("d-none", yeni);
+  const simdi = new Date();
+  $("gmBaslangic").value = _yerelZamanMetni(simdi);
+  $("gmBitis").value = gorev ? _yerelZamanMetni(new Date(gorev.bitis)) : _yerelZamanMetni(new Date(simdi.getTime() + 3 * 3600 * 1000));
+  $("gmGorevli").value = gorev ? gorev.gorevli : "";
+  $("gmGuzergah").value = gorev ? (gorev.guzergah || "") : "";
+  $("gmAciklama").value = gorev ? (gorev.aciklama || "") : "";
+  $("gorevModalBaslik").textContent = gorev ? "Görevi düzenle" : secenek.kayitId ? "Resmi araç çıkışını işle" : "Resmi araç çıkışı";
+  bootstrap.Modal.getOrCreateInstance($("gorevModal")).show();
+  setTimeout(() => $("gmGorevli").focus(), 300);
+}
+
+document.getElementById("gorevModalForm")?.addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const $ = id => document.getElementById(id);
+  const gorevId = $("gmGorev").value, kayitId = $("gmKayit").value;
+  const govde = { gorevli: $("gmGorevli").value, guzergah: $("gmGuzergah").value, aciklama: $("gmAciklama").value, bitis: $("gmBitis").value };
+  if (!gorevId) {
+    if (kayitId) govde.kayit_id = Number(kayitId);
+    else Object.assign(govde, { resmi_arac_id: Number($("gmArac").value), baslangic: $("gmBaslangic").value });
+  }
+  const btn = e.target.querySelector('button[type="submit"]');
+  btn.disabled = true;
+  try {
+    const g = await apiCagir(gorevId ? `/gorev-emirleri/${gorevId}` : "/gorev-emirleri", {
+      method: gorevId ? "PUT" : "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(govde),
+    });
+    bootstrap.Modal.getInstance($("gorevModal"))?.hide();
+    toastGoster(`${g.plaka_no} görevi kaydedildi (${g.gorevli})`, "basari");
+    klonUyarilariYukle();
+    if (document.getElementById("resmi-sekme")?.classList.contains("active")) {
+      resmiAraclariYukle();
+      gorevEmirleriniYukle();
+    }
+  } catch (err) {
+    toastGoster("Kaydedilemedi: " + err.message, "hata");
+  } finally {
+    btn.disabled = false;
+  }
+});
+
 function _resmiRaporAy() {
   const el = document.getElementById("resmiRaporAy");
   if (!el.value) el.value = _yerelTarihMetni(new Date()).slice(0, 7);
@@ -3528,7 +3602,7 @@ async function resmiRaporYukle() {
     const hucre = (n, kotu) => `<td class="text-end${kotu && n ? " text-danger fw-bold" : ""}">${n}</td>`;
     tablo.innerHTML = r.ozet.length ? r.ozet.map(o => `<tr>
         <td><b>${escapeHtml(o.plaka_no)}</b> <span class="small text-muted">${escapeHtml(o.ad)}</span></td>
-        ${hucre(o.cikis)}${hucre(o.gorevli)}${hucre(o.gorevsiz, true)}${hucre(o.mesai_disi, true)}${hucre(o.gec_donus, true)}
+        ${hucre(o.cikis)}<td class="text-end">${o.gorevli}${o.sonradan ? `<div class="small text-muted" title="Kamera çıkışı gördükten sonra girildi">${o.sonradan} sonradan</div>` : ""}</td>${hucre(o.gorevsiz, true)}${hucre(o.mesai_disi, true)}${hucre(o.gec_donus, true)}
         <td class="text-end text-nowrap">${_sureMetni(o.disarida_dk)}</td></tr>`).join("")
       + `<tr><td colspan="7" class="small text-muted">Mesai ${escapeHtml(r.mesai)} · görev payı ${r.tolerans_dk} dk · tek tek çıkışlar Excel'in "Döküm" sayfasında</td></tr>`
       : '<tr><td colspan="7" class="text-muted small p-3">Resmi araç yok.</td></tr>';
@@ -3640,11 +3714,14 @@ async function klonUyarilariYukle() {
   // RESMİ ARAÇ (2026-10-30): görev emirsiz çıkış, mesai dışı hareket, geç dönüş.
   if (_resmiModulAcik) {
     _kapiAlarmAlani("kapiResmiAlani", "resmi_arac", '<i class="bi bi-briefcase-fill"></i> Resmi araç uyarısı',
-      "Görev emri olmadan ya da mesai dışında hareket eden resmi araç. Sürücüden görev belgesini isteyin.");
+      "Görev emri olmadan ya da mesai dışında hareket eden resmi araç. Sürücüden görev belgesini isteyin.",
+      a => a.kayit_id && a.mesaj.startsWith("GÖREVSİZ ÇIKIŞ")
+        ? `<button type="button" class="btn btn-sm btn-primary" data-kayit="${Number(a.kayit_id)}" data-plaka="${escapeHtml(a.plaka_no)}"
+             data-zaman="${escapeHtml(a.tarih_saat)}" onclick="gorevModalAc({ kayitId: Number(this.dataset.kayit), plaka: this.dataset.plaka, cikis: this.dataset.zaman })">Görev bilgisi gir</button>` : "");
   }
 }
 
-async function _kapiAlarmAlani(alanId, tip, baslik, aciklama) {
+async function _kapiAlarmAlani(alanId, tip, baslik, aciklama, ekDugme = () => "") {
   const alan = document.getElementById(alanId);
   if (!alan) return;
   let liste;
@@ -3662,7 +3739,8 @@ async function _kapiAlarmAlani(alanId, tip, baslik, aciklama) {
       <div class="okunamayan-satir">
         <div class="okunamayan-bilgi"><b>${escapeHtml(a.plaka_no)}</b>
           <div class="small">${escapeHtml(a.mesaj)}</div></div>
-        ${islem ? `<button type="button" class="btn btn-sm btn-outline-danger" onclick="klonKontrolEdildi(${Number(a.id)})">Kontrol ettim</button>` : ""}
+        <div class="d-flex gap-2">${ekDugme(a)}
+        ${islem ? `<button type="button" class="btn btn-sm btn-outline-danger" onclick="klonKontrolEdildi(${Number(a.id)})">Kontrol ettim</button>` : ""}</div>
       </div>`).join("")}</div>` : "";
 }
 
