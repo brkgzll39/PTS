@@ -71,7 +71,7 @@ function kapiSekme(ad) {
   _kapiSekmeAdi = ad;
   document.querySelectorAll("#kapiModu .kapi-sekme[data-kapi-sekme]").forEach(b =>
     b.classList.toggle("aktif", b.dataset.kapiSekme === ad));
-  for (const s of ["kapi", "iceride", "ara"]) {
+  for (const s of ["kapi", "iceride", "ara", "resmi"]) {
     document.getElementById(`kapiSekme_${s}`).classList.toggle("d-none", s !== ad);
   }
   const nobet = ad === "nobet";
@@ -81,6 +81,7 @@ function kapiSekme(ad) {
   if (ad === "iceride") _kapiIcerideYukle();
   if (ad === "ara") kapiAramaYap();
   if (ad === "kapi") kapiSonGecisleriYukle();
+  if (ad === "resmi") kapiResmiYukle();
   window.scrollTo(0, 0);
 }
 
@@ -188,8 +189,108 @@ async function kapiSonGecisleriYukle() {
 // app.js::_sseKayitAl'dan çağrılır (yeni geçiş).
 function kapiYeniKayit() {
   if (_kapiSekmeAdi === "kapi" && !_kapiAcikPencere) kapiSonGecisleriYukle();
+  if (_kapiSekmeAdi === "resmi") kapiResmiYukle();
+  else if (typeof klonUyarilariYukle === "function") klonUyarilariYukle();  // görevsiz çıkış penceresi her sekmede
   _kapiIcerideYukle();
 }
+
+// ---------------------------------------------------------------- Resmi Araçlar
+// Kurumun resmi araçları: kim dışarıda, kimin görevi gecikti, hangisi görevsiz
+// çıktı (bkz. main.py "RESMİ ARAÇ GÖREV TAKİBİ"). Görev penceresi app.js::gorevModalAc.
+let _kapiResmi = [];
+let _kapiResmiFiltre = "hepsi";
+
+function _kapiResmiDurum(a) {
+  const g = a.gorevler.find(x => ["görevde", "gecikti"].includes(x.durum)) || null;
+  const bekleyen = a.gorevler.find(x => x.durum === "bekliyor") || null;
+  if (a.konum === "disarida" && a.gorevsiz_cikis_kayit_id) return { sinif: "gorevsiz", etiket: "Görevsiz çıktı", sorunlu: true, g: null, bekleyen };
+  if (g && g.durum === "gecikti") return { sinif: "gecikti", etiket: "Dönüşü gecikti", sorunlu: true, g, bekleyen };
+  if (a.konum === "disarida") return { sinif: "gorevde", etiket: "Görevde", sorunlu: false, g, bekleyen };
+  return { sinif: "iceride", etiket: a.konum === "iceride" ? "İçeride" : "Bilinmiyor", sorunlu: false, g: null, bekleyen };
+}
+
+async function kapiResmiYukle() {
+  try {
+    _kapiResmi = (await apiCagir("/resmi-araclar")).filter(a => a.aktif);
+  } catch (e) {
+    return;
+  }
+  if (typeof _resmiAraclar !== "undefined") _resmiAraclar = _kapiResmi;
+  const sorunlu = _kapiResmi.filter(a => _kapiResmiDurum(a).sorunlu).length;
+  const rozet = document.getElementById("kapiResmiSayi");
+  rozet.textContent = sorunlu;
+  rozet.classList.toggle("d-none", !sorunlu);
+  if (_kapiSekmeAdi === "resmi") _kapiResmiCiz();
+}
+
+function kapiResmiFiltre(ad) {
+  _kapiResmiFiltre = ad;
+  _kapiResmiCiz();
+}
+
+function _kapiSureMetni(dk) {
+  dk = Math.max(0, Math.round(dk));
+  return dk >= 60 ? `${Math.floor(dk / 60)} sa ${dk % 60} dk` : `${dk} dk`;
+}
+
+function _kapiResmiCiz() {
+  const durumlar = _kapiResmi.map(a => [a, _kapiResmiDurum(a)]);
+  const say = f => durumlar.filter(([a, d]) => f(a, d)).length;
+  const kutular = [
+    ["hepsi", _kapiResmi.length, "bi-briefcase", "Resmi araç", ""],
+    ["disarida", say(a => a.konum === "disarida"), "bi-box-arrow-right", "Şu an dışarıda", ""],
+    ["sorunlu", say((a, d) => d.sorunlu), "bi-exclamation-triangle", "Görevsiz / gecikmiş", "uyari"],
+    ["iceride", say(a => a.konum !== "disarida"), "bi-house-door", "İçeride", ""],
+  ];
+  document.getElementById("kapiResmiOzet").innerHTML = kutular.map(([ad, sayi, ikon, etiket, ek]) =>
+    `<button type="button" class="kapi-kart kapi-kutu ${ek} ${_kapiResmiFiltre === ad ? "secili" : ""}" onclick="kapiResmiFiltre('${ad}')">
+      <div class="sayi">${sayi}</div><div class="ad"><i class="bi ${ikon}"></i> ${escapeHtml(etiket)}</div></button>`).join("");
+  const aranan = _kapiPlakaSade(document.getElementById("kapiResmiAra").value);
+  const metinSade = m => (m || "").toLocaleUpperCase("tr-TR").replace(/[^0-9A-ZÇĞİÖŞÜ]/g, "");
+  const sira = { gorevsiz: 0, gecikti: 1, gorevde: 2, iceride: 3 };
+  const liste = durumlar
+    .filter(([a, d]) => _kapiResmiFiltre === "hepsi" || (_kapiResmiFiltre === "disarida" && a.konum === "disarida")
+      || (_kapiResmiFiltre === "sorunlu" && d.sorunlu) || (_kapiResmiFiltre === "iceride" && a.konum !== "disarida"))
+    .filter(([a, d]) => !aranan || _kapiPlakaSade(a.plaka_no).includes(aranan) || metinSade(a.ad).includes(metinSade(aranan))
+      || a.gorevler.some(g => metinSade(g.gorevli).includes(metinSade(aranan))))
+    .sort(([a, d], [b, e]) => sira[d.sinif] - sira[e.sinif] || a.plaka_no.localeCompare(b.plaka_no, "tr"));
+  const simdi = Date.now();
+  document.getElementById("kapiResmiListe").innerHTML = liste.length ? liste.map(([a, d]) => {
+    const g = d.g;
+    const disaridaDk = a.son_gecis ? (simdi - new Date(a.son_gecis)) / 60000 : 0;
+    const cikis = a.konum === "disarida" && a.son_gecis
+      ? `Çıkış <b>${_kapiZaman(a.son_gecis)}</b> · ${disaridaDk < 1 ? "az önce" : _kapiSureMetni(disaridaDk) + " önce"}` : "";
+    let gorev = "";
+    if (g) {
+      const gec = (simdi - new Date(g.bitis)) / 60000;
+      gorev = `<div class="kr-gorev"><i class="bi bi-person-badge"></i> <b>${escapeHtml(g.gorevli)}</b>${g.guzergah ? ` · ${escapeHtml(g.guzergah)}` : ""}</div>
+        <div class="kr-donus ${g.durum === "gecikti" ? "gec" : ""}"><i class="bi bi-arrow-return-left"></i> Dönüş ${_kapiZaman(g.bitis)}${g.durum === "gecikti" ? ` · <b>${_kapiSureMetni(gec)} gecikti</b>` : ""}</div>`;
+    } else if (d.sinif === "gorevsiz") {
+      gorev = '<div class="kr-gorev uyari"><i class="bi bi-exclamation-triangle-fill"></i> Görev emri yok — sürücüden görev belgesini isteyin</div>';
+    } else if (d.bekleyen) {
+      const b = d.bekleyen;
+      gorev = `<div class="kr-gorev soluk"><i class="bi bi-calendar-check"></i> Bekleyen görev: <b>${escapeHtml(b.gorevli)}</b> · ${_kapiZaman(b.baslangic)}–${_kapiZaman(b.bitis)}${b.guzergah ? ` · ${escapeHtml(b.guzergah)}` : ""}</div>`;
+    }
+    const dugmeler = [];
+    if (d.sinif === "gorevsiz") {
+      dugmeler.push(`<button type="button" class="kapi-dugme kd-ana" data-kayit="${Number(a.gorevsiz_cikis_kayit_id)}" data-plaka="${escapeHtml(a.plaka_no)}" data-zaman="${escapeHtml(a.son_gecis)}"
+        onclick="gorevModalAc({ kayitId: Number(this.dataset.kayit), plaka: this.dataset.plaka, cikis: this.dataset.zaman })"><i class="bi bi-pencil-square"></i> Görev bilgisi gir</button>`);
+    } else if (g) {
+      dugmeler.push(`<button type="button" class="kapi-dugme kd-acik" onclick="gorevModalAc({ gorevId: ${Number(g.id)} })"><i class="bi bi-pencil"></i> Görevi düzenle</button>`);
+    } else {
+      dugmeler.push(`<button type="button" class="kapi-dugme kd-acik" onclick="gorevModalAc({ aracId: ${Number(a.id)} })"><i class="bi bi-box-arrow-right"></i> Çıkış kaydet</button>`);
+    }
+    return `<div class="kapi-kart kapi-resmi-kart kr-${d.sinif}">
+      <div class="kr-ust">${_kapiPlakaHtml(a.plaka_no)}<span class="kr-rozet">${escapeHtml(d.etiket)}</span></div>
+      <div class="kr-ad">${escapeHtml(a.ad)}${a.birim ? ` <span>· ${escapeHtml(a.birim)}</span>` : ""}</div>
+      ${cikis ? `<div class="kr-cikis"><i class="bi bi-clock"></i> ${cikis}</div>` : ""}
+      ${gorev}
+      <div class="kr-dugmeler">${dugmeler.join("")}</div>
+    </div>`;
+  }).join("") : '<div class="kapi-bos" style="padding:40px">Bu grupta resmi araç yok.</div>';
+}
+
+document.getElementById("kapiResmiAra")?.addEventListener("input", () => _kapiResmiCiz());
 
 // YANLIŞ ARACA NOT (2026-10-30, kullanıcı bildirdi): görevli büyük karttaki
 // aracın "Not Ekle"sine uzanırken yeni bir araç geçerse kart yeni araca dönüyor,

@@ -251,3 +251,31 @@ body.kapi-nobet .app-main { max-width: 1400px; margin: 0 auto; }
 .kapi-kart-kilitli .kapi-dugmeler { opacity: .55; pointer-events: none; transition: opacity .2s; }
 .kapi-kart-kilitli .kapi-plaka { animation: kapiKartYeni .6s ease-out; }
 @keyframes kapiKartYeni { from { transform: scale(.96); opacity: .4; } to { transform: none; opacity: 1; } }
+
+/* Resmi Araçlar sekmesi */
+.kapi-resmi-ust { display: flex; gap: 14px; align-items: stretch; margin-bottom: 16px; flex-wrap: wrap; }
+.kapi-resmi-ust .kapi-arama { flex: 1 1 320px; margin: 0; }
+.kapi-resmi-ust .kapi-dugme { flex: 0 0 auto; padding-left: 26px; padding-right: 26px; }
+.kapi-resmi-liste { display: grid; grid-template-columns: repeat(auto-fill, minmax(360px, 1fr)); gap: 14px; }
+.kapi-resmi-kart { padding: 18px 20px; display: flex; flex-direction: column; gap: 8px; border-left: 6px solid #94a3b8; }
+.kapi-resmi-kart.kr-gorevsiz { border-left-color: #dc2626; background: #fef2f2; }
+.kapi-resmi-kart.kr-gecikti { border-left-color: #ea580c; background: #fff7ed; }
+.kapi-resmi-kart.kr-gorevde { border-left-color: #2563eb; }
+.kapi-resmi-kart.kr-iceride { border-left-color: #16a34a; }
+.kr-ust { display: flex; justify-content: space-between; align-items: center; gap: 10px; }
+.kr-rozet { font-size: 14px; font-weight: 700; padding: 5px 12px; border-radius: 999px; background: #e2e8f0; color: #334155; white-space: nowrap; }
+.kr-gorevsiz .kr-rozet { background: #dc2626; color: #fff; }
+.kr-gecikti .kr-rozet { background: #ea580c; color: #fff; }
+.kr-gorevde .kr-rozet { background: #dbeafe; color: #1e40af; }
+.kr-iceride .kr-rozet { background: #dcfce7; color: #166534; }
+.kr-ad { font-size: 18px; font-weight: 600; }
+.kr-ad span { font-weight: 400; color: var(--k-soluk); }
+.kr-cikis, .kr-gorev, .kr-donus { font-size: 16px; }
+.kr-gorev.uyari { color: #b91c1c; font-weight: 600; }
+.kr-gorev.soluk { color: var(--k-soluk); }
+.kr-donus.gec { color: #c2410c; }
+.kr-dugmeler { display: flex; gap: 10px; margin-top: 6px; }
+.kr-dugmeler .kapi-dugme { flex: 1; font-size: 17px; padding-top: 12px; padding-bottom: 12px; }
+@media (max-width: 700px) { .kapi-resmi-liste { grid-template-columns: 1fr; } }
+.kapi-resmi-ust .kapi-arama { background: var(--k-kart); }
+.kr-dugmeler .kapi-dugme { min-height: 52px; }

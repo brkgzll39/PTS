@@ -938,10 +938,10 @@
       <button class="kapi-sekme" data-kapi-sekme="iceride"><i class="bi bi-car-front"></i> İçeridekiler <span class="sayi d-none" id="kapiIcerideSayi"></span></button>
       <button class="kapi-sekme" data-kapi-sekme="ara"><i class="bi bi-search"></i> Ara / Rapor</button>
       <button class="kapi-sekme" data-kapi-sekme="nobet"><i class="bi bi-journal-text"></i> Nöbet Defteri <span class="sayi d-none nobet-rozet"></span></button>
+      <button class="kapi-sekme d-none resmi-modul" data-kapi-sekme="resmi"><i class="bi bi-briefcase"></i> Resmi Araçlar <span class="sayi d-none" id="kapiResmiSayi"></span></button>
     </div>
     <span class="kapi-vardiya d-none" id="kapiVardiya"></span>
     <div class="kapi-sag"><b id="kapiKullanici"></b><br><span id="kapiSaat"></span></div>
-    <button class="kapi-kucuk-dugme d-none resmi-modul" onclick="gorevModalAc()" title="Resmi araç çıkışı (görev) kaydet"><i class="bi bi-briefcase"></i> Resmi Araç</button>
     <button class="kapi-kucuk-dugme" onclick="gorunumDegistir('klasik')" title="Tüm menülerin olduğu klasik panel"><i class="bi bi-grid-3x3-gap"></i> Gelişmiş</button>
     <button class="kapi-kucuk-dugme d-none" id="kapiFarkliKullanici" onclick="farkliKullaniciylaGiris()" title="Başka bir hesapla giriş"><i class="bi bi-person-gear"></i></button>
     <button class="kapi-kucuk-dugme" id="kapiCikis" onclick="oturumKapat()" title="Çıkış"><i class="bi bi-box-arrow-right"></i></button>
@@ -983,6 +983,16 @@
         <div class="kapi-alt-baslik"><i class="bi bi-hourglass-split"></i> Onay bekleyen girişler (son 24 saat) <span class="kapi-rozet kr-ziyaretci" id="kapiOnaysizSayi"></span></div>
         <div class="kapi-kart kapi-tablo"><div id="kapiOnaysizTablo"></div></div>
       </div>
+    </div>
+
+    <!-- Resmi Araçlar (2026-10-30): dışarıdaki / görevdeki / içerideki resmi araçlar -->
+    <div id="kapiSekme_resmi" class="d-none">
+      <div class="kapi-ozet" id="kapiResmiOzet"></div>
+      <div class="kapi-resmi-ust">
+        <label class="kapi-arama"><i class="bi bi-search"></i><input id="kapiResmiAra" type="search" placeholder="Plaka, araç ya da görevli ara" autocomplete="off"></label>
+        <button type="button" class="kapi-dugme kd-ana" onclick="gorevModalAc()"><i class="bi bi-box-arrow-right"></i> Resmi Araç Çıkışı Kaydet</button>
+      </div>
+      <div class="kapi-resmi-liste" id="kapiResmiListe"></div>
     </div>
 
     <!-- Ara / Rapor -->

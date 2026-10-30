@@ -3404,8 +3404,11 @@ async function resmiModulHazirla() {
     _resmiModulAcik = false;
   }
   document.querySelectorAll(".resmi-modul").forEach(el => el.classList.toggle("d-none", !_resmiModulAcik));
-  // Kapı Modu bu yanıttan önce açılmış olabilir: uyarı alanını şimdi doldur.
-  if (_resmiModulAcik) klonUyarilariYukle();
+  // Kapı Modu bu yanıttan önce açılmış olabilir: uyarı alanını ve sekme rozetini şimdi doldur.
+  if (_resmiModulAcik) {
+    klonUyarilariYukle();
+    if (typeof kapiResmiYukle === "function" && document.body.classList.contains("kapi-modu")) kapiResmiYukle();
+  }
 }
 
 function _gorevRozet(g) {
@@ -3646,6 +3649,7 @@ async function gorevModalAc(secenek = {}) {
     try { _resmiAraclar = await apiCagir("/resmi-araclar"); } catch (e) { toastGoster(e.message, "hata"); return; }
     $("gmAra").value = "";
     _aracSecenekleri("gmArac");
+    if (secenek.aracId) $("gmArac").value = String(secenek.aracId);
   }
   $("gmAracAlani").classList.toggle("d-none", !yeni);
   $("gmBaslangicAlani").classList.toggle("d-none", !yeni);
@@ -3690,6 +3694,7 @@ document.getElementById("gorevModalForm")?.addEventListener("submit", async (e) 
     bootstrap.Modal.getInstance($("gorevModal"))?.hide();
     toastGoster(`${g.plaka_no} görevi kaydedildi (${g.gorevli})`, "basari");
     klonUyarilariYukle();
+    if (typeof kapiResmiYukle === "function" && document.body.classList.contains("kapi-modu")) kapiResmiYukle();
     if (document.getElementById("resmi-sekme")?.classList.contains("active")) {
       resmiAraclariYukle();
       gorevEmirleriniYukle();
