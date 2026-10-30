@@ -8384,3 +8384,55 @@ def test_kutu_yok_say_ve_yetkiler(client, yetkili_header, operator_header, izley
     assert yeni != k["anahtar"] and _kutu_gonder(client, k["anahtar"], []).status_code == 401
     assert client.delete(f"/kapi-kutulari/{k['id']}", headers=yetkili_header).status_code == 200
     assert _kutu_gonder(client, yeni, []).status_code == 401  # pasif kutu kabul edilmez
+
+
+# ---------------- Klon plaka şüphesi (2026-10-30) ----------------
+
+def _klon_alarmlari(client, header, plaka):
+    return [a for a in client.get("/alarmlar", headers=header).json()
+            if a["alarm_tipi"] == "klon_plaka" and a["plaka_no"] == plaka]
+
+
+def _manuel_gecis(client, header, plaka, kamera, yon):
+    r = client.post("/kayitlar", json={"plaka_no": plaka, "kamera_id": kamera, "yon": yon}, headers=header)
+    assert r.status_code == 200, r.text
+    return r.json()
+
+
+def test_klon_plaka_iki_ayri_kapidan_ayni_yonde_giris_alarm_verir(client, operator_header):
+    _kayit_ekle_db("34 KLN 01", "giris", kamera="Klon Ana Giris", once=timedelta(minutes=4))
+    _manuel_gecis(client, operator_header, "34 KLN 01", "Lojmanklon Giris", "giris")
+    alarmlar = _klon_alarmlari(client, operator_header, "34 KLN 01")
+    assert len(alarmlar) == 1 and "iki ayrı kapıdan giriş" in alarmlar[0]["mesaj"]
+    # Aynı şüphe için ikinci alarm üretilmez
+    _manuel_gecis(client, operator_header, "34 KLN 01", "Klon Ana Giris", "giris")
+    assert len(_klon_alarmlari(client, operator_header, "34 KLN 01")) == 1
+
+
+def test_klon_plaka_normal_gecisler_alarm_vermez(client, operator_header):
+    # Bir kapıdan girip içeriden diğer kapıdan çıkmak normal
+    _kayit_ekle_db("34 KLN 02", "giris", kamera="Klon Ana Giris", once=timedelta(minutes=5))
+    _manuel_gecis(client, operator_header, "34 KLN 02", "Lojmanklon Cikis", "cikis")
+    # Aynı kapıdan tekrar giriş (çıkış okunmamış) klon değildir
+    _kayit_ekle_db("34 KLN 03", "giris", kamera="Klon Ana Giris", once=timedelta(minutes=5))
+    _manuel_gecis(client, operator_header, "34 KLN 03", "Klon Ana Giris", "giris")
+    # Süre penceresinden (10 dk) eski geçiş sayılmaz
+    _kayit_ekle_db("34 KLN 04", "giris", kamera="Klon Ana Giris", once=timedelta(minutes=30))
+    _manuel_gecis(client, operator_header, "34 KLN 04", "Lojmanklon Giris", "giris")
+    for p in ("34 KLN 02", "34 KLN 03", "34 KLN 04"):
+        assert _klon_alarmlari(client, operator_header, p) == []
+
+
+def test_klon_plaka_bir_dakikadan_kisa_surede_iki_kapi_ve_ayar_kapali(client, operator_header, yetkili_header):
+    _kayit_ekle_db("34 KLN 05", "giris", kamera="Klon Ana Giris", once=timedelta(seconds=30))
+    _manuel_gecis(client, operator_header, "34 KLN 05", "Lojmanklon Cikis", "cikis")
+    assert "iki ayrı kapıda" in _klon_alarmlari(client, operator_header, "34 KLN 05")[0]["mesaj"]
+    ayarlar = client.get("/sistem/ayarlar", headers=yetkili_header).json()
+    r = client.put("/sistem/ayarlar", json={**ayarlar, "klon_sure_dk": 0}, headers=yetkili_header)
+    assert r.status_code == 200, r.text
+    try:
+        _kayit_ekle_db("34 KLN 06", "giris", kamera="Klon Ana Giris", once=timedelta(minutes=2))
+        _manuel_gecis(client, operator_header, "34 KLN 06", "Lojmanklon Giris", "giris")
+        assert _klon_alarmlari(client, operator_header, "34 KLN 06") == []
+    finally:
+        client.put("/sistem/ayarlar", json=ayarlar, headers=yetkili_header)

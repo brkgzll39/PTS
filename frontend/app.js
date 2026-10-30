@@ -602,6 +602,7 @@ function alarmTipiEtiketi(tip) {
     suresi_dolmus: "Süresi dolmuş ziyaretçi",
     kara_liste: "Kara liste geçişi",
     supheli_arac: "Şüpheli araç (tekrarlı red)",
+    klon_plaka: "Klon plaka şüphesi",
     kamera_arizasi: "Kamera arızası / bağlantı sorunu",
     // 2026-09-25 (sistem taraması): bu iki alarm tipi backend'de üretiliyor
     // ama burada etiketi yoktu -- panelde ham "bariyer_hatasi" metni görünüyordu.
@@ -3292,7 +3293,8 @@ document.getElementById("beklenenForm")?.addEventListener("submit", async (e) =>
 let _okunamayanZamanlayici = null;
 
 async function okunamayanlariYukle() {
-  const alanlar = document.querySelectorAll(".okunamayan-alan");
+  klonUyarilariYukle();
+  const alanlar = document.querySelectorAll(".okunamayan-alan:not([data-klon])");
   if (!alanlar.length) return;
   let liste;
   try {
@@ -3324,6 +3326,37 @@ async function okunamayanlariYukle() {
     alan.classList.toggle("d-none", !liste.length);
     korumaliGorselleriYukle(alan);
   });
+}
+
+// KLON PLAKA (2026-10-30): Kapı Modunda görevliye açık klon plaka şüpheleri
+// (bkz. main.py::_klon_plaka_suphesi). "Kontrol ettim" alarmı okundu yapar.
+async function klonUyarilariYukle() {
+  const alan = document.getElementById("kapiKlonAlani");
+  if (!alan || !document.body.classList.contains("kapi-modu")) return;
+  let liste;
+  try {
+    liste = await apiCagir("/alarmlar?sadece_acik=true&alarm_tipi=klon_plaka&limit=10");
+  } catch (e) {
+    return;
+  }
+  const islem = rolYeterli("operatör");
+  alan.classList.toggle("d-none", !liste.length);
+  alan.innerHTML = liste.length ? `
+    <div class="okunamayan-baslik"><i class="bi bi-shield-exclamation"></i> Klon plaka şüphesi: ${liste.length}
+      <span class="small fw-normal">Aynı plaka kısa sürede iki ayrı kapıda okundu. Aracı ve sürücüyü kontrol edin.</span></div>
+    <div class="okunamayan-liste">${liste.map(a => `
+      <div class="okunamayan-satir">
+        <div class="okunamayan-bilgi"><b>${escapeHtml(a.plaka_no)}</b>
+          <div class="small">${escapeHtml(a.mesaj)}</div></div>
+        ${islem ? `<button type="button" class="btn btn-sm btn-outline-danger" onclick="klonKontrolEdildi(${Number(a.id)})">Kontrol ettim</button>` : ""}
+      </div>`).join("")}</div>` : "";
+}
+
+async function klonKontrolEdildi(id) {
+  try {
+    await apiCagir(`/alarmlar/${id}/okundu`, { method: "PATCH" });
+    klonUyarilariYukle();
+  } catch (err) { toastGoster(err.message, "hata"); }
 }
 
 async function okunamayanCoz(e, id) {
@@ -6574,7 +6607,7 @@ async function bildirimAyarlariYukle() {
     _bildirimAyarCache = ayarlar;
     const tetikleyiciEtiketleri = {
       hepsi: "Hepsi", yetkisiz: "Yetkisiz araç", kara_liste: "Kara liste",
-      suresi_dolmus: "Süresi dolmuş", supheli_arac: "Şüpheli araç",
+      suresi_dolmus: "Süresi dolmuş", supheli_arac: "Şüpheli araç", klon_plaka: "Klon plaka şüphesi",
       bariyer_hatasi: "Bariyer hatası", kamera_arizasi: "Kamera arızası",
       disk_hatasi: "Disk hatası", yedek_bozuk: "Otomatik yedek bozuk", yedek_hatasi: "Otomatik yedek alınamadı",
       disk_doluyor: "Disk doluluk erken uyarısı", sertifika_bitiyor: "HTTPS sertifikası bitiyor", gunluk_ozet: "Günlük özet (her sabah)",
@@ -6709,6 +6742,8 @@ async function sistemAyarlariYukle() {
     if (!el) return;
     const satirlar = [
       { key: "supheli_esik", label: "Şüpheli araç eşiği (red/saat)", tip: "number" },
+      // KLON PLAKA (2026-10-30) -- bkz. main.py::_klon_plaka_suphesi.
+      { key: "klon_sure_dk", label: "Klon plaka: aynı plaka bu kadar dakika içinde iki ayrı kapıdan aynı yönde geçerse alarm (0 = kapalı)", tip: "number" },
       { key: "goruntu_saklama_gun", label: "Görüntü saklama süresi (gün)", tip: "number" },
       // KVKK (2026-10-23) -- bkz. main.py::_kayitlari_anonimlestir.
       { key: "kayit_anonimlestirme_gun", label: "KVKK: bu kadar günden eski geçişlerin plaka/kişi/not bilgisini sil (0 = kapalı, en az 30; geri alınamaz)", tip: "number" },

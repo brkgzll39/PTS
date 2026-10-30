@@ -275,6 +275,9 @@ _veritabani_migrasyon()
 SISTEM_AYARLARI_DOSYASI = os.getenv("PTS_SISTEM_AYARLARI_FILE") or os.path.join(BACKEND_DIR, "sistem_ayarlari.json")
 _VARSAYILAN_AYARLAR = {
     "supheli_esik": 3,           # saatte kaç red → şüpheli alarm
+    # KLON PLAKA (2026-10-30) -- bkz. _klon_plaka_suphesi. Aynı plaka bu kadar
+    # dakika içinde iki AYRI nizamiyeden aynı yönde geçerse alarm. 0 = kapalı.
+    "klon_sure_dk": 10,
     # 2026-10-05 kullanıcı isteği ("her araç geçtiğinde alarmlar otomatik
     # okunsun"): True ise yeni bir araç geçişi kaydedildiğinde, ÖNCEKİ geçişlere
     # ait açık "yetkisiz araç"/"süresi dolmuş" alarmları otomatik okundu
@@ -5558,6 +5561,46 @@ def _beklenen_ziyaretci_notu(b: models.BeklenenZiyaretci) -> str:
     return " · ".join(parcalar)[:500]
 
 
+# KLON PLAKA ŞÜPHESİ (2026-10-30, kullanıcı isteği): başka bir aracın plakasını
+# takarak girme. Bir araç aynı anda iki yerde olamaz: aynı plaka kısa süre içinde
+# iki AYRI nizamiyeden aynı yönde (iki giriş ya da iki çıkış) okunursa, ya da
+# hangi yönde olursa olsun 1 dakikadan kısa sürede iki ayrı nizamiyede görülürse
+# şüphe alarmı üretilir. Bir kapıdan girip içeriden diğer kapıdan çıkmak (Ana
+# Nizamiye -> Lojman) normaldir ve alarm vermez. Aynı nizamiyenin kameraları
+# arasındaki tekrarlar zaten tek geçiş sayılır (bkz. _capraz_kamera_kisa_sureli_tekrar_mi).
+_KLON_ANINDA_SN = 60
+
+
+def _klon_plaka_suphesi(db: Session, kayit: models.Kayit) -> Optional[str]:
+    dakika = int(_sistem_ayarlari_oku().get("klon_sure_dk") or 0)
+    if dakika <= 0 or kayit.plaka_no in ("BILINMEYEN", KVKK_ANONIM_PLAKA):
+        return None
+    nizamiye = excel_export.nizamiye_grubu(kayit.kamera_id or "")
+    if not nizamiye:
+        return None
+    bas = kayit.tarih_saat - timedelta(minutes=dakika)
+    K = models.Kayit
+    oncekiler = (db.query(K).filter(K.id != kayit.id, K.tarih_saat >= bas, K.tarih_saat <= kayit.tarih_saat,
+                                    _plaka_normalize_sql(K.plaka_no) == _plaka_normalize(kayit.plaka_no))
+                 .order_by(desc(K.tarih_saat)).limit(20).all())
+    for o in oncekiler:
+        diger = excel_export.nizamiye_grubu(o.kamera_id or "")
+        if not diger or diger == nizamiye:
+            continue
+        fark = (kayit.tarih_saat - o.tarih_saat).total_seconds()
+        if o.yon != kayit.yon and fark >= _KLON_ANINDA_SN:
+            continue  # bir kapıdan girip diğerinden çıkmak normal
+        acik = db.query(models.Alarm).filter(models.Alarm.alarm_tipi == "klon_plaka", models.Alarm.plaka_no == kayit.plaka_no,
+                                             models.Alarm.tarih_saat >= bas).first()
+        if acik:
+            return None  # aynı şüphe için ikinci alarm yok
+        sure = f"{int(fark // 60)} dk {int(fark % 60)} sn" if fark >= 60 else f"{int(fark)} sn"
+        ne = ("iki ayrı kapıdan " + ("giriş" if kayit.yon == "giris" else "çıkış")) if o.yon == kayit.yon else "iki ayrı kapıda"
+        return (f"KLON PLAKA ŞÜPHESİ: {kayit.plaka_no} {sure} arayla {ne} okundu "
+                f"({o.kamera_id} {o.tarih_saat:%H:%M:%S}, {kayit.kamera_id} {kayit.tarih_saat:%H:%M:%S})")
+    return None
+
+
 def _kayit_olustur_ve_bildir(db: Session, plaka_no: str, kamera_id: str, yon: str,
                               guven_skoru: Optional[float], goruntu_yolu: Optional[str],
                               dogrulama_kare_sayisi: Optional[int] = None,
@@ -5759,6 +5802,17 @@ def _kayit_olustur_ve_bildir(db: Session, plaka_no: str, kamera_id: str, yon: st
                     })
         except Exception as exc:
             logger.error("Şüpheli araç kontrolü hatası: %s", exc)
+
+    try:
+        klon_mesaj = _klon_plaka_suphesi(db, kayit)
+        if klon_mesaj:
+            db.add(models.Alarm(kayit_id=kayit.id, plaka_no=kayit.plaka_no, alarm_tipi="klon_plaka", mesaj=klon_mesaj[:255]))
+            logger.warning(klon_mesaj)
+            _bildirim_tetikle(db, "klon_plaka", {
+                "olay": "klon_plaka", "alarm_tipi": "klon_plaka", "plaka_no": kayit.plaka_no, "mesaj": klon_mesaj,
+            })
+    except Exception as exc:
+        logger.error("Klon plaka kontrolü hatası: %s", exc)
 
     db.commit()
 
@@ -9283,6 +9337,7 @@ def _ayar_klasor_yolu_veya_bos_dogrula(v) -> str:
 # eklemek gerekir.
 _AYAR_DOGRULAYICILAR = {
     "supheli_esik": lambda v: _ayar_int_dogrula(v, 0, 1000),
+    "klon_sure_dk": lambda v: _ayar_int_dogrula(v, 0, 720),
     "alarm_otomatik_okundu": _ayar_bool_dogrula,
     "goruntu_saklama_gun": lambda v: _ayar_int_dogrula(v, 0, None),
     "kayit_anonimlestirme_gun": lambda v: _anonimlestirme_gunu_dogrula(v),

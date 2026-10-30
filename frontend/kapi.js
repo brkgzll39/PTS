@@ -175,6 +175,7 @@ async function _kapiVardiyaGuncelle() {
 
 // ---------------------------------------------------------------- Kapı sekmesi
 async function kapiSonGecisleriYukle() {
+  if (typeof klonUyarilariYukle === "function") klonUyarilariYukle();
   try {
     _kapiKayitlar = await apiCagir("/kayitlar?limit=30");
   } catch (e) {
