@@ -164,7 +164,7 @@ function rolBazliArayuzuUygula() {
 // Anahtarlar schemas.EKRANLAR ile aynı.
 const EKRAN_ADLARI = {
   canli: "Canlı İzleme", kontrol: "Kontrol Merkezi", panel: "Son Geçişler", iceride: "İçerideki Araçlar",
-  nobet: "Nöbet Defteri", kayitlar: "Geçiş Kayıtları", kisiler: "Kişiler", karaliste: "Kara Liste",
+  nobet: "Nöbet Defteri", kayitlar: "Geçiş Kayıtları", kisiler: "Kişiler", karaliste: "Kara Liste", resmi: "Resmi Araçlar",
   kapi: "Kapı Modu", kamera: "Kameralar", bariyer: "Bariyer", site: "Site / Nokta", bildirim: "Bildirimler",
   led: "LED", kullanicilar: "Kullanıcılar", test: "Test", lisans: "Lisans", sistem: "Sistem / Log",
   denetim: "Denetim Kayıtları", iletisim: "İletişim / Arıza",
@@ -603,6 +603,7 @@ function alarmTipiEtiketi(tip) {
     kara_liste: "Kara liste geçişi",
     supheli_arac: "Şüpheli araç (tekrarlı red)",
     klon_plaka: "Klon plaka şüphesi",
+    resmi_arac: "Resmi araç (görevsiz / mesai dışı / geç dönüş)",
     kamera_arizasi: "Kamera arızası / bağlantı sorunu",
     // 2026-09-25 (sistem taraması): bu iki alarm tipi backend'de üretiliyor
     // ama burada etiketi yoktu -- panelde ham "bariyer_hatasi" metni görünüyordu.
@@ -924,6 +925,7 @@ function authBasarili(kullanici) {
   mevcutEkranlar = Array.isArray(kullanici.ekran_listesi) && kullanici.ekran_listesi.length ? kullanici.ekran_listesi : null;
   rolBazliArayuzuUygula();
   ekranKisitlamasiUygula();
+  resmiModulHazirla();
   uygulamaVerileriniYukle();
   _pwaKisaYolunuUygula();
   _nobetDefteriniBaslat();
@@ -3358,6 +3360,235 @@ document.getElementById("beklenenForm")?.addEventListener("submit", async (e) =>
   dugme?.addEventListener("shown.bs.tab", beklenenleriYukle);
 })();
 
+// ---------------------- RESMİ ARAÇ GÖREV TAKİBİ (2026-10-30) ----------------------
+// Lisans modülü "resmi_arac" (varsayılan kapalı): uç 403 dönerse sekme hiç
+// görünmez. Bkz. main.py "RESMİ ARAÇ GÖREV TAKİBİ".
+let _resmiModulAcik = false;
+let _resmiAraclar = [];
+const _GOREV_DURUM_RENK = {
+  bekliyor: "secondary", "görevde": "primary", "tamamlandı": "success", gecikti: "danger",
+  "geç döndü": "warning", "kullanılmadı": "light", iptal: "light",
+};
+
+async function resmiModulHazirla() {
+  try {
+    _resmiAraclar = await apiCagir("/resmi-araclar");
+    _resmiModulAcik = true;
+  } catch (e) {
+    _resmiModulAcik = false;
+  }
+  document.querySelectorAll(".resmi-modul").forEach(el => el.classList.toggle("d-none", !_resmiModulAcik));
+  // Kapı Modu bu yanıttan önce açılmış olabilir: uyarı alanını şimdi doldur.
+  if (_resmiModulAcik) klonUyarilariYukle();
+}
+
+function _gorevRozet(g) {
+  const renk = _GOREV_DURUM_RENK[g.durum] || "secondary";
+  return `<span class="badge text-bg-${renk}${renk === "light" ? " border" : ""}">${escapeHtml(g.durum)}</span>`;
+}
+
+function _kisaZaman(iso) {
+  return iso ? new Date(iso).toLocaleString("tr-TR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" }) : "";
+}
+
+async function resmiAraclariYukle() {
+  const tablo = document.getElementById("resmiAracTablo");
+  try {
+    _resmiAraclar = await apiCagir("/resmi-araclar");
+  } catch (e) {
+    tablo.innerHTML = `<tr><td colspan="5" class="text-danger small p-3">${escapeHtml(e.message)}</td></tr>`;
+    return;
+  }
+  const duzenle = rolYeterli("operatör");
+  tablo.innerHTML = _resmiAraclar.length ? _resmiAraclar.map(a => {
+    const konum = a.konum === "disarida" ? '<span class="badge text-bg-warning">Dışarıda</span>'
+      : a.konum === "iceride" ? '<span class="badge text-bg-success">İçeride</span>' : '<span class="text-muted small">-</span>';
+    const g = a.gorevler.find(x => ["görevde", "gecikti"].includes(x.durum)) || a.gorevler.find(x => x.durum === "bekliyor");
+    const gorev = g ? `${_gorevRozet(g)} <span class="small">${escapeHtml(g.gorevli)} · ${_kisaZaman(g.baslangic)}–${_kisaZaman(g.bitis)}</span>`
+      : '<span class="text-muted small">Görev emri yok</span>';
+    return `<tr class="${a.aktif ? "" : "text-muted"}">
+      <td class="fw-bold text-nowrap">${escapeHtml(a.plaka_no)}</td>
+      <td>${escapeHtml(a.ad)}${a.birim ? `<div class="small text-muted">${escapeHtml(a.birim)}</div>` : ""}${a.aktif ? "" : ' <span class="badge text-bg-light border">pasif</span>'}</td>
+      <td>${konum}${a.son_gecis ? `<div class="small text-muted">${_kisaZaman(a.son_gecis)}</div>` : ""}</td>
+      <td>${gorev}</td>
+      <td class="text-end">${duzenle ? `<button class="btn btn-sm btn-outline-secondary" onclick="resmiAracModalAc(${Number(a.id)})" title="Düzenle" aria-label="Düzenle"><i class="bi bi-pencil"></i></button>` : ""}</td>
+    </tr>`;
+  }).join("") : '<tr><td colspan="5" class="text-muted small p-3">Henüz resmi araç yok. "Araç ekle" ile kurumun araçlarını girin.</td></tr>';
+  const sec = document.getElementById("geArac");
+  const onceki = sec.value;
+  sec.innerHTML = _resmiAraclar.filter(a => a.aktif)
+    .map(a => `<option value="${Number(a.id)}">${escapeHtml(a.plaka_no)} — ${escapeHtml(a.ad)}</option>`).join("");
+  if (onceki) sec.value = onceki;
+}
+
+function resmiAracModalAc(id) {
+  const a = _resmiAraclar.find(x => x.id === id) || { plaka_no: "", ad: "", birim: "", aciklama: "", aktif: true };
+  document.getElementById("raId").value = id || "";
+  document.getElementById("raPlaka").value = a.plaka_no;
+  document.getElementById("raAd").value = a.ad;
+  document.getElementById("raBirim").value = a.birim || "";
+  document.getElementById("raAciklama").value = a.aciklama || "";
+  document.getElementById("raAktif").checked = a.aktif;
+  document.getElementById("resmiAracModalBaslik").textContent = id ? "Resmi aracı düzenle" : "Resmi araç ekle";
+  bootstrap.Modal.getOrCreateInstance(document.getElementById("resmiAracModal")).show();
+}
+
+document.getElementById("resmiAracForm")?.addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const id = document.getElementById("raId").value;
+  const govde = {
+    plaka_no: document.getElementById("raPlaka").value, ad: document.getElementById("raAd").value,
+    birim: document.getElementById("raBirim").value, aciklama: document.getElementById("raAciklama").value,
+    aktif: document.getElementById("raAktif").checked,
+  };
+  try {
+    await apiCagir(id ? `/resmi-araclar/${id}` : "/resmi-araclar", {
+      method: id ? "PUT" : "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(govde),
+    });
+    bootstrap.Modal.getInstance(document.getElementById("resmiAracModal"))?.hide();
+    toastGoster(`${govde.plaka_no.toLocaleUpperCase("tr-TR")} kaydedildi`, "basari");
+    resmiAraclariYukle();
+  } catch (err) {
+    toastGoster("Kaydedilemedi: " + err.message, "hata");
+  }
+});
+
+async function gorevEmirleriniYukle() {
+  const tablo = document.getElementById("gorevEmriTablo");
+  let liste;
+  try {
+    liste = await apiCagir(`/gorev-emirleri?kapsam=${document.getElementById("gorevKapsam").value}`);
+  } catch (e) {
+    tablo.innerHTML = `<tr><td colspan="6" class="text-danger small p-3">${escapeHtml(e.message)}</td></tr>`;
+    return;
+  }
+  const iptal = rolYeterli("operatör");
+  tablo.innerHTML = liste.length ? liste.map(g => `<tr>
+      <td class="text-nowrap"><b>${escapeHtml(g.plaka_no || "")}</b><div class="small text-muted">${escapeHtml(g.arac_adi || "")}</div></td>
+      <td>${escapeHtml(g.gorevli)}${g.guzergah ? `<div class="small text-muted">${escapeHtml(g.guzergah)}</div>` : ""}</td>
+      <td class="small text-nowrap">${_kisaZaman(g.baslangic)}<br>${_kisaZaman(g.bitis)}</td>
+      <td class="small text-nowrap">${g.cikis_zamani ? "↑ " + _kisaZaman(g.cikis_zamani) : "-"}<br>${g.donus_zamani ? "↓ " + _kisaZaman(g.donus_zamani) : ""}</td>
+      <td>${_gorevRozet(g)}</td>
+      <td class="text-end">${iptal && g.durum === "bekliyor" ? `<button class="btn btn-sm btn-outline-danger" onclick="gorevEmriIptal(${Number(g.id)})">İptal</button>` : ""}</td>
+    </tr>`).join("") : '<tr><td colspan="6" class="text-muted small p-3">Görev emri yok.</td></tr>';
+}
+
+async function gorevEmriIptal(id) {
+  if (!confirm("Görev emri iptal edilsin mi?")) return;
+  try {
+    await apiCagir(`/gorev-emirleri/${id}/iptal`, { method: "POST" });
+    gorevEmirleriniYukle();
+    resmiAraclariYukle();
+  } catch (err) { toastGoster(err.message, "hata"); }
+}
+
+function _yerelZamanMetni(d) {
+  return `${_yerelTarihMetni(d)}T${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+}
+
+document.getElementById("gorevEmriForm")?.addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const btn = e.target.querySelector('button[type="submit"]');
+  btn.disabled = true;
+  try {
+    const g = await apiCagir("/gorev-emirleri", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        resmi_arac_id: Number(document.getElementById("geArac").value),
+        gorevli: document.getElementById("geGorevli").value, guzergah: document.getElementById("geGuzergah").value,
+        aciklama: document.getElementById("geAciklama").value,
+        baslangic: document.getElementById("geBaslangic").value, bitis: document.getElementById("geBitis").value,
+      }),
+    });
+    toastGoster(`${g.plaka_no} için görev emri #${g.id} kaydedildi`, "basari");
+    ["geGorevli", "geGuzergah", "geAciklama"].forEach(id => { document.getElementById(id).value = ""; });
+    gorevEmirleriniYukle();
+    resmiAraclariYukle();
+  } catch (err) {
+    toastGoster("Görev emri kaydedilemedi: " + err.message, "hata");
+  } finally {
+    btn.disabled = false;
+  }
+});
+
+function _resmiRaporAy() {
+  const el = document.getElementById("resmiRaporAy");
+  if (!el.value) el.value = _yerelTarihMetni(new Date()).slice(0, 7);
+  return el.value;
+}
+
+function _sureMetni(dk) {
+  return dk ? `${Math.floor(dk / 60)} sa ${dk % 60} dk` : "-";
+}
+
+async function resmiRaporYukle() {
+  const tablo = document.getElementById("resmiRaporTablo");
+  try {
+    const r = await apiCagir(`/resmi-araclar/rapor?ay=${_resmiRaporAy()}`);
+    const hucre = (n, kotu) => `<td class="text-end${kotu && n ? " text-danger fw-bold" : ""}">${n}</td>`;
+    tablo.innerHTML = r.ozet.length ? r.ozet.map(o => `<tr>
+        <td><b>${escapeHtml(o.plaka_no)}</b> <span class="small text-muted">${escapeHtml(o.ad)}</span></td>
+        ${hucre(o.cikis)}${hucre(o.gorevli)}${hucre(o.gorevsiz, true)}${hucre(o.mesai_disi, true)}${hucre(o.gec_donus, true)}
+        <td class="text-end text-nowrap">${_sureMetni(o.disarida_dk)}</td></tr>`).join("")
+      + `<tr><td colspan="7" class="small text-muted">Mesai ${escapeHtml(r.mesai)} · görev payı ${r.tolerans_dk} dk · tek tek çıkışlar Excel'in "Döküm" sayfasında</td></tr>`
+      : '<tr><td colspan="7" class="text-muted small p-3">Resmi araç yok.</td></tr>';
+  } catch (err) {
+    tablo.innerHTML = `<tr><td colspan="7" class="text-danger small p-3">${escapeHtml(err.message)}</td></tr>`;
+  }
+}
+
+function resmiRaporIndir() {
+  window.open(indirmeUrlOlustur("/resmi-araclar/rapor", new URLSearchParams({ ay: _resmiRaporAy(), bicim: "xlsx" })), "_blank");
+}
+
+async function resmiMesaiYukle() {
+  if (!rolYeterli("yonetici")) return;
+  try {
+    const a = await apiCagir("/sistem/ayarlar");
+    document.getElementById("rmBas").value = a.resmi_mesai_baslangic || "08:00";
+    document.getElementById("rmBit").value = a.resmi_mesai_bitis || "18:00";
+    document.getElementById("rmPay").value = a.resmi_gorev_tolerans_dk ?? 30;
+    const secili = String(a.resmi_mesai_gunleri ?? "").split(",");
+    document.getElementById("rmGunler").innerHTML = ["Pzt", "Sal", "Çar", "Per", "Cum", "Cmt", "Paz"].map((ad, i) => `
+      <div class="form-check form-check-inline m-0"><input class="form-check-input" type="checkbox" id="rmGun${i}" value="${i}" ${secili.includes(String(i)) ? "checked" : ""}>
+        <label class="form-check-label small" for="rmGun${i}">${ad}</label></div>`).join("");
+  } catch (e) { /* yetki yoksa kart zaten gizli */ }
+}
+
+document.getElementById("resmiMesaiForm")?.addEventListener("submit", async (e) => {
+  e.preventDefault();
+  try {
+    const ayarlar = await apiCagir("/sistem/ayarlar");
+    await apiCagir("/sistem/ayarlar", {
+      method: "PUT", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        ...ayarlar,
+        resmi_mesai_baslangic: document.getElementById("rmBas").value,
+        resmi_mesai_bitis: document.getElementById("rmBit").value,
+        resmi_mesai_gunleri: [...document.querySelectorAll("#rmGunler input:checked")].map(x => x.value).join(","),
+        resmi_gorev_tolerans_dk: Number(document.getElementById("rmPay").value),
+      }),
+    });
+    toastGoster("Mesai saatleri kaydedildi", "basari");
+  } catch (err) {
+    toastGoster("Kaydedilemedi: " + err.message, "hata");
+  }
+});
+
+(function () {
+  const dugmeler = document.querySelectorAll('[data-bs-target="#resmi-sekme"]');
+  dugmeler.forEach(d => d.addEventListener("shown.bs.tab", () => {
+    const simdi = new Date();
+    const bas = document.getElementById("geBaslangic"), bit = document.getElementById("geBitis");
+    if (!bas.value) bas.value = _yerelZamanMetni(simdi);
+    if (!bit.value) bit.value = _yerelZamanMetni(new Date(simdi.getTime() + 4 * 3600 * 1000));
+    resmiAraclariYukle();
+    gorevEmirleriniYukle();
+    resmiRaporYukle();
+    resmiMesaiYukle();
+  }));
+})();
+
 // ---------------------- KAPI KUTUSU (2026-10-28) ----------------------
 // Okunamayan geçişler (kutunun sensörü araç gördü, kamera plakayı okumadı):
 // İçerideki Araçlar sekmesinin ve Kapı Modu ana ekranının üstünde, görevli
@@ -3403,19 +3634,30 @@ async function okunamayanlariYukle() {
 // KLON PLAKA (2026-10-30): Kapı Modunda görevliye açık klon plaka şüpheleri
 // (bkz. main.py::_klon_plaka_suphesi). "Kontrol ettim" alarmı okundu yapar.
 async function klonUyarilariYukle() {
-  const alan = document.getElementById("kapiKlonAlani");
-  if (!alan || !document.body.classList.contains("kapi-modu")) return;
+  if (!document.body.classList.contains("kapi-modu")) return;
+  _kapiAlarmAlani("kapiKlonAlani", "klon_plaka", '<i class="bi bi-shield-exclamation"></i> Klon plaka şüphesi',
+    "Aynı plaka kısa sürede iki ayrı kapıda okundu. Aracı ve sürücüyü kontrol edin.");
+  // RESMİ ARAÇ (2026-10-30): görev emirsiz çıkış, mesai dışı hareket, geç dönüş.
+  if (_resmiModulAcik) {
+    _kapiAlarmAlani("kapiResmiAlani", "resmi_arac", '<i class="bi bi-briefcase-fill"></i> Resmi araç uyarısı',
+      "Görev emri olmadan ya da mesai dışında hareket eden resmi araç. Sürücüden görev belgesini isteyin.");
+  }
+}
+
+async function _kapiAlarmAlani(alanId, tip, baslik, aciklama) {
+  const alan = document.getElementById(alanId);
+  if (!alan) return;
   let liste;
   try {
-    liste = await apiCagir("/alarmlar?sadece_acik=true&alarm_tipi=klon_plaka&limit=10");
+    liste = await apiCagir(`/alarmlar?sadece_acik=true&alarm_tipi=${tip}&limit=10`);
   } catch (e) {
     return;
   }
   const islem = rolYeterli("operatör");
   alan.classList.toggle("d-none", !liste.length);
   alan.innerHTML = liste.length ? `
-    <div class="okunamayan-baslik"><i class="bi bi-shield-exclamation"></i> Klon plaka şüphesi: ${liste.length}
-      <span class="small fw-normal">Aynı plaka kısa sürede iki ayrı kapıda okundu. Aracı ve sürücüyü kontrol edin.</span></div>
+    <div class="okunamayan-baslik">${baslik}: ${liste.length}
+      <span class="small fw-normal">${escapeHtml(aciklama)}</span></div>
     <div class="okunamayan-liste">${liste.map(a => `
       <div class="okunamayan-satir">
         <div class="okunamayan-bilgi"><b>${escapeHtml(a.plaka_no)}</b>
@@ -6680,7 +6922,7 @@ async function bildirimAyarlariYukle() {
     const tetikleyiciEtiketleri = {
       hepsi: "Hepsi", yetkisiz: "Yetkisiz araç", kara_liste: "Kara liste",
       suresi_dolmus: "Süresi dolmuş", supheli_arac: "Şüpheli araç", klon_plaka: "Klon plaka şüphesi",
-      bariyer_hatasi: "Bariyer hatası", kamera_arizasi: "Kamera arızası",
+      resmi_arac: "Resmi araç uyarısı", bariyer_hatasi: "Bariyer hatası", kamera_arizasi: "Kamera arızası",
       disk_hatasi: "Disk hatası", yedek_bozuk: "Otomatik yedek bozuk", yedek_hatasi: "Otomatik yedek alınamadı",
       disk_doluyor: "Disk doluluk erken uyarısı", sertifika_bitiyor: "HTTPS sertifikası bitiyor", gunluk_ozet: "Günlük özet (her sabah)",
     };

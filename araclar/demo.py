@@ -263,6 +263,48 @@ def veri_uret(m, demo: str) -> dict:
                                     mesaj=f"KARA LİSTEDEKİ ARAÇ: {k.plaka_no}", tarih_saat=z, okundu=gun > 2))
         db.commit()
 
+        # Resmi araçlar (modül "resmi_arac"): haftada birkaç görevli çıkış, bir
+        # görevsiz akşam çıkışı ve şu an görevde olan bir araç.
+        resmi = [models.ResmiArac(plaka_no=yeni_plaka(), ad=ad, birim=birim) for ad, birim in
+                 (("Makam aracı", "Genel Müdürlük"), ("Hizmet aracı (Doblo)", "İdari İşler"), ("Saha aracı (Pick-up)", "Teknik"))]
+        db.add_all(resmi)
+        resmi_kisi = [models.Kisi(ad_soyad=a.ad, plaka_no=a.plaka_no, tip="personel", daire_departman=a.birim) for a in resmi]
+        db.add_all(resmi_kisi)
+        db.flush()
+        rk = {a.plaka_no: k for a, k in zip(resmi, resmi_kisi)}
+        soforler = ["Kemal Uçar", "Hasan Bilgin", "Murat Eren"]
+        yerler = ["Valilik", "Bölge Müdürlüğü", "Saha - Kuyu 7", "Vergi Dairesi", "Organize Sanayi"]
+        for gun in range(7, 0, -1):
+            tarih = (simdi - timedelta(days=gun)).date()
+            if tarih.weekday() >= 5:
+                continue
+            for i, a in enumerate(resmi):
+                if r.random() < .35:
+                    continue
+                bas = datetime.combine(tarih, datetime.min.time()) + timedelta(hours=r.randint(9, 13))
+                bit = bas + timedelta(hours=r.randint(2, 4))
+                cikis = bas + timedelta(minutes=r.randint(0, 20))
+                donus = bit - timedelta(minutes=r.randint(-50 if i == 2 else 0, 40))
+                db.add(models.GorevEmri(resmi_arac_id=a.id, gorevli=soforler[i], guzergah=r.choice(yerler), baslangic=bas,
+                                        bitis=bit, olusturan_adi="demo", olusturma_zamani=bas - timedelta(hours=18),
+                                        cikis_zamani=cikis, donus_zamani=donus))
+                kayit(a.plaka_no, cikis, "cikis", rk[a.plaka_no])
+                kayit(a.plaka_no, donus, "giris", rk[a.plaka_no])
+        dun = (simdi - timedelta(days=1)).replace(hour=20, minute=41)
+        k = kayit(resmi[1].plaka_no, dun, "cikis", rk[resmi[1].plaka_no])
+        kayit(resmi[1].plaka_no, dun + timedelta(hours=2, minutes=7), "giris", rk[resmi[1].plaka_no])
+        db.flush()
+        db.add(models.Alarm(kayit_id=k.id, plaka_no=k.plaka_no, alarm_tipi="resmi_arac", tarih_saat=dun,
+                            mesaj=f"GÖREVSİZ ÇIKIŞ: {k.plaka_no} – {resmi[1].ad} {dun:%d.%m %H:%M} mesai dışında, görev emri olmadan çıktı"))
+        bas = simdi - timedelta(hours=1, minutes=10)
+        db.add(models.GorevEmri(resmi_arac_id=resmi[0].id, gorevli=soforler[0], guzergah="Valilik", baslangic=bas,
+                                bitis=simdi + timedelta(hours=2), olusturan_adi="demo", olusturma_zamani=bas - timedelta(hours=3),
+                                cikis_zamani=bas + timedelta(minutes=5)))
+        kayit(resmi[0].plaka_no, bas + timedelta(minutes=5), "cikis", rk[resmi[0].plaka_no])
+        db.add(models.GorevEmri(resmi_arac_id=resmi[2].id, gorevli=soforler[2], guzergah="Saha - Kuyu 7",
+                                baslangic=simdi + timedelta(hours=1), bitis=simdi + timedelta(hours=5), olusturan_adi="demo"))
+        db.commit()
+
         # Lisans (demo anahtarıyla), kameralar (bağlantısız), sistem ayarları.
         anahtar = lisans.uret("Demo", kamera_limiti=8, gun=365, moduller=list(lisans.MODULLER))  # demo: hepsi açık
         payload = lisans.coz(anahtar)

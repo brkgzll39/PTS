@@ -578,6 +578,45 @@ class BeklenenZiyaretci(Base):
     davet_eden_kullanici_id = Column(Integer, nullable=True, index=True)
 
 
+class ResmiArac(Base):
+    """Kurumun resmi aracı (2026-10-30, lisans modülü "resmi_arac"). Bu plakanın
+    her çıkışında geçerli bir görev emri (models.GorevEmri) aranır; yoksa ya da
+    araç mesai dışında görevsiz hareket ederse alarm üretilir (bkz.
+    main.py "RESMİ ARAÇ GÖREV TAKİBİ"). Kişiler tablosundan bağımsızdır: araç
+    ayrıca bir kişiye (bariyerin kendiliğinden açılması için) tanımlı olabilir."""
+    __tablename__ = "resmi_araclar"
+
+    id = Column(Integer, primary_key=True, index=True)
+    plaka_no = Column(String(15), nullable=False, unique=True, index=True)
+    ad = Column(String(100), nullable=False)          # "Makam aracı", "Servis minibüsü"
+    birim = Column(String(100), nullable=True)        # sorumlu birim / departman
+    aciklama = Column(String(300), nullable=True)
+    aktif = Column(Boolean, default=True)
+    olusturma_zamani = Column(DateTime, default=datetime.now)
+
+
+class GorevEmri(Base):
+    """Resmi aracın görev emri: kim, ne zaman, nereye. Araç bu aralıkta (± tolerans)
+    çıkarsa görevli sayılır ve çıkış/dönüş zamanları buraya yazılır. Silinmez; iptal edilir."""
+    __tablename__ = "gorev_emirleri"
+
+    id = Column(Integer, primary_key=True, index=True)
+    resmi_arac_id = Column(Integer, ForeignKey("resmi_araclar.id"), nullable=False, index=True)
+    gorevli = Column(String(100), nullable=False)     # sürücü / görevli personel
+    guzergah = Column(String(200), nullable=True)
+    aciklama = Column(String(300), nullable=True)
+    baslangic = Column(DateTime, nullable=False, index=True)
+    bitis = Column(DateTime, nullable=False, index=True)
+    olusturan_adi = Column(String(80), nullable=False)
+    olusturma_zamani = Column(DateTime, default=datetime.now)
+    cikis_zamani = Column(DateTime, nullable=True)    # görev kapsamındaki ilk çıkış
+    donus_zamani = Column(DateTime, nullable=True)    # çıkıştan sonraki ilk giriş
+    iptal = Column(Boolean, default=False)
+    iptal_eden = Column(String(80), nullable=True)
+
+    arac = relationship("ResmiArac")
+
+
 class KapiKutusu(Base):
     """Nizamiyedeki "PTS Kapı Kutusu" (2026-10-28, kapi_kutusu/ yazılımı, KC868-A8).
     Kutu, yerdeki döngü dedektörünün "araç var" sinyalini POST /kapi-kutusu/olay

@@ -112,12 +112,13 @@ MODULLER = {
     "vardiya_cizelgesi": "Vardiya çizelgesi (girişsiz vardiya)",
     "dahua_anpr": "Kamera ANPR okumasını birleştirme (Dahua)",
     "misafir_daveti": "Öz-hizmet hesabının kendi misafirini davet etmesi",
+    "resmi_arac": "Resmi araç görev emri takibi",
 }
 
 # Lisansta modül listesi YOKKEN de kapalı kalan modüller (2026-10-30): yalnız
 # dış kurulumlar için yapılmış, mevcut sistemlerde (TPAO) hiç görünmemesi
 # gereken özellikler. Açmak için lisans --modul ile açıkça listelemelidir.
-VARSAYILAN_KAPALI = frozenset({"misafir_daveti"})
+VARSAYILAN_KAPALI = frozenset({"misafir_daveti", "resmi_arac"})
 
 
 def modul_acik(ad: str, moduller: Optional[list]) -> bool:

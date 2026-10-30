@@ -280,3 +280,57 @@ def kisi_ice_aktarma_sablonu_olustur(dosya_yolu: str) -> str:
 
     wb.save(dosya_yolu)
     return dosya_yolu
+
+
+def resmi_arac_raporu_olustur(rapor: dict, dosya_yolu: str) -> str:
+    """Resmi araç ay sonu raporu (bkz. main.py::_resmi_arac_raporu): özet + döküm."""
+    from datetime import datetime
+
+    def _saat(deger):
+        return datetime.fromisoformat(deger).strftime("%d.%m.%Y %H:%M") if deger else ""
+
+    def _sure(dk):
+        return "" if dk is None else f"{dk // 60} sa {dk % 60} dk"
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Özet"
+    basliklar = ["Plaka", "Araç", "Birim", "Çıkış", "Görevli", "Görevsiz", "Mesai Dışı", "Geç Dönüş", "Dışarıda (toplam)"]
+    ws.append(basliklar)
+    _baslik_satiri_bicimlendir(ws, len(basliklar))
+    for o in rapor["ozet"]:
+        ws.append([_guvenli_hucre(o["plaka_no"]), _guvenli_hucre(o["ad"]), _guvenli_hucre(o["birim"] or ""),
+                   o["cikis"], o["gorevli"], o["gorevsiz"], o["mesai_disi"], o["gec_donus"], _sure(o["disarida_dk"])])
+    ws.append([])
+    ws.append([f"Dönem: {rapor['ay']} · Mesai: {rapor['mesai']} · Görev payı: {rapor['tolerans_dk']} dk"])
+    for i, baslik in enumerate(basliklar, 1):
+        ws.column_dimensions[get_column_letter(i)].width = max(12, len(baslik) + 4)
+    ws.freeze_panes = "A2"
+
+    ws2 = wb.create_sheet("Döküm")
+    basliklar = ["Plaka", "Araç", "Gün", "Çıkış", "Dönüş", "Süre", "Görev Emri", "Görevli", "Güzergah", "Durum", "Kamera"]
+    ws2.append(basliklar)
+    _baslik_satiri_bicimlendir(ws2, len(basliklar))
+    uyari = PatternFill(start_color="FDE2E1", end_color="FDE2E1", fill_type="solid")
+    for s in rapor["satirlar"]:
+        durumlar = []
+        if not s["gorev_emri_id"]:
+            durumlar.append("GÖREVSİZ")
+        if s["mesai_disi"]:
+            durumlar.append("Mesai dışı")
+        if s["gec_donus"]:
+            durumlar.append("Geç dönüş")
+        if not s["donus"]:
+            durumlar.append("Dönüş kaydı yok")
+        ws2.append([_guvenli_hucre(s["plaka_no"]), _guvenli_hucre(s["ad"]), s["gun"], _saat(s["cikis"]), _saat(s["donus"]),
+                    _sure(s["sure_dk"]), f"#{s['gorev_emri_id']}" if s["gorev_emri_id"] else "",
+                    _guvenli_hucre(s["gorevli"] or ""), _guvenli_hucre(s["guzergah"] or ""),
+                    ", ".join(durumlar) or "Görevli", _guvenli_hucre(s["kamera"] or "")])
+        if not s["gorev_emri_id"] or s["gec_donus"]:
+            for hucre in ws2[ws2.max_row]:
+                hucre.fill = uyari
+    for i, genislik in enumerate([12, 22, 11, 17, 17, 11, 11, 20, 24, 28, 18], 1):
+        ws2.column_dimensions[get_column_letter(i)].width = genislik
+    ws2.freeze_panes = "A2"
+    wb.save(dosya_yolu)
+    return dosya_yolu

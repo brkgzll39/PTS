@@ -26,6 +26,30 @@
 
 <!-- Plaka analiz modal -->
 <!-- KAPI KUTUSU düzenleme (2026-10-28, bkz. app.js::kapiKutusuDuzenleAc) -->
+<div class="modal fade" id="resmiAracModal" tabindex="-1" aria-labelledby="resmiAracModalBaslik" aria-hidden="true">
+  <div class="modal-dialog">
+    <form class="modal-content" id="resmiAracForm">
+      <div class="modal-header"><h5 class="modal-title" id="resmiAracModalBaslik">Resmi araç</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Kapat"></button></div>
+      <div class="modal-body">
+        <input type="hidden" id="raId">
+        <div class="mb-2"><label class="form-label small" for="raPlaka">Plaka</label>
+          <input type="text" class="form-control" id="raPlaka" maxlength="15" required></div>
+        <div class="mb-2"><label class="form-label small" for="raAd">Araç adı</label>
+          <input type="text" class="form-control" id="raAd" maxlength="100" placeholder="Makam aracı, Servis minibüsü" required></div>
+        <div class="mb-2"><label class="form-label small" for="raBirim">Sorumlu birim</label>
+          <input type="text" class="form-control" id="raBirim" maxlength="100"></div>
+        <div class="mb-2"><label class="form-label small" for="raAciklama">Açıklama</label>
+          <input type="text" class="form-control" id="raAciklama" maxlength="300"></div>
+        <div class="form-check"><input type="checkbox" class="form-check-input" id="raAktif" checked>
+          <label class="form-check-label small" for="raAktif">Takipte (pasif araç denetlenmez)</label></div>
+      </div>
+      <div class="modal-footer"><button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Vazgeç</button>
+        <button type="submit" class="btn btn-primary">Kaydet</button></div>
+    </form>
+  </div>
+</div>
+
 <div class="modal fade" id="kapiKutusuModal" tabindex="-1" aria-hidden="true">
   <div class="modal-dialog modal-lg modal-dialog-centered modal-dialog-scrollable"><div class="modal-content">
     <div class="modal-header"><h5 class="modal-title"><i class="bi bi-cpu me-2"></i><span id="kkBaslik">Kapı kutusu</span></h5>
@@ -869,6 +893,7 @@
     <!-- Kapı -->
     <div id="kapiSekme_kapi">
       <div class="okunamayan-alan okunamayan-kapi d-none" id="kapiKlonAlani" data-klon></div>
+      <div class="okunamayan-alan okunamayan-kapi d-none" id="kapiResmiAlani" data-klon></div>
       <div class="okunamayan-alan okunamayan-kapi d-none"></div>
       <div class="kapi-izgara">
         <div class="kapi-kart kapi-son" id="kapiSonKart"></div>
@@ -987,6 +1012,7 @@
     <button class="side-link" data-target="#kayitlar-sekme"><i class="bi bi-list-ul"></i>Geçiş Kayıtları</button>
     <button class="side-link" data-target="#kisiler-sekme"><i class="bi bi-people"></i>Aboneler ve Kişiler</button>
     <button class="side-link" data-target="#karaliste-sekme"><i class="bi bi-slash-circle"></i>Kara Liste</button>
+    <button class="side-link d-none resmi-modul" data-target="#resmi-sekme"><i class="bi bi-briefcase"></i>Resmi Araçlar</button>
     <div class="sidebar-section-label" data-rol-min="yonetici" data-rol-davranis="gizle">YÖNETİM</div>
     <button class="side-link" data-target="#kamera-sekme" data-rol-min="yonetici" data-rol-davranis="gizle"><i class="bi bi-camera-video"></i>Kameralar</button>
     <button class="side-link" data-target="#bariyer-sekme" data-rol-min="yonetici" data-rol-davranis="gizle"><i class="bi bi-door-open"></i>Bariyer Kontrolü</button>
@@ -1023,6 +1049,7 @@
     <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#kayitlar-sekme" type="button"><i class="bi bi-list-columns-reverse me-1"></i>Kayıtlar</button></li>
     <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#kisiler-sekme" type="button"><i class="bi bi-people-fill me-1"></i>Kişiler</button></li>
     <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#karaliste-sekme" type="button"><i class="bi bi-slash-circle me-1"></i>Kara Liste</button></li>
+    <li class="nav-item d-none resmi-modul"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#resmi-sekme" type="button"><i class="bi bi-briefcase me-1"></i>Resmi Araçlar</button></li>
     <li class="nav-item" data-rol-min="yonetici" data-rol-davranis="gizle"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#kamera-sekme" type="button"><i class="bi bi-camera-video me-1"></i>Kameralar</button></li>
     <li class="nav-item" data-rol-min="yonetici" data-rol-davranis="gizle"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#bariyer-sekme" type="button"><i class="bi bi-door-open me-1"></i>Bariyer</button></li>
     <li class="nav-item" data-rol-min="yonetici" data-rol-davranis="gizle"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#site-sekme" type="button"><i class="bi bi-diagram-3 me-1"></i>Site/Nokta</button></li>
@@ -1998,6 +2025,102 @@
     </div>
 
     <!-- ================= BARİYER KONTROLÜ ================= -->
+    <!-- RESMİ ARAÇ GÖREV TAKİBİ (2026-10-30, lisans modülü "resmi_arac") -->
+    <div class="tab-pane fade" id="resmi-sekme">
+      <div class="row g-3">
+        <div class="col-xl-8">
+          <div class="card mb-3">
+            <div class="card-header d-flex justify-content-between align-items-center">
+              <span><i class="bi bi-briefcase-fill me-1"></i>Resmi Araçlar</span>
+              <span class="d-flex gap-2">
+                <button class="btn btn-sm btn-outline-primary" data-rol-min="operatör" onclick="resmiAracModalAc()"><i class="bi bi-plus-lg"></i> Araç ekle</button>
+                <button class="btn btn-sm btn-outline-secondary" onclick="resmiAraclariYukle()" title="Yenile" aria-label="Yenile"><i class="bi bi-arrow-clockwise"></i></button>
+              </span>
+            </div>
+            <div class="card-body p-0 table-responsive">
+              <table class="table table-hover mb-0 align-middle">
+                <thead class="table-light"><tr><th>Plaka</th><th>Araç</th><th>Konum</th><th>Görev</th><th></th></tr></thead>
+                <tbody id="resmiAracTablo"></tbody>
+              </table>
+            </div>
+          </div>
+          <div class="card mb-3">
+            <div class="card-header d-flex justify-content-between align-items-center">
+              <span><i class="bi bi-clipboard-check me-1"></i>Görev Emirleri</span>
+              <select class="form-select form-select-sm w-auto" id="gorevKapsam" onchange="gorevEmirleriniYukle()" aria-label="Görev emri listesi">
+                <option value="guncel">Güncel</option><option value="gecmis">Son 31 gün (kapanan)</option>
+              </select>
+            </div>
+            <div class="card-body p-0 table-responsive">
+              <table class="table table-sm table-hover mb-0 align-middle">
+                <thead class="table-light"><tr><th>Araç</th><th>Görevli / Güzergah</th><th>Süre</th><th>Çıkış / Dönüş</th><th>Durum</th><th></th></tr></thead>
+                <tbody id="gorevEmriTablo"></tbody>
+              </table>
+            </div>
+          </div>
+          <div class="card">
+            <div class="card-header d-flex flex-wrap gap-2 justify-content-between align-items-center">
+              <span><i class="bi bi-calendar3 me-1"></i>Ay Sonu Raporu</span>
+              <span class="d-flex gap-2">
+                <input type="month" class="form-control form-control-sm" id="resmiRaporAy" aria-label="Rapor ayı">
+                <button class="btn btn-sm btn-outline-primary" onclick="resmiRaporYukle()">Göster</button>
+                <button class="btn btn-sm btn-outline-success text-nowrap" onclick="resmiRaporIndir()"><i class="bi bi-file-earmark-excel"></i> Excel</button>
+              </span>
+            </div>
+            <div class="card-body p-0 table-responsive">
+              <table class="table table-sm mb-0 align-middle">
+                <thead class="table-light"><tr><th>Araç</th><th class="text-end">Çıkış</th><th class="text-end">Görevli</th><th class="text-end">Görevsiz</th><th class="text-end">Mesai dışı</th><th class="text-end">Geç dönüş</th><th class="text-end">Dışarıda</th></tr></thead>
+                <tbody id="resmiRaporTablo"><tr><td colspan="7" class="text-muted small p-3">Ay seçip "Göster"e basın.</td></tr></tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+        <div class="col-xl-4">
+          <div class="card mb-3" data-rol-min="operatör" data-rol-davranis="gizle">
+            <div class="card-header"><i class="bi bi-pencil-square me-1"></i>Görev Emri Ver</div>
+            <div class="card-body">
+              <form id="gorevEmriForm">
+                <div class="mb-2"><label class="form-label small" for="geArac">Araç</label>
+                  <select class="form-select" id="geArac" required></select></div>
+                <div class="mb-2"><label class="form-label small" for="geGorevli">Görevli / sürücü</label>
+                  <input type="text" class="form-control" id="geGorevli" maxlength="100" required></div>
+                <div class="mb-2"><label class="form-label small" for="geGuzergah">Güzergah / görev yeri</label>
+                  <input type="text" class="form-control" id="geGuzergah" maxlength="200" placeholder="Valilik, Ankara"></div>
+                <div class="row g-2 mb-2">
+                  <div class="col-6"><label class="form-label small" for="geBaslangic">Başlangıç</label>
+                    <input type="datetime-local" class="form-control form-control-sm" id="geBaslangic" required></div>
+                  <div class="col-6"><label class="form-label small" for="geBitis">Bitiş</label>
+                    <input type="datetime-local" class="form-control form-control-sm" id="geBitis" required></div>
+                </div>
+                <div class="mb-3"><label class="form-label small" for="geAciklama">Açıklama</label>
+                  <input type="text" class="form-control" id="geAciklama" maxlength="300"></div>
+                <button type="submit" class="btn btn-primary w-100"><i class="bi bi-check2-circle"></i> Görev emrini kaydet</button>
+              </form>
+              <p class="small text-muted mt-2 mb-0">Araç bu aralıkta çıkarsa görevli sayılır. Görev emri olmadan
+                çıkan, mesai dışında görevsiz hareket eden ya da geç dönen araç için kapıya ve bildirimlere uyarı düşer.</p>
+            </div>
+          </div>
+          <div class="card" data-rol-min="yonetici" data-rol-davranis="gizle">
+            <div class="card-header"><i class="bi bi-clock me-1"></i>Mesai Saatleri</div>
+            <div class="card-body">
+              <form id="resmiMesaiForm">
+                <div class="row g-2 mb-2">
+                  <div class="col-6"><label class="form-label small" for="rmBas">Başlangıç</label>
+                    <input type="time" class="form-control form-control-sm" id="rmBas" required></div>
+                  <div class="col-6"><label class="form-label small" for="rmBit">Bitiş</label>
+                    <input type="time" class="form-control form-control-sm" id="rmBit" required></div>
+                </div>
+                <div class="mb-2 d-flex flex-wrap gap-2" id="rmGunler"></div>
+                <div class="mb-3"><label class="form-label small" for="rmPay">Görev payı (dk) — erken çıkış / geç dönüş için tanınan süre</label>
+                  <input type="number" min="0" max="240" class="form-control form-control-sm" id="rmPay" required></div>
+                <button type="submit" class="btn btn-outline-primary btn-sm w-100">Kaydet</button>
+              </form>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
     <div class="tab-pane fade" id="bariyer-sekme">
       <div class="row g-3">
         <div class="col-lg-5">
@@ -2320,6 +2443,7 @@
                     <option value="suresi_dolmus">Sadece süresi dolmuş</option>
                     <option value="supheli_arac">Sadece şüpheli araç (tekrarlı red)</option>
                     <option value="klon_plaka">Sadece klon plaka şüphesi</option>
+                    <option value="resmi_arac">Sadece resmi araç uyarıları</option>
                     <option value="bariyer_hatasi">Sadece bariyer açma hatası</option>
                     <option value="kamera_arizasi">Sadece kamera arızası</option>
                     <option value="disk_hatasi">Sadece disk/görsel yazma hatası</option>

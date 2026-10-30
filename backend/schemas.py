@@ -117,7 +117,7 @@ class LisansAktivasyonIstegi(BaseModel):
 
 # Arayüz sekmeleri (index.html "#<ad>-sekme"; "kapi" = Kapı Modu). Kullanıcıya
 # ekran kısıtlaması verilirken yalnız bunlar kabul edilir.
-EKRANLAR = ("canli", "kontrol", "panel", "iceride", "nobet", "kayitlar", "kisiler", "karaliste", "kapi",
+EKRANLAR = ("canli", "kontrol", "panel", "iceride", "nobet", "kayitlar", "kisiler", "karaliste", "resmi", "kapi",
             "kamera", "bariyer", "site", "bildirim", "led", "kullanicilar", "test", "lisans", "sistem",
             "denetim", "iletisim")
 
@@ -880,3 +880,44 @@ class VardiyaCizelgesiAy(BaseModel):
     sabah: str = Field(max_length=100)   # 07:00-15:00
     aksam: str = Field(max_length=100)   # 15:00-23:00
     gece: str = Field(max_length=100)    # 23:00-07:00 (ertesi gün)
+
+
+class ResmiAracOlustur(BaseModel):
+    """POST/PUT /resmi-araclar (2026-10-30, lisans modülü "resmi_arac")."""
+    plaka_no: str = Field(min_length=2, max_length=15)
+    ad: str = Field(min_length=1, max_length=100)
+    birim: Optional[str] = Field(None, max_length=100)
+    aciklama: Optional[str] = Field(None, max_length=300)
+    aktif: bool = True
+
+    @field_validator("plaka_no")
+    @classmethod
+    def plaka_kontrol(cls, v):
+        v = plaka_normalize(v)
+        if len(v.replace(" ", "")) < 2:
+            raise ValueError("Geçerli bir plaka girin")
+        return v
+
+    @field_validator("ad", "birim", "aciklama", mode="before")
+    @classmethod
+    def bos_metin(cls, v):
+        if isinstance(v, str):
+            v = v.strip()
+        return v or None
+
+
+class GorevEmriOlustur(BaseModel):
+    """POST /gorev-emirleri: resmi aracın bu aralıktaki çıkışı görevli sayılır."""
+    resmi_arac_id: int
+    gorevli: str = Field(min_length=1, max_length=100)
+    guzergah: Optional[str] = Field(None, max_length=200)
+    aciklama: Optional[str] = Field(None, max_length=300)
+    baslangic: datetime
+    bitis: datetime
+
+    @field_validator("gorevli", "guzergah", "aciklama", mode="before")
+    @classmethod
+    def bos_metin(cls, v):
+        if isinstance(v, str):
+            v = v.strip()
+        return v or None

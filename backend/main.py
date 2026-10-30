@@ -82,7 +82,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import text
 from sqlalchemy.orm import Session, selectinload
-from sqlalchemy import desc, func, or_, and_, false, select
+from sqlalchemy import desc, func, or_, and_, not_, false, select
 
 from backend import models
 from backend import schemas
@@ -280,6 +280,12 @@ _VARSAYILAN_AYARLAR = {
     # KLON PLAKA (2026-10-30) -- bkz. _klon_plaka_suphesi. Aynı plaka bu kadar
     # dakika içinde iki AYRI nizamiyeden aynı yönde geçerse alarm. 0 = kapalı.
     "klon_sure_dk": 10,
+    # RESMİ ARAÇ (2026-10-30) -- bkz. _resmi_arac_kontrol. Mesai saatleri ve
+    # görev emrinin başına/sonuna tanınan pay (erken çıkış / geç dönüş).
+    "resmi_mesai_baslangic": "08:00",
+    "resmi_mesai_bitis": "18:00",
+    "resmi_mesai_gunleri": "0,1,2,3,4",
+    "resmi_gorev_tolerans_dk": 30,
     # 2026-10-05 kullanıcı isteği ("her araç geçtiğinde alarmlar otomatik
     # okunsun"): True ise yeni bir araç geçişi kaydedildiğinde, ÖNCEKİ geçişlere
     # ait açık "yetkisiz araç"/"süresi dolmuş" alarmları otomatik okundu
@@ -5815,6 +5821,17 @@ def _kayit_olustur_ve_bildir(db: Session, plaka_no: str, kamera_id: str, yon: st
     except Exception as exc:
         logger.error("Klon plaka kontrolü hatası: %s", exc)
 
+    try:
+        resmi_mesaj = _resmi_arac_kontrol(db, kayit)
+        if resmi_mesaj:
+            db.add(models.Alarm(kayit_id=kayit.id, plaka_no=kayit.plaka_no, alarm_tipi="resmi_arac", mesaj=resmi_mesaj[:255]))
+            logger.warning(resmi_mesaj)
+            _bildirim_tetikle(db, "resmi_arac", {
+                "olay": "resmi_arac", "alarm_tipi": "resmi_arac", "plaka_no": kayit.plaka_no, "mesaj": resmi_mesaj,
+            })
+    except Exception as exc:
+        logger.error("Resmi araç kontrolü hatası: %s", exc)
+
     db.commit()
 
     # Yetkili araç girişinde otomatik bariyer açma
@@ -9371,6 +9388,20 @@ def _ayar_kamera_listesi_dogrula(v):
     return list(dict.fromkeys(x.strip() for x in v))
 
 
+def _ayar_saat_dogrula(v) -> str:
+    if not isinstance(v, str) or not re.fullmatch(r"([01]\d|2[0-3]):[0-5]\d", v.strip()):
+        raise ValueError("Saat SS:DD biçiminde olmalı (ör. 08:00)")
+    return v.strip()
+
+
+def _ayar_gunler_dogrula(v) -> str:
+    """"0,1,2,3,4" (Pazartesi=0 … Pazar=6); boş = hiçbir gün mesai değil."""
+    parcalar = [p.strip() for p in str(v or "").split(",") if p.strip()]
+    if any(p not in "0123456" or len(p) != 1 for p in parcalar):
+        raise ValueError("Günler 0-6 arası, virgülle ayrılmış olmalı (Pazartesi=0)")
+    return ",".join(sorted(set(parcalar)))
+
+
 def _ayar_bool_dogrula(v) -> bool:
     if isinstance(v, bool):
         return v
@@ -9412,6 +9443,10 @@ def _ayar_klasor_yolu_veya_bos_dogrula(v) -> str:
 _AYAR_DOGRULAYICILAR = {
     "supheli_esik": lambda v: _ayar_int_dogrula(v, 0, 1000),
     "klon_sure_dk": lambda v: _ayar_int_dogrula(v, 0, 720),
+    "resmi_mesai_baslangic": lambda v: _ayar_saat_dogrula(v),
+    "resmi_mesai_bitis": lambda v: _ayar_saat_dogrula(v),
+    "resmi_mesai_gunleri": lambda v: _ayar_gunler_dogrula(v),
+    "resmi_gorev_tolerans_dk": lambda v: _ayar_int_dogrula(v, 0, 240),
     "alarm_otomatik_okundu": _ayar_bool_dogrula,
     "goruntu_saklama_gun": lambda v: _ayar_int_dogrula(v, 0, None),
     "kayit_anonimlestirme_gun": lambda v: _anonimlestirme_gunu_dogrula(v),
@@ -9825,6 +9860,305 @@ def beklenen_ziyaretci_iptal(beklenen_id: int, db: Session = Depends(get_db),
     _denetim_kaydet(db, kullanici.kullanici_adi, "beklenen_ziyaretci_iptal", f"#{b.id} {b.plaka_no}")
     db.refresh(b)
     return _beklenen_cevap(b, datetime.now())
+
+
+# ==================================================================
+# RESMİ ARAÇ GÖREV TAKİBİ (2026-10-30, lisans modülü "resmi_arac", varsayılan
+# kapalı). Kurumun resmi araçları (models.ResmiArac) her çıkışta görev emrine
+# (models.GorevEmri) bakılarak denetlenir:
+#   - görev emri yokken çıkış                     -> alarm (mesai dışıysa belirtilir)
+#   - görevden görev bitişi + paydan sonra dönüş  -> alarm (geç dönüş)
+#   - görevsiz, mesai dışında giriş               -> alarm (önceki çıkış zaten
+#     alarm verdiyse tekrar verilmez)
+# Ay sonu raporu araç başına çıkışları görevli / görevsiz / mesai dışı ayırır.
+# ==================================================================
+_RESMI_GUN_ADLARI = ("Pazartesi", "Salı", "Çarşamba", "Perşembe", "Cuma", "Cumartesi", "Pazar")
+
+
+def _mesai_icinde_mi(zaman: datetime, ayar: Optional[dict] = None) -> bool:
+    ayar = ayar or _sistem_ayarlari_oku()
+    gunler = {int(g) for g in str(ayar.get("resmi_mesai_gunleri") or "").split(",") if g.strip().isdigit()}
+    bas = str(ayar.get("resmi_mesai_baslangic") or "08:00")
+    bit = str(ayar.get("resmi_mesai_bitis") or "18:00")
+    saat = zaman.strftime("%H:%M")
+    if bas <= bit:
+        return zaman.weekday() in gunler and bas <= saat < bit
+    # Gece vardiyası (22:00-06:00): gece yarısından sonrası önceki günün mesaisidir.
+    if saat >= bas:
+        return zaman.weekday() in gunler
+    return saat < bit and (zaman - timedelta(days=1)).weekday() in gunler
+
+
+def _gorev_payi(ayar: Optional[dict] = None) -> timedelta:
+    ayar = ayar or _sistem_ayarlari_oku()
+    return timedelta(minutes=int(ayar.get("resmi_gorev_tolerans_dk") or 0))
+
+
+def _resmi_arac_bul(db: Session, plaka_no: str) -> Optional[models.ResmiArac]:
+    R = models.ResmiArac
+    return db.query(R).filter(R.aktif == True, _plaka_normalize_sql(R.plaka_no) == _plaka_normalize(plaka_no)).first()  # noqa: E712
+
+
+def _cikisi_kapsayan_gorev(db: Session, arac_id: int, zaman: datetime, pay: timedelta) -> Optional[models.GorevEmri]:
+    G = models.GorevEmri
+    return (db.query(G).filter(G.resmi_arac_id == arac_id, G.iptal == False,  # noqa: E712
+                               G.baslangic <= zaman + pay, G.bitis >= zaman,
+                               # Araç çıktıktan sonra yazılan emir o çıkışı görevli yapmaz (raporda da).
+                               G.olusturma_zamani <= zaman)
+            .order_by(G.baslangic, G.id).first())
+
+
+def _resmi_arac_kontrol(db: Session, kayit: models.Kayit) -> Optional[str]:
+    """Kayıt bir resmi araca aitse görev emrini işler; alarm gerekiyorsa mesajı döner."""
+    if kayit.yon not in ("giris", "cikis") or not _modul_acik_mi("resmi_arac"):
+        return None
+    arac = _resmi_arac_bul(db, kayit.plaka_no)
+    if arac is None:
+        return None
+    ayar = _sistem_ayarlari_oku()
+    pay = _gorev_payi(ayar)
+    zaman = kayit.tarih_saat
+    mesai = _mesai_icinde_mi(zaman, ayar)
+    G = models.GorevEmri
+    etiket = f"{kayit.plaka_no} – {arac.ad}"
+    if kayit.yon == "cikis":
+        emir = _cikisi_kapsayan_gorev(db, arac.id, zaman, pay)
+        if emir is not None:
+            if emir.cikis_zamani is None:
+                emir.cikis_zamani = zaman
+            if not kayit.not_metni:
+                kayit.not_metni = f"Görev emri #{emir.id}: {emir.gorevli}" + (f" · {emir.guzergah}" if emir.guzergah else "")
+            return None
+        return (f"GÖREVSİZ ÇIKIŞ: {etiket} {zaman:%d.%m %H:%M} "
+                f"{'mesai dışında, ' if not mesai else ''}görev emri olmadan çıktı")
+    # Giriş: açık (çıkmış, dönmemiş) görev varsa dönüşü yazılır.
+    emir = (db.query(G).filter(G.resmi_arac_id == arac.id, G.iptal == False, G.cikis_zamani != None,  # noqa: E711,E712
+                               G.donus_zamani == None, G.cikis_zamani <= zaman)  # noqa: E711
+            .order_by(desc(G.cikis_zamani)).first())
+    if emir is not None:
+        emir.donus_zamani = zaman
+        if not kayit.not_metni:
+            kayit.not_metni = f"Görev emri #{emir.id} dönüşü: {emir.gorevli}"
+        gecikme = zaman - emir.bitis
+        if gecikme > pay:
+            dk = int(gecikme.total_seconds() // 60)
+            sure = f"{dk // 60} sa {dk % 60} dk" if dk >= 60 else f"{dk} dk"
+            return (f"GEÇ DÖNÜŞ: {etiket} görevi {emir.bitis:%d.%m %H:%M}'de bitiyordu, "
+                    f"{sure} geç döndü (görevli: {emir.gorevli})")
+        return None
+    if mesai:
+        return None
+    # Görevsiz çıkış alarmı zaten verildiyse dönüş için ikinci alarm yok.
+    onceki = (db.query(models.Alarm).filter(models.Alarm.alarm_tipi == "resmi_arac", models.Alarm.plaka_no == kayit.plaka_no,
+                                            models.Alarm.tarih_saat >= zaman - timedelta(hours=24),
+                                            models.Alarm.mesaj.like("GÖREVSİZ ÇIKIŞ%")).first())
+    if onceki is not None:
+        return None
+    return f"MESAİ DIŞI GİRİŞ: {etiket} {zaman:%d.%m %H:%M} görev emri olmadan girdi"
+
+
+def _resmi_kontrol() -> None:
+    if not _modul_acik_mi("resmi_arac"):
+        raise HTTPException(403, "Resmi araç takibi bu kurulumda kapalı")
+
+
+def _gorev_cevap(g: models.GorevEmri, simdi: datetime, pay: timedelta) -> dict:
+    if g.iptal:
+        durum = "iptal"
+    elif g.donus_zamani:
+        durum = "geç döndü" if g.donus_zamani - g.bitis > pay else "tamamlandı"
+    elif g.cikis_zamani:
+        durum = "gecikti" if simdi - g.bitis > pay else "görevde"
+    elif simdi > g.bitis:
+        durum = "kullanılmadı"
+    else:
+        durum = "bekliyor"
+    return {
+        "id": g.id, "resmi_arac_id": g.resmi_arac_id,
+        "plaka_no": g.arac.plaka_no if g.arac else None, "arac_adi": g.arac.ad if g.arac else None,
+        "gorevli": g.gorevli, "guzergah": g.guzergah, "aciklama": g.aciklama,
+        "baslangic": g.baslangic.isoformat(), "bitis": g.bitis.isoformat(),
+        "cikis_zamani": g.cikis_zamani.isoformat() if g.cikis_zamani else None,
+        "donus_zamani": g.donus_zamani.isoformat() if g.donus_zamani else None,
+        "olusturan_adi": g.olusturan_adi, "iptal_eden": g.iptal_eden, "durum": durum,
+    }
+
+
+def _resmi_arac_cevap(db: Session, a: models.ResmiArac, simdi: datetime, pay: timedelta) -> dict:
+    K = models.Kayit
+    son = (db.query(K).filter(_plaka_normalize_sql(K.plaka_no) == _plaka_normalize(a.plaka_no), K.yon.in_(("giris", "cikis")))
+           .order_by(desc(K.tarih_saat)).first())
+    G = models.GorevEmri
+    gorevler = (db.query(G).filter(G.resmi_arac_id == a.id, G.iptal == False, G.bitis >= simdi - timedelta(days=1),  # noqa: E712
+                                   or_(G.donus_zamani == None, G.donus_zamani >= simdi - timedelta(hours=12)))  # noqa: E711
+                .order_by(G.baslangic).limit(5).all())
+    return {
+        "id": a.id, "plaka_no": a.plaka_no, "ad": a.ad, "birim": a.birim, "aciklama": a.aciklama, "aktif": bool(a.aktif),
+        "konum": ("disarida" if son.yon == "cikis" else "iceride") if son else "bilinmiyor",
+        "son_gecis": son.tarih_saat.isoformat() if son else None,
+        "gorevler": [_gorev_cevap(g, simdi, pay) for g in gorevler],
+    }
+
+
+@app.get("/resmi-araclar")
+def resmi_araclar(db: Session = Depends(get_db), _: models.Kullanici = Depends(_personel_girisi_gerekli)):
+    _resmi_kontrol()
+    simdi, pay = datetime.now(), _gorev_payi()
+    araclar = db.query(models.ResmiArac).order_by(desc(models.ResmiArac.aktif), models.ResmiArac.plaka_no).all()
+    return [_resmi_arac_cevap(db, a, simdi, pay) for a in araclar]
+
+
+def _resmi_arac_kaydet(db: Session, a: models.ResmiArac, istek: schemas.ResmiAracOlustur) -> None:
+    R = models.ResmiArac
+    cakisan = db.query(R).filter(R.id != (a.id or 0), _plaka_normalize_sql(R.plaka_no) == _plaka_normalize(istek.plaka_no)).first()
+    if cakisan:
+        raise HTTPException(409, f"{istek.plaka_no} zaten resmi araç olarak kayıtlı ({cakisan.ad})")
+    a.plaka_no, a.ad, a.birim, a.aciklama, a.aktif = istek.plaka_no, istek.ad, istek.birim, istek.aciklama, istek.aktif
+
+
+@app.post("/resmi-araclar")
+def resmi_arac_ekle(istek: schemas.ResmiAracOlustur, db: Session = Depends(get_db),
+                    kullanici: models.Kullanici = Depends(_personel_girisi_gerekli)):
+    _resmi_kontrol()
+    _rol_dogrula(kullanici, ROL_YONETICI, ROL_OPERATOR)
+    a = models.ResmiArac()
+    _resmi_arac_kaydet(db, a, istek)
+    db.add(a)
+    db.commit()
+    _denetim_kaydet(db, kullanici.kullanici_adi, "resmi_arac_ekle", f"#{a.id} {a.plaka_no} {a.ad}")
+    return _resmi_arac_cevap(db, a, datetime.now(), _gorev_payi())
+
+
+@app.put("/resmi-araclar/{arac_id}")
+def resmi_arac_guncelle(arac_id: int, istek: schemas.ResmiAracOlustur, db: Session = Depends(get_db),
+                        kullanici: models.Kullanici = Depends(_personel_girisi_gerekli)):
+    _resmi_kontrol()
+    _rol_dogrula(kullanici, ROL_YONETICI, ROL_OPERATOR)
+    a = db.query(models.ResmiArac).filter(models.ResmiArac.id == arac_id).first()
+    if not a:
+        raise HTTPException(404, "Resmi araç bulunamadı")
+    _resmi_arac_kaydet(db, a, istek)
+    db.commit()
+    _denetim_kaydet(db, kullanici.kullanici_adi, "resmi_arac_guncelle",
+                    f"#{a.id} {a.plaka_no} {a.ad}{'' if a.aktif else ' (pasif)'}")
+    return _resmi_arac_cevap(db, a, datetime.now(), _gorev_payi())
+
+
+@app.get("/gorev-emirleri")
+def gorev_emirleri(kapsam: str = Query("guncel", pattern="^(guncel|gecmis)$"), db: Session = Depends(get_db),
+                   _: models.Kullanici = Depends(_personel_girisi_gerekli)):
+    """guncel: bitmemiş ya da araç henüz dönmemiş görevler; gecmis: son 31 günün kapanmışları."""
+    _resmi_kontrol()
+    simdi, pay = datetime.now(), _gorev_payi()
+    G = models.GorevEmri
+    acik = and_(G.iptal == False, or_(G.bitis >= simdi, and_(G.cikis_zamani != None, G.donus_zamani == None)))  # noqa: E711,E712
+    sorgu = db.query(G)
+    if kapsam == "guncel":
+        sorgu = sorgu.filter(acik).order_by(G.baslangic, G.id)
+    else:
+        sorgu = sorgu.filter(G.baslangic >= simdi - timedelta(days=31), not_(acik)).order_by(desc(G.baslangic), desc(G.id))
+    return [_gorev_cevap(g, simdi, pay) for g in sorgu.limit(500).all()]
+
+
+@app.post("/gorev-emirleri")
+def gorev_emri_ekle(istek: schemas.GorevEmriOlustur, db: Session = Depends(get_db),
+                    kullanici: models.Kullanici = Depends(_personel_girisi_gerekli)):
+    _resmi_kontrol()
+    _rol_dogrula(kullanici, ROL_YONETICI, ROL_OPERATOR)
+    bas, bit = istek.baslangic.replace(tzinfo=None), istek.bitis.replace(tzinfo=None)
+    if bit <= bas:
+        raise HTTPException(400, "Görev bitişi başlangıçtan sonra olmalı")
+    if bit < datetime.now():
+        raise HTTPException(400, "Geçmişte bitmiş bir görev için emir girilemez")
+    if bit - bas > timedelta(days=31):
+        raise HTTPException(400, "Bir görev emri en fazla 31 gün sürebilir")
+    a = db.query(models.ResmiArac).filter(models.ResmiArac.id == istek.resmi_arac_id).first()
+    if not a or not a.aktif:
+        raise HTTPException(404, "Resmi araç bulunamadı ya da pasif")
+    g = models.GorevEmri(resmi_arac_id=a.id, gorevli=istek.gorevli, guzergah=istek.guzergah, aciklama=istek.aciklama,
+                         baslangic=bas, bitis=bit, olusturan_adi=kullanici.kullanici_adi)
+    db.add(g)
+    db.commit()
+    _denetim_kaydet(db, kullanici.kullanici_adi, "gorev_emri_ekle",
+                    f"#{g.id} {a.plaka_no} {g.gorevli} {bas:%d.%m.%Y %H:%M}-{bit:%d.%m.%Y %H:%M}")
+    db.refresh(g)
+    return _gorev_cevap(g, datetime.now(), _gorev_payi())
+
+
+@app.post("/gorev-emirleri/{gorev_id}/iptal")
+def gorev_emri_iptal(gorev_id: int, db: Session = Depends(get_db),
+                     kullanici: models.Kullanici = Depends(_personel_girisi_gerekli)):
+    _resmi_kontrol()
+    _rol_dogrula(kullanici, ROL_YONETICI, ROL_OPERATOR)
+    g = db.query(models.GorevEmri).filter(models.GorevEmri.id == gorev_id).first()
+    if not g:
+        raise HTTPException(404, "Görev emri bulunamadı")
+    if g.iptal:
+        raise HTTPException(409, "Görev emri zaten iptal edilmiş")
+    if g.cikis_zamani:
+        raise HTTPException(409, "Araç bu görevle çıkmış; görev emri iptal edilemez")
+    g.iptal = True
+    g.iptal_eden = kullanici.kullanici_adi
+    db.commit()
+    _denetim_kaydet(db, kullanici.kullanici_adi, "gorev_emri_iptal", f"#{g.id}")
+    db.refresh(g)
+    return _gorev_cevap(g, datetime.now(), _gorev_payi())
+
+
+def _resmi_arac_raporu(db: Session, yil: int, ay: int) -> dict:
+    ayar = _sistem_ayarlari_oku()
+    pay = _gorev_payi(ayar)
+    bas = datetime(yil, ay, 1)
+    bit = datetime(yil + (ay == 12), ay % 12 + 1, 1)
+    K = models.Kayit
+    ozet, satirlar = [], []
+    for a in db.query(models.ResmiArac).order_by(models.ResmiArac.plaka_no).all():
+        gecisler = (db.query(K).filter(_plaka_normalize_sql(K.plaka_no) == _plaka_normalize(a.plaka_no),
+                                       K.yon.in_(("giris", "cikis")), K.tarih_saat >= bas,
+                                       K.tarih_saat < bit + timedelta(days=7))
+                    .order_by(K.tarih_saat, K.id).all())
+        o = {"plaka_no": a.plaka_no, "ad": a.ad, "birim": a.birim, "cikis": 0, "gorevli": 0, "gorevsiz": 0,
+             "mesai_disi": 0, "gec_donus": 0, "disarida_dk": 0}
+        for i, k in enumerate(gecisler):
+            if k.yon != "cikis" or k.tarih_saat >= bit:
+                continue
+            donus = next((x for x in gecisler[i + 1:] if x.yon == "giris"), None)
+            emir = _cikisi_kapsayan_gorev(db, a.id, k.tarih_saat, pay)
+            mesai = _mesai_icinde_mi(k.tarih_saat, ayar)
+            gec = bool(emir and donus and donus.tarih_saat - emir.bitis > pay)
+            sure_dk = int((donus.tarih_saat - k.tarih_saat).total_seconds() // 60) if donus else None
+            o["cikis"] += 1
+            o["gorevli" if emir else "gorevsiz"] += 1
+            o["mesai_disi"] += 0 if mesai else 1
+            o["gec_donus"] += 1 if gec else 0
+            o["disarida_dk"] += sure_dk or 0
+            satirlar.append({
+                "plaka_no": a.plaka_no, "ad": a.ad, "cikis": k.tarih_saat.isoformat(),
+                "gun": _RESMI_GUN_ADLARI[k.tarih_saat.weekday()],
+                "donus": donus.tarih_saat.isoformat() if donus else None, "sure_dk": sure_dk,
+                "gorev_emri_id": emir.id if emir else None, "gorevli": emir.gorevli if emir else None,
+                "guzergah": emir.guzergah if emir else None, "mesai_disi": not mesai, "gec_donus": gec,
+                "kamera": k.kamera_id,
+            })
+        ozet.append(o)
+    return {"ay": f"{yil:04d}-{ay:02d}", "ozet": ozet, "satirlar": satirlar,
+            "mesai": f"{ayar.get('resmi_mesai_baslangic')}-{ayar.get('resmi_mesai_bitis')}",
+            "tolerans_dk": int(pay.total_seconds() // 60)}
+
+
+@app.get("/resmi-araclar/rapor")
+def resmi_arac_raporu(ay: str = Query(..., pattern=r"^\d{4}-(0[1-9]|1[0-2])$"), bicim: str = Query("json", pattern="^(json|xlsx)$"),
+                      db: Session = Depends(get_db), kullanici: models.Kullanici = Depends(_personel_girisi_gerekli)):
+    """Ay sonu raporu: araç başına çıkışlar (görevli / görevsiz / mesai dışı / geç dönüş) ve tek tek dökümü."""
+    _resmi_kontrol()
+    _rol_dogrula(kullanici, ROL_YONETICI, ROL_OPERATOR, ROL_IZLEYICI)
+    yil, ay_no = (int(x) for x in ay.split("-"))
+    rapor = _resmi_arac_raporu(db, yil, ay_no)
+    if bicim == "json":
+        return rapor
+    dosya_yolu = _gecici_rapor_yolu(f"resmi_arac_{ay}", "xlsx")
+    excel_export.resmi_arac_raporu_olustur(rapor, dosya_yolu)
+    return _indirip_sil(dosya_yolu, f"resmi_arac_raporu_{ay}.xlsx", _XLSX_MEDIA)
 
 
 # ==================================================================

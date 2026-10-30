@@ -56,10 +56,11 @@ hiçbir durumda görünmez. Bozuk bir `marka.json` da kurumsuz değerlere düşe
 | `vardiya_cizelgesi` | Çizelge etiketlemesi yok (vardiya oturumları kullanılır); çizelge girişi 403 |
 | `dahua_anpr` | Kameranın kendi ANPR okuması birleştirilmez |
 | `misafir_daveti` | Öz-hizmet hesabı (site sakini / çalışan) kendi misafirini davet edemez. **Listesiz lisansta da kapalıdır**: yalnız `--modul misafir_daveti` ile açılır |
+| `resmi_arac` | Resmi araç görev emri takibi yok (sekme gizli, uçlar 403, geçişlerde kontrol yapılmaz). **Listesiz lisansta da kapalıdır**: yalnız `--modul resmi_arac` ile açılır |
 
 Modül listesi imzalı lisans anahtarının içinden okunur; `license.json` elle
 değiştirilerek modül açılamaz. Lisansta liste yoksa (eski lisanslar, kendi
-sisteminiz) tüm modüller açıktır; yalnız `misafir_daveti` kapalı kalır.
+sisteminiz) tüm modüller açıktır; yalnız `misafir_daveti` ve `resmi_arac` kapalı kalır.
 
 ## 3. Yeni müşteri: adım adım
 
