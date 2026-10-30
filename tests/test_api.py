@@ -8144,7 +8144,8 @@ def test_modulsuz_lisans_tum_modulleri_acar(client, yetkili_header):
     assert client.post("/lisans/aktive-et", json={"anahtar": anahtar}, headers=yetkili_header).status_code == 200
     j = client.get("/lisans", headers=yetkili_header).json()
     assert j["moduller"] is None
-    assert all(m["acik"] for m in j["modul_durumu"].values())
+    # Listesiz lisansta yalnız "varsayılan kapalı" modüller (misafir daveti) kapalı.
+    assert all(m["acik"] == (ad not in lisans.VARSAYILAN_KAPALI) for ad, m in j["modul_durumu"].items())
     assert client.put("/led/ayarlar", json={}, headers=yetkili_header).status_code != 403
 
 
@@ -8436,3 +8437,55 @@ def test_klon_plaka_bir_dakikadan_kisa_surede_iki_kapi_ve_ayar_kapali(client, op
         assert _klon_alarmlari(client, operator_header, "34 KLN 06") == []
     finally:
         client.put("/sistem/ayarlar", json=ayarlar, headers=yetkili_header)
+
+
+# ---------------- Misafir daveti (2026-10-30, lisans modülü) ----------------
+
+def _davet(client, header, **ek):
+    govde = {"plaka_no": "34 DVT 01", "misafir_adi": "Ayla Konuk", "tarih": datetime.now().date().isoformat(), **ek}
+    return client.post("/sakin/davetler", json=govde, headers=header)
+
+
+def test_misafir_daveti_listesiz_lisansta_kapali(client, sakin_header):
+    assert client.get("/sakin/davetler", headers=sakin_header).status_code == 403
+    assert _davet(client, sakin_header).status_code == 403
+
+
+def test_misafir_daveti_lisansla_acilir_ve_kapida_onaylanir(client, yetkili_header, sakin_header, operator_header, admin_header):
+    anahtar = lisans.uret("Dış Kurulum", kamera_limiti=5, gun=30, moduller=["misafir_daveti"])
+    assert client.post("/lisans/aktive-et", json={"anahtar": anahtar}, headers=yetkili_header).status_code == 200
+    try:
+        r = _davet(client, sakin_header, aciklama="Akşam yemeği")
+        assert r.status_code == 200, r.text
+        d = r.json()
+        assert d["davet"] is True and d["durum"] == "bekleniyor" and d["ev_sahibi"]
+        # Görevlinin listesinde "davet" olarak görünür
+        assert any(x["id"] == d["id"] and x["davet"] for x in client.get("/beklenen-ziyaretciler", headers=operator_header).json())
+        # Araç gelince onaylı ziyaretçi
+        k = _otomatik_kayit(client, "34 DVT 01", "DAVET-KAM", kare=5)
+        assert k["yetki_durumu"] == "ziyaretci_onayli" and k["misafir_adi"] == "Ayla Konuk"
+        assert next(x for x in client.get("/sakin/davetler", headers=sakin_header).json() if x["id"] == d["id"])["durum"] == "geldi"
+        # Kurallar
+        ileri = (datetime.now() + timedelta(days=40)).date().isoformat()
+        assert _davet(client, sakin_header, plaka_no="34 DVT 02", tarih=ileri).status_code == 400
+        client.post("/kara-listesi", json={"plaka_no": "34 DVT 09", "sebep": "test"}, headers=operator_header)
+        assert _davet(client, sakin_header, plaka_no="34 DVT 09").status_code == 409
+        # Başkasının davetini iptal edemez (yöneticinin ön kaydı)
+        bk = client.post("/beklenen-ziyaretciler", json={"plaka_no": "34 DVT 03", "tarih": datetime.now().date().isoformat()},
+                         headers=operator_header).json()
+        assert client.post(f"/sakin/davetler/{bk['id']}/iptal", headers=sakin_header).status_code == 404
+        # Açık davet sınırı
+        for i in range(10):
+            r = _davet(client, sakin_header, plaka_no=f"34 DVS {i:02d}")
+            if r.status_code == 429:
+                break
+            assert r.status_code == 200, r.text
+        assert _davet(client, sakin_header, plaka_no="34 DVS 99").status_code == 429
+        # Kendi davetini iptal edebilir
+        son = client.get("/sakin/davetler", headers=sakin_header).json()[0]
+        assert client.post(f"/sakin/davetler/{son['id']}/iptal", headers=sakin_header).json()["durum"] == "iptal"
+        # Personel hesabı bu uçları kullanamaz
+        assert client.get("/sakin/davetler", headers=operator_header).status_code == 403
+    finally:
+        anahtar = lisans.uret("Eski Tip Lisans", kamera_limiti=5, gun=30)
+        client.post("/lisans/aktive-et", json={"anahtar": anahtar}, headers=yetkili_header)

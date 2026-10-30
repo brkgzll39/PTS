@@ -973,7 +973,79 @@ function sakinModunuBaslat() {
   document.querySelector(".navbar-pts small")?.classList.add("d-none");
   document.getElementById("sakinPaneli").classList.remove("d-none");
   sakinPaneliYukle();
+  sakinDavetleriYukle();
 }
+
+// MİSAFİR DAVETİ (2026-10-30): öz-hizmet hesabının kendi misafirleri. Modül
+// lisansta kapalıysa uç 403 döner ve kart hiç gösterilmez.
+async function sakinDavetleriYukle() {
+  const kart = document.getElementById("sakinDavetKart");
+  let liste;
+  try {
+    liste = await apiCagir("/sakin/davetler");
+  } catch (e) {
+    kart.classList.add("d-none");
+    return;
+  }
+  kart.classList.remove("d-none");
+  const tarih = document.getElementById("sdTarih");
+  if (!tarih.value) tarih.value = _yerelTarihMetni(new Date());
+  document.getElementById("sakinDavetTablo").innerHTML = liste.length ? liste.map(b => {
+    const bas = new Date(b.baslangic).toLocaleDateString("tr-TR");
+    const bit = new Date(b.bitis).toLocaleDateString("tr-TR");
+    const geldi = b.ilk_gelis_zamani ? `<div class="small text-muted">${escapeHtml(tarihFormatla(b.ilk_gelis_zamani))}</div>` : "";
+    return `<tr>
+      <td class="fw-bold text-nowrap">${escapeHtml(b.plaka_no)}</td>
+      <td>${b.misafir_adi ? escapeHtml(b.misafir_adi) : '<span class="text-muted">-</span>'}</td>
+      <td class="small text-nowrap">${bas === bit ? bas : `${bas} – ${bit}`}${b.beklenen_saat ? ` · ${escapeHtml(b.beklenen_saat)}` : ""}</td>
+      <td>${_BEKLENEN_DURUM[b.durum] || escapeHtml(b.durum)}${geldi}</td>
+      <td class="text-end">${["bekleniyor", "ileri_tarih"].includes(b.durum)
+        ? `<button type="button" class="btn btn-sm btn-outline-danger" onclick="sakinDavetIptal(${Number(b.id)})" title="Daveti iptal et" aria-label="Daveti iptal et"><i class="bi bi-x-lg"></i></button>` : ""}</td>
+    </tr>`;
+  }).join("") : '<tr><td colspan="5" class="text-muted text-center py-2">Henüz davetiniz yok</td></tr>';
+}
+
+async function sakinDavetIptal(id) {
+  if (!(await onayAl("Bu davet iptal edilsin mi?"))) return;
+  try {
+    await apiCagir(`/sakin/davetler/${id}/iptal`, { method: "POST" });
+    sakinDavetleriYukle();
+  } catch (e) { toastGoster(e.message, "hata"); }
+}
+
+document.getElementById("sakinDavetForm")?.addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const sonuc = document.getElementById("sakinDavetSonuc");
+  const tarih = document.getElementById("sdTarih").value;
+  const gun = Math.max(1, Math.min(31, Number(document.getElementById("sdGun").value) || 1));
+  const govde = {
+    plaka_no: document.getElementById("sdPlaka").value,
+    misafir_adi: document.getElementById("sdAd").value,
+    aciklama: document.getElementById("sdAciklama").value,
+    beklenen_saat: document.getElementById("sdSaat").value || null,
+    tarih,
+  };
+  if (gun > 1) {
+    const bitis = new Date(`${tarih}T12:00:00`);
+    bitis.setDate(bitis.getDate() + gun - 1);
+    govde.bitis_tarihi = _yerelTarihMetni(bitis);
+  }
+  const btn = e.target.querySelector('button[type="submit"]');
+  btn.disabled = true;
+  try {
+    const b = await apiCagir("/sakin/davetler", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(govde) });
+    sonuc.className = "small mb-2 text-success";
+    sonuc.textContent = `${b.plaka_no} için davet oluşturuldu. Misafiriniz kapıda kendiliğinden onaylanacak.`;
+    ["sdPlaka", "sdAd", "sdAciklama", "sdSaat"].forEach(id => { document.getElementById(id).value = ""; });
+    document.getElementById("sdGun").value = 1;
+    sakinDavetleriYukle();
+  } catch (err) {
+    sonuc.className = "small mb-2 text-danger";
+    sonuc.textContent = err.message;
+  } finally {
+    btn.disabled = false;
+  }
+});
 
 async function sakinPaneliYukle() {
   try {
@@ -3226,7 +3298,7 @@ async function beklenenleriYukle() {
       <td class="fw-bold text-nowrap">${b.ilk_gelis_kayit_id
         ? `<a href="#" onclick="olayDetayAc(${Number(b.ilk_gelis_kayit_id)});return false">${escapeHtml(b.plaka_no)}</a>` : escapeHtml(b.plaka_no)}</td>
       <td>${b.misafir_adi ? escapeHtml(b.misafir_adi) : '<span class="text-muted">-</span>'}${b.aciklama ? `<div class="small text-muted">${escapeHtml(b.aciklama)}</div>` : ""}</td>
-      <td class="small">${b.ev_sahibi ? escapeHtml(b.ev_sahibi) : '<span class="text-muted">-</span>'}</td>
+      <td class="small">${b.ev_sahibi ? escapeHtml(b.ev_sahibi) : '<span class="text-muted">-</span>'}${b.davet ? ' <span class="badge bg-info text-dark" title="Ev sahibi kendisi davet etti">davet</span>' : ""}</td>
       <td class="small text-nowrap">${tarih}<div class="text-muted">${escapeHtml(b.olusturan_adi)}</div></td>
       <td>${_BEKLENEN_DURUM[b.durum] || escapeHtml(b.durum)}${geldi}</td>
       <td class="text-end">${iptalEdilebilir ? `<button type="button" class="btn btn-sm btn-outline-danger" onclick="beklenenIptal(${Number(b.id)})" title="Ön kaydı iptal et"><i class="bi bi-x-lg"></i></button>` : ""}</td>

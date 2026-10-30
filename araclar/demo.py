@@ -264,7 +264,7 @@ def veri_uret(m, demo: str) -> dict:
         db.commit()
 
         # Lisans (demo anahtarıyla), kameralar (bağlantısız), sistem ayarları.
-        anahtar = lisans.uret("Demo", kamera_limiti=8, gun=365)
+        anahtar = lisans.uret("Demo", kamera_limiti=8, gun=365, moduller=list(lisans.MODULLER))  # demo: hepsi açık
         payload = lisans.coz(anahtar)
         with open(os.environ["PTS_LICENSE_FILE"], "w", encoding="utf-8") as f:
             json.dump({"aktif": True, "anahtar": anahtar, "lisans_id": payload["lisans_id"], "musteri": "Demo",

@@ -783,6 +783,34 @@
     </div>
   </div>
 
+  <!-- MİSAFİR DAVETİ (2026-10-30, lisans modülü misafir_daveti; kapalıysa hiç görünmez).
+       Bkz. app.js::sakinDavetleriYukle, main.py "MİSAFİR DAVETİ". -->
+  <div class="card mb-3 d-none" id="sakinDavetKart">
+    <div class="card-header"><i class="bi bi-envelope-paper me-1"></i>Misafirlerim</div>
+    <div class="card-body">
+      <p class="small text-muted mb-2">Misafirinizin aracını önceden kaydedin: kapıda kendiliğinden onaylanır, sizin misafiriniz olarak görünür.</p>
+      <form id="sakinDavetForm" class="row g-2 align-items-end mb-3">
+        <div class="col-6 col-md-3"><label class="form-label small mb-0" for="sdPlaka">Plaka *</label>
+          <input type="text" class="form-control form-control-sm text-uppercase" id="sdPlaka" placeholder="34 ABC 123" maxlength="15" required autocomplete="off"></div>
+        <div class="col-6 col-md-3"><label class="form-label small mb-0" for="sdAd">Misafirin adı</label>
+          <input type="text" class="form-control form-control-sm" id="sdAd" maxlength="100" autocomplete="off"></div>
+        <div class="col-6 col-md-2"><label class="form-label small mb-0" for="sdTarih">Tarih *</label>
+          <input type="date" class="form-control form-control-sm" id="sdTarih" required></div>
+        <div class="col-3 col-md-2"><label class="form-label small mb-0" for="sdSaat">Saat</label>
+          <input type="time" class="form-control form-control-sm" id="sdSaat"></div>
+        <div class="col-3 col-md-2"><label class="form-label small mb-0" for="sdGun">Gün</label>
+          <input type="number" class="form-control form-control-sm" id="sdGun" min="1" max="31" value="1"></div>
+        <div class="col-12 col-md-9"><input type="text" class="form-control form-control-sm" id="sdAciklama" maxlength="300" placeholder="Not (isteğe bağlı): ziyaret sebebi, kurye, servis…" autocomplete="off"></div>
+        <div class="col-12 col-md-3 d-grid"><button type="submit" class="btn btn-sm btn-primary"><i class="bi bi-plus-lg"></i> Davet et</button></div>
+      </form>
+      <div id="sakinDavetSonuc" class="small mb-2"></div>
+      <table class="table table-sm mb-0">
+        <thead><tr><th>Plaka</th><th>Misafir</th><th>Tarih</th><th>Durum</th><th></th></tr></thead>
+        <tbody id="sakinDavetTablo"></tbody>
+      </table>
+    </div>
+  </div>
+
   <div class="card">
     <div class="card-header d-flex justify-content-between align-items-center">
       <span><i class="bi bi-clock-history me-1"></i>Giriş/Çıkış Geçmişim</span>

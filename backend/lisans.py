@@ -111,7 +111,19 @@ MODULLER = {
     "arvento": "Arvento filo / sürücü entegrasyonu",
     "vardiya_cizelgesi": "Vardiya çizelgesi (girişsiz vardiya)",
     "dahua_anpr": "Kamera ANPR okumasını birleştirme (Dahua)",
+    "misafir_daveti": "Öz-hizmet hesabının kendi misafirini davet etmesi",
 }
+
+# Lisansta modül listesi YOKKEN de kapalı kalan modüller (2026-10-30): yalnız
+# dış kurulumlar için yapılmış, mevcut sistemlerde (TPAO) hiç görünmemesi
+# gereken özellikler. Açmak için lisans --modul ile açıkça listelemelidir.
+VARSAYILAN_KAPALI = frozenset({"misafir_daveti"})
+
+
+def modul_acik(ad: str, moduller: Optional[list]) -> bool:
+    if moduller is None:
+        return ad not in VARSAYILAN_KAPALI
+    return ad in moduller
 
 
 def modulleri_dogrula(moduller: Optional[list]) -> Optional[list]:

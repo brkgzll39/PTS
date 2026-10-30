@@ -574,6 +574,8 @@ class BeklenenZiyaretci(Base):
     ilk_gelis_kamera = Column(String(64), nullable=True)
     iptal = Column(Boolean, default=False)
     iptal_eden = Column(String(80), nullable=True)
+    # Misafir daveti (2026-10-30): öz-hizmet hesabının kendi oluşturduğu kayıt.
+    davet_eden_kullanici_id = Column(Integer, nullable=True, index=True)
 
 
 class KapiKutusu(Base):

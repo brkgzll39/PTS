@@ -219,6 +219,8 @@ def _veritabani_migrasyon() -> None:
         # "İçeriden çıkar" (2026-10-26) -- bkz. models.Kayit.elle_cikis_zamani.
         f"ALTER TABLE plaka_kayitlari ADD {col_kw}elle_cikis_zamani DATETIME",
         f"ALTER TABLE plaka_kayitlari ADD {col_kw}elle_cikis_yapan VARCHAR(80)",
+        # Misafir daveti (2026-10-30) -- bkz. models.BeklenenZiyaretci.davet_eden_kullanici_id.
+        "ALTER TABLE beklenen_ziyaretciler ADD " + col_kw + "davet_eden_kullanici_id INTEGER",
         # "sakin" (site sakini öz-hizmet) rolü: bir giriş hesabını bir Kişi
         # kaydına bağlar. NULL kabul eden, DEFAULT'suz bir INTEGER sütun
         # olduğu için (manuel_giris'teki BIT DEFAULT 0 vakasının aksine) burada
@@ -2889,8 +2891,7 @@ def _lisanstaki_moduller() -> Optional[list]:
 
 
 def _modul_acik_mi(ad: str) -> bool:
-    moduller = _lisanstaki_moduller()
-    return moduller is None or ad in moduller
+    return lisans_modulu.modul_acik(ad, _lisanstaki_moduller())
 
 
 def _modul_gerekli(ad: str):
@@ -3506,7 +3507,7 @@ _LISANS_UYARI_ESIK_GUN = 14  # bitişe bu kadar veya daha az gün kalınca "yak�
 def _lisans_modul_bilgisi_ekle(durum: dict) -> dict:
     moduller = _lisanstaki_moduller()
     durum["moduller"] = moduller
-    durum["modul_durumu"] = {ad: {"ad": etiket, "acik": moduller is None or ad in moduller}
+    durum["modul_durumu"] = {ad: {"ad": etiket, "acik": lisans_modulu.modul_acik(ad, moduller)}
                              for ad, etiket in lisans_modulu.MODULLER.items()}
     return durum
 
@@ -8361,6 +8362,79 @@ def sakin_gecmisim(
     return sorgu.order_by(desc(models.Kayit.tarih_saat)).offset(offset).limit(limit).all()
 
 
+# MİSAFİR DAVETİ (2026-10-30, lisans modülü "misafir_daveti", varsayılan kapalı):
+# öz-hizmet hesabı (sakin rolü: site sakini ya da şirket çalışanı) kendi misafirini
+# kaydeder. Kayıt bir ön kayıttır (models.BeklenenZiyaretci): araç gelince kapıda
+# onaylı ziyaretçi sayılır, ev sahibi olarak bu hesabın kişisi yazılır.
+_DAVET_EN_FAZLA_ACIK = 10
+_DAVET_EN_ILERI_GUN = 30
+
+
+def _davet_kontrol() -> None:
+    if not _modul_acik_mi("misafir_daveti"):
+        raise HTTPException(403, "Misafir daveti bu kurulumda kapalı")
+
+
+@app.get("/sakin/davetler")
+def sakin_davetlerim(db: Session = Depends(get_db), kullanici: models.Kullanici = Depends(_sakin_girisi_gerekli)):
+    _davet_kontrol()
+    simdi = datetime.now()
+    B = models.BeklenenZiyaretci
+    davetler = (db.query(B).filter(B.davet_eden_kullanici_id == kullanici.id, B.baslangic >= simdi - timedelta(days=30))
+                .order_by(desc(B.baslangic), desc(B.id)).limit(100).all())
+    return [_beklenen_cevap(b, simdi) for b in davetler]
+
+
+@app.post("/sakin/davetler")
+def sakin_davet_et(istek: schemas.BeklenenZiyaretciOlustur, db: Session = Depends(get_db),
+                   kullanici: models.Kullanici = Depends(_sakin_girisi_gerekli)):
+    _davet_kontrol()
+    kisi = _sakin_kisisini_al(db, kullanici)
+    if not kisi.aktif:
+        raise HTTPException(403, "Hesabınız pasif; misafir davet edemezsiniz")
+    simdi = datetime.now()
+    if istek.tarih > (simdi + timedelta(days=_DAVET_EN_ILERI_GUN)).date():
+        raise HTTPException(400, f"En fazla {_DAVET_EN_ILERI_GUN} gün sonrası için davet edebilirsiniz")
+    B = models.BeklenenZiyaretci
+    acik = db.query(B).filter(B.davet_eden_kullanici_id == kullanici.id, B.iptal == False,  # noqa: E712
+                              B.bitis >= simdi).count()
+    if acik >= _DAVET_EN_FAZLA_ACIK:
+        raise HTTPException(429, f"Aynı anda en fazla {_DAVET_EN_FAZLA_ACIK} açık davetiniz olabilir")
+    baslangic = datetime.combine(istek.tarih, datetime.min.time())
+    bitis = datetime.combine(istek.bitis_tarihi or istek.tarih, datetime.max.time().replace(microsecond=0))
+    if bitis < simdi:
+        raise HTTPException(400, "Geçmiş bir tarih için davet yapılamaz")
+    if _plaka_yetki_kontrol(db, istek.plaka_no)[0] == "kara_liste":
+        raise HTTPException(409, "Bu plaka için davet yapılamaz; güvenlik birimiyle görüşün")
+    ev_sahibi = kisi.ad_soyad + (f" ({kisi.daire_departman})" if kisi.daire_departman else "")
+    b = B(plaka_no=istek.plaka_no, misafir_adi=istek.misafir_adi, ev_sahibi=ev_sahibi[:120], aciklama=istek.aciklama,
+          beklenen_saat=istek.beklenen_saat, baslangic=baslangic, bitis=bitis,
+          olusturan_adi=kullanici.kullanici_adi, davet_eden_kullanici_id=kullanici.id)
+    db.add(b)
+    db.commit()
+    _denetim_kaydet(db, kullanici.kullanici_adi, "misafir_davet_et", f"#{b.id} {b.plaka_no} {istek.tarih} {b.misafir_adi or ''}".strip())
+    db.refresh(b)
+    return _beklenen_cevap(b, datetime.now())
+
+
+@app.post("/sakin/davetler/{davet_id}/iptal")
+def sakin_davet_iptal(davet_id: int, db: Session = Depends(get_db), kullanici: models.Kullanici = Depends(_sakin_girisi_gerekli)):
+    _davet_kontrol()
+    # Yalnız kendi daveti (başkasının kaydını id tahminiyle iptal edemesin).
+    b = db.query(models.BeklenenZiyaretci).filter(models.BeklenenZiyaretci.id == davet_id,
+                                                  models.BeklenenZiyaretci.davet_eden_kullanici_id == kullanici.id).first()
+    if not b:
+        raise HTTPException(404, "Davet bulunamadı")
+    if b.iptal:
+        raise HTTPException(409, "Davet zaten iptal edilmiş")
+    b.iptal = True
+    b.iptal_eden = kullanici.kullanici_adi
+    db.commit()
+    _denetim_kaydet(db, kullanici.kullanici_adi, "misafir_davet_iptal", f"#{b.id} {b.plaka_no}")
+    db.refresh(b)
+    return _beklenen_cevap(b, datetime.now())
+
+
 @app.get("/sakin/goruntu/{kayit_id}")
 def sakin_goruntu(kayit_id: int, db: Session = Depends(get_db), kullanici: models.Kullanici = Depends(_sakin_girisi_gerekli)):
     """Sakinin kendi bir geçiş kaydının fotoğrafını görebilmesi. Genel
@@ -9689,7 +9763,7 @@ def _beklenen_cevap(b: models.BeklenenZiyaretci, simdi: datetime) -> dict:
         "olusturan_adi": b.olusturan_adi, "olusturma_zamani": b.olusturma_zamani.isoformat() if b.olusturma_zamani else None,
         "ilk_gelis_zamani": b.ilk_gelis_zamani.isoformat() if b.ilk_gelis_zamani else None,
         "ilk_gelis_kayit_id": b.ilk_gelis_kayit_id, "ilk_gelis_kamera": b.ilk_gelis_kamera,
-        "iptal_eden": b.iptal_eden, "durum": durum,
+        "iptal_eden": b.iptal_eden, "durum": durum, "davet": b.davet_eden_kullanici_id is not None,
     }
 
 
