@@ -942,7 +942,7 @@
     </div>
     <span class="kapi-vardiya d-none" id="kapiVardiya"></span>
     <div class="kapi-sag"><b id="kapiKullanici"></b><br><span id="kapiSaat"></span></div>
-    <a class="kapi-kucuk-dugme" href="/kilavuz#kapi-modu" target="_blank" rel="noopener" title="Kullanım kılavuzu"><i class="bi bi-question-circle"></i> Kılavuz</a>
+    <a class="kapi-kucuk-dugme" href="/kilavuz#kapi-modu" target="_blank" onclick="return kilavuzAc(event)" title="Kullanım kılavuzu"><i class="bi bi-question-circle"></i> Kılavuz</a>
     <button class="kapi-kucuk-dugme" onclick="gorunumDegistir('klasik')" title="Tüm menülerin olduğu klasik panel"><i class="bi bi-grid-3x3-gap"></i> Gelişmiş</button>
     <button class="kapi-kucuk-dugme d-none" id="kapiFarkliKullanici" onclick="farkliKullaniciylaGiris()" title="Başka bir hesapla giriş"><i class="bi bi-person-gear"></i></button>
     <button class="kapi-kucuk-dugme" id="kapiCikis" onclick="oturumKapat()" title="Çıkış"><i class="bi bi-box-arrow-right"></i></button>
@@ -1104,7 +1104,7 @@
          profillerde Arıza Bildirim ya da iletişim gibi bir sayfa
          eklemeni istiyorum" -- data-rol-min YOK: tüm roller (izleyici/
          operatör/güvenlik/yonetici) bu sekmeyi görebilir. -->
-    <a class="side-link" href="/kilavuz" target="_blank" rel="noopener"><i class="bi bi-book"></i>Kullanım Kılavuzu</a>
+    <a class="side-link" href="/kilavuz" target="_blank" onclick="return kilavuzAc(event)"><i class="bi bi-book"></i>Kullanım Kılavuzu</a>
     <button class="side-link" data-target="#iletisim-sekme"><i class="bi bi-headset"></i>İletişim / Arıza Bildirim</button>
     <div class="sidebar-footer"><span class="status-led"></span> Sistem çevrimiçi<br><small><span data-marka="kisa_ad">TPAO PTS</span> · v2.0</small></div>
   </aside>

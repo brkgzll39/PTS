@@ -81,6 +81,7 @@ def backend_derle(cikti: str, test_anahtarsiz: bool) -> None:
     hedef = os.path.join(cikti, "backend")
     shutil.copytree(os.path.join(paket, "fonts"), os.path.join(hedef, "fonts"))
     shutil.copy2(os.path.join(paket, "requirements-windows.txt"), hedef)
+    shutil.copy2(os.path.join(paket, "kilavuz_icerik.html"), hedef)  # kullanım kılavuzu metni (main.py::kilavuz_icerik)
     shutil.rmtree(calisma)
 
 

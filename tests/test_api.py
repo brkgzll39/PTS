@@ -8721,4 +8721,27 @@ def test_resmi_arac_kisilerden_toplu_ekleme(client, operator_header, izleyici_he
 
 def test_kullanim_kilavuzu_sayfasi(client):
     r = client.get("/kilavuz")
-    assert r.status_code == 200 and "Kullanım Kılavuzu" in r.text and 'id="kapi-modu"' in r.text
+    assert r.status_code == 200 and "Kullanım Kılavuzu" in r.text
+    # Metin statik olarak açıkta değil; yalnız süzülmüş uçtan gelir
+    assert client.get("/static/kilavuz_icerik.html").status_code == 404
+
+
+def test_kullanim_kilavuzu_yonetim_bolumu_yetkiye_gore(client, yetkili_header, operator_header, izleyici_header):
+    def metin(header=None):
+        r = client.get("/kilavuz/icerik", headers=header or {})
+        assert r.status_code == 200, r.text
+        return r.json()["html"]
+    yonetici = metin(yetkili_header)
+    assert 'id="yonetim"' in yonetici and "Lisans Yönetimi" in yonetici and 'id="kapi-modu"' in yonetici
+    for baska in (metin(operator_header), metin(izleyici_header), metin(), metin({"Authorization": "Bearer bozuk"})):
+        assert 'id="yonetim"' not in baska and "Lisans Yönetimi" not in baska and "Kameralar</h3>" not in baska
+        assert 'id="kapi-modu"' in baska and "<!--" not in baska
+    # Listesiz lisansta resmi araç kapalı: bölümleri de yok
+    assert 'id="resmi-araclar"' not in yonetici and "<!--MODUL" not in yonetici
+    assert "rolünüze göre" in client.get("/kilavuz/icerik", headers=operator_header).json()["rol_aciklama"]
+
+
+def test_kullanim_kilavuzu_resmi_arac_modulu_acikken(client, resmi_modul, operator_header, yetkili_header):
+    h = client.get("/kilavuz/icerik", headers=operator_header).json()["html"]
+    assert 'id="resmi-araclar"' in h and 'id="resmi-arac-kapi"' in h and "Mesai Saatleri</b> kartında" not in h
+    assert "Mesai Saatleri</b> kartında" in client.get("/kilavuz/icerik", headers=yetkili_header).json()["html"]

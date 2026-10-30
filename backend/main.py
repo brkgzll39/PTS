@@ -3304,8 +3304,47 @@ def anasayfa():
 
 @app.get("/kilavuz")
 def kullanim_kilavuzu():
-    """Kullanım kılavuzu (frontend/kilavuz.html). Gizli bilgi içermez; kurum adı /marka'dan okunur."""
+    """Kullanım kılavuzu kabuğu (frontend/kilavuz.html); metni /kilavuz/icerik'ten alır."""
     return FileResponse(os.path.join(FRONTEND_KLASORU, "kilavuz.html"), headers={"Cache-Control": "no-cache"})
+
+
+_KILAVUZ_METNI = os.path.join(BACKEND_DIR, "kilavuz_icerik.html")
+# <!--ROL:yonetici-->...<!--/ROL-->, <!--MODUL:resmi_arac-->...<!--/MODUL-->
+_KILAVUZ_BLOK = {tur: re.compile(rf"<!--{tur}:(\w+)-->(.*?)<!--/{tur}-->", re.S) for tur in ("ROL", "MODUL")}
+_KILAVUZ_ROL_ADLARI = {ROL_YONETICI: "Yönetici", ROL_OPERATOR: "Operatör", ROL_GUVENLIK: "Güvenlik Personeli",
+                       ROL_IZLEYICI: "İzleyici", ROL_SAKIN: "Sakin"}
+
+
+@app.get("/kilavuz/icerik")
+def kilavuz_icerik(authorization: Optional[str] = Header(None), db: Session = Depends(get_db)):
+    """Kılavuz metni, okuyanın rolüne göre süzülmüş (2026-10-30, kullanıcı isteği: yönetimle
+    ilgili bölümler yetkiye göre gizli). Süzme sunucuda yapılır: yönetici olmayana yönetim
+    bölümleri hiç gönderilmez (sayfa kaynağında da yoktur). Lisansta kapalı modüllerin
+    bölümleri de çıkarılır. Oturum yoksa yönetim bölümleri olmadan genel metin döner."""
+    kullanici = None
+    if authorization:
+        try:
+            kullanici = _giris_gerekli(authorization=authorization, token=None, db=db)
+        except HTTPException:
+            kullanici = None
+    try:
+        with open(_KILAVUZ_METNI, encoding="utf-8") as f:
+            metin = f.read()
+    except OSError:
+        raise HTTPException(404, "Kılavuz bulunamadı")
+    yonetici = kullanici is not None and kullanici.rol == ROL_YONETICI
+    metin = _KILAVUZ_BLOK["ROL"].sub(lambda m: m.group(2) if (m.group(1) == "yonetici" and yonetici) else "", metin)
+    metin = _KILAVUZ_BLOK["MODUL"].sub(lambda m: m.group(2) if _modul_acik_mi(m.group(1)) else "", metin)
+    metin = re.sub(r"<!--.*?-->", "", metin, flags=re.S)  # açıklamalar ve kalan işaretler gönderilmez
+    if kullanici is None:
+        aciklama = ("Genel kılavuz gösteriliyor. Rolünüze göre hazırlanmış kılavuz için sisteme giriş yaptıktan sonra "
+                    "kılavuzu menüdeki bağlantıdan açın.")
+    elif yonetici:
+        aciklama = "Yönetici olarak giriş yaptınız: tüm bölümler gösteriliyor."
+    else:
+        aciklama = (f"Bu kılavuz <b>{_KILAVUZ_ROL_ADLARI.get(kullanici.rol, kullanici.rol)}</b> rolünüze göre hazırlandı; "
+                    "yönetim ekranlarıyla ilgili bölümler gösterilmiyor.")
+    return JSONResponse({"html": metin, "rol_aciklama": aciklama}, headers={"Cache-Control": "no-store"})
 
 
 @app.get("/sw.js")

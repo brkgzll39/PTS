@@ -1,0 +1,358 @@
+<!-- KULLANIM KILAVUZU METNİ (2026-10-30). Tarayıcıya doğrudan servis EDİLMEZ: main.py::kilavuz_icerik okur;
+     ROL bloklarını yönetici olmayanlardan, MODUL bloklarını modül lisansta kapalıysa çıkarır (işaret biçimi
+     main.py::_KILAVUZ_BLOK). Aynı türden blok iç içe konmaz. -->…<!--/ROL--> bloklarını yönetici olmayanlardan, <!--MODUL:ad-->…<!--/MODUL-->
+     bloklarını modül lisansta kapalıysa çıkarır. Aynı türden blok iç içe konmaz. -->
+      <!-- ===================================================== 1 -->
+      <section id="baslarken">
+        <h2>1. Başlarken</h2>
+        <p class="ozet">Sistem, kameraların okuduğu plakaları kaydeder; aracın kime ait olduğunu, ne zaman girip çıktığını ve
+          içeride kimlerin olduğunu gösterir. Bu kılavuz, ekranlardaki her bölümü kullanım sırasına göre anlatır.</p>
+
+        <h3 id="giris">Giriş yapmak</h3>
+        <ol class="adim">
+          <li>Tarayıcıda sistemin adresini açın (ör. <code>http://sunucu-adresi:8000</code>).</li>
+          <li>Size verilen <b>kullanıcı adı</b> ve <b>parola</b> ile giriş yapın.</li>
+          <li>Hesabınızda <b>iki adımlı doğrulama</b> açıksa telefonunuzdaki doğrulama uygulamasının gösterdiği 6 haneli kodu da girin.</li>
+        </ol>
+        <div class="ipucu"><b>Herkes kendi hesabıyla:</b> Parolanızı kimseyle paylaşmayın; nöbet değişiminde herkes kendi hesabıyla giriş
+          yapmalıdır. Yapılan her işlem (not, onay, düzeltme) giriş yapan kişinin adıyla kayda geçer.</div>
+
+        <h3 id="roller">Roller: kim ne yapabilir?</h3>
+        <table class="tablo">
+          <thead><tr><th>Rol</th><th>Kimler için</th><th>Neler yapabilir</th></tr></thead>
+          <tbody>
+            <tr><td><b>Güvenlik Personeli</b></td><td>Nizamiye görevlileri</td><td>Kapı Modu, not ekleme, ziyaretçi onayı, plaka düzeltme, Nöbet Defteri, beklenen ziyaretçi kaydı, resmi araç çıkışı. Kayıt listesi kendi vardiyasına göre daraltılır.</td></tr>
+            <tr><td><b>Operatör</b></td><td>Güvenlik amiri, idari personel</td><td>Güvenlik personelinin yaptıkları + kişi ve kara liste yönetimi, görev emri verme/iptal, raporlar.</td></tr>
+            <tr><td><b>İzleyici</b></td><td>Yöneticiler, denetim</td><td>Ekranları görür, rapor alır; değişiklik yapamaz.</td></tr>
+            <tr><td><b>Yönetici</b></td><td>Sistem sorumlusu</td><td>Her şey: kameralar, bariyer, kullanıcılar, bildirimler, lisans, sistem ayarları, denetim kayıtları.</td></tr>
+          </tbody>
+        </table>
+        <p>Yönetici, bir kullanıcının yalnızca belirli ekranları görmesini de sağlayabilir. Kılavuzda anlatılan bir ekranı
+          göremiyorsanız rolünüz ya da ekran kısıtlamanız buna izin vermiyordur. Her bölümün başlığındaki etiket kimlerin kullanabileceğini gösterir:
+          <span class="rol rol-herkes">Herkes</span> <span class="rol rol-gorevli">Görevli</span> (güvenlik, operatör, yönetici)
+          <span class="rol rol-yonetici">Yönetici</span> <span class="rol rol-modul">Lisansla açılır</span>.</p>
+
+        <h3 id="iki-gorunum">İki görünüm: Kapı Modu ve Gelişmiş panel</h3>
+        <ul>
+          <li><b>Kapı Modu</b>: nizamiyedeki görevli için sade, büyük yazılı ekran. Son geçen araç, not ekleme ve içeridekiler tek bakışta.
+            Güvenlik hesapları genellikle doğrudan bu ekranla açılır.</li>
+          <li><b>Gelişmiş panel</b>: soldaki menüyle tüm ekranlar (kayıtlar, kişiler, raporlar, ayarlar).</li>
+        </ul>
+        <p>Kapı Modu'ndan <span class="dugme"><i class="bi bi-grid-3x3-gap"></i> Gelişmiş</span>, Gelişmiş panelden üstteki
+          <span class="dugme"><i class="bi bi-door-open"></i> Kapı Modu</span> düğmesiyle geçersiniz. Sistem son seçtiğiniz görünümü hatırlar.</p>
+      </section>
+
+      <!-- ===================================================== 2 -->
+      <section id="kapi-modu">
+        <h2>2. Kapı Modu <span class="rol rol-gorevli">Görevli</span></h2>
+        <p class="ozet">Üstte <b>Kapı</b>, <b>İçeridekiler</b>, <b>Ara / Rapor</b>, <b>Nöbet Defteri</b><!--MODUL:resmi_arac--> ve <b>Resmi Araçlar</b><!--/MODUL-->
+          sekmeleri vardır. Ekran kendiliğinden yenilenir; yeni araç geçtiği anda görünür.</p>
+
+        <h3 id="kapi-sekmesi">Kapı sekmesi: son geçen araç</h3>
+        <p>Soldaki büyük kart kameranın son okuduğu aracı gösterir: fotoğraf, plaka, aracın sahibi, giriş/çıkış, saat, nizamiye ve not.
+          Sağda son geçişlerin listesi vardır; bir satıra basınca o geçiş büyük kartta açılır ("Seçilen geçiş"). Bir dakika sonra kart
+          yeniden en son geçen araca döner.</p>
+        <h4>Rozet renkleri</h4>
+        <table class="tablo">
+          <tbody>
+            <tr><td><span class="renk" style="background:#16a34a"></span><b>Personel</b></td><td>Sistemde tanımlı araç.</td></tr>
+            <tr><td><span class="renk" style="background:#7c3aed"></span><b>Bölge Müdürü / VIP</b></td><td>VIP olarak tanımlı araç.</td></tr>
+            <tr><td><span class="renk" style="background:#475569"></span><b>Alt İşveren</b></td><td>Taşeron / hizmet firması aracı (görevi yanında yazar).</td></tr>
+            <tr><td><span class="renk" style="background:#ea8a00"></span><b>Ziyaretçi</b></td><td>Tanımsız araç. Not ekleyip onaylamanız beklenir.</td></tr>
+            <tr><td><span class="renk" style="background:#dc2626"></span><b>Kara Liste</b></td><td>Girişi yasaklı araç. Ekranda ve bildirimlerde alarm verir.</td></tr>
+            <tr><td><span class="renk" style="background:#b45309"></span><b>Süresi Dolmuş</b></td><td>İzin süresi bitmiş kişi/araç.</td></tr>
+          </tbody>
+        </table>
+
+        <h3 id="not-ekleme">Not eklemek ve ziyaretçiyi onaylamak</h3>
+        <ol class="adim">
+          <li>Büyük karttaki <span class="dugme"><i class="bi bi-pencil-square"></i> Not Ekle</span> (not varsa <span class="dugme">Notu Değiştir</span>) düğmesine basın.</li>
+          <li>Açılan pencerenin üstünde <b>plakanın doğru araç olduğunu kontrol edin</b>.</li>
+          <li>Hazır düğmelerden birini seçin (Kargo, Teslimat, Misafir, Teknik Servis, Servis, Görevli Onayı, Bakım…) ya da kutuya yazın.
+            Birden fazla düğme seçilebilir; virgülle birleşir.</li>
+          <li>Tanımsız (ziyaretçi) bir araçsa <span class="dugme">Kaydet ve Ziyaretçiyi Onayla</span>; yalnızca not için <span class="dugme">Sadece Kaydet</span>.</li>
+        </ol>
+        <div class="ipucu"><b>Arkadan araç gelirse:</b> Kartla ilgilenirken (fare kartın üstünde ya da karta dokunduysanız) yeni geçen araç kartı
+          değiştirmez; kartın üstünde sarı <span class="dugme">Yeni geçiş: … — göster</span> düğmesi çıkar. Kart yeni araca döndüyse düğmeler
+          bir an soluklaşır ve basılmaz. Bu, notun yanlış araca yazılmasını önler. Yine de kaydetmeden önce penceredeki plakaya bakın.</div>
+        <div class="dikkat"><b>Kara listedeki araç:</b> Onaylamak isterseniz sistem ayrıca sorar ve bu işlem kayda geçer. Kara listedeki aracı
+          amirinize haber vermeden içeri almayın.</div>
+
+        <h3 id="plaka-yanlis">Kamera plakayı yanlış okuduysa</h3>
+        <ol class="adim">
+          <li>Kartta <span class="dugme"><i class="bi bi-arrow-repeat"></i> Plaka Yanlış</span> düğmesine basın.</li>
+          <li>Fotoğrafa bakarak doğru plakayı yazın ve <span class="dugme">Düzelt</span>'e basın.</li>
+        </ol>
+        <p>Kayıt doğru plakayla yeniden değerlendirilir: araç tanımlıysa personel olarak görünür. Okunan ilk değer ve düzelten kişi kayıtta saklanır.</p>
+
+        <h3 id="kapi-uyarilari">Ekranın üstündeki uyarı kutuları</h3>
+        <ul>
+          <li><b>Klon plaka şüphesi</b>: Aynı plaka kısa süre içinde iki ayrı kapıda okundu. Aracı ve sürücüyü kontrol edin, sonra
+            <span class="dugme">Kontrol ettim</span>'e basın.</li>
+          <!--MODUL:resmi_arac--><li><b>Resmi araç uyarısı</b>: Kurumun resmi aracı görev emri olmadan ya da mesai dışında çıktı veya görev süresinden geç döndü
+            (bkz. <a href="#resmi-arac-kapi">Resmi Araçlar</a>). <span class="dugme">Görev bilgisi gir</span> ile çıkışı işleyin.</li><!--/MODUL-->
+          <li><b>Okunamayan geçiş</b> (Kapı Kutusu kuruluysa): Yerdeki sensör araç gördü ama kamera plakayı okuyamadı. Fotoğrafa bakıp plakayı
+            yazın ya da "araç değil" deyin.</li>
+        </ul>
+
+        <h3 id="iceridekiler-kapi">İçeridekiler sekmesi</h3>
+        <p>Şu an içeride sayılan araçlar. Üstteki kutulara basarak süzün: <b>Şu an içeride</b>, <b>Personel / Alt İşveren</b>,
+          <b>Ziyaretçi</b>, <b>uzun süredir çıkmayanlar</b>. Bir satıra basınca o geçişin not penceresi açılır. Altta
+          <b>Onay bekleyen girişler</b> (son 24 saatte giren ama onaylanmamış ziyaretçiler) listelenir.</p>
+        <h4 id="iceriyi-temizle">İçeriyi Temizle</h4>
+        <p>Çıkışta kamera okumadığı için saatlerdir "içeride" görünen araçlar için:</p>
+        <ol class="adim">
+          <li><span class="dugme"><i class="bi bi-eraser"></i> İçeriyi Temizle</span>'ye basın.</li>
+          <li>"İçeride en az" süresini seçin (ör. 12 saat), çıkmış olduğunu bildiğiniz araçları işaretleyin.</li>
+          <li><span class="dugme">Seçilenleri çıktı say</span> ile onaylayın.</li>
+        </ol>
+        <p>Geçiş kayıtları silinmez; araç yalnızca içeridekiler listesinden düşer ve yeniden girerse kendiliğinden listeye döner.
+          Yanlışlıkla çıkardığınızı aynı penceredeki listeden geri alabilirsiniz.</p>
+
+        <h3 id="ara-rapor-kapi">Ara / Rapor sekmesi</h3>
+        <p>Plaka, isim ya da not yazarak geçmiş geçişleri arayın. Tarih aralığını seçin (Bugün, Dün + Bugün, Bu hafta, Bu ay ya da
+          <b>Tarih seç</b>), kapıya ve araç türüne (Personel, Ziyaretçi, Alt İşveren) göre süzün. Sonuçları <span class="dugme">Excel indir</span> ya da
+          <span class="dugme">PDF indir</span> ile alın. Bir sonuca basınca not penceresi açılır.</p>
+
+        <h3 id="nobet-kapi">Nöbet Defteri sekmesi</h3>
+        <p>Gelişmiş paneldeki Nöbet Defteri ekranı açılır (bkz. <a href="#nobet-defteri">Nöbet Defteri</a>). Okunmamış not sayısı sekmede kırmızı
+          rozetle görünür; ekranın üstündeki kayan yazı da son notları gösterir. Kayan yazıya basınca defter açılır.</p>
+
+        <!--MODUL:resmi_arac-->
+        <h3 id="resmi-arac-kapi">Resmi Araçlar sekmesi <span class="rol rol-modul">Lisansla açılır</span></h3>
+        <p>Kurumun resmi araçları (makam, hizmet, saha araçları) kartlar halinde listelenir. Üstteki kutular: toplam, <b>şu an dışarıda</b>,
+          <b>görevsiz / gecikmiş</b>, <b>içeride</b>. Sorunlu araçlar en üstte kırmızı/turuncu görünür; sayıları sekmedeki rozette yazar.</p>
+        <table class="tablo">
+          <thead><tr><th>Kartta yazan</th><th>Anlamı</th><th>Yapılacak</th></tr></thead>
+          <tbody>
+            <tr><td><b>Görevsiz çıktı</b></td><td>Araç görev emri olmadan çıktı.</td><td>Sürücüden görev belgesini isteyin, <span class="dugme">Görev bilgisi gir</span>.</td></tr>
+            <tr><td><b>Dönüşü gecikti</b></td><td>Görev bitiş saati (payıyla) geçti, araç dönmedi.</td><td>Amirinize bildirin; gerekirse <span class="dugme">Görevi düzenle</span> ile dönüş saatini güncelleyin.</td></tr>
+            <tr><td><b>Görevde</b></td><td>Görev emriyle dışarıda.</td><td>—</td></tr>
+            <tr><td><b>İçeride</b></td><td>Araç içeride; bekleyen görevi varsa yazar.</td><td>Çıkacaksa <span class="dugme">Çıkış kaydet</span>.</td></tr>
+          </tbody>
+        </table>
+        <h4>Resmi araç çıkışı kaydetmek</h4>
+        <ol class="adim">
+          <li><span class="dugme">Resmi Araç Çıkışı Kaydet</span>'e (ya da aracın kartındaki <span class="dugme">Çıkış kaydet</span>) basın.</li>
+          <li>Arama kutusuna plakayı yazıp aracı seçin; görevliyi/sürücüyü, güzergahı, tahmini dönüşü ve görev belgesi numarasını girin.</li>
+          <li><span class="dugme">Kaydet</span>. Araç kameradan çıkınca görev kendiliğinden bu çıkışa bağlanır, uyarı çıkmaz.</li>
+        </ol>
+        <p><b>Araç görev emri olmadan çıktıysa</b> görev penceresi kendiliğinden açılır ("Resmi araç çıkışını işle"). Görevliyi ve güzergahı yazıp
+          kaydedin. Kapatırsanız aynı çıkış için tekrar açılmaz; uyarıdaki ve karttaki <span class="dugme">Görev bilgisi gir</span> düğmesi kalır.</p>
+        <div class="dikkat">Çıkıştan sonra girilen görev raporda <b>"sonradan girildi"</b> olarak, giren kişinin adıyla görünür. Görev belgesi
+          olmayan çıkışı görevli göstermek için kullanmayın.</div>
+        <!--/MODUL-->
+      </section>
+
+      <!-- ===================================================== 3 -->
+      <section id="gelismis">
+        <h2>3. Gelişmiş panel ekranları</h2>
+        <p class="ozet">Soldaki menüden açılır. "Çalışma Alanı" ekranları günlük işler içindir.<!--ROL:yonetici--> "Yönetim" ekranları sistem ayarlarıdır (bkz. <a href="#yonetim">5. bölüm</a>).<!--/ROL--></p>
+
+        <h3 id="canli-izleme">Canlı İzleme <span class="rol rol-herkes">Herkes</span></h3>
+        <p>Kameraların canlı görüntüsü ve son geçişler. Görüntüsünü görebileceğiniz kameralar yöneticinin verdiği yetkiye bağlıdır.</p>
+
+        <h3 id="kontrol-merkezi">Kontrol Merkezi <span class="rol rol-herkes">Herkes</span></h3>
+        <ul>
+          <li><b>Günlük Geçiş Grafiği</b>, <b>Yetki Dağılımı</b>, <b>Saatlik Yoğunluk</b>: son 7/14/30 günün özeti.</li>
+          <li><b>En Sık Yetkisiz/Engellenen Plakalar</b>: tekrar tekrar gelen tanımsız araçlar.</li>
+          <li><b>Kaçırılan Geçişler</b>: kameranın büyük olasılıkla okuyamadığı geçişler. Örneğin arka arkaya iki giriş görülen
+            araç aradaki çıkışı kaçırmıştır. Kamera açısı/ışık sorunlarını bulmak için kullanın.</li>
+        </ul>
+
+        <h3 id="son-gecisler">Son Geçişler <span class="rol rol-herkes">Herkes</span></h3>
+        <p>En son geçişler fotoğraflarıyla. Bir geçişe basınca <b>geçiş penceresi</b> açılır: büyük fotoğraf, araç sahibi, kayıt bilgileri.
+          Tanımsız araçta not yazıp <span class="dugme">Ziyaretçi Girişi Onayla</span> diyebilirsiniz. Yeni geçiş geldiğinde ekranın
+          köşesinde bildirim balonu çıkar; balona basınca o geçiş açılır.</p>
+
+        <h3 id="iceride-gelismis">İçerideki Araçlar <span class="rol rol-herkes">Herkes</span></h3>
+        <p>Kapı Modu'ndaki İçeridekiler sekmesinin geniş hali: kim, ne zamandır içeride, uzun süre kalan ziyaretçi uyarısı,
+          <b>Onaylanmamış Girişler (son 24 saat)</b> ve İçeriyi Temizle.</p>
+
+        <h3 id="nobet-defteri">Nöbet Defteri <span class="rol rol-gorevli">Görevli</span></h3>
+        <h4>Sonraki vardiyaya not bırakmak</h4>
+        <p>"Sonraki vardiyaya not bırak" kutusuna yazın ve kaydedin. Notu açan her görevlinin okuduğu, adıyla ve saatiyle kaydedilir.
+          İşi biten notu <b>kapatın</b>; Açık / Kapatılmış / Tümü sekmeleriyle eski notlara bakın. Okunmamış notlar giriş yapınca ekrana gelir.</p>
+        <h4 id="beklenen-ziyaretci">Beklenen ziyaretçi (ön kayıt)</h4>
+        <ol class="adim">
+          <li>"Beklenen Ziyaretçiler" kartında plakayı, misafirin adını, kimin misafiri olduğunu, tarihi (ve isterseniz saati) girin.</li>
+          <li>Araç o tarihte kameraya okununca kayıt kendiliğinden <b>onaylı ziyaretçi</b> olur, misafir adı ve not dolar, ziyaretçi alarmı çıkmaz.</li>
+        </ol>
+        <p>Ön kayıt bariyeri kendiliğinden açtırmaz; bu yalnız tanımlı araçlar içindir. Kara listedeki plaka için ön kayıt yapılamaz.
+          Gelmeyecek misafiri listeden <b>iptal</b> edin.</p>
+        <h4>İçeride kalan ziyaretçiler</h4>
+        <p>Vardiya devrinde içeride kalan ziyaretçilerin listesi; devralan görevli kimin içeride olduğunu buradan görür.</p>
+
+        <h3 id="gecis-kayitlari">Geçiş Kayıtları <span class="rol rol-herkes">Herkes</span></h3>
+        <p>Tüm geçişlerde arama. Süzgeçler:</p>
+        <ul>
+          <li><b>Plaka</b>, <b>başlangıç / bitiş tarihi-saati</b>, <b>nizamiye</b>, <b>vardiya</b> (A/B/C/D).</li>
+          <li><b>Yetki durumu</b>: Personel, Ziyaretçi, Süresi Dolmuş, Ziyaretçi (Onaylı), Kara Liste.</li>
+          <li><b>Doğrulama</b>: riskli okumalar. Tek karede okunan, farklı okunan, kayıtlı plakaya göre düzeltilen ve
+            kameranın kendi okumasıyla uyuşmayan kayıtlar burada toplanır. Bunları ara ara kontrol edin.</li>
+        </ul>
+        <p>Sonucu <span class="dugme">Excel</span> ya da <span class="dugme">PDF</span> olarak indirin. Bir kayda basınca detayı açılır;
+          yetkiniz varsa plaka, yön, durum ve not düzeltilebilir. Her düzeltme kimin yaptığıyla birlikte kayda geçer.</p>
+        <div class="ipucu">Güvenlik hesaplarında liste kendi vardiya pencerenize göre daraltılmış olabilir; tüm vardiyalar için
+          "Vardiya" süzgecini kullanın.</div>
+
+        <h3 id="kisiler">Aboneler ve Kişiler <span class="rol rol-gorevli">Görevli</span></h3>
+        <p>Araçları tanımlı kişiler. Tipler: <b>Abone</b>, <b>Personel</b>, <b>Ziyaretçi</b> (süreli izinli), <b>VIP</b>, <b>Alt İşveren</b>.</p>
+        <ol class="adim">
+          <li><b>Yeni Kişi Ekle</b> kartında ad soyad, plaka, tip, telefon ve departmanı girin.</li>
+          <li>İsterseniz <b>otomatik not</b> yazın (ör. "Servis", "Kargo teslimatı"): bu kişinin aracı geçtiğinde not kendiliğinden dolar.</li>
+          <li>Ziyaretçi gibi süreli izinlerde bitiş tarihini girin; süresi dolunca araç "Süresi Dolmuş" görünür.</li>
+        </ol>
+        <p>Bir kişiye basınca <b>Kişi Kartı</b> açılır:</p>
+        <ul>
+          <li><b>Araç Listesi</b>: bir kişiye birden fazla plaka (ek plaka) bağlanabilir; filo/firma kayıtları için.</li>
+          <li><b>Saat / Gün Kısıtlaması</b>: aracın yalnızca belirli saatlerde ve günlerde yetkili sayılması.</li>
+        </ul>
+        <p>Çok sayıda kişiyi Excel'den toplu aktarabilirsiniz: <span class="dugme">Şablon İndir</span> ile şablonu alın, doldurun,
+          <span class="dugme">Excel İçe Aktar</span> ile yükleyin ("Mevcut kişileri güncelle" işaretliyse aynı plakalı kişiler güncellenir). Listeyi
+          <span class="dugme">Excel İndir</span> ile dışarı alabilirsiniz (arama kutusu doluysa yalnız görünenler iner).</p>
+
+        <h3 id="kara-liste">Kara Liste <span class="rol rol-gorevli">Görevli</span></h3>
+        <p>Girişi yasaklı plakalar. <b>Kara Listeye Ekle</b> kartına plakayı ve sebebi yazın. Bu araç geçtiğinde kırmızı alarm verilir ve
+          bildirim gönderilir. Listeden çıkarmak için satırdaki <span class="dugme"><i class="bi bi-check-circle"></i></span> (Listeden çıkar) düğmesini kullanın;
+          ekleme ve çıkarma denetim kaydına geçer.</p>
+
+        <!--MODUL:resmi_arac-->
+        <h3 id="resmi-araclar">Resmi Araçlar <span class="rol rol-modul">Lisansla açılır</span></h3>
+        <p>Resmi araç görev takibinin yönetim ekranı.</p>
+        <h4>Araçları tanımlamak</h4>
+        <ul>
+          <li><span class="dugme">Araç ekle</span>: tek tek plaka, araç adı ve sorumlu birim.</li>
+          <li><span class="dugme">Kişilerden toplu ekle</span>: Kişiler'de kayıtlı araçları topluca ekler. Kişi adı/departmanında geçen kelimeleri
+            (ör. <i>Müdürlük, B.HAVUZ, Şeflik</i>) ve plaka serilerini (ör. <i>34 MRU, 39 ACY</i>) virgülle yazın, <span class="dugme">Listele</span>'ye basın.
+            Ek plakalar dahil eşleşen araçlar listelenir; istemediklerinizin işaretini kaldırın, adlarını düzeltin ve ekleyin.
+            Harf/noktalama farkı önemsizdir ("B.HAVUZ" = "b. havuz").</li>
+          <li>Aracı takipten çıkarmak için düzenleyip "Takipte" işaretini kaldırın (pasif araç denetlenmez).</li>
+        </ul>
+        <h4>Görev emri vermek <span class="rol rol-gorevli">Görevli</span></h4>
+        <p><b>Görev Emri Ver</b> kartında aracı arayıp seçin, görevliyi, güzergahı, başlangıç ve bitişi girin. Araç bu aralıkta çıkarsa görevli sayılır.
+          Görev emirleri listesinde durum: <i>bekliyor, görevde, tamamlandı, gecikti, geç döndü, kullanılmadı, iptal</i>.
+          Kalem düğmesiyle görevli, güzergah ve dönüş saati düzeltilir. Henüz kullanılmamış emri yalnız operatör/yönetici iptal edebilir.</p>
+        <h4>Ne zaman uyarı verilir?</h4>
+        <ul>
+          <li><b>Görevsiz çıkış</b>: görev emri olmadan çıkış (mesai dışındaysa ayrıca belirtilir).</li>
+          <li><b>Geç dönüş</b>: görev bitişinden, görev payı da aşılarak dönüş.</li>
+          <li><b>Mesai dışı giriş</b>: görev emri olmadan mesai dışında giriş (çıkışında zaten uyarı verildiyse tekrar verilmez).</li>
+        </ul>
+        <h4>Ay sonu raporu ve mesai saatleri</h4>
+        <p><b>Ay Sonu Raporu</b>'nda ayı seçip <span class="dugme">Göster</span>: araç başına çıkış, görevli, görevsiz, sonradan girilen, mesai dışı,
+          geç dönüş ve toplam dışarıda kalma süresi. <span class="dugme">Excel</span> dosyasının "Döküm" sayfasında her çıkış tek tek yer alır.
+          <!--ROL:yonetici--><b>Mesai Saatleri</b> kartında <span class="rol rol-yonetici">Yönetici</span> mesai başlangıç/bitişini, günleri ve görev payını (erken çıkış/geç dönüş toleransı) ayarlar.<!--/ROL--></p>
+        <!--/MODUL-->
+      </section>
+
+      <!-- ===================================================== 4 -->
+      <section id="alarmlar">
+        <h2>4. Uyarılar ve bildirimler <span class="rol rol-herkes">Herkes</span></h2>
+        <p class="ozet">Alarmlar ekranda görünür ve (ayarlıysa) Telegram/webhook ile telefona gider.</p>
+        <table class="tablo">
+          <thead><tr><th>Uyarı</th><th>Ne zaman</th></tr></thead>
+          <tbody>
+            <tr><td>Yetkisiz araç</td><td>Tanımsız araç geçti.</td></tr>
+            <tr><td>Kara liste geçişi</td><td>Kara listedeki plaka okundu.</td></tr>
+            <tr><td>Süresi dolmuş</td><td>İzin süresi bitmiş araç geçti.</td></tr>
+            <tr><td>Şüpheli araç</td><td>Aynı tanımsız araç bir saat içinde defalarca reddedildi.</td></tr>
+            <tr><td>Klon plaka şüphesi</td><td>Aynı plaka kısa sürede iki ayrı kapıda okundu (başka araçta aynı plaka olabilir).</td></tr>
+            <!--MODUL:resmi_arac--><tr><td>Resmi araç</td><td>Görevsiz çıkış, geç dönüş, mesai dışı hareket.</td></tr><!--/MODUL-->
+            <tr><td>Kamera arızası</td><td>Kamera bağlantısı koptu ya da görüntü gelmiyor.</td></tr>
+            <tr><td>Bariyer otomatik açılamadı</td><td>Tanımlı araç için bariyer komutu başarısız oldu.</td></tr>
+          </tbody>
+        </table>
+        <p>Kontrol ettiğiniz alarmı <b>okundu</b> işaretleyin ya da Kapı Modu'nda <span class="dugme">Kontrol ettim</span>'e basın. Ayarlıysa
+          yetkisiz/süresi dolmuş alarmları sonraki araç geçtiğinde kendiliğinden okundu sayılır.</p>
+      </section>
+
+      <!-- ===================================================== 5 -->
+      <!--ROL:yonetici-->
+      <section id="yonetim">
+        <h2>5. Yönetim ekranları <span class="rol rol-yonetici">Yönetici</span></h2>
+
+        <h3 id="kameralar">Kameralar</h3>
+        <p><b>Kamera Ekle</b>: ad (ör. "Nizamiye Giriş"), RTSP adresi ve yön (giriş/çıkış). <b>Tanımlı Kameralar</b> listesinde bağlantı durumu,
+          yön değiştirme, okuma alanı (ROI) çizme ve kameranın kendi plaka okumasını (Dahua ANPR) bağlama yapılır.
+          <b>Okuma Kalitesi</b> ve <b>Kamera Karşılaştırma</b> kartları hangi kameranın ne kadar iyi okuduğunu gösterir.</p>
+        <div class="ipucu">Aynı nizamiyenin kameralarına ortak bir başlangıç verin ("Nizamiye Giriş", "Nizamiye Çıkış"): sistem bunları tek
+          nizamiye sayar, raporlarda birlikte gösterir.</div>
+
+        <h3 id="bariyer">Bariyer Kontrolü ve Kapı Kutuları</h3>
+        <p><b>Yeni Bariyer Ekle</b>: bariyerin açma komutu (HTTP adresi). "Otomatik aç" işaretliyse tanımlı araç girişinde bariyer kendiliğinden açılır.
+          Bariyer listeden elle de açılabilir; her açma kayda geçer. <b>Kapı Kutuları</b> kartında nizamiyedeki Kapı Kutusu cihazları tanımlanır
+          (sensör girişleri, kamera eşlemesi, anahtar).</p>
+
+        <h3 id="bildirimler">Bildirimler (Webhook / Telegram)</h3>
+        <p><b>Yeni Bildirim Ayarı</b>: Telegram botu ya da webhook adresi ve hangi olaylarda gönderileceği (yetkisiz, kara liste, klon plaka,
+          resmi araç, kamera arızası, disk/yedek uyarıları, günlük özet…). Kaydettikten sonra test mesajı gönderip deneyin.</p>
+
+        <h3 id="led">LED Paneller</h3>
+        <p>Nizamiyedeki LED tabelanın bağlantı ayarları ve <b>Test Mesajı Gönder</b>. Araç geçtiğinde tabelada karşılama yazısı çıkar.</p>
+
+        <h3 id="site-nokta">Site / Erişim Noktası</h3>
+        <p>Birden fazla tesis ya da kapı yönetiliyorsa siteler ve erişim noktaları burada tanımlanır.</p>
+
+        <h3 id="kullanicilar">Kullanıcılar</h3>
+        <ul>
+          <li><b>Yeni Kullanıcı</b>: kullanıcı adı, parola, rol. Güvenlik personeli için vardiya grubu (A/B/C/D) seçilir.</li>
+          <li><b>Ekranlar</b>: "Rolünün tüm ekranlarını görebilir" işaretini kaldırıp yalnız görmesini istediğiniz ekranları seçin (ör. Canlı,
+            Kontrol Merkezi, Kayıtlar). Bu menüyü sadeleştirir; yetkiyi rol belirler.</li>
+          <li><b>Kamera erişimi</b>: kullanıcının hangi nizamiyelerin kayıtlarını ve canlı görüntüsünü göreceği.</li>
+          <li>Telefonunu kaybeden kullanıcının iki adımlı doğrulaması listedeki düğmeyle sıfırlanabilir.</li>
+          <li><b>İki Adımlı Doğrulama</b>: kendi hesabınız için telefon uygulamasıyla ek güvenlik.</li>
+          <li><b>Vardiya Oturumları</b> ve <b>Aktif Oturumlar</b>: kim ne zaman giriş yaptı; şüpheli oturumu sonlandırma.</li>
+        </ul>
+        <div class="dikkat">İşten ayrılan personelin hesabını hemen pasif yapın. Hesapları paylaştırmayın; denetim kayıtları kişiye göre tutulur.</div>
+
+        <h3 id="lisans">Lisans Yönetimi</h3>
+        <p>Lisansın durumu, kamera limiti, bitiş tarihi ve açık modüller. Yeni lisans anahtarını buraya girip <b>Aktive et</b>. Lisansı cihaza
+          bağlamak için <b>Cihaz Bilgileri</b>'ndeki cihaz kodunu lisans sağlayıcınıza iletin.</p>
+
+        <h3 id="sistem">Sistem / Log</h3>
+        <ul>
+          <li><b>Sistem Durumu</b> ve <b>Disk Yönetimi</b>: sunucu, veritabanı, disk doluluğu; eski görüntülerin temizliği.</li>
+          <li><b>Sistem Ayarları</b>: okuma güven eşikleri, tekrar bastırma süreleri, klon plaka süresi, görüntü saklama süresi,
+            KVKK gereği eski kayıtların silinme süresi, günlük otomatik yedek ve klasörü, disk uyarı eşiği, içeride sayılma süreleri.</li>
+          <li><b>Vardiya Çizelgesi</b>: vardiyaların saatleri.</li>
+          <li><b>Uygulama Logları</b>: teknik sorun ararken.</li>
+        </ul>
+        <div class="dikkat">KVKK silme süresini ayarlarsanız o günden eski geçişlerin plaka, kişi, not ve görüntü bilgileri <b>geri alınamaz</b> biçimde silinir.</div>
+
+        <h3 id="denetim">Denetim Kayıtları</h3>
+        <p>Kim, ne zaman, ne yaptı: giriş/çıkışlar, kişi ve kara liste değişiklikleri, kayıt düzeltmeleri, ziyaretçi onayları, bariyer açmaları,
+          görev emirleri, ayar değişiklikleri. Silinemez; denetim ve inceleme için kullanılır.</p>
+      </section>
+      <!--/ROL-->
+
+      <!-- ===================================================== 6 -->
+      <section id="sss">
+        <h2>6. Sık sorulanlar ve sorun giderme</h2>
+        <details><summary>Araç geçti ama ekranda görünmüyor.</summary>
+          <p>Kamera plakayı okuyamamış olabilir (çamur, ışık, açı). Kontrol Merkezi'ndeki <b>Kaçırılan Geçişler</b> kartına ve Kameralar ekranındaki
+            bağlantı durumuna bakın; tekrarlıyorsa durumu yöneticiye bildirin.</p></details>
+        <details><summary>Personel aracı "Ziyaretçi" görünüyor.</summary>
+          <p>Ya kamera plakayı yanlış okudu (<a href="#plaka-yanlis">Plaka Yanlış</a> ile düzeltin) ya da araç Kişiler'de tanımlı değil / ek plakası eklenmemiş.
+            Tanımlıysa saat-gün kısıtlaması ya da bitiş tarihi olabilir.</p></details>
+        <details><summary>Araç çıktı ama hâlâ içeride görünüyor.</summary>
+          <p>Çıkış kamerası okumamıştır. <a href="#iceriyi-temizle">İçeriyi Temizle</a> ile "çıktı" sayın.</p></details>
+        <details><summary>Notu yanlış araca ekledim.</summary>
+          <p>Doğru araçta notu ekleyin; yanlış araçta <span class="dugme">Notu Değiştir</span> ile notu silin. Yanlış verilen ziyaretçi onayını
+            amirinize bildirin; Geçiş Kayıtları'ndan durum düzeltilebilir.</p></details>
+        <details><summary>Ekran donmuş gibi, yeni geçişler gelmiyor.</summary>
+          <p>Sayfayı <b>Ctrl+F5</b> ile yenileyin. Düzelmezse ağ bağlantısını ve sunucunun açık olduğunu kontrol edin; Kapı Modu her 30 saniyede bir
+            kendiliğinden yenilenir.</p></details>
+        <details><summary>Güncellemeden sonra yeni düğme görünmüyor.</summary>
+          <p>Tarayıcı eski sayfayı tutuyordur: <b>Ctrl+F5</b>. Bazı bölümler lisansınızda açık değilse görünmez.</p></details>
+        <details><summary>Parolamı unuttum / hesabım kilitlendi.</summary>
+          <p>Art arda hatalı girişte hesap bir süre kilitlenir. Yöneticiniz Kullanıcılar ekranından parolanızı sıfırlayabilir.</p></details>
+      </section>
+
+      <!-- ===================================================== 7 -->
+      <section id="destek">
+        <h2>7. Destek</h2>
+        <p>Arıza ya da öneriniz için menüdeki <b>İletişim / Arıza Bildirim</b> ekranını kullanın; ekranın görüntüsünü ve saatini eklemeniz
+          sorunun bulunmasını hızlandırır.</p>
+        <p id="iletisimBilgisi" class="d-none"></p>
+      </section>

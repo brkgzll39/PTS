@@ -559,6 +559,14 @@ function escapeHtml(deger) {
 // gibi "onaylanmadı" yollarının HEPSİ `hidden.bs.modal` olayı üzerinden tek
 // bir noktada yakalanır, bu yüzden her kapanma yolunu ayrı ayrı ele almaya
 // gerek yoktur.
+// Kullanım kılavuzu yeni sekmede: window.open açan sekmenin oturumunu (sessionStorage)
+// yeni sekmeye kopyalar; düz target="_blank" bağlantı kopyalamaz ve kılavuz rolünüze
+// göre süzülemezdi (bkz. main.py::kilavuz_icerik).
+function kilavuzAc(e) {
+  const pencere = window.open(e.currentTarget.getAttribute("href"), "_blank");
+  return !pencere;  // açılamadıysa (engelleyici) bağlantı kendisi açsın
+}
+
 function onayAl(mesaj, secenekler = {}) {
   return new Promise((resolve) => {
     const modalEl = document.getElementById("onayModal");
