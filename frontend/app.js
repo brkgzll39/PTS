@@ -570,7 +570,20 @@ function onayAl(mesaj, secenekler = {}) {
     onayBtn.className = `btn ${secenekler.guvenli ? "btn-primary" : "btn-danger"}`;
     let onaylandi = false;
     onayBtn.addEventListener("click", () => { onaylandi = true; modal.hide(); }, { once: true });
-    modalEl.addEventListener("hidden.bs.modal", () => resolve(onaylandi), { once: true });
+    // Başka bir pencerenin üstünde açılırsa (ör. toplu ekleme) onu da karartsın;
+    // kapanınca alttaki pencere açık kaldığı için sayfa kaydırması kilitli kalsın.
+    const ustte = !!document.querySelector(".modal.show:not(#onayModal)");
+    modalEl.classList.toggle("onay-ustte", ustte);
+    if (ustte) {
+      modalEl.addEventListener("shown.bs.modal", () => {
+        const perdeler = document.querySelectorAll(".modal-backdrop");
+        perdeler[perdeler.length - 1]?.classList.add("onay-ustte");
+      }, { once: true });
+    }
+    modalEl.addEventListener("hidden.bs.modal", () => {
+      if (document.querySelector(".modal.show")) document.body.classList.add("modal-open");
+      resolve(onaylandi);
+    }, { once: true });
     modal.show();
   });
 }
@@ -3416,11 +3429,7 @@ async function resmiAraclariYukle() {
           onclick="gorevModalAc({ kayitId: Number(this.dataset.kayit), plaka: this.dataset.plaka, cikis: this.dataset.zaman })">Çıkışı işle</button>` : ""}${duzenle ? `<button class="btn btn-sm btn-outline-secondary" onclick="resmiAracModalAc(${Number(a.id)})" title="Aracı düzenle" aria-label="Aracı düzenle"><i class="bi bi-pencil"></i></button>` : ""}</td>
     </tr>`;
   }).join("") : '<tr><td colspan="5" class="text-muted small p-3">Henüz resmi araç yok. "Araç ekle" ile kurumun araçlarını girin.</td></tr>';
-  const sec = document.getElementById("geArac");
-  const onceki = sec.value;
-  sec.innerHTML = _resmiAraclar.filter(a => a.aktif)
-    .map(a => `<option value="${Number(a.id)}">${escapeHtml(a.plaka_no)} — ${escapeHtml(a.ad)}</option>`).join("");
-  if (onceki) sec.value = onceki;
+  _aracSecenekleri("geArac", document.getElementById("geAra").value);
 }
 
 function resmiAracModalAc(id) {
@@ -3477,7 +3486,8 @@ async function gorevEmirleriniYukle() {
 }
 
 async function gorevEmriIptal(id) {
-  if (!confirm("Görev emri iptal edilsin mi?")) return;
+  if (!(await onayAl("Görev emri iptal edilecek. Araç bu görevle çıkarsa görevsiz sayılır.",
+    { baslik: "Görev emri iptal edilsin mi?", onayMetni: "Evet, iptal et" }))) return;
   try {
     await apiCagir(`/gorev-emirleri/${id}/iptal`, { method: "POST" });
     gorevEmirleriniYukle();
@@ -3512,6 +3522,29 @@ document.getElementById("gorevEmriForm")?.addEventListener("submit", async (e) =
   } finally {
     btn.disabled = false;
   }
+});
+
+// Görev formlarındaki araç arama kutusu: seçim listesini plakaya / araç adına göre süzer.
+function _aracSecenekleri(secim, aranan = "") {
+  const sade = m => (m || "").toLocaleUpperCase("tr-TR").replace(/[^0-9A-ZÇĞİÖŞÜ]/g, "");
+  const a = sade(aranan);
+  const liste = _resmiAraclar.filter(x => x.aktif && (!a || sade(x.plaka_no).includes(a) || sade(x.ad).includes(a)));
+  const el = document.getElementById(secim);
+  const onceki = el.value;
+  el.innerHTML = liste.map(x => `<option value="${Number(x.id)}">${escapeHtml(x.plaka_no)} — ${escapeHtml(x.ad)}</option>`).join("");
+  if (liste.some(x => String(x.id) === onceki)) el.value = onceki;
+  const sonuc = document.getElementById(secim.replace("Arac", "AraSonuc"));
+  if (sonuc) {
+    sonuc.classList.toggle("d-none", !a);
+    sonuc.classList.toggle("text-danger", a && !liste.length);
+    sonuc.textContent = !a ? "" : liste.length ? `${liste.length} araç bulundu` : "Bu aramayla resmi araç yok";
+  }
+}
+
+document.querySelectorAll(".arac-ara").forEach(girdi => {
+  girdi.addEventListener("input", () => _aracSecenekleri(girdi.dataset.secim, girdi.value));
+  // Enter formu göndermesin; tek sonuç varsa zaten seçilidir.
+  girdi.addEventListener("keydown", e => { if (e.key === "Enter") { e.preventDefault(); document.getElementById(girdi.dataset.secim).focus(); } });
 });
 
 // Toplu ekleme: Kişiler'deki kurum kayıtları ve plaka serileri -> önizleme -> onay.
@@ -3566,7 +3599,9 @@ async function resmiTopluEkle() {
     const ad = document.querySelector(`#rtTablo input.rt-ad[data-i="${c.dataset.i}"]`)?.value.trim() || a.ad;
     return { plaka_no: a.plaka_no, ad, birim: a.birim };
   });
-  if (!araclar.length || !confirm(`${araclar.length} araç resmi araç olarak eklensin mi?`)) return;
+  if (!araclar.length) return;
+  if (!(await onayAl(`Seçilen ${araclar.length} araç resmi araç olarak eklenecek. Bu araçların her çıkışında görev emri aranır; görevsiz çıkışta kapıya uyarı düşer.`,
+    { baslik: "Resmi araçlar eklensin mi?", onayMetni: `${araclar.length} aracı ekle`, guvenli: true }))) return;
   const btn = document.getElementById("rtEkle");
   btn.disabled = true;
   try {
@@ -3596,8 +3631,8 @@ async function gorevModalAc(secenek = {}) {
   const yeni = !gorev && !secenek.kayitId;
   if (yeni) {
     try { _resmiAraclar = await apiCagir("/resmi-araclar"); } catch (e) { toastGoster(e.message, "hata"); return; }
-    $("gmArac").innerHTML = _resmiAraclar.filter(a => a.aktif)
-      .map(a => `<option value="${Number(a.id)}">${escapeHtml(a.plaka_no)} — ${escapeHtml(a.ad)}</option>`).join("");
+    $("gmAra").value = "";
+    _aracSecenekleri("gmArac");
   }
   $("gmAracAlani").classList.toggle("d-none", !yeni);
   $("gmBaslangicAlani").classList.toggle("d-none", !yeni);
@@ -3785,7 +3820,8 @@ async function klonUyarilariYukle() {
       "Görev emri olmadan ya da mesai dışında hareket eden resmi araç. Sürücüden görev belgesini isteyin.",
       a => a.kayit_id && a.mesaj.startsWith("GÖREVSİZ ÇIKIŞ")
         ? `<button type="button" class="btn btn-sm btn-primary" data-kayit="${Number(a.kayit_id)}" data-plaka="${escapeHtml(a.plaka_no)}"
-             data-zaman="${escapeHtml(a.tarih_saat)}" onclick="gorevModalAc({ kayitId: Number(this.dataset.kayit), plaka: this.dataset.plaka, cikis: this.dataset.zaman })">Görev bilgisi gir</button>` : "");
+             data-zaman="${escapeHtml(a.tarih_saat)}" onclick="gorevModalAc({ kayitId: Number(this.dataset.kayit), plaka: this.dataset.plaka, cikis: this.dataset.zaman })">Görev bilgisi gir</button>` : "")
+      .then(_gorevsizCikisPenceresiAc);
   }
 }
 
@@ -3810,6 +3846,28 @@ async function _kapiAlarmAlani(alanId, tip, baslik, aciklama, ekDugme = () => ""
         <div class="d-flex gap-2">${ekDugme(a)}
         ${islem ? `<button type="button" class="btn btn-sm btn-outline-danger" onclick="klonKontrolEdildi(${Number(a.id)})">Kontrol ettim</button>` : ""}</div>
       </div>`).join("")}</div>` : "";
+  return liste;
+}
+
+// Görev emri olmadan çıkan resmi araç (2026-10-30, kullanıcı isteği): Kapı
+// Modu'nda görev penceresi kendiliğinden açılır. Her çıkış için bir kez
+// (Vazgeç denirse tekrar açılmaz, uyarıdaki düğme kalır); yalnız son 10 dakikanın
+// çıkışları ve başka bir pencere açık değilken.
+const _GOREVSIZ_ACILANLAR_ANAHTAR = "pts_gorevsiz_acilan";
+function _gorevsizAcilanlar() {
+  try { return new Set(JSON.parse(sessionStorage.getItem(_GOREVSIZ_ACILANLAR_ANAHTAR) || "[]")); } catch (e) { return new Set(); }
+}
+
+function _gorevsizCikisPenceresiAc(liste) {
+  if (!Array.isArray(liste) || !rolYeterli("güvenlik") || document.querySelector(".modal.show")) return;
+  const acilanlar = _gorevsizAcilanlar();
+  const sinir = Date.now() - 10 * 60 * 1000;
+  const a = liste.find(x => x.kayit_id && x.mesaj.startsWith("GÖREVSİZ ÇIKIŞ") && !acilanlar.has(x.id)
+    && new Date(x.tarih_saat).getTime() >= sinir);
+  if (!a) return;
+  acilanlar.add(a.id);
+  try { sessionStorage.setItem(_GOREVSIZ_ACILANLAR_ANAHTAR, JSON.stringify([...acilanlar].slice(-200))); } catch (e) { /* yoksay */ }
+  gorevModalAc({ kayitId: a.kayit_id, plaka: a.plaka_no, cikis: a.tarih_saat });
 }
 
 async function klonKontrolEdildi(id) {
@@ -7287,7 +7345,8 @@ async function sistemAyarlariYukle() {
       guncel.disk_izleme_aktif = document.getElementById("ayar_disk_izleme_aktif").checked;
       const kvkkGun = guncel.kayit_anonimlestirme_gun;
       if (kvkkGun > 0 && kvkkGun !== Number(ayarlar.kayit_anonimlestirme_gun || 0) &&
-          !confirm(`${kvkkGun} günden eski TÜM geçişlerin plaka, kişi, not ve görüntü bilgisi kalıcı olarak silinecek. Bu işlem geri alınamaz. Devam edilsin mi?`)) return;
+          !(await onayAl(`${kvkkGun} günden eski TÜM geçişlerin plaka, kişi, not ve görüntü bilgisi kalıcı olarak silinecek. Bu işlem geri alınamaz.`,
+            { baslik: "Eski kayıtlar silinsin mi?", onayMetni: "Evet, sil" }))) return;
       // DÜZELTME (2026-09-25): bu gönderim işleyicisinde try/catch YOKTU --
       // backend'in yeni ayar doğrulaması (Patch #100) geçersiz bir değeri
       // (ör. panel yenileme 1 sn) 400 ile reddettiğinde kullanıcı yalnızca

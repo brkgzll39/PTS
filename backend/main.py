@@ -10007,7 +10007,9 @@ def _resmi_arac_cevap(db: Session, a: models.ResmiArac, simdi: datetime, pay: ti
                 .order_by(G.baslangic).limit(5).all())
     # Dışarıdaki aracın son çıkışı bir göreve bağlı değilse görevli bu çıkışa görev bilgisi girebilir.
     gorevsiz_cikis = None
-    if son and son.yon == "cikis" and _cikisin_gorevi(db, a.id, son, pay) is None:
+    # Resmi araç olarak eklenmeden önceki çıkışlar takip dışıdır.
+    if (son and son.yon == "cikis" and (a.olusturma_zamani is None or son.tarih_saat >= a.olusturma_zamani)
+            and _cikisin_gorevi(db, a.id, son, pay) is None):
         gorevsiz_cikis = son.id
     return {
         "id": a.id, "plaka_no": a.plaka_no, "ad": a.ad, "birim": a.birim, "aciklama": a.aciklama, "aktif": bool(a.aktif),

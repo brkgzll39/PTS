@@ -719,3 +719,7 @@ table td, table th {
 .okunamayan-form input { max-width: 11rem; }
 .okunamayan-kapi { margin: 0 0 14px; font-size: 1.05rem; }
 .okunamayan-kapi .okunamayan-gorsel { width: 160px; height: 90px; }
+
+/* Onay penceresi başka bir pencerenin üstünde (bkz. app.js::onayAl) */
+#onayModal.onay-ustte { z-index: 1075; }
+.modal-backdrop.onay-ustte { z-index: 1070; }

@@ -90,8 +90,11 @@
       <div class="modal-body">
         <input type="hidden" id="gmKayit"><input type="hidden" id="gmGorev">
         <div class="alert alert-secondary py-2 small d-none" id="gmCikisBilgi"></div>
-        <div class="mb-2" id="gmAracAlani"><label class="form-label small" for="gmArac">Araç</label>
-          <select class="form-select" id="gmArac"></select></div>
+        <div class="mb-2" id="gmAracAlani"><label class="form-label small" for="gmAra">Araç</label>
+          <input type="search" class="form-control form-control-sm mb-1 arac-ara" id="gmAra" data-secim="gmArac"
+            placeholder="Plaka ya da araç adı ara: 34 MRU…" autocomplete="off">
+          <select class="form-select" id="gmArac" aria-label="Araç"></select>
+          <div class="form-text small d-none" id="gmAraSonuc"></div></div>
         <div class="mb-2" id="gmBaslangicAlani"><label class="form-label small" for="gmBaslangic">Çıkış (görev başlangıcı)</label>
           <input type="datetime-local" class="form-control" id="gmBaslangic"></div>
         <div class="mb-2"><label class="form-label small" for="gmGorevli">Görevli / sürücü</label>
@@ -2141,8 +2144,11 @@
             <div class="card-header"><i class="bi bi-pencil-square me-1"></i>Görev Emri Ver</div>
             <div class="card-body">
               <form id="gorevEmriForm">
-                <div class="mb-2"><label class="form-label small" for="geArac">Araç</label>
-                  <select class="form-select" id="geArac" required></select></div>
+                <div class="mb-2"><label class="form-label small" for="geAra">Araç</label>
+                  <input type="search" class="form-control form-control-sm mb-1 arac-ara" id="geAra" data-secim="geArac"
+                    placeholder="Plaka ya da araç adı ara: 34 MRU…" autocomplete="off">
+                  <select class="form-select" id="geArac" required aria-label="Araç"></select>
+                  <div class="form-text small d-none" id="geAraSonuc"></div></div>
                 <div class="mb-2"><label class="form-label small" for="geGorevli">Görevli / sürücü</label>
                   <input type="text" class="form-control" id="geGorevli" maxlength="100" required></div>
                 <div class="mb-2"><label class="form-label small" for="geGuzergah">Güzergah / görev yeri</label>
