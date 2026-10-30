@@ -1623,7 +1623,20 @@ async function alarmOkundu(id) {
 // numarası deseniyle yalnızca EN SON açılma isteği modali doldurur.
 let _olayDetayIstekNo = 0;
 
+// YANLIŞ ARACA NOT (2026-10-30): yeni geçiş gelince "Son Geçişler" listesi ve
+// bildirim balonları yer değiştirir; tam o anda yapılan tıklama başka bir aracın
+// satırına düşebilir. Liste değiştikten sonraki kısa sürede fareyle/dokunarak
+// yapılan açma yok sayılır (görevli doğru satıra tekrar basar).
+let _sonListeDegisimi = 0;
+function _listeYeniDegistiMi() {
+  const olay = window.event;
+  if (!olay || olay.type !== "click" || Date.now() - _sonListeDegisimi > 900) return false;
+  toastGoster("Liste yeni bir geçişle değişti. Açmak istediğiniz araca tekrar basın.", "uyari");
+  return true;
+}
+
 async function olayDetayAc(id) {
+  if (_listeYeniDegistiMi()) return;
   const istekNo = ++_olayDetayIstekNo;
   let kayit = sonKayitlarCache.find(item => item.id === id);
   if (!kayit) {
@@ -5668,6 +5681,7 @@ function _sseBaslatFetch(token) {
 }
 
 function _sseKayitAl(kayit) {
+  _sonListeDegisimi = Date.now();
   sonKayitlarCache.unshift(kayit);
   if (sonKayitlarCache.length > 500) sonKayitlarCache.pop();
   const kapiModu = document.body.classList.contains("kapi-modu");
@@ -5723,6 +5737,7 @@ function _canliBolumleriTazeleDebounce() {
     if (!_kayitlarFiltresiDuzenleniyorMu()) {
       try { await kayitlariYukle(false); } catch (e) { console.error("Kayıtlar otomatik yenileme hatası:", e); }
     }
+    _sonListeDegisimi = Date.now();
   }, 400);
 }
 

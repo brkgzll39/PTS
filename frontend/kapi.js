@@ -191,7 +191,76 @@ function kapiYeniKayit() {
   _kapiIcerideYukle();
 }
 
+// YANLIŞ ARACA NOT (2026-10-30, kullanıcı bildirdi): görevli büyük karttaki
+// aracın "Not Ekle"sine uzanırken yeni bir araç geçerse kart yeni araca dönüyor,
+// dokunuş yeni aracın düğmesine düşüyordu. Önlemler:
+//  1) Görevli kartla ilgileniyorsa (fare üstünde / dokundu, son 5 sn) kart
+//     değişmez; üstte "Yeni geçiş: … göster" düğmesi çıkar.
+//  2) Kart başka araca döndükten sonraki 1,5 sn düğmeler basılmaz.
+//  3) Basılan düğme, basıldığı anda kartta görünen araca ait değilse yok sayılır.
+//  Aynısı sağdaki listenin satırları için: liste yenilendikten sonraki kısa sürede
+//  ya da basılan satır yer değiştirdiyse dokunuş yok sayılır.
+const _KAPI_KART_KILIT_MS = 1500;
+const _KAPI_ILGI_MS = 5000;
+let _kapiKartKayitId = null;     // büyük kartta şu an çizili kayıt
+let _kapiKartDegisim = 0;        // kart en son ne zaman başka araca döndü
+let _kapiKartIlgi = 0;           // görevlinin kartla son etkileşimi
+let _kapiListeDegisim = 0;       // sağdaki liste en son ne zaman değişti
+let _kapiBasma = null;           // { kart, satir } -- pointerdown anındaki durum
+let _kapiIlgiSabit = false;      // kart görevli ilgilendiği için sabitlendi (açık seçim değil)
+let _kapiListeImza = "";
+
+function _kapiTazeBasma() {
+  return _kapiBasma && Date.now() - _kapiBasma.zaman < 2000 ? _kapiBasma : null;  // klavyeyle basışta yok
+}
+
+function _kapiKartDegistiMi(id) {
+  const basma = _kapiTazeBasma();
+  if (Date.now() - _kapiKartDegisim < _KAPI_KART_KILIT_MS || (basma && basma.kart !== id) || _kapiKartKayitId !== id) {
+    toastGoster("Yeni bir araç geçti, kart değişti. Not eklemek istediğiniz araca tekrar basın.", "uyari");
+    return true;
+  }
+  return false;
+}
+
+let _kapiIlgiZamanlayici = null;
+function _kapiIlgiBirakmaKur() {
+  clearTimeout(_kapiIlgiZamanlayici);
+  const kalan = 2 * _KAPI_ILGI_MS - (Date.now() - _kapiKartIlgi);
+  _kapiIlgiZamanlayici = setTimeout(() => {
+    if (!_kapiIlgiSabit) return;
+    if (Date.now() - _kapiKartIlgi > 2 * _KAPI_ILGI_MS && !_kapiAcikPencere) _kapiCiz();
+    else _kapiIlgiBirakmaKur();
+  }, Math.max(1000, kalan + 200));
+}
+
+document.addEventListener("pointerdown", (e) => {
+  if (!document.body.classList.contains("kapi-modu")) return;
+  const satir = e.target.closest("[data-kapi-kayit]");
+  _kapiBasma = { kart: _kapiKartKayitId, satir: satir ? Number(satir.dataset.kapiKayit) : null, zaman: Date.now() };
+  if (e.target.closest("#kapiSonKart")) _kapiKartIlgi = Date.now();
+}, true);
+document.addEventListener("pointermove", (e) => {
+  if (e.pointerType === "mouse" && document.body.classList.contains("kapi-modu") && e.target.closest("#kapiSonKart")) _kapiKartIlgi = Date.now();
+}, { passive: true });
+
+function kapiKartNotAc(id) { if (!_kapiKartDegistiMi(id)) kapiNotAc(id); }
+function kapiKartPlakaAc(id) { if (!_kapiKartDegistiMi(id)) kapiPlakaDuzeltAc(id); }
+
 function _kapiGosterilenKayit() {
+  // Görevli kartla ilgileniyorken yeni geçiş kartı değiştirmez (yukarıdaki not).
+  if (_kapiSeciliId === null && _kapiKartKayitId !== null && Date.now() - _kapiKartIlgi < _KAPI_ILGI_MS
+      && _kapiKayitlar[0] && _kapiKayitlar[0].id !== _kapiKartKayitId && _kapiKayitlar.some(x => x.id === _kapiKartKayitId)) {
+    _kapiSeciliId = _kapiKartKayitId;
+    _kapiSeciliZaman = Date.now();
+    _kapiIlgiSabit = true;
+    _kapiIlgiBirakmaKur();
+  }
+  // İlgi bitince (10 sn hareket yok) sabitleme kalkar, kart en yeni geçişe döner.
+  if (_kapiIlgiSabit && Date.now() - _kapiKartIlgi > 2 * _KAPI_ILGI_MS && !_kapiAcikPencere) {
+    _kapiIlgiSabit = false;
+    _kapiSeciliId = null;
+  }
   if (_kapiSeciliId !== null && Date.now() - _kapiSeciliZaman < 60000) {
     const k = _kapiKayitlar.find(x => x.id === _kapiSeciliId);
     if (k) return k;
@@ -209,8 +278,12 @@ function _kapiCiz() {
     const tur = _kapiKayitTuru(k);
     const kim = k.kisi_adi || k.misafir_adi || (tur.sinif === "ziyaretci" ? "Tanımsız araç" : "");
     const not = (k.not_metni || "").trim();
+    const enYeni = _kapiKayitlar[0];
+    const yeniVar = enYeni && enYeni.id !== k.id;
     kart.innerHTML = `
-      <div class="ust-satir"><span class="kapi-baslik">${_kapiSeciliId === null ? "Son geçen araç" : "Seçilen geçiş"}</span><span class="kapi-canli">Canlı</span></div>
+      <div class="ust-satir"><span class="kapi-baslik">${_kapiSeciliId === null ? "Son geçen araç" : "Seçilen geçiş"}</span>${yeniVar
+        ? `<button type="button" class="kapi-yeni-gecis" data-kapi-son-goster><i class="bi bi-arrow-up-circle"></i> Yeni geçiş: <b>${escapeHtml(enYeni.plaka_no)}</b> — göster</button>`
+        : '<span class="kapi-canli">Canlı</span>'}</div>
       ${_kapiSeciliId === null && !_kapiBugunMu(k.tarih_saat) ? `<div class="kapi-eski-uyari"><i class="bi bi-info-circle"></i> Bugün henüz size görünen geçiş yok; aşağıdaki kayıt ${_kapiTarihSaat(k.tarih_saat)} tarihli.</div>` : ""}
       <div class="kapi-goruntu" id="kapiGoruntu"><span class="kamera"><i class="bi bi-camera-video"></i> ${escapeHtml(k.kamera_id)} · ${k.yon === "giris" ? "Giriş" : "Çıkış"}</span><i class="bi bi-car-front-fill"></i></div>
       <div class="kapi-bilgi">
@@ -220,9 +293,17 @@ function _kapiCiz() {
       <div class="kapi-ayrinti"><span>${_kapiYonHtml(k.yon)}</span><span><i class="bi bi-clock"></i> <b>${_kapiZaman(k.tarih_saat)}</b> (${_kapiNeKadarOnce(k.tarih_saat)})</span><span><i class="bi bi-geo-alt"></i> <b>${escapeHtml(k.kamera_id)}</b></span></div>
       <div class="kapi-not ${not ? "dolu" : ""}"><i class="bi bi-chat-left-text"></i> ${not ? escapeHtml(not) : "Not yok — eklemek için aşağıdaki düğmeye basın."}</div>
       <div class="kapi-dugmeler">
-        <button class="kapi-dugme kd-ana" onclick="kapiNotAc(${k.id})"><i class="bi bi-pencil-square"></i> ${not ? "Notu Değiştir" : "Not Ekle"}</button>
-        <button class="kapi-dugme kd-acik" onclick="kapiPlakaDuzeltAc(${k.id})"><i class="bi bi-arrow-repeat"></i> Plaka Yanlış</button>
+        <button class="kapi-dugme kd-ana" onclick="kapiKartNotAc(${k.id})"><i class="bi bi-pencil-square"></i> ${not ? "Notu Değiştir" : "Not Ekle"}</button>
+        <button class="kapi-dugme kd-acik" onclick="kapiKartPlakaAc(${k.id})"><i class="bi bi-arrow-repeat"></i> Plaka Yanlış</button>
       </div>`;
+    if (_kapiKartKayitId !== k.id) {
+      if (_kapiKartKayitId !== null) {
+        _kapiKartDegisim = Date.now();
+        kart.classList.add("kapi-kart-kilitli");
+        setTimeout(() => kart.classList.remove("kapi-kart-kilitli"), _KAPI_KART_KILIT_MS);
+      }
+      _kapiKartKayitId = k.id;
+    }
     const goruntu = document.getElementById("kapiGoruntu");
     if (k.goruntu_yolu) {
       const img = document.createElement("img");
@@ -236,6 +317,9 @@ function _kapiCiz() {
 }
 
 function _kapiListeCiz() {
+  const imza = _kapiKayitlar.map(x => x.id).join(",");
+  if (_kapiListeImza && imza !== _kapiListeImza) _kapiListeDegisim = Date.now();
+  _kapiListeImza = imza;
   const filtre = _kapiPlakaSade(document.getElementById("kapiListeAra").value);
   const gosterilen = _kapiGosterilenKayit();
   const satirlar = _kapiKayitlar
@@ -581,12 +665,23 @@ document.addEventListener("click", (e) => {
   if (sekme) { kapiSekme(sekme.dataset.kapiSekme); return; }
   const cip = e.target.closest("[data-kapi-cip]");
   if (cip) { _kapiCipTikla(cip.dataset.kapiCip); return; }
+  if (e.target.closest("[data-kapi-son-goster]")) {
+    _kapiSeciliId = null;
+    _kapiIlgiSabit = false;
+    _kapiKartIlgi = 0;
+    _kapiCiz();
+    return;
+  }
   const satir = e.target.closest("[data-kapi-kayit]");
   if (satir) {
     const id = Number(satir.dataset.kapiKayit);
+    // Liste az önce değiştiyse ya da basılan satır yer değiştirdiyse yanlış araç seçilmesin.
+    const basma = _kapiTazeBasma();
+    if (Date.now() - _kapiListeDegisim < 800 || (basma && basma.satir !== null && basma.satir !== id)) return;
     if (_kapiSekmeAdi === "kapi") {
       _kapiSeciliId = id;
       _kapiSeciliZaman = Date.now();
+      _kapiIlgiSabit = false;
       _kapiCiz();
       window.scrollTo({ top: 0, behavior: "smooth" });
     } else {

@@ -242,3 +242,12 @@ body.kapi-nobet .app-main { max-width: 1400px; margin: 0 auto; }
   .kapi-temizle-satir span { display: none; }
   .kapi-temizle-dugme { width: 100%; }
 }
+
+/* Yanlış araca not koruması (bkz. kapi.js "YANLIŞ ARACA NOT") */
+.kapi-yeni-gecis { border: 0; border-radius: 999px; padding: 6px 14px; font-size: 15px; font-weight: 600;
+  background: #fde68a; color: #78350f; cursor: pointer; animation: kapiYeniNabiz 1.6s ease-in-out 3; }
+.kapi-yeni-gecis:hover { background: #fcd34d; }
+@keyframes kapiYeniNabiz { 50% { box-shadow: 0 0 0 6px rgba(253, 230, 138, .45); } }
+.kapi-kart-kilitli .kapi-dugmeler { opacity: .55; pointer-events: none; transition: opacity .2s; }
+.kapi-kart-kilitli .kapi-plaka { animation: kapiKartYeni .6s ease-out; }
+@keyframes kapiKartYeni { from { transform: scale(.96); opacity: .4; } to { transform: none; opacity: 1; } }
