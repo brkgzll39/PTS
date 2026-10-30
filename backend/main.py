@@ -10046,6 +10046,77 @@ def resmi_arac_ekle(istek: schemas.ResmiAracOlustur, db: Session = Depends(get_d
     return _resmi_arac_cevap(db, a, datetime.now(), _gorev_payi())
 
 
+# TOPLU EKLEME (2026-10-30, kullanıcı isteği): kurumun resmi araçları zaten
+# Kişiler'de kayıtlıdır ("Müdürlük", "B.HAVUZ", "Şeflik" kişileri/departmanları,
+# 34 MRU / 39 ACY gibi plaka serileri). Önce önizleme, sonra onaylananlar eklenir.
+_TR_SADE = str.maketrans("çğıöşüÇĞİIÖŞÜ", "cgiosucgiiosu")
+
+
+def _sade_metin(metin: Optional[str]) -> str:
+    return re.sub(r"[^a-z0-9]", "", (metin or "").translate(_TR_SADE).lower())
+
+
+def _plaka_seri_eslesir(plaka: str, seriler: list) -> bool:
+    duz = _plaka_normalize(plaka)
+    harfle = re.sub(r"^\d+", "", duz)  # "MPN" gibi il kodsuz seri
+    return any(duz.startswith(s) if s[:1].isdigit() else harfle.startswith(s) for s in seriler)
+
+
+@app.get("/resmi-araclar/adaylar")
+def resmi_arac_adaylari(kurum: str = Query("", max_length=500), plaka: str = Query("", max_length=500),
+                        db: Session = Depends(get_db), kullanici: models.Kullanici = Depends(_personel_girisi_gerekli)):
+    """`kurum`: virgülle ayrılmış adlar; kişinin adı, departmanı, açıklaması, otomatik notu ya da ek plakanın
+    açıklamasında geçerse o kişinin (aktif) plakaları aday olur. `plaka`: virgülle ayrılmış seri önekleri
+    ("34 MRU, 39 ACY"). İkisinden birine uyan her plaka listelenir."""
+    _resmi_kontrol()
+    _rol_dogrula(kullanici, ROL_YONETICI, ROL_OPERATOR)
+    kurumlar = [k for k in (_sade_metin(x) for x in kurum.split(",")) if k]
+    seriler = [p for p in (_plaka_normalize(x) for x in plaka.split(",")) if p]
+    if not kurumlar and not seriler:
+        raise HTTPException(400, "En az bir kurum adı ya da plaka serisi girin")
+    kayitli = {_plaka_normalize(p) for (p,) in db.query(models.ResmiArac.plaka_no).all()}
+    adaylar = {}
+
+    def ekle(plaka_no, kisi, ek_aciklama, neden):
+        anahtar = _plaka_normalize(plaka_no)
+        if not anahtar or anahtar in adaylar:
+            return
+        ad = " · ".join(x for x in (kisi.ad_soyad, ek_aciklama) if x)[:100] or plaka_no
+        adaylar[anahtar] = {"plaka_no": plaka_no, "ad": ad, "birim": (kisi.daire_departman or "")[:100] or None,
+                            "kisi_tip": kisi.tip, "neden": neden, "zaten_kayitli": anahtar in kayitli}
+
+    for kisi in db.query(models.Kisi).filter(models.Kisi.aktif == True).all():  # noqa: E712
+        kisi_metni = _sade_metin(" ".join(x or "" for x in (kisi.ad_soyad, kisi.daire_departman, kisi.aciklama, kisi.otomatik_not)))
+        kisi_kurum = next((k for k in kurumlar if k in kisi_metni), None)
+        plakalar = [(kisi.plaka_no, None)] + [(e.plaka_no, e.aciklama) for e in kisi.ek_plakalar if e.aktif]
+        for plaka_no, ek_aciklama in plakalar:
+            kurum_es = kisi_kurum or next((k for k in kurumlar if k in _sade_metin(ek_aciklama)), None)
+            if kurum_es:
+                ekle(plaka_no, kisi, ek_aciklama, f"kurum: {kisi.daire_departman or kisi.ad_soyad}")
+            elif seriler and _plaka_seri_eslesir(plaka_no, seriler):
+                ekle(plaka_no, kisi, ek_aciklama, "plaka serisi")
+    return sorted(adaylar.values(), key=lambda a: (a["zaten_kayitli"], a["plaka_no"]))
+
+
+@app.post("/resmi-araclar/toplu")
+def resmi_arac_toplu_ekle(istek: schemas.ResmiAracToplu, db: Session = Depends(get_db),
+                          kullanici: models.Kullanici = Depends(_personel_girisi_gerekli)):
+    _resmi_kontrol()
+    _rol_dogrula(kullanici, ROL_YONETICI, ROL_OPERATOR)
+    kayitli = {_plaka_normalize(p) for (p,) in db.query(models.ResmiArac.plaka_no).all()}
+    eklenen = 0
+    for a in istek.araclar:
+        anahtar = _plaka_normalize(a.plaka_no)
+        if anahtar in kayitli:
+            continue
+        kayitli.add(anahtar)
+        db.add(models.ResmiArac(plaka_no=a.plaka_no, ad=a.ad, birim=a.birim, aciklama=a.aciklama, aktif=a.aktif))
+        eklenen += 1
+    db.commit()
+    _denetim_kaydet(db, kullanici.kullanici_adi, "resmi_arac_toplu_ekle", f"{eklenen} araç eklendi")
+    return {"eklenen": eklenen, "atlanan": len(istek.araclar) - eklenen}
+
+
 @app.put("/resmi-araclar/{arac_id}")
 def resmi_arac_guncelle(arac_id: int, istek: schemas.ResmiAracOlustur, db: Session = Depends(get_db),
                         kullanici: models.Kullanici = Depends(_personel_girisi_gerekli)):

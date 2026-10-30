@@ -906,6 +906,11 @@ class ResmiAracOlustur(BaseModel):
         return v or None
 
 
+class ResmiAracToplu(BaseModel):
+    """POST /resmi-araclar/toplu: önizlemede (GET /resmi-araclar/adaylar) onaylanan araçlar."""
+    araclar: List[ResmiAracOlustur] = Field(min_length=1, max_length=3000)
+
+
 class GorevEmriOlustur(BaseModel):
     """POST /gorev-emirleri: resmi aracın bu aralıktaki çıkışı görevli sayılır.
     `kayit_id` verilirse (kameranın zaten kaydettiği çıkış) görev o çıkışa

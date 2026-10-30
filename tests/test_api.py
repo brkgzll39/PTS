@@ -8691,3 +8691,29 @@ def test_resmi_arac_gorevle_cikan_araca_cikisi_isle_onerilmez(client, operator_h
     assert arac["konum"] == "disarida" and arac["gorevsiz_cikis_kayit_id"] is None
     assert client.post("/gorev-emirleri", json={"kayit_id": k["id"], "gorevli": "X", "bitis": (simdi + timedelta(hours=2)).isoformat()},
                        headers=operator_header).status_code == 409
+
+
+def test_resmi_arac_kisilerden_toplu_ekleme(client, operator_header, izleyici_header, resmi_modul):
+    k = client.post("/kisiler", json={"ad_soyad": "B.HAVUZ", "plaka_no": "34 TPH 01", "tip": "personel",
+                                      "daire_departman": "Araç Havuzu"}, headers=operator_header)
+    assert k.status_code == 200, k.text
+    assert client.post(f"/kisiler/{k.json()['id']}/plakalar", json={"plaka_no": "34 TPH 02", "aciklama": "Doblo"},
+                       headers=operator_header).status_code in (200, 201)
+    client.post("/kisiler", json={"ad_soyad": "Ahmet Yılmaz", "plaka_no": "34 TPS 01", "tip": "personel",
+                                  "daire_departman": "SONDAJ ŞEFLİK"}, headers=operator_header)
+    client.post("/kisiler", json={"ad_soyad": "Pickup", "plaka_no": "39 TPY 77", "tip": "personel"}, headers=operator_header)
+    client.post("/kisiler", json={"ad_soyad": "Alakasız", "plaka_no": "06 TPZ 01", "tip": "personel"}, headers=operator_header)
+    assert client.get("/resmi-araclar/adaylar?kurum=x", headers=izleyici_header).status_code == 403
+    assert client.get("/resmi-araclar/adaylar", headers=operator_header).status_code == 400
+    r = client.get("/resmi-araclar/adaylar", params={"kurum": "b. havuz, Şeflik", "plaka": "39 TPY"}, headers=operator_header)
+    assert r.status_code == 200, r.text
+    plakalar = {a["plaka_no"] for a in r.json()}
+    assert {"34 TPH 01", "34 TPH 02", "34 TPS 01", "39 TPY 77"} <= plakalar and "06 TPZ 01" not in plakalar
+    # İl kodsuz seri de eşleşir
+    assert any(a["plaka_no"] == "39 TPY 77" for a in client.get("/resmi-araclar/adaylar", params={"plaka": "TPY"}, headers=operator_header).json())
+    secili = [{"plaka_no": a["plaka_no"], "ad": a["ad"], "birim": a["birim"]} for a in r.json()]
+    t = client.post("/resmi-araclar/toplu", json={"araclar": secili + secili[:1]}, headers=operator_header)
+    assert t.status_code == 200 and t.json()["eklenen"] == len(secili) and t.json()["atlanan"] == 1
+    assert all(a["zaten_kayitli"] for a in client.get("/resmi-araclar/adaylar", params={"kurum": "b.havuz"}, headers=operator_header).json())
+    ek = next(x for x in client.get("/resmi-araclar", headers=operator_header).json() if x["plaka_no"] == "34 TPH 02")
+    assert ek["ad"] == "B.HAVUZ · Doblo" and ek["birim"] == "Araç Havuzu"

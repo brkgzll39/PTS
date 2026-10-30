@@ -3514,6 +3514,74 @@ document.getElementById("gorevEmriForm")?.addEventListener("submit", async (e) =
   }
 });
 
+// Toplu ekleme: Kişiler'deki kurum kayıtları ve plaka serileri -> önizleme -> onay.
+let _resmiAdaylar = [];
+
+function resmiTopluAc() {
+  bootstrap.Modal.getOrCreateInstance(document.getElementById("resmiTopluModal")).show();
+  setTimeout(() => document.getElementById("rtKurum").focus(), 300);
+}
+
+function _rtSayac() {
+  const n = document.querySelectorAll("#rtTablo input.rt-sec:checked").length;
+  const btn = document.getElementById("rtEkle");
+  btn.disabled = !n;
+  btn.textContent = n ? `Seçilen ${n} aracı ekle` : "Seçilenleri ekle";
+}
+
+document.getElementById("resmiTopluAraForm")?.addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const tablo = document.getElementById("rtTablo");
+  const params = new URLSearchParams({ kurum: document.getElementById("rtKurum").value, plaka: document.getElementById("rtSeri").value });
+  try {
+    _resmiAdaylar = await apiCagir(`/resmi-araclar/adaylar?${params}`);
+  } catch (err) {
+    tablo.innerHTML = `<tr><td colspan="5" class="text-danger small p-3">${escapeHtml(err.message)}</td></tr>`;
+    return;
+  }
+  const yeni = _resmiAdaylar.filter(a => !a.zaten_kayitli).length;
+  document.getElementById("rtOzet").textContent =
+    `${_resmiAdaylar.length} plaka bulundu: ${yeni} yeni, ${_resmiAdaylar.length - yeni} zaten resmi araç. Araç adlarını eklemeden önce düzeltebilirsiniz.`;
+  tablo.innerHTML = _resmiAdaylar.length ? _resmiAdaylar.map((a, i) => `<tr class="${a.zaten_kayitli ? "text-muted" : ""}">
+      <td><input type="checkbox" class="form-check-input rt-sec" data-i="${i}" ${a.zaten_kayitli ? "disabled" : "checked"} aria-label="Seç"></td>
+      <td class="fw-bold text-nowrap">${escapeHtml(a.plaka_no)}</td>
+      <td>${a.zaten_kayitli ? escapeHtml(a.ad) + ' <span class="badge text-bg-light border">kayıtlı</span>'
+        : `<input type="text" class="form-control form-control-sm rt-ad" data-i="${i}" maxlength="100" value="${escapeHtml(a.ad)}">`}</td>
+      <td class="small">${escapeHtml(a.birim || "")}</td>
+      <td class="small text-muted">${escapeHtml(a.neden)}</td></tr>`).join("")
+    : '<tr><td colspan="5" class="text-muted small p-3">Eşleşen plaka yok.</td></tr>';
+  document.getElementById("rtHepsi").checked = true;
+  _rtSayac();
+});
+
+document.getElementById("rtTablo")?.addEventListener("change", e => { if (e.target.classList.contains("rt-sec")) _rtSayac(); });
+document.getElementById("rtHepsi")?.addEventListener("change", e => {
+  document.querySelectorAll("#rtTablo input.rt-sec:not(:disabled)").forEach(c => { c.checked = e.target.checked; });
+  _rtSayac();
+});
+
+async function resmiTopluEkle() {
+  const araclar = [...document.querySelectorAll("#rtTablo input.rt-sec:checked")].map(c => {
+    const a = _resmiAdaylar[Number(c.dataset.i)];
+    const ad = document.querySelector(`#rtTablo input.rt-ad[data-i="${c.dataset.i}"]`)?.value.trim() || a.ad;
+    return { plaka_no: a.plaka_no, ad, birim: a.birim };
+  });
+  if (!araclar.length || !confirm(`${araclar.length} araç resmi araç olarak eklensin mi?`)) return;
+  const btn = document.getElementById("rtEkle");
+  btn.disabled = true;
+  try {
+    const r = await apiCagir("/resmi-araclar/toplu", {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ araclar }),
+    });
+    toastGoster(`${r.eklenen} resmi araç eklendi${r.atlanan ? `, ${r.atlanan} zaten kayıtlıydı` : ""}`, "basari");
+    document.getElementById("resmiTopluAraForm").requestSubmit();
+    resmiAraclariYukle();
+  } catch (err) {
+    toastGoster("Eklenemedi: " + err.message, "hata");
+    btn.disabled = false;
+  }
+}
+
 // Resmi araç çıkışı penceresi: { kayitId, plaka, cikis } kameranın kaydettiği
 // çıkışa görev bilgisi; { gorevId } var olan görevi düzenler; boş: yeni görev.
 let _gorevListesi = [];
