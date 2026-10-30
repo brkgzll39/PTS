@@ -723,3 +723,4 @@ table td, table th {
 /* Onay penceresi başka bir pencerenin üstünde (bkz. app.js::onayAl) */
 #onayModal.onay-ustte { z-index: 1075; }
 .modal-backdrop.onay-ustte { z-index: 1070; }
+a.side-link { text-decoration: none; } a.side-link:hover { color: #fff; }

@@ -8717,3 +8717,8 @@ def test_resmi_arac_kisilerden_toplu_ekleme(client, operator_header, izleyici_he
     assert all(a["zaten_kayitli"] for a in client.get("/resmi-araclar/adaylar", params={"kurum": "b.havuz"}, headers=operator_header).json())
     ek = next(x for x in client.get("/resmi-araclar", headers=operator_header).json() if x["plaka_no"] == "34 TPH 02")
     assert ek["ad"] == "B.HAVUZ · Doblo" and ek["birim"] == "Araç Havuzu"
+
+
+def test_kullanim_kilavuzu_sayfasi(client):
+    r = client.get("/kilavuz")
+    assert r.status_code == 200 and "Kullanım Kılavuzu" in r.text and 'id="kapi-modu"' in r.text

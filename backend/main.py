@@ -3302,6 +3302,12 @@ def anasayfa():
     )
 
 
+@app.get("/kilavuz")
+def kullanim_kilavuzu():
+    """Kullanım kılavuzu (frontend/kilavuz.html). Gizli bilgi içermez; kurum adı /marka'dan okunur."""
+    return FileResponse(os.path.join(FRONTEND_KLASORU, "kilavuz.html"), headers={"Cache-Control": "no-cache"})
+
+
 @app.get("/sw.js")
 def servis_calisani():
     """PWA service worker dosyası -- BİLİNÇLİ OLARAK /static/ mount'unun

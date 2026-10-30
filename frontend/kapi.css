@@ -279,3 +279,4 @@ body.kapi-nobet .app-main { max-width: 1400px; margin: 0 auto; }
 @media (max-width: 700px) { .kapi-resmi-liste { grid-template-columns: 1fr; } }
 .kapi-resmi-ust .kapi-arama { background: var(--k-kart); }
 .kr-dugmeler .kapi-dugme { min-height: 52px; }
+a.kapi-kucuk-dugme { text-decoration: none; display: inline-flex; align-items: center; gap: 4px; } a.kapi-kucuk-dugme:hover { color: #fff; }
