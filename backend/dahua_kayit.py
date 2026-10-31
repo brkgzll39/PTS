@@ -110,6 +110,14 @@ def zaman_coz(deger: Optional[str], kayma: Optional[timedelta] = None) -> Option
     return None
 
 
+def kamera_unix(an: datetime, kayma: Optional[timedelta] = None) -> int:
+    """`zaman_coz`un tersi: sunucu saatindeki `an`ı kameranın kullandığı unix saniyesine çevirir.
+    Sorgu aralığı da kayıtlarla AYNI yorumla gönderilmeli: kamera yerel saat yazıyorsa
+    gerçek UTC saniyesi göndermek aralığı 3 saat kaydırır (sahada görüldü, 2026-10-31)."""
+    naif = an - (yerel_saat_farki(an) if kayma is None else kayma)
+    return int((naif - _EPOK).total_seconds())
+
+
 def kayit_ayikla(kayit: dict, kayma: Optional[timedelta] = None) -> Optional[dict]:
     plaka = _alan(kayit, _PLAKA_ALANLARI)
     if not plaka:
@@ -161,8 +169,8 @@ class _Baglanti:
 _SAYFA_UST = 1024  # kameranın bir yanıtta verdiği en fazla kayıt
 
 
-def _rf_varyantlari(bas: datetime, bit: datetime) -> list:
-    u1, u2 = str(int(bas.timestamp())), str(int(bit.timestamp()))
+def _rf_varyantlari(bas: datetime, bit: datetime, kayma: Optional[timedelta] = None) -> list:
+    u1, u2 = str(kamera_unix(bas, kayma)), str(kamera_unix(bit, kayma))
     t1, t2 = bas.strftime("%Y-%m-%d %H:%M:%S"), bit.strftime("%Y-%m-%d %H:%M:%S")
     return [
         ("condition.StartTime (unix)", {"condition.StartTime": u1, "condition.EndTime": u2}),
@@ -197,7 +205,7 @@ def _record_finder_suzgecli(bag: "_Baglanti", bas: datetime, bit: datetime, ham:
     kayıtları; yoksa None. Hiç kayıt döndürmeyen yazım kesin sayılmaz (kamera yazımı
     anlamamış da olabilir): `bos_yanit` listesine işaretlenir, sıra araması denenir."""
     pay = timedelta(hours=1)
-    for etiket, parametreler in _rf_varyantlari(bas, bit):
+    for etiket, parametreler in _rf_varyantlari(bas, bit, bag.kayma):
         y = _rf_get(bag, "find", {**parametreler, "count": _SAYFA_UST})
         satirlar = _rf_satirlari(y.text, bag.kayma) if y.status_code == 200 else []
         ham.append({"yontem": f"recordFinder · {etiket}", "http": y.status_code,

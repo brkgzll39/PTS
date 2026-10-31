@@ -16,9 +16,25 @@ os.environ["no_proxy"] = os.environ.get("NO_PROXY", "127.0.0.1,localhost")
 JPEG = b"\xff\xd8\xff\xe0" + b"x" * 3000 + b"\xff\xd9"
 
 
+@pytest.fixture(autouse=True)
+def turkiye_saati():
+    """Saat yorumu hataları UTC'de çalışan makinede görünmez (yerel = UTC): Türkiye saatiyle çalıştır."""
+    import time
+    eski = os.environ.get("TZ")
+    os.environ["TZ"] = "Europe/Istanbul"
+    time.tzset()
+    yield
+    if eski is None:
+        os.environ.pop("TZ", None)
+    else:
+        os.environ["TZ"] = eski
+    time.tzset()
+
+
 def _yoksayan_veri():
     """TPAO Lojman kamerasında görülen davranış (2026-10-31): 3000 kayıt, dakikada bir."""
-    t0 = int((datetime.now() - timedelta(days=3)).timestamp())
+    # Gün başına sabit: kamera verisi ile testin beklentisi ayrı anlarda üretilince saniye kaymasın.
+    t0 = int((datetime.now().replace(hour=0, minute=0, second=0, microsecond=0) - timedelta(days=3)).timestamp())
     return [(i + 1, t0 + 60 * i, f"34TPA{i:04d}") for i in range(3000)]
 
 
@@ -163,3 +179,53 @@ def test_suzgeci_yok_sayan_kamerada_sira_aramasi(kamera_yoksay):
     # Aralık kayıtların sonundan sonra: boş ama başarılı
     s = dahua_kayit.kayitlari_getir(rtsp, datetime.now() + timedelta(days=1), datetime.now() + timedelta(days=2), http_port=port)
     assert s["basarili"] and s["kayitlar"] == []
+
+
+def _yerel_epok_kamera():
+    """TPAO Nizamiye kamerası gibi: yerel saati unix saniyesi gibi yazar, condition.StartTime
+    süzgecini AYNI (yerel) saniyelerle uygular. Kayıtlar dün 06:00'dan itibaren saatte bir."""
+    yerel = dahua_kayit.yerel_saat_farki()
+    bugun = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+    gercek = [bugun - timedelta(days=1) + timedelta(hours=6 + i) for i in range(20)]
+    veri = [(i + 1, int((z - datetime(1970, 1, 1)).total_seconds()), f"39S{1000 + i}") for i, z in enumerate(gercek)]
+
+    class Isleyici(BaseHTTPRequestHandler):
+        def log_message(self, *a):
+            pass
+
+        def do_GET(self):
+            u = urlsplit(self.path)
+            q = {k: v[0] for k, v in parse_qs(u.query).items()}
+            if u.path == "/cgi-bin/recordFinder.cgi" and q.get("condition.StartTime", "").isdigit():
+                a, b = int(q["condition.StartTime"]), int(q["condition.EndTime"])
+                govde = _rf_metin([r for r in veri if a <= r[1] <= b]).encode()
+                self.send_response(200)
+            else:
+                govde = b"Error\r\nBad Request!"
+                self.send_response(400)
+            self.send_header("Content-Length", str(len(govde)))
+            self.end_headers()
+            self.wfile.write(govde)
+
+    sunucu = ThreadingHTTPServer(("127.0.0.1", 0), Isleyici)
+    threading.Thread(target=sunucu.serve_forever, daemon=True).start()
+    return sunucu, gercek, yerel
+
+
+def test_yerel_saat_yazan_kamerada_aralik_dogru_sorgulanir():
+    sunucu, gercek, yerel = _yerel_epok_kamera()
+    try:
+        rtsp, port = "rtsp://admin:parola@127.0.0.1:554/cam", sunucu.server_address[1]
+        bas, bit = gercek[5] - timedelta(minutes=5), gercek[9] + timedelta(minutes=5)  # 5 kayıt
+        s = dahua_kayit.kayitlari_getir(rtsp, bas, bit, http_port=port, kayma=timedelta(0))
+        assert s["basarili"], s
+        assert [k["zaman"] for k in s["kayitlar"]] == gercek[5:10]
+        assert [k["plaka"] for k in s["kayitlar"]] == [f"39S{1005 + i}" for i in range(5)]
+    finally:
+        sunucu.shutdown()
+
+
+def test_kamera_unix_zaman_coz_tersidir():
+    an = datetime(2026, 10, 31, 8, 23, 0)
+    for kayma in (None, timedelta(0), timedelta(hours=3)):
+        assert dahua_kayit.zaman_coz(str(dahua_kayit.kamera_unix(an, kayma)), kayma) == an
