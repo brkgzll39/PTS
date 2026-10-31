@@ -229,3 +229,17 @@ def test_kamera_unix_zaman_coz_tersidir():
     an = datetime(2026, 10, 31, 8, 23, 0)
     for kayma in (None, timedelta(0), timedelta(hours=3)):
         assert dahua_kayit.zaman_coz(str(dahua_kayit.kamera_unix(an, kayma)), kayma) == an
+
+
+def test_kaymis_aralikla_sorgu_reddedilmez_ve_en_cok_kayit_veren_yazim_secilir():
+    """Sahada (2026-10-31): sorgu aralığı kameraya 3 saat kaymış gidince ±1 saat kuralı doğru
+    yazımı eledi, 1 kayıt döndüren başka bir yazım kaldı ve saat ölçülemedi."""
+    sunucu, gercek, yerel = _yerel_epok_kamera()
+    try:
+        rtsp, port = "rtsp://admin:parola@127.0.0.1:554/cam", sunucu.server_address[1]
+        bas, bit = gercek[2] - timedelta(minutes=5), gercek[12] + timedelta(minutes=5)
+        # Kamera yerel saat yazıyor ama UTC sanılarak (kayma 3 sa) sorgulanıyor: aralık 3 saat kayık gider.
+        s = dahua_kayit.kayitlari_getir(rtsp, bas, bit, http_port=port, kayma=timedelta(hours=3))
+        assert s["basarili"] and len(s["kayitlar"]) >= 7, s
+    finally:
+        sunucu.shutdown()

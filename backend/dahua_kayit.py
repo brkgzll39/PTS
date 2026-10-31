@@ -199,12 +199,21 @@ def _rf_ozet(satirlar: list) -> str:
     return f"{len(satirlar)} kayıt, {min(zamanlar):%d.%m.%Y %H:%M} – {max(zamanlar):%d.%m.%Y %H:%M}"
 
 
+# Süzgeç "uygulandı" sayılması için dönen kayıtların istenen aralığa en fazla bu kadar
+# uzak olmasına izin verilir: aralık kameraya yerel saat / UTC farkıyla birkaç saat kaymış
+# gitse de doğru sorgu reddedilmesin (sahada 2026-10-31: ±1 saat kuralı doğru sorguyu
+# eledi, ölçüm 1 kayıtla kaldı). Süzgeci yok sayan kamera en eski kayıtlarını (aylar
+# öncesi) döndürür; onlar yine elenir. Kesin aralık kayitlari_getir'de süzülür.
+_SUZGEC_TOLERANS = timedelta(hours=6)
+
+
 def _record_finder_suzgecli(bag: "_Baglanti", bas: datetime, bit: datetime, ham: list,
                             bos_yanit: Optional[list] = None) -> Optional[list]:
-    """Süzgeci gerçekten uygulayan (aralıkta kayıt döndüren) bir yazım bulunursa onun
-    kayıtları; yoksa None. Hiç kayıt döndürmeyen yazım kesin sayılmaz (kamera yazımı
-    anlamamış da olabilir): `bos_yanit` listesine işaretlenir, sıra araması denenir."""
-    pay = timedelta(hours=1)
+    """Süzgeci uygulayan yazımlar arasından aralıkta EN ÇOK kayıt döndürenin kayıtları
+    (tümü denenir: bir yazımın 1, ötekinin 240 kayıt döndürdüğü görüldü); yoksa None.
+    Hiç kayıt döndürmeyen yazım kesin sayılmaz (kamera yazımı anlamamış olabilir):
+    `bos_yanit` listesine işaretlenir, sıra araması denenir."""
+    en_iyi = None  # (aralıktaki kayıt sayısı, parametreler, satırlar)
     for etiket, parametreler in _rf_varyantlari(bas, bit, bag.kayma):
         y = _rf_get(bag, "find", {**parametreler, "count": _SAYFA_UST})
         satirlar = _rf_satirlari(y.text, bag.kayma) if y.status_code == 200 else []
@@ -217,17 +226,22 @@ def _record_finder_suzgecli(bag: "_Baglanti", bas: datetime, bit: datetime, ham:
             if bos_yanit is not None:
                 bos_yanit.append(etiket)
             continue
-        if not all(bas - pay <= z <= bit + pay for z in zamanlar):
-            continue  # kamera bu yazımı yok saydı (aralık dışı kayıtlar döndü)
-        kayitlar = [a for _, a in satirlar if a]
-        offset = len(satirlar)
-        while len(satirlar) >= _SAYFA_UST and offset < EN_FAZLA_KAYIT:  # aralıkta 1024'ten fazla kayıt
-            y = _rf_get(bag, "doSeekFind", {**parametreler, "offset": offset, "count": _SAYFA_UST})
-            satirlar = _rf_satirlari(y.text, bag.kayma) if y.status_code == 200 else []
-            kayitlar += [a for _, a in satirlar if a]
-            offset += len(satirlar)
-        return kayitlar
-    return None
+        if not all(bas - _SUZGEC_TOLERANS <= z <= bit + _SUZGEC_TOLERANS for z in zamanlar):
+            continue  # kamera bu yazımı yok saydı (çok eski / alakasız kayıtlar döndü)
+        aralikta = sum(1 for z in zamanlar if bas <= z <= bit)
+        if en_iyi is None or aralikta > en_iyi[0]:
+            en_iyi = (aralikta, parametreler, satirlar)
+    if en_iyi is None:
+        return None
+    _, parametreler, satirlar = en_iyi
+    kayitlar = [a for _, a in satirlar if a]
+    offset = len(satirlar)
+    while len(satirlar) >= _SAYFA_UST and offset < EN_FAZLA_KAYIT:  # aralıkta 1024'ten fazla kayıt
+        y = _rf_get(bag, "doSeekFind", {**parametreler, "offset": offset, "count": _SAYFA_UST})
+        satirlar = _rf_satirlari(y.text, bag.kayma) if y.status_code == 200 else []
+        kayitlar += [a for _, a in satirlar if a]
+        offset += len(satirlar)
+    return kayitlar
 
 
 def _seek(bag: "_Baglanti", offset: int, adet: int) -> Optional[list]:
