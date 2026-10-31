@@ -3992,8 +3992,8 @@ def kamera_dahua_guncelle(kamera_id: str, veri: schemas.KameraDahuaGuncelle, db:
             raise HTTPException(400, str(exc))
         onceki = kamera.get("dahua_anpr") or {}
         kamera["dahua_anpr"] = {"aktif": veri.aktif, "olaylar": olaylar, "http_port": veri.http_port}
-        if onceki.get("saat_yorumu") and onceki.get("http_port") == veri.http_port:
-            kamera["dahua_anpr"]["saat_yorumu"] = onceki["saat_yorumu"]
+        if "saat_farki_sn" in onceki and onceki.get("http_port") == veri.http_port:
+            kamera["dahua_anpr"]["saat_farki_sn"] = onceki["saat_farki_sn"]
         _kameralari_yaz(kameralar)
     _denetim_kaydet(
         db, kullanici.kullanici_adi, "kamera_dahua_anpr",
@@ -10419,7 +10419,6 @@ def _dahua_kayitli_kameralar() -> list:
 # Türk plakası: il kodu + (1 harf 4-5 rakam | 2 harf 3-4 rakam | 3 harf 2-3 rakam). Kameranın
 # yarım okumaları ("72AB", "EAJ910", "394208") aktarılmaz (2026-10-31, sahadaki önizlemede görüldü).
 _TR_PLAKA = re.compile(r"^(0[1-9]|[1-7]\d|8[01])([A-Z]\d{4,5}|[A-Z]{2}\d{3,4}|[A-Z]{3}\d{2,3})$")
-_SAAT_YORUMLARI = ("yerel", "utc")
 
 
 def _gecerli_tr_plaka(plaka: str) -> bool:
@@ -10433,48 +10432,86 @@ def _sistemde_var_mi(db: Session, plaka: str, zaman: datetime) -> bool:
                                  K.tarih_saat <= zaman + _AKTARIM_ESLESME).first() is not None
 
 
-def _saat_kaymasi(yorum: str) -> timedelta:
+def _sure_yazi(sn: float) -> str:
+    sn = int(round(abs(sn)))
+    if sn >= 3600:
+        return f"{sn // 3600} sa {sn % 3600 // 60} dk"
+    return f"{sn // 60} dk {sn % 60} sn" if sn >= 60 else f"{sn} sn"
+
+
+def _saat_farki_aciklama(fark: timedelta) -> str:
+    """Kameranın unix saniyesine eklenen fark -> insanca açıklama (yerel/UTC + kamera saatinin kayması)."""
     from backend import dahua_kayit
-    return timedelta(0) if yorum == "yerel" else dahua_kayit.yerel_saat_farki()
+    yerel = dahua_kayit.yerel_saat_farki()
+    utc_tabanli = abs(fark - yerel) < abs(fark)
+    kayma = (fark - yerel if utc_tabanli else fark).total_seconds()
+    temel = "UTC" if utc_tabanli else "kameranın yerel saati"
+    if abs(kayma) < 30:
+        return f"{temel}, kamera saati sistemle uyumlu"
+    return f"{temel}; kamera saati sistemden {_sure_yazi(kayma)} {'geri' if kayma > 0 else 'ileri'}"
 
 
-def _dahua_saat_yorumu(db: Session, kamera: dict, secim: str = "otomatik") -> tuple:
-    """Kameranın kayıt zamanlarını (unix saniyesi) nasıl yazdığı: "yerel" (yerel saat
-    saniyeye çevrilmiş) ya da "utc". SAHADA (2026-10-31) bir Dahua kamerası "yerel"
-    yazıyordu ve UTC sanıldığı için geçişler 3 saat ileri görünüp sistemdekilerle
-    eşleşmemişti. Otomatikte kameranın son 24 saatlik kayıtları iki yorumla da okunur,
-    PTS'in o saatlerde zaten kaydettiği geçişlerle hangisi eşleşiyorsa o seçilir ve
-    kameranın ayarına yazılır. Dönüş: (yorum ya da None, açıklama)."""
-    if secim in _SAAT_YORUMLARI:
-        return secim, f"{'kameranın yerel saati' if secim == 'yerel' else 'UTC'} (elle seçildi)"
+def _dahua_saat_farki(db: Session, kamera: dict, secim: str = "otomatik") -> tuple:
+    """Kameranın kayıt zamanlarını (unix saniyesi) sunucu saatine çevirmek için eklenecek fark.
+
+    SAHADA (2026-10-31, TPAO Nizamiye): kamera yerel saati unix saniyesine yazıyordu
+    (UTC sanılınca geçişler 3 saat ileri göründü), üstelik "yerel" ve "UTC" yorumlarının
+    ikisi de sistemle yalnız 1 geçişte eşleşti -- kamera saati ayrıca kaymış olabilir.
+    Bu yüzden fark iki seçenekten seçilmez, ölçülür: kameranın son kayıtlarındaki her
+    plaka için sistemde aynı plakanın ±14 saat içindeki geçişleriyle zaman farkları
+    toplanır; farkların yığıldığı yer (3 dakikalık pencere) kameranın gerçek saat
+    farkıdır. Bulunan fark kameranın ayarına yazılır. Dönüş: (timedelta ya da None, açıklama)."""
+    from backend import dahua_kayit
+    if secim == "yerel":
+        return timedelta(0), "kameranın yerel saati (elle seçildi)"
+    if secim == "utc":
+        return dahua_kayit.yerel_saat_farki(), "UTC (elle seçildi)"
     ayar = kamera.get("dahua_anpr") or {}
-    if ayar.get("saat_yorumu") in _SAAT_YORUMLARI:
-        return ayar["saat_yorumu"], f"{'kameranın yerel saati' if ayar['saat_yorumu'] == 'yerel' else 'UTC'} (daha önce doğrulandı)"
-    from backend import dahua_kayit
-    if dahua_kayit.yerel_saat_farki() == timedelta(0):
-        return "yerel", "sunucu UTC saatinde; yorum fark etmez"
+    if isinstance(ayar.get("saat_farki_sn"), (int, float)):
+        fark = timedelta(seconds=ayar["saat_farki_sn"])
+        return fark, f"{_saat_farki_aciklama(fark)} (daha önce ölçüldü)"
     simdi = datetime.now()
-    sayilar = {}
-    for yorum in _SAAT_YORUMLARI:
-        s = dahua_kayit.kayitlari_getir(kamera.get("rtsp_url", ""), simdi - timedelta(hours=24), simdi,
-                                        ayar.get("http_port"), ayar.get("olaylar"), kayma=_saat_kaymasi(yorum))
-        if not s["basarili"]:
-            return None, s["hata"] or "Kamera kayıtları okunamadı"
-        ornek = [r for r in s["kayitlar"] if _gecerli_tr_plaka(r["plaka"])][-300:]
-        sayilar[yorum] = sum(1 for r in ornek if _sistemde_var_mi(db, r["plaka"], r["zaman"]))
-    en, diger = sorted(_SAAT_YORUMLARI, key=lambda y: -sayilar[y])
-    if sayilar[en] < 3 or sayilar[en] < 3 * sayilar[diger]:
-        return None, (f"Kamera saati doğrulanamadı: son 24 saatte sistemle eşleşen geçiş yerel saatle {sayilar['yerel']}, "
-                      f"UTC ile {sayilar['utc']}. Kamera saatini kontrol edin ya da saat yorumunu elle seçin.")
+    # Kameranın kendi saatine göre (fark 0) geniş bir pencere: hangi yorum doğruysa son 24 saati kapsar.
+    s = dahua_kayit.kayitlari_getir(kamera.get("rtsp_url", ""), simdi - timedelta(hours=30), simdi + timedelta(hours=4),
+                                    ayar.get("http_port"), ayar.get("olaylar"), kayma=timedelta(0))
+    if not s["basarili"]:
+        return None, s["hata"] or "Kamera kayıtları okunamadı"
+    ornek = [r for r in s["kayitlar"] if _gecerli_tr_plaka(r["plaka"])][-400:]
+    K = models.Kayit
+    farklar, karsiligi_olan = [], 0
+    for r in ornek:
+        satirlar = (db.query(K.tarih_saat).filter(_plaka_normalize_sql(K.plaka_no) == _plaka_normalize(r["plaka"]),
+                                                  K.tarih_saat >= r["zaman"] - timedelta(hours=14),
+                                                  K.tarih_saat <= r["zaman"] + timedelta(hours=14))
+                    .limit(40).all())
+        if satirlar:
+            karsiligi_olan += 1
+        farklar += [(t - r["zaman"]).total_seconds() for (t,) in satirlar]
+    farklar.sort()
+    en_iyi, bas_i, sol = 0, 0, 0
+    for sag in range(len(farklar)):
+        while farklar[sag] - farklar[sol] > 180:
+            sol += 1
+        if sag - sol + 1 > en_iyi:
+            en_iyi, bas_i = sag - sol + 1, sol
+    if en_iyi < 5 or en_iyi < 0.25 * karsiligi_olan:
+        return None, (f"Kamera saati doğrulanamadı: kameranın son {len(ornek)} geçişinin {karsiligi_olan} tanesinin plakası "
+                      f"o saatlere yakın sistemde de var, ama zaman farkları tutarlı değil (en çok {en_iyi} geçiş aynı farkta). "
+                      + ("Kameranın okuduğu geçişlerin çoğu sistemde hiç yok: PTS bu kameradan kayıt alamıyor olabilir. "
+                         if karsiligi_olan < len(ornek) / 4 else "")
+                      + "Kamera saatini (NTP) kontrol edin ya da saat yorumunu elle seçin.")
+    kume = farklar[bas_i:bas_i + en_iyi]
+    fark = timedelta(seconds=round(kume[len(kume) // 2]))
     with _kamera_dosya_kilit:
         kameralar = _kameralari_oku()
         k = next((x for x in kameralar if x["id"] == kamera.get("id")), None)
         if k is not None and isinstance(k.get("dahua_anpr"), dict):
-            k["dahua_anpr"]["saat_yorumu"] = en
+            k["dahua_anpr"]["saat_farki_sn"] = int(fark.total_seconds())
             _kameralari_yaz(kameralar)
-    logger.info("[%s] Kamera kayıt saati yorumu: %s (eşleşen: %s)", kamera.get("ad"), en, sayilar)
-    return en, (f"{'kameranın yerel saati' if en == 'yerel' else 'UTC'} (otomatik bulundu: son 24 saatte "
-                f"{sayilar[en]} geçiş sistemle eşleşti, diğer yorumla {sayilar[diger]})")
+    logger.info("[%s] Kamera kayıt saati farkı ölçüldü: %s sn (%d/%d geçiş)", kamera.get("ad"), fark.total_seconds(),
+                en_iyi, len(ornek))
+    return fark, (f"{_saat_farki_aciklama(fark)} (otomatik ölçüldü: kameranın son {len(ornek)} geçişinden {en_iyi} "
+                  f"tanesi sistemle bu farkla eşleşti)")
 
 
 def _gecmis_gecisleri_aktar(db: Session, kamera: dict, bas: datetime, bit: datetime,
@@ -10485,13 +10522,13 @@ def _gecmis_gecisleri_aktar(db: Session, kamera: dict, bas: datetime, bit: datet
     ayar = kamera.get("dahua_anpr") or {}
     sonuc = {"kamera": kamera.get("ad"), "basarili": False, "yontem": None, "hata": None, "bulunan": 0,
              "aktarilan": 0, "zaten_vardi": 0, "kara_liste": 0, "eksik_okuma": 0, "ham": [], "saat_yorumu": None}
-    yorum, aciklama = _dahua_saat_yorumu(db, kamera, saat_secimi)
+    fark, aciklama = _dahua_saat_farki(db, kamera, saat_secimi)
     sonuc["saat_yorumu"] = aciklama
-    if yorum is None:
+    if fark is None:
         sonuc["hata"] = aciklama  # saat bilinmeden aktarım yapılmaz: geçişler yanlış saatle eklenirdi
         return sonuc
     s = dahua_kayit.kayitlari_getir(kamera.get("rtsp_url", ""), bas, bit, ayar.get("http_port"), ayar.get("olaylar"),
-                                    kayma=_saat_kaymasi(yorum))
+                                    kayma=fark)
     sonuc.update(basarili=s["basarili"], yontem=s["yontem"], hata=s["hata"], bulunan=len(s["kayitlar"]), ham=s["ham"])
     if not s["basarili"]:
         return sonuc

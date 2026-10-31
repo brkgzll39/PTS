@@ -11,6 +11,8 @@ import os
 import time
 from datetime import datetime, timedelta
 
+import re
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -8754,7 +8756,7 @@ def dahua_kamera(monkeypatch):
     kameralar = pts_main._kameralari_oku()
     kamera = {"id": "kesinti-kam", "ad": "Kesinti Nizamiye Giriş", "rtsp_url": "rtsp://admin:x@10.0.0.9/cam",
               "yon": "giris", "aktif": False,
-              "dahua_anpr": {"aktif": True, "olaylar": "TrafficJunction", "http_port": 80, "saat_yorumu": "yerel"}}
+              "dahua_anpr": {"aktif": True, "olaylar": "TrafficJunction", "http_port": 80, "saat_farki_sn": 0}}
     pts_main._kameralari_yaz(kameralar + [kamera])
     simdi = datetime.now().replace(microsecond=0)
     kayitlar = [{"plaka": "34 KSN 01", "zaman": simdi - timedelta(hours=2), "dosya": None},
@@ -8815,39 +8817,67 @@ def test_nabiz_dosyasi_yaz_oku(tmp_path, monkeypatch):
     assert pts_main._nabiz_oku() == an
 
 
-def test_kamera_saat_yorumu_sistemdeki_gecislerle_bulunur(client, yetkili_header, dahua_kamera, monkeypatch):
-    """Sahada (2026-10-31): kamera yerel saati unix saniyesine yazıyordu; UTC sanılınca
-    geçişler 3 saat ileri görünüp sistemdekilerle eşleşmedi."""
-    kamera, simdi = dahua_kamera
+def _saat_farki_sifirla():
     pts_main._kameralari_yaz([k if k["id"] != "kesinti-kam" else
-                              {**k, "dahua_anpr": {**k["dahua_anpr"], "saat_yorumu": None}} for k in pts_main._kameralari_oku()])
-    gercek = [simdi - timedelta(hours=h) for h in (5, 6, 7, 8)]
+                              {**k, "dahua_anpr": {kk: v for kk, v in k["dahua_anpr"].items() if kk != "saat_farki_sn"}}
+                              for k in pts_main._kameralari_oku()])
+
+
+def _kamera_saati_senaryosu(client, header, monkeypatch, simdi, plaka_onek, kamera_eksi_gercek):
+    """Kamera, gerçek saatten `kamera_eksi_gercek` farklı bir "duvar saati"ni unix saniyesine yazar;
+    PTS aynı geçişleri gerçek saatle kaydetmiştir."""
+    _saat_farki_sifirla()
+    gercek = [simdi - timedelta(hours=h, minutes=7 * h) for h in range(2, 9)]
     for i, z in enumerate(gercek):
-        _kayit_ekle_db(f"34 SAT {i:02d}", "giris", kamera="Kesinti Nizamiye Giriş", once=simdi - z)
-    from backend import dahua_kayit
+        _kayit_ekle_db(f"34 {plaka_onek} {i:02d}", "giris", kamera="Kesinti Nizamiye Giriş", once=simdi - z)
 
     def kamera_cevabi(*a, kayma=None, **k):
-        # Kamera yerel saati yazar: "yerel" yorumu (kayma 0) gerçeği verir, UTC yorumu +3 sa kaydırır.
-        fark = timedelta(0) if kayma == timedelta(0) else dahua_kayit.yerel_saat_farki()
         return {"basarili": True, "yontem": "recordFinder", "ham": [], "hata": None,
-                "kayitlar": [{"plaka": f"34SAT{i:02d}", "zaman": z + fark, "dosya": None} for i, z in enumerate(gercek)]}
+                "kayitlar": [{"plaka": f"34{plaka_onek}{i:02d}", "zaman": z + kamera_eksi_gercek + (kayma or timedelta(0)),
+                              "dosya": None} for i, z in enumerate(gercek)]}
     monkeypatch.setattr("backend.dahua_kayit.kayitlari_getir", kamera_cevabi)
+    govde = {"baslangic": (simdi - timedelta(hours=10)).isoformat(), "bitis": simdi.isoformat()}
+    return client.post("/kameralar/kesinti-kam/dahua-gecmis", json=govde, headers=header).json()
+
+
+def test_kamera_saat_farki_olculur_yerel_ve_kaymis(client, yetkili_header, dahua_kamera, monkeypatch):
+    """Sahada (2026-10-31): kamera yerel saati yazıyordu ve "yerel"/"UTC" yorumlarının ikisi de
+    yalnız 1 geçişte eşleşti -- kamera saati ayrıca kaymıştı. Fark artık ölçülür."""
+    kamera, simdi = dahua_kamera
     monkeypatch.setattr("backend.dahua_kayit.yerel_saat_farki", lambda an=None: timedelta(hours=3))
-    govde = {"baslangic": (simdi - timedelta(hours=9)).isoformat(), "bitis": simdi.isoformat()}
-    r = client.post("/kameralar/kesinti-kam/dahua-gecmis", json=govde, headers=yetkili_header).json()
-    assert "yerel saati (otomatik bulundu" in r["saat_yorumu"] and (r["zaten_vardi"], r["aktarilan"]) == (4, 0)
+    r = _kamera_saati_senaryosu(client, yetkili_header, monkeypatch, simdi, "SFA", -timedelta(seconds=95))
+    assert r["basarili"], r
+    # Kayıtlar testte birkaç yüz ms geç yazılır: ölçülen fark 95-96 sn
+    assert re.search(r"yerel saati; kamera saati sistemden 1 dk 3[56] sn geri \(otomatik ölçüldü", r["saat_yorumu"]), r["saat_yorumu"]
+    assert (r["zaten_vardi"], r["aktarilan"]) == (7, 0)
     kam = next(k for k in pts_main._kameralari_oku() if k["id"] == "kesinti-kam")
-    assert kam["dahua_anpr"]["saat_yorumu"] == "yerel"
-    # Eşleşme yoksa saat doğrulanamaz ve aktarım yapılmaz
-    pts_main._kameralari_yaz([k if k["id"] != "kesinti-kam" else
-                              {**k, "dahua_anpr": {**k["dahua_anpr"], "saat_yorumu": None}} for k in pts_main._kameralari_oku()])
+    assert kam["dahua_anpr"]["saat_farki_sn"] in (95, 96)
+    # İkinci sorguda ölçüm tekrarlanmaz
+    r = client.post("/kameralar/kesinti-kam/dahua-gecmis", json={"baslangic": (simdi - timedelta(hours=10)).isoformat(),
+                                                                  "bitis": simdi.isoformat()}, headers=yetkili_header).json()
+    assert "daha önce ölçüldü" in r["saat_yorumu"]
+
+
+def test_kamera_saat_farki_olculur_utc(client, yetkili_header, dahua_kamera, monkeypatch):
+    kamera, simdi = dahua_kamera
+    monkeypatch.setattr("backend.dahua_kayit.yerel_saat_farki", lambda an=None: timedelta(hours=3))
+    r = _kamera_saati_senaryosu(client, yetkili_header, monkeypatch, simdi, "SFB", -timedelta(hours=3))
+    assert r["basarili"] and r["saat_yorumu"].startswith("UTC, kamera saati sistemle uyumlu"), r
+    assert (r["zaten_vardi"], r["aktarilan"]) == (7, 0)
+
+
+def test_kamera_saati_dogrulanamazsa_aktarim_yapilmaz(client, yetkili_header, dahua_kamera, monkeypatch):
+    kamera, simdi = dahua_kamera
+    _saat_farki_sifirla()
     monkeypatch.setattr("backend.dahua_kayit.kayitlari_getir", lambda *a, **k: {
         "basarili": True, "yontem": "recordFinder", "ham": [], "hata": None,
-        "kayitlar": [{"plaka": "34ZZZ99", "zaman": simdi - timedelta(hours=1), "dosya": None}]})
-    r = client.post("/kameralar/kesinti-kam/dahua-gecmis", json={**govde, "aktar": True}, headers=yetkili_header).json()
-    assert r["basarili"] is False and "doğrulanamadı" in r["hata"] and r["aktarilan"] == 0
+        "kayitlar": [{"plaka": f"34ZZZ{i:02d}", "zaman": simdi - timedelta(hours=1, minutes=i), "dosya": None} for i in range(9)]})
+    govde = {"baslangic": (simdi - timedelta(hours=3)).isoformat(), "bitis": simdi.isoformat(), "aktar": True}
+    r = client.post("/kameralar/kesinti-kam/dahua-gecmis", json=govde, headers=yetkili_header).json()
+    assert r["basarili"] is False and "doğrulanamadı" in r["hata"] and "sistemde hiç yok" in r["hata"] and r["aktarilan"] == 0
     # Elle seçilirse kullanılır
-    r = client.post("/kameralar/kesinti-kam/dahua-gecmis", json={**govde, "saat": "utc"}, headers=yetkili_header).json()
+    r = client.post("/kameralar/kesinti-kam/dahua-gecmis", json={**govde, "aktar": False, "saat": "yerel"},
+                    headers=yetkili_header).json()
     assert r["basarili"] and "elle seçildi" in r["saat_yorumu"]
 
 

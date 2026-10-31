@@ -297,9 +297,9 @@
           "Kameranın hafızasındaki geçişler" bölümünden tarih aralığı seçip <span class="dugme">Önizle</span>, sonra <span class="dugme">Aktar</span>.
           Önizleme kameranın ham yanıtını da gösterir; kamera sorguyu kabul etmezse teşhis için bu yanıtı destek ekibine iletin.</p>
         <div class="dikkat">Bunun için kameranın kartında ANPR kayıtlarının tutulması (kameranın Depolama ayarı) ve kamera saatinin doğru
-          olması gerekir. Bazı kameralar kayıt saatini yerel saatle, bazıları UTC ile yazar; sistem bunu kameranın son kayıtlarını
-          sistemdeki geçişlerle karşılaştırarak kendisi bulur ("Saat: Otomatik"). Bulamazsa aktarım yapılmaz; önizlemede saatler
-          sistemdeki geçişlerle uyuşuyorsa "Saat" seçimini elle yapabilirsiniz. Plaka biçimine uymayan eksik okumalar aktarılmaz.</div>
+          olması gerekir. Bazı kameralar kayıt saatini yerel saatle, bazıları UTC ile yazar; kamera saati de birkaç dakika kaymış olabilir.
+          Sistem kameranın son kayıtlarını sistemdeki geçişlerle karşılaştırarak saat farkını kendisi ölçer ("Saat: Otomatik")
+          ve önizlemede yazar (ör. "kameranın yerel saati; kamera saati sistemden 1 dk 35 sn geri"). Ölçemezse aktarım yapılmaz. Plaka biçimine uymayan eksik okumalar aktarılmaz.</div>
 
         <h3 id="bariyer">Bariyer Kontrolü ve Kapı Kutuları</h3>
         <p><b>Yeni Bariyer Ekle</b>: bariyerin açma komutu (HTTP adresi). "Otomatik aç" işaretliyse tanımlı araç girişinde bariyer kendiliğinden açılır.
