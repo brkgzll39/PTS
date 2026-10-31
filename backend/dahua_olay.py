@@ -160,19 +160,29 @@ def ozellik_degerlerini_sadelestir(ham: dict) -> dict:
 
 
 def arac_ozellikleri(metin_ya_da_kayit) -> dict:
-    """Olay metninden (str) ya da kayıt sorgusu satırından (dict) renk/marka/tip."""
+    """Olay metninden (str) ya da kayıt sorgusu satırından (dict) renk/marka/tip.
+
+    DÜZELTME (2026-10-31, sahada "Beyaz Honda Events[0].Object.Center[0]=762" göründü):
+    değeri boş bir satırdan sonra ("Category=") bir sonraki satır değer sanılıyordu.
+    Değer artık satır sonunda biter; alanlar metindeki sıraya göre değil _OZELLIK_ALANLARI
+    öncelik sırasına göre seçilir."""
     if isinstance(metin_ya_da_kayit, dict):
         ciftler = list(metin_ya_da_kayit.items())
     else:
         metin = metin_ya_da_kayit or ""
-        ciftler = [(a, d) for a, d in re.findall(r"^\s*([A-Za-z0-9_.\[\]]+)\s*=\s*(.*?)\s*$", metin, re.M)]
+        ciftler = re.findall(r"^[ \t]*([A-Za-z0-9_.\[\]]+)[ \t]*=([^\r\n]*)", metin, re.M)
         ciftler += re.findall(r'"([A-Za-z]+)"\s*:\s*"([^"]*)"', metin)
-    ham = {}
+    adaylar = {}
     for anahtar, deger in ciftler:
-        son = re.split(r"[.\]]", anahtar)[-1].lower()
-        for alan, adlar in _OZELLIK_ALANLARI.items():
-            if alan not in ham and son in adlar and str(deger).strip():
-                ham[alan] = deger
+        deger = str(deger or "").strip()
+        if not deger or "=" in deger or re.match(r"^[A-Za-z]+\[\d+\]\.", deger):
+            continue  # boş ya da başka bir alanın satırı
+        adaylar.setdefault(re.split(r"[.\]]", anahtar)[-1].lower(), deger)
+    ham = {}
+    for alan, adlar in _OZELLIK_ALANLARI.items():
+        deger = next((adaylar[ad] for ad in adlar if ad in adaylar), None)
+        if deger is not None:
+            ham[alan] = deger
     return ozellik_degerlerini_sadelestir(ham)
 
 

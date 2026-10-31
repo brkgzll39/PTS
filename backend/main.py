@@ -10948,6 +10948,23 @@ async def _nabiz_dongu() -> None:
 
 
 @app.on_event("startup")
+async def _bozuk_arac_ozelliklerini_temizle():
+    """2026-10-31 düzeltmesinden önce boş değerli alandan sonraki satır araç tipi sanılıp
+    yazılmıştı ("Events[0].Object.Center[0]=762"); bu değerler silinir (tekrarlanabilir)."""
+    db = SessionLocal()
+    try:
+        K = models.Kayit
+        for alan in (K.arac_renk, K.arac_marka, K.arac_tip):
+            db.query(K).filter(alan.like("%=%")).update({alan: None}, synchronize_session=False)
+        db.commit()
+    except Exception:
+        db.rollback()
+        logger.exception("Bozuk araç özellikleri temizlenemedi")
+    finally:
+        db.close()
+
+
+@app.on_event("startup")
 async def _gece_isleri_baslangic():
     """Gece mutabakatı, sessiz kamera kontrolü ve Telegram sorgu dinleyicisi (2026-10-31)."""
     asyncio.ensure_future(_mutabakat_dongu())

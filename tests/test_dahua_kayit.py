@@ -260,3 +260,11 @@ def test_olay_metninden_arac_ozellikleri():
     k = dahua_kayit.kayit_ayikla({"PlateNumber": "34ABC123", "Time": "1793300000", "VehicleColor": "Red",
                                   "VehicleSign": "Hyundai", "Category": "SUV"})
     assert k["ozellik"] == {"renk": "Kırmızı", "marka": "Hyundai", "tip": "SUV"}
+
+
+def test_bos_degerli_alan_sonraki_satiri_almaz_ve_oncelik_sirasi():
+    """Sahada (2026-10-31): "Beyaz Honda Events[0].Object.Center[0]=762" göründü."""
+    from backend.dahua_olay import arac_ozellikleri
+    metin = ("Events[0].TrafficCar.VehicleColor=White\r\nEvents[0].Object.BrandName=Toyota\r\n"
+             "Events[0].TrafficCar.VehicleSign=Fiat\r\nEvents[0].Object.Category=\r\nEvents[0].Object.Center[0]=762\r\n")
+    assert arac_ozellikleri(metin) == {"renk": "Beyaz", "marka": "Fiat"}
