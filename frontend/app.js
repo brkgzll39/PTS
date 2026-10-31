@@ -628,6 +628,7 @@ function alarmTipiEtiketi(tip) {
     sunucu_kesintisi: "Sunucu kapalı kaldı",
     sessiz_kamera: "Sessiz kamera (plaka okumuyor)",
     bildirim_hatasi: "Bildirim gönderilemiyor",
+    arac_uyusmazligi: "Plaka-araç uyuşmazlığı",
     kamera_arizasi: "Kamera arızası / bağlantı sorunu",
     // 2026-09-25 (sistem taraması): bu iki alarm tipi backend'de üretiliyor
     // ama burada etiketi yoktu -- panelde ham "bariyer_hatasi" metni görünüyordu.
@@ -1733,6 +1734,9 @@ async function olayDetayAc(id) {
   // Düzenle"/Ziyaretçi Girişi'nde girilebilir) gösteriliyor.
   document.getElementById("olayModalKisi").textContent = detay?.ad_soyad || kayit.misafir_adi || "Tanımsız araç";
   document.getElementById("olayModalDaire").textContent = detay?.daire_departman || "-";
+  const aracMetni = [kayit.arac_renk, kayit.arac_marka, kayit.arac_tip].filter(Boolean).join(" ");
+  document.getElementById("olayModalAracAlani").classList.toggle("d-none", !aracMetni);
+  document.getElementById("olayModalArac").textContent = aracMetni || "-";
   document.getElementById("olayModalAracTipi").textContent = detay ? (detay.tip === "ziyaretci" ? "Ziyaretçi" : detay.tip === "vip" ? "Bölge Müdürü" : detay.tip === "alt_isveren" ? "Alt İşveren" : "Tanımlı") : (kayit.misafir_adi ? "Misafir" : "Tanımsız araç");
   // 2026-09-22: kullanıcı isteği -- "OCR güven skoru gibi şeyleri görmeme
   // gerek yok, onların yerine Not yazınca not bilgisi eklensin". GÜVEN
@@ -4047,6 +4051,8 @@ async function klonUyarilariYukle() {
   // SUNUCU KESİNTİSİ (2026-10-30): sunucu kapalı kaldıysa görevli bilsin.
   _kapiAlarmAlani("kapiKesintiAlani", "sunucu_kesintisi", '<i class="bi bi-power"></i> Sunucu kapalı kaldı',
     "Bu sürede geçişler canlı kaydedilemedi; kameranın hafızasından alınabilenler sisteme eklenir. Kimin kapattığını amirinize bildirin.");
+  _kapiAlarmAlani("kapiUyusmazlikAlani", "arac_uyusmazligi", '<i class="bi bi-exclamation-octagon-fill"></i> Plaka bu araca ait olmayabilir',
+    "Bu plaka daha önce farklı renk/markada bir araçta görüldü. Aracı durdurup ruhsatı kontrol edin.");
   _kapiAlarmAlani("kapiSessizAlani", "sessiz_kamera", '<i class="bi bi-camera-video-off"></i> Kamera plaka okumuyor',
     "Görüntü geliyor ama kamera bir süredir plaka okumuyor. Geçen araçları elle kontrol edin ve teknik birime haber verin.");
   // RESMİ ARAÇ (2026-10-30): görev emirsiz çıkış, mesai dışı hareket, geç dönüş.
@@ -7371,7 +7377,7 @@ async function bildirimAyarlariYukle() {
     const tetikleyiciEtiketleri = {
       hepsi: "Hepsi", yetkisiz: "Yetkisiz araç", kara_liste: "Kara liste",
       suresi_dolmus: "Süresi dolmuş", supheli_arac: "Şüpheli araç", klon_plaka: "Klon plaka şüphesi",
-      resmi_arac: "Resmi araç uyarısı", sunucu_kesintisi: "Sunucu kapalı kaldı", sessiz_kamera: "Sessiz kamera", bariyer_hatasi: "Bariyer hatası", kamera_arizasi: "Kamera arızası",
+      resmi_arac: "Resmi araç uyarısı", sunucu_kesintisi: "Sunucu kapalı kaldı", sessiz_kamera: "Sessiz kamera", arac_uyusmazligi: "Plaka-araç uyuşmazlığı", bariyer_hatasi: "Bariyer hatası", kamera_arizasi: "Kamera arızası",
       disk_hatasi: "Disk hatası", yedek_bozuk: "Otomatik yedek bozuk", yedek_hatasi: "Otomatik yedek alınamadı",
       disk_doluyor: "Disk doluluk erken uyarısı", sertifika_bitiyor: "HTTPS sertifikası bitiyor", gunluk_ozet: "Günlük özet (her sabah)",
     };

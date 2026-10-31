@@ -187,26 +187,43 @@ def metin_gonder_sync(chat_id: str, metin: str) -> "tuple[bool, Optional[str]]":
         return False, _disaridan_baglanti_hatasi_aciklamasi(exc)
 
 
-def dosya_gonder_sync(chat_id: str, dosya_yolu: str, aciklama: str = "") -> "tuple[bool, Optional[str]]":
-    """Dosyayı (günlük PDF) belge olarak gönderir (multipart/form-data)."""
+def _multipart_gonder(yol: str, chat_id: str, alan: str, dosya_yolu: str, mime: str, aciklama: str) -> "tuple[bool, Optional[str]]":
     import uuid
     sinir = uuid.uuid4().hex
     with open(dosya_yolu, "rb") as f:
         icerik = f.read()
     ad = os.path.basename(dosya_yolu)
     parcalar = []
-    for alan, deger in (("chat_id", str(chat_id)), ("caption", aciklama[:1000])):
-        parcalar.append(f'--{sinir}\r\nContent-Disposition: form-data; name="{alan}"\r\n\r\n{deger}\r\n'.encode("utf-8"))
-    parcalar.append(f'--{sinir}\r\nContent-Disposition: form-data; name="document"; filename="{ad}"\r\n'
-                    f'Content-Type: application/pdf\r\n\r\n'.encode("utf-8") + icerik + b"\r\n")
+    for anahtar, deger in (("chat_id", str(chat_id)), ("caption", aciklama[:1024])):
+        parcalar.append(f'--{sinir}\r\nContent-Disposition: form-data; name="{anahtar}"\r\n\r\n{deger}\r\n'.encode("utf-8"))
+    parcalar.append(f'--{sinir}\r\nContent-Disposition: form-data; name="{alan}"; filename="{ad}"\r\n'
+                    f'Content-Type: {mime}\r\n\r\n'.encode("utf-8") + icerik + b"\r\n")
     parcalar.append(f"--{sinir}--\r\n".encode())
     try:
-        _istek("sendDocument", b"".join(parcalar), f"multipart/form-data; boundary={sinir}", zaman_asimi=60)
+        _istek(yol, b"".join(parcalar), f"multipart/form-data; boundary={sinir}", zaman_asimi=60)
         return True, None
     except urllib.error.HTTPError as exc:
         return False, _http_hatasi_aciklamasi(exc)
     except Exception as exc:
         return False, _disaridan_baglanti_hatasi_aciklamasi(exc)
+
+
+def dosya_gonder_sync(chat_id: str, dosya_yolu: str, aciklama: str = "") -> "tuple[bool, Optional[str]]":
+    """Dosyayı (günlük PDF) belge olarak gönderir."""
+    return _multipart_gonder("sendDocument", chat_id, "document", dosya_yolu, "application/pdf", aciklama)
+
+
+def fotografli_gonder_sync(chat_id: str, veri: dict, foto_yolu: str) -> "tuple[bool, Optional[str]]":
+    """Alarm bildirimini aracın fotoğrafıyla gönderir (2026-10-31). Metin fotoğrafın
+    açıklaması olur (en fazla 1024 karakter); fotoğraf gönderilemezse düz metne düşer."""
+    metin = _mesaj_metni_olustur(veri)
+    sonuc = _multipart_gonder("sendPhoto", chat_id, "photo", foto_yolu, "image/jpeg", metin)
+    if sonuc[0]:
+        if len(metin) > 1024:  # açıklamaya sığmayan kısım ayrı mesaj
+            metin_gonder_sync(chat_id, metin)
+        return sonuc
+    logger.info("Telegram fotoğrafı gönderilemedi (%s); metin olarak gönderiliyor", sonuc[1])
+    return telegram_gonder_sync(chat_id, veri)
 
 
 def guncellemeleri_al(offset: Optional[int], bekleme_sn: int = 25) -> list:

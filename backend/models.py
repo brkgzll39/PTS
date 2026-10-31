@@ -262,6 +262,11 @@ class Kayit(Base):
     # SUNUCU KESİNTİSİ (2026-10-30): sunucu kapalıyken kameranın kendi hafızasına
     # yazdığı ve sunucu açılınca kameradan alınan geçiş (bkz. main.py "SUNUCU KESİNTİSİ").
     sonradan_aktarildi = Column(Boolean, nullable=True)
+    # ARAÇ ÖZELLİKLERİ (2026-10-31): kameranın kendi ANPR'ının bildirdiği renk / marka / tip
+    # (Türkçe; bkz. dahua_olay.arac_ozellikleri). Yalnız Dahua okuması açık kameralarda dolar.
+    arac_renk = Column(String(30), nullable=True)
+    arac_marka = Column(String(30), nullable=True)
+    arac_tip = Column(String(30), nullable=True)
     # Tek seferlik, bu kayda özel not (örn. "görevli tarafından elle içeri
     # alındı, sebep: teslimat"). Kişinin KENDİ profilindeki kalıcı notlar
     # (bkz. Kisi.aciklama) ile KARIŞTIRILMAMALI -- bu SADECE bu tekil geçişe

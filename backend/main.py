@@ -222,6 +222,10 @@ def _veritabani_migrasyon() -> None:
         f"ALTER TABLE plaka_kayitlari ADD {col_kw}elle_cikis_yapan VARCHAR(80)",
         # Sunucu kesintisi (2026-10-30) -- bkz. models.Kayit.sonradan_aktarildi.
         f"ALTER TABLE plaka_kayitlari ADD {col_kw}sonradan_aktarildi {bool_tip}{bit_sonu}",
+        # Araç özellikleri (2026-10-31) -- bkz. models.Kayit.arac_renk.
+        f"ALTER TABLE plaka_kayitlari ADD {col_kw}arac_renk {'VARCHAR(30)' if sqlite_mod else 'NVARCHAR(30)'}",
+        f"ALTER TABLE plaka_kayitlari ADD {col_kw}arac_marka {'VARCHAR(30)' if sqlite_mod else 'NVARCHAR(30)'}",
+        f"ALTER TABLE plaka_kayitlari ADD {col_kw}arac_tip {'VARCHAR(30)' if sqlite_mod else 'NVARCHAR(30)'}",
         # Resmi araç (2026-10-30) -- bkz. models.GorevEmri.cikis_kayit_id.
         f"ALTER TABLE gorev_emirleri ADD {col_kw}cikis_kayit_id INTEGER",
         f"ALTER TABLE gorev_emirleri ADD {col_kw}sonradan_giren VARCHAR(80)",
@@ -5631,6 +5635,128 @@ def _beklenen_ziyaretci_notu(b: models.BeklenenZiyaretci) -> str:
     return " · ".join(parcalar)[:500]
 
 
+# ARAÇ ÖZELLİKLERİ VE PLAKA-ARAÇ UYUŞMAZLIĞI (2026-10-31, kullanıcı isteği). Dahua
+# kameraları plakanın yanında aracın rengini, markasını ve tipini de bildirir (bkz.
+# dahua_olay.arac_ozellikleri). Kameranın olayı PTS kaydından önce ya da sonra
+# gelebildiği için iki yoldan bağlanır: kayıt oluşurken son 150 sn'de gelen özellik
+# alınır (_arac_ozelligi_bul), ya da özellik kayıttan sonra gelirse az önceki kayıt
+# güncellenir (_arac_ozelligi_geldi). Aynı plakanın geçmişteki geçişlerinden aracın
+# "bilinen" markası/rengi çıkarılır; plaka bambaşka bir araçta okunursa (sahte / başka
+# araçtan sökülmüş plaka) alarm verilir. Yanlış alarm olmasın diye: en az 3 geçişte
+# aynı marka (%70+) gerekir ve marka farkına ek olarak renk ya da tip de tutmamalıdır
+# (gece IR'de renk, bazen marka tek başına yanlış okunabilir).
+_ARAC_OZELLIK_SURE = timedelta(seconds=150)
+_arac_ozellik_onbellek: dict = {}
+_arac_ozellik_kilit = threading.Lock()
+_UYUSMAZLIK_TEKRAR = timedelta(hours=6)
+
+
+def _arac_ozelligi_bul(plaka: str) -> dict:
+    with _arac_ozellik_kilit:
+        kayit = _arac_ozellik_onbellek.get(_plaka_normalize(plaka))
+    if kayit and datetime.now() - kayit[0] <= _ARAC_OZELLIK_SURE:
+        return kayit[1]
+    return {}
+
+
+def _arac_ozelligini_ata(kayit: models.Kayit, ozellik: dict) -> bool:
+    if not ozellik:
+        return False
+    kayit.arac_renk = ozellik.get("renk") or kayit.arac_renk
+    kayit.arac_marka = ozellik.get("marka") or kayit.arac_marka
+    kayit.arac_tip = ozellik.get("tip") or kayit.arac_tip
+    return True
+
+
+def _arac_metni(renk: Optional[str], marka: Optional[str], tip: Optional[str]) -> str:
+    return " ".join(x for x in (renk, marka, tip) if x) or "-"
+
+
+def _arac_bilinen_ozellik(db: Session, plaka: str, haric_id: Optional[int] = None) -> Optional[dict]:
+    """Plakanın son geçişlerinden öğrenilen araç: {"marka", "renk", "tip", "adet"} ya da None."""
+    from collections import Counter
+    K = models.Kayit
+    sorgu = db.query(K.arac_renk, K.arac_marka, K.arac_tip).filter(
+        _plaka_normalize_sql(K.plaka_no) == _plaka_normalize(plaka), K.arac_marka != None,  # noqa: E711
+        K.tarih_saat >= datetime.now() - timedelta(days=120))
+    if haric_id:
+        sorgu = sorgu.filter(K.id != haric_id)
+    satirlar = sorgu.order_by(desc(K.tarih_saat)).limit(30).all()
+    if len(satirlar) < 3:
+        return None
+
+    def baskin(degerler):
+        degerler = [d for d in degerler if d]
+        if not degerler:
+            return None
+        deger, adet = Counter(d.lower() for d in degerler).most_common(1)[0]
+        return next(d for d in degerler if d.lower() == deger) if adet >= 3 and adet / len(degerler) >= 0.7 else None
+
+    marka = baskin([m for _, m, _ in satirlar])
+    if not marka:
+        return None
+    return {"marka": marka, "renk": baskin([r for r, _, _ in satirlar]), "tip": baskin([t for _, _, t in satirlar]),
+            "adet": len(satirlar)}
+
+
+def _arac_uyusmazligi_mesaji(db: Session, kayit: models.Kayit) -> Optional[str]:
+    if not kayit.arac_marka:
+        return None
+    bilinen = _arac_bilinen_ozellik(db, kayit.plaka_no, haric_id=kayit.id)
+    if not bilinen or kayit.arac_marka.lower() == bilinen["marka"].lower():
+        return None
+    farkli = lambda a, b: bool(a and b and a.lower() != b.lower())  # noqa: E731
+    if not (farkli(kayit.arac_renk, bilinen["renk"]) or farkli(kayit.arac_tip, bilinen["tip"])):
+        return None
+    A = models.Alarm
+    if db.query(A.id).filter(A.alarm_tipi == "arac_uyusmazligi", A.plaka_no == kayit.plaka_no,
+                             A.tarih_saat >= datetime.now() - _UYUSMAZLIK_TEKRAR).first():
+        return None
+    return (f"PLAKA-ARAÇ UYUŞMAZLIĞI: {kayit.plaka_no} normalde {_arac_metni(bilinen['renk'], bilinen['marka'], bilinen['tip'])}, "
+            f"şimdi {_arac_metni(kayit.arac_renk, kayit.arac_marka, kayit.arac_tip)} ({kayit.kamera_id} "
+            f"{kayit.tarih_saat:%H:%M}). Sahte ya da başka araçtan alınmış plaka olabilir; aracı kontrol edin.")
+
+
+def _arac_uyusmazligi_isle(db: Session, kayit: models.Kayit) -> Optional[str]:
+    mesaj = _arac_uyusmazligi_mesaji(db, kayit)
+    if mesaj:
+        db.add(models.Alarm(kayit_id=kayit.id, plaka_no=kayit.plaka_no, alarm_tipi="arac_uyusmazligi", mesaj=mesaj[:255]))
+        db.commit()
+        logger.warning(mesaj)
+        _bildirim_tetikle(db, "arac_uyusmazligi", {"olay": "arac_uyusmazligi", "alarm_tipi": "arac_uyusmazligi",
+                                                    "plaka_no": kayit.plaka_no, "mesaj": mesaj,
+                                                    "goruntu_yolu": kayit.goruntu_yolu})
+    return mesaj
+
+
+def _arac_ozelligi_geldi(kamera_ad: str, plaka: str, ozellik: dict) -> None:
+    """Dahua dinleyicisinden (ayrı iş parçacığı): özelliği saklar; kayıt zaten oluştuysa ona yazar."""
+    simdi = datetime.now()
+    anahtar = _plaka_normalize(plaka)
+    with _arac_ozellik_kilit:
+        _arac_ozellik_onbellek[anahtar] = (simdi, ozellik)
+        for k in [k for k, (z, _) in _arac_ozellik_onbellek.items() if simdi - z > timedelta(minutes=10)]:
+            _arac_ozellik_onbellek.pop(k, None)
+    db = SessionLocal()
+    try:
+        K = models.Kayit
+        kayit = (db.query(K).filter(_plaka_normalize_sql(K.plaka_no) == anahtar, K.tarih_saat >= simdi - _ARAC_OZELLIK_SURE,
+                                    K.arac_marka == None, K.arac_renk == None)  # noqa: E711
+                 .order_by(desc(K.tarih_saat)).first())
+        if kayit is not None and _arac_ozelligini_ata(kayit, ozellik):
+            db.commit()
+            _arac_uyusmazligi_isle(db, kayit)
+    except Exception:
+        db.rollback()
+        logger.exception("[%s] Araç özelliği kayda yazılamadı", kamera_ad)
+    finally:
+        db.close()
+
+
+from backend import dahua_olay as _dahua_olay_modulu  # noqa: E402
+_dahua_olay_modulu.ARAC_OZELLIK_KANCASI = _arac_ozelligi_geldi
+
+
 # KLON PLAKA ŞÜPHESİ (2026-10-30, kullanıcı isteği): başka bir aracın plakasını
 # takarak girme. Bir araç aynı anda iki yerde olamaz: aynı plaka kısa süre içinde
 # iki AYRI nizamiyeden aynı yönde (iki giriş ya da iki çıkış) okunursa, ya da
@@ -5779,6 +5905,7 @@ def _kayit_olustur_ve_bildir(db: Session, plaka_no: str, kamera_id: str, yon: st
         harici_katkili=harici_katkili,
         kamera_okumasi=_kamera_okumasi_farki(plaka_no, kamera_okumasi),
     )
+    _arac_ozelligini_ata(kayit, _arac_ozelligi_bul(plaka_no))
     db.add(kayit)
     db.commit()
     db.refresh(kayit)
@@ -5868,10 +5995,15 @@ def _kayit_olustur_ve_bildir(db: Session, plaka_no: str, kamera_id: str, yon: st
                     # durumda nöbetçi ekrana bakmıyorsa hiç haberi olmuyordu.
                     _bildirim_tetikle(db, "supheli_arac", {
                         "olay": "supheli_arac", "alarm_tipi": "supheli_arac",
-                        "plaka_no": plaka_no, "mesaj": supheli_mesaj,
+                        "plaka_no": plaka_no, "mesaj": supheli_mesaj, "goruntu_yolu": goruntu_yolu,
                     })
         except Exception as exc:
             logger.error("Şüpheli araç kontrolü hatası: %s", exc)
+
+    try:
+        _arac_uyusmazligi_isle(db, kayit)
+    except Exception as exc:
+        logger.error("Plaka-araç uyuşmazlığı kontrolü hatası: %s", exc)
 
     try:
         klon_mesaj = _klon_plaka_suphesi(db, kayit)
@@ -5880,6 +6012,7 @@ def _kayit_olustur_ve_bildir(db: Session, plaka_no: str, kamera_id: str, yon: st
             logger.warning(klon_mesaj)
             _bildirim_tetikle(db, "klon_plaka", {
                 "olay": "klon_plaka", "alarm_tipi": "klon_plaka", "plaka_no": kayit.plaka_no, "mesaj": klon_mesaj,
+                "goruntu_yolu": kayit.goruntu_yolu,
             })
     except Exception as exc:
         logger.error("Klon plaka kontrolü hatası: %s", exc)
@@ -5891,6 +6024,7 @@ def _kayit_olustur_ve_bildir(db: Session, plaka_no: str, kamera_id: str, yon: st
             logger.warning(resmi_mesaj)
             _bildirim_tetikle(db, "resmi_arac", {
                 "olay": "resmi_arac", "alarm_tipi": "resmi_arac", "plaka_no": kayit.plaka_no, "mesaj": resmi_mesaj,
+                "goruntu_yolu": kayit.goruntu_yolu,
             })
     except Exception as exc:
         logger.error("Resmi araç kontrolü hatası: %s", exc)
@@ -6037,6 +6171,8 @@ def _webhook_gonder_sync(url: str, metot: str, veri: dict) -> "tuple[bool, Optio
 
 
 _BILDIRIM_TIPLERI = ("webhook", "telegram", "push", "email")
+_FOTOLU_ALARMLAR = {"kara_liste", "klon_plaka", "resmi_arac", "arac_uyusmazligi", "supheli_arac"}
+_FOTOLU_GECISLER = {"kara_liste", "yetkisiz", "suresi_dolmus"}
 
 
 def _bildirim_gonder_sync(tip: str, hedef: str, http_metot: str, veri: dict) -> "tuple[bool, Optional[str]]":
@@ -6062,8 +6198,15 @@ def _bildirim_gonder_sync(tip: str, hedef: str, http_metot: str, veri: dict) -> 
     pdf_yolu = veri.get("pdf_yolu")  # günlük yönetici raporu (bkz. _gunluk_ozet_gonder)
     if pdf_yolu:
         veri = {k: v for k, v in veri.items() if k != "pdf_yolu"}  # sunucu dosya yolu dışarı gitmesin
+    # Alarm fotoğrafı (2026-10-31): kara liste / yetkisiz / klon / resmi araç / uyuşmazlık
+    # bildirimleri Telegram'a fotoğraflı, e-postaya resim ekli gider; olağan geçişler metin.
+    foto = veri.get("goruntu_yolu") if (veri.get("alarm_tipi") in _FOTOLU_ALARMLAR
+                                         or veri.get("yetki_durumu") in _FOTOLU_GECISLER) else None
+    foto = foto if foto and os.path.isfile(foto) else None
     if tip == "webhook":
         return _webhook_gonder_sync(hedef, http_metot, veri)
+    if tip == "telegram" and foto and not pdf_yolu:
+        return telegram_bildirim.fotografli_gonder_sync(hedef, veri, foto)
     if tip == "telegram":
         sonuc = telegram_bildirim.telegram_gonder_sync(hedef, veri)
         if pdf_yolu and sonuc[0] and os.path.isfile(pdf_yolu):
@@ -6075,7 +6218,7 @@ def _bildirim_gonder_sync(tip: str, hedef: str, http_metot: str, veri: dict) -> 
         from backend import eposta
         konu = f"PTS: {veri.get('olay') or veri.get('alarm_tipi') or 'Bildirim'}" + (f" {veri['tarih']}" if pdf_yolu and veri.get("tarih") else "")
         return eposta.eposta_gonder_sync(hedef, konu, telegram_bildirim._mesaj_metni_olustur(veri),
-                                         ek_yolu=pdf_yolu if pdf_yolu and os.path.isfile(pdf_yolu) else None)
+                                         ek_yolu=pdf_yolu if pdf_yolu and os.path.isfile(pdf_yolu) else foto)
     return False, f"Desteklenmeyen bildirim tipi: '{tip}' (yalnızca {'/'.join(_BILDIRIM_TIPLERI)} desteklenir)"
 
 
@@ -10702,6 +10845,8 @@ def _gecmis_gecisleri_aktar(db: Session, kamera: dict, bas: datetime, bit: datet
         kayit = K(plaka_no=plaka, kamera_id=kamera_ad, yon=yon, tarih_saat=zaman, goruntu_yolu=goruntu_yolu,
                   yetki_durumu=yetki, kisi_id=kisi_id, kisi_tip_anlik=kisi_tip, harici_katkili=True,
                   sonradan_aktarildi=True, misafir_adi=beklenen.misafir_adi if beklenen else None,
+                  arac_renk=(r.get("ozellik") or {}).get("renk"), arac_marka=(r.get("ozellik") or {}).get("marka"),
+                  arac_tip=(r.get("ozellik") or {}).get("tip"),
                   not_metni=(_beklenen_ziyaretci_notu(beklenen) if beklenen
                              else (_kisinin_otomatik_notu(db, kisi_id) if kisi_id else None)))
         db.add(kayit)
@@ -11140,6 +11285,9 @@ def _telegram_plaka_cevabi(db: Session, aranan: str) -> str:
     kisi = db.get(models.Kisi, kisi_id) if kisi_id else None
     if kisi:
         satirlar.append(f"Kişi: {kisi.ad_soyad} ({kisi.tip}{', ' + kisi.daire_departman if kisi.daire_departman else ''})")
+    arac = next((k for k in son if k.arac_marka or k.arac_renk), None)
+    if arac is not None:
+        satirlar.append(f"Araç: {_arac_metni(arac.arac_renk, arac.arac_marka, arac.arac_tip)} (kameranın okuması)")
     elif yetki != "kara_liste":
         satirlar.append("Tanımlı değil (ziyaretçi)")
     ilk = son[0]

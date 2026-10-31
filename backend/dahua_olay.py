@@ -116,6 +116,79 @@ def olay_metninden_plaka(metin: str) -> Optional[str]:
     return None
 
 
+# ARAÇ RENGİ / MARKASI / TİPİ (2026-10-31): Dahua her plaka olayında aracın rengini,
+# markasını ve tipini de gönderir (sahadaki kayıt sorgusunda görüldü: VehicleColor=Red,
+# VehicleSign=Hyundai, Category=SUV). Alan adının SON parçasına göre okunur (olay metni
+# "Events[0].TrafficCar.VehicleColor=" ya da JSON "VehicleColor": olabilir). Bkz.
+# main.py "ARAÇ ÖZELLİKLERİ" (kayda yazma + plaka-araç uyuşmazlığı).
+_OZELLIK_ALANLARI = {
+    "renk": ("vehiclecolor", "carcolor"),
+    "marka": ("vehiclesign", "vehiclebrand", "brandname", "carlogo", "logo"),
+    "tip": ("category", "vehicletype", "vehiclecategory", "vehiclesize"),
+}
+_BILINMEYEN = {"", "unknown", "other", "others", "null", "none", "-", "0"}
+RENKLER = {
+    "white": "Beyaz", "black": "Siyah", "red": "Kırmızı", "blue": "Mavi", "gray": "Gri", "grey": "Gri",
+    "silver": "Gümüş", "yellow": "Sarı", "green": "Yeşil", "brown": "Kahverengi", "orange": "Turuncu",
+    "purple": "Mor", "pink": "Pembe", "golden": "Altın", "gold": "Altın", "cyan": "Turkuaz", "darkblue": "Lacivert",
+    "darkgray": "Koyu gri", "beige": "Bej",
+}
+TIPLER = {
+    "passenger": "Otomobil", "car": "Otomobil", "sedan": "Otomobil", "hatchback": "Otomobil", "suv": "SUV",
+    "mpv": "MPV", "pickup": "Pikap", "van": "Panelvan", "minivan": "Minivan", "minibus": "Minibüs",
+    "bus": "Otobüs", "truck": "Kamyon", "lighttruck": "Kamyonet", "heavytruck": "Kamyon", "trailer": "Tır",
+    "motor": "Motosiklet", "motorcycle": "Motosiklet", "nonmotor": "Bisiklet", "tricycle": "Üç teker",
+}
+
+
+def ozellik_degerlerini_sadelestir(ham: dict) -> dict:
+    """{"renk": "White", "marka": "FORD", "tip": "Pickup"} -> {"renk": "Beyaz", "marka": "Ford", "tip": "Pikap"}"""
+    sonuc = {}
+    for alan, deger in (ham or {}).items():
+        d = str(deger or "").strip().strip('"')
+        anahtar = re.sub(r"[^a-z]", "", d.lower())
+        if anahtar in _BILINMEYEN or re.fullmatch(r"\d+", d):
+            continue  # sayısal kodlar (bazı sürümler marka kodu gönderir) güvenilir değil
+        if alan == "renk":
+            d = RENKLER.get(anahtar, d.title())
+        elif alan == "tip":
+            d = TIPLER.get(anahtar, d.upper() if len(d) <= 4 else d.title())
+        else:
+            d = d.upper() if len(d) <= 3 else d.title()
+        sonuc[alan] = d[:30]
+    return sonuc
+
+
+def arac_ozellikleri(metin_ya_da_kayit) -> dict:
+    """Olay metninden (str) ya da kayıt sorgusu satırından (dict) renk/marka/tip."""
+    if isinstance(metin_ya_da_kayit, dict):
+        ciftler = list(metin_ya_da_kayit.items())
+    else:
+        metin = metin_ya_da_kayit or ""
+        ciftler = [(a, d) for a, d in re.findall(r"^\s*([A-Za-z0-9_.\[\]]+)\s*=\s*(.*?)\s*$", metin, re.M)]
+        ciftler += re.findall(r'"([A-Za-z]+)"\s*:\s*"([^"]*)"', metin)
+    ham = {}
+    for anahtar, deger in ciftler:
+        son = re.split(r"[.\]]", anahtar)[-1].lower()
+        for alan, adlar in _OZELLIK_ALANLARI.items():
+            if alan not in ham and son in adlar and str(deger).strip():
+                ham[alan] = deger
+    return ozellik_degerlerini_sadelestir(ham)
+
+
+# main.py kayıt sırasında / sonrasında okur (aynı süreçte): kamera olayı PTS kaydından
+# önce ya da sonra gelebilir. Fonksiyon kancası main.py'de atanır.
+ARAC_OZELLIK_KANCASI: Optional[Callable[[str, str, dict], None]] = None
+
+
+def arac_ozelligi_yayinla(kamera_ad: str, plaka: str, ozellik: dict) -> None:
+    if ozellik and ARAC_OZELLIK_KANCASI is not None:
+        try:
+            ARAC_OZELLIK_KANCASI(kamera_ad, plaka, ozellik)
+        except Exception:
+            logger.exception("[%s] Araç özelliği işlenemedi", kamera_ad)
+
+
 def olay_kodunu_al(metin: str) -> Optional[str]:
     eslesme = re.search(r"(?:^|\.)Code\s*=\s*([A-Za-z0-9_]+)", metin or "", re.M) or \
         re.search(r'"Code"\s*:\s*"([A-Za-z0-9_]+)"', metin or "")
@@ -200,7 +273,8 @@ class OlayBirlestirici:
             return cikan
         plaka = olay_metninden_plaka(metin)
         if plaka:
-            self._bekleyen = {"plaka": plaka, "kod": olay_kodunu_al(metin), "jpeg": None, "metin": metin}
+            self._bekleyen = {"plaka": plaka, "kod": olay_kodunu_al(metin), "jpeg": None, "metin": metin,
+                              "ozellik": arac_ozellikleri(metin)}
         return cikan
 
 
@@ -358,6 +432,7 @@ class DahuaOlayDinleyici:
             self._geri_cagri(olay["plaka"], olay.get("jpeg"))
         except Exception:
             logger.exception("[%s] Kamera plaka olayı işlenemedi", self.kamera_ad)
+        arac_ozelligi_yayinla(self.kamera_ad, olay["plaka"], olay.get("ozellik") or {})
 
 
 def baglanti_testi(rtsp_url: str, olaylar: Optional[str] = None, http_port: Optional[int] = None,

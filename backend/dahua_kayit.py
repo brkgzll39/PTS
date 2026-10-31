@@ -128,7 +128,8 @@ def kayit_ayikla(kayit: dict, kayma: Optional[timedelta] = None) -> Optional[dic
     zaman = zaman_coz(_alan(kayit, _ZAMAN_ALANLARI), kayma)
     if zaman is None:
         return None
-    return {"plaka": plaka, "zaman": zaman, "dosya": _alan(kayit, _DOSYA_ALANLARI)}
+    from backend.dahua_olay import arac_ozellikleri
+    return {"plaka": plaka, "zaman": zaman, "dosya": _alan(kayit, _DOSYA_ALANLARI), "ozellik": arac_ozellikleri(kayit)}
 
 
 def _tekillestir(kayitlar: list) -> list:

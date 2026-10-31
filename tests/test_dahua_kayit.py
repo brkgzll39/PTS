@@ -243,3 +243,20 @@ def test_kaymis_aralikla_sorgu_reddedilmez_ve_en_cok_kayit_veren_yazim_secilir()
         assert s["basarili"] and len(s["kayitlar"]) >= 7, s
     finally:
         sunucu.shutdown()
+
+
+def test_olay_metninden_arac_ozellikleri():
+    from backend.dahua_olay import OlayBirlestirici, arac_ozellikleri
+    metin = ("Events[0].Code=TrafficJunction\r\nEvents[0].TrafficCar.PlateNumber=34ABC123\r\n"
+             "Events[0].TrafficCar.VehicleColor=White\r\nEvents[0].TrafficCar.VehicleSign=FORD\r\n"
+             "Events[0].Vehicle.Category=Pickup\r\nEvents[0].CommInfo.SnapCategory=Motor\r\n")
+    assert arac_ozellikleri(metin) == {"renk": "Beyaz", "marka": "Ford", "tip": "Pikap"}
+    assert arac_ozellikleri('{"VehicleColor":"Unknown","VehicleSign":"12"}') == {}
+    b = OlayBirlestirici()
+    b.parca("text/plain", metin.encode())
+    olay = b.parca("image/jpeg", b"\xff\xd8x")[0]
+    assert olay["ozellik"]["marka"] == "Ford"
+    # Kayıt sorgusu satırı
+    k = dahua_kayit.kayit_ayikla({"PlateNumber": "34ABC123", "Time": "1793300000", "VehicleColor": "Red",
+                                  "VehicleSign": "Hyundai", "Category": "SUV"})
+    assert k["ozellik"] == {"renk": "Kırmızı", "marka": "Hyundai", "tip": "SUV"}

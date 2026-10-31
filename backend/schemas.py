@@ -538,6 +538,9 @@ class KayitCevap(BaseModel):
     # Kameranın kendi okuması kayıttan farklıysa -- bkz. models.Kayit.kamera_okumasi.
     kamera_okumasi: Optional[str] = None
     sonradan_aktarildi: Optional[bool] = None  # sunucu kapalıyken kameranın hafızasından alındı
+    arac_renk: Optional[str] = None   # kameranın bildirdiği renk / marka / tip (2026-10-31)
+    arac_marka: Optional[str] = None
+    arac_tip: Optional[str] = None
 
     model_config = ConfigDict(from_attributes=True)
 

@@ -293,7 +293,7 @@
 <div class="modal fade" id="olayDetayModal" tabindex="-1" aria-hidden="true">
   <div class="modal-dialog modal-xl modal-dialog-centered"><div class="modal-content event-detail-modal">
     <div class="modal-header" id="olayModalBaslik"><h5 class="modal-title" id="olayModalTur">TANIMLI ARAÇ</h5><button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Kapat"></button></div>
-    <div class="modal-body"><div class="row g-3"><div class="col-lg-8"><div class="event-image-wrap"><img id="olayModalGorsel" class="zoomable-img" role="button" tabindex="0" alt="Araç geçiş görseli, büyütmek için tıklayın veya Enter'a basın"><div id="olayModalGorselYok" class="empty-state">Bu kayıt için görsel bulunmuyor</div></div><div class="detail-table mt-3"><div><b>TARİH</b><span id="olayModalTarih">-</span></div><div><b>SAAT</b><span id="olayModalSaat">-</span></div><div><b>SİTE</b><span id="olayModalSite">-</span></div><div><b>NOKTA</b><span id="olayModalNokta">-</span></div><div><b>YÖN</b><span id="olayModalYon">-</span></div></div></div><div class="col-lg-4"><div class="plate-display" id="olayModalPlaka">-</div><div class="vehicle-facts"><div><b>ARAÇ TİPİ</b><span id="olayModalAracTipi">-</span></div></div><div class="vehicle-facts person-facts"><div><b>İSİM</b><span id="olayModalKisi">-</span></div><div><b>DAİRE / BLOK</b><span id="olayModalDaire">-</span></div><div><b>NOT <button type="button" class="btn btn-sm btn-link p-0 align-baseline" id="olayModalNotDuzenleBtn" data-rol-min="operatör" data-rol-davranis="gizle" title="Notu düzenle"><i class="bi bi-pencil-square"></i></button></b><span id="olayModalNot">-</span></div></div>
+    <div class="modal-body"><div class="row g-3"><div class="col-lg-8"><div class="event-image-wrap"><img id="olayModalGorsel" class="zoomable-img" role="button" tabindex="0" alt="Araç geçiş görseli, büyütmek için tıklayın veya Enter'a basın"><div id="olayModalGorselYok" class="empty-state">Bu kayıt için görsel bulunmuyor</div></div><div class="detail-table mt-3"><div><b>TARİH</b><span id="olayModalTarih">-</span></div><div><b>SAAT</b><span id="olayModalSaat">-</span></div><div><b>SİTE</b><span id="olayModalSite">-</span></div><div><b>NOKTA</b><span id="olayModalNokta">-</span></div><div><b>YÖN</b><span id="olayModalYon">-</span></div></div></div><div class="col-lg-4"><div class="plate-display" id="olayModalPlaka">-</div><div class="vehicle-facts"><div><b>ARAÇ TİPİ</b><span id="olayModalAracTipi">-</span></div><div id="olayModalAracAlani" class="d-none"><b>ARAÇ (KAMERA)</b><span id="olayModalArac">-</span></div></div><div class="vehicle-facts person-facts"><div><b>İSİM</b><span id="olayModalKisi">-</span></div><div><b>DAİRE / BLOK</b><span id="olayModalDaire">-</span></div><div><b>NOT <button type="button" class="btn btn-sm btn-link p-0 align-baseline" id="olayModalNotDuzenleBtn" data-rol-min="operatör" data-rol-davranis="gizle" title="Notu düzenle"><i class="bi bi-pencil-square"></i></button></b><span id="olayModalNot">-</span></div></div>
       <!-- Ziyaretçi Girişi: tanımsız/yetkisiz bir tespiti tek adımda bir kişiye/daireye
            bağlayıp yetki_durumu="ziyaretci_onayli" yapan hızlı onay bölümü
            (bkz. app.js::_ziyaretciGirisiKutusunuAyarla, main.py::kayit_duzenle).
@@ -982,6 +982,7 @@
       <div class="okunamayan-alan okunamayan-kapi d-none" id="kapiResmiAlani" data-klon></div>
       <div class="okunamayan-alan okunamayan-kapi d-none" id="kapiKesintiAlani" data-klon></div>
       <div class="okunamayan-alan okunamayan-kapi d-none" id="kapiSessizAlani" data-klon></div>
+      <div class="okunamayan-alan okunamayan-kapi d-none" id="kapiUyusmazlikAlani" data-klon></div>
       <div class="okunamayan-alan okunamayan-kapi d-none"></div>
       <div class="kapi-izgara">
         <div class="kapi-kart kapi-son" id="kapiSonKart"></div>
@@ -2599,6 +2600,7 @@
                     <option value="resmi_arac">Sadece resmi araç uyarıları</option>
                     <option value="sunucu_kesintisi">Sadece sunucu kesintileri</option>
                     <option value="sessiz_kamera">Sadece sessiz kamera (plaka okumayan kamera)</option>
+                    <option value="arac_uyusmazligi">Sadece plaka-araç uyuşmazlığı (sahte plaka şüphesi)</option>
                     <option value="bariyer_hatasi">Sadece bariyer açma hatası</option>
                     <option value="kamera_arizasi">Sadece kamera arızası</option>
                     <option value="disk_hatasi">Sadece disk/görsel yazma hatası</option>

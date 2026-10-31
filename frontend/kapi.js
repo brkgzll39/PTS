@@ -86,6 +86,11 @@ function kapiSekme(ad) {
 }
 
 // ---------------------------------------------------------------- yardımcılar
+// Kameranın bildirdiği renk / marka / tip (2026-10-31): "Beyaz Ford Pikap"
+function _kapiAracMetni(k) {
+  return [k.arac_renk, k.arac_marka, k.arac_tip].filter(Boolean).join(" ");
+}
+
 function _kapiPlakaHtml(plaka) {
   return `<span class="kapi-plaka"><span class="tr">TR</span><span class="no">${escapeHtml(plaka || "-")}</span></span>`;
 }
@@ -390,7 +395,7 @@ function _kapiCiz() {
       <div class="kapi-goruntu" id="kapiGoruntu"><span class="kamera"><i class="bi bi-camera-video"></i> ${escapeHtml(k.kamera_id)} · ${k.yon === "giris" ? "Giriş" : "Çıkış"}</span><i class="bi bi-car-front-fill"></i></div>
       <div class="kapi-bilgi">
         ${_kapiPlakaHtml(k.plaka_no)}
-        <div class="kapi-kim">${kim ? `<span class="ad">${escapeHtml(kim)}</span>` : ""}<span class="kapi-rozet kr-${tur.sinif}"><i class="bi ${tur.ikon}"></i> ${escapeHtml(tur.etiket)}</span></div>
+        <div class="kapi-kim">${kim ? `<span class="ad">${escapeHtml(kim)}</span>` : ""}<span class="kapi-rozet kr-${tur.sinif}"><i class="bi ${tur.ikon}"></i> ${escapeHtml(tur.etiket)}</span>${_kapiAracMetni(k) ? `<span class="kapi-arac"><i class="bi bi-car-front"></i> ${escapeHtml(_kapiAracMetni(k))}</span>` : ""}</div>
       </div>
       <div class="kapi-ayrinti"><span>${_kapiYonHtml(k.yon)}</span><span><i class="bi bi-clock"></i> <b>${_kapiZaman(k.tarih_saat)}</b> (${_kapiNeKadarOnce(k.tarih_saat)})</span><span><i class="bi bi-geo-alt"></i> <b>${escapeHtml(k.kamera_id)}</b></span></div>
       <div class="kapi-not ${not ? "dolu" : ""}"><i class="bi bi-chat-left-text"></i> ${not ? escapeHtml(not) : "Not yok — eklemek için aşağıdaki düğmeye basın."}</div>
@@ -432,6 +437,7 @@ function _kapiListeCiz() {
       const not = _kapiEkNot(k.not_metni, kim, k.kisi_departman);
       const alt = [kim ? `<b>${escapeHtml(kim)}</b>` : "", escapeHtml(tur.etiket),
         k.sonradan_aktarildi ? '<i class="bi bi-sd-card"></i> Kameradan eklendi' : "",
+        _kapiAracMetni(k) ? escapeHtml(_kapiAracMetni(k)) : "",
         not ? `<i class="bi bi-chat-left-text"></i> ${escapeHtml(not)}` : ""].filter(Boolean).join(" · ");
       return `<button type="button" class="kapi-satir ${gosterilen && gosterilen.id === k.id ? "secili" : ""}" data-kapi-kayit="${k.id}">
         <span class="serit ks-${tur.sinif}"></span>

@@ -94,11 +94,18 @@
           <li><b>Sunucu kapalı kaldı</b>: Sunucu bilgisayarı kapatılmış ya da uykuya alınmış. Bu sürede geçişler canlı kaydedilemedi;
             kameranın kendi hafızasından alınabilenler sisteme eklendi (listede <i class="bi bi-sd-card"></i> "Kameradan eklendi" yazar).
             Kimin, neden kapattığını amirinize bildirin, sonra <span class="dugme">Kontrol ettim</span>'e basın.</li>
+          <li><b>Plaka bu araca ait olmayabilir</b>: Bu plaka daha önce farklı renk ve markada bir araçta görüldü (ör. "normalde Beyaz Ford
+            Pikap, şimdi Kırmızı Hyundai SUV"). Sahte ya da başka araçtan sökülmüş plaka olabilir: aracı durdurun, ruhsatı kontrol edin.</li>
           <li><b>Kamera plaka okumuyor</b>: Kameranın görüntüsü geliyor ama normalde araç geçen saatlerde uzun süredir plaka okumadı
             (lens kirli, kamera döndü, plaka okuma kapandı…). Geçen araçları elle kontrol edin, teknik birime haber verin.</li>
           <li><b>Okunamayan geçiş</b> (Kapı Kutusu kuruluysa): Yerdeki sensör araç gördü ama kamera plakayı okuyamadı. Fotoğrafa bakıp plakayı
             yazın ya da "araç değil" deyin.</li>
         </ul>
+
+        <h4 id="arac-bilgisi">Araç rengi ve markası</h4>
+        <p>Kameranın kendi plaka okuması (Dahua) açık kameralarda kartta ve listede aracın rengi, markası ve tipi de yazar
+          (ör. "Beyaz Ford Pikap"). Bu bilgi kameranın tahminidir; gece kızılötesi ışıkta renk gri/beyaz görünebilir.
+          Sistem her plakanın aracını geçmiş geçişlerinden öğrenir ve plaka farklı bir araçta görülürse uyarır.</p>
 
         <h4 id="sesli-uyari">Sesli uyarı</h4>
         <p>Kara listedeki araç geçtiğinde ya da yeni bir uyarı (klon plaka, resmi araç, sunucu kapandı, kamera plaka okumuyor) geldiğinde
@@ -280,6 +287,7 @@
             <tr><td>Klon plaka şüphesi</td><td>Aynı plaka kısa sürede iki ayrı kapıda okundu (başka araçta aynı plaka olabilir).</td></tr>
             <!--MODUL:resmi_arac--><tr><td>Resmi araç</td><td>Görevsiz çıkış, geç dönüş, mesai dışı hareket.</td></tr><!--/MODUL-->
             <tr><td>Sunucu kapalı kaldı</td><td>Sunucu 3 dakikadan uzun kapalı kaldı ya da uykuya alındı; ardından kameradan kaç geçiş aktarıldığı da bildirilir.</td></tr>
+            <tr><td>Plaka-araç uyuşmazlığı</td><td>Plaka, geçmişte görüldüğü araçtan farklı marka ve renkte/tipte bir araçta okundu.</td></tr>
             <tr><td>Sessiz kamera</td><td>Kamera görüntü veriyor ama normalde trafik olan saatlerde uzun süredir plaka okumuyor.</td></tr>
             <tr><td>Kamera arızası</td><td>Kamera bağlantısı koptu ya da görüntü gelmiyor.</td></tr>
             <tr><td>Bariyer otomatik açılamadı</td><td>Tanımlı araç için bariyer komutu başarısız oldu.</td></tr>
@@ -339,6 +347,8 @@
           kara liste, klon plaka, resmi araç, sunucu kesintisi, sessiz kamera, kamera arızası, disk/yedek uyarıları, günlük özet…).
           Kaydettikten sonra test mesajı gönderip deneyin. E-posta için sunucuda <code>PTS_SMTP_SUNUCU</code> (gerekirse
           <code>PTS_SMTP_PORT</code>, <code>PTS_SMTP_KULLANICI</code>, <code>PTS_SMTP_PAROLA</code>, <code>PTS_SMTP_GONDEREN</code>) ayarlanmalıdır.</p>
+        <p>Kara liste, onaysız ziyaretçi, klon plaka, resmi araç ve plaka-araç uyuşmazlığı bildirimleri Telegram'a <b>aracın
+          fotoğrafıyla</b>, e-postaya fotoğraf ekli gider; olağan (tanımlı araç) geçişler yalnız metin olarak gider.</p>
         <p><b>Günlük özet</b> tetikleyicisi seçilen alıcılara her sabah dünün özeti gider; e-postada <b>yönetici raporu PDF'i</b> ek olarak,
           Telegram'da dosya olarak gelir.</p>
         <h4 id="telegram-sorgu">Telegram'dan soru sorma</h4>

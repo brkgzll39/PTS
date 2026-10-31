@@ -50,8 +50,10 @@ def eposta_gonder_sync(alici: str, konu: str, metin: str, ek_yolu: Optional[str]
     ileti["To"] = alici
     ileti.set_content(metin)
     if ek_yolu:
+        resim = ek_yolu.lower().endswith((".jpg", ".jpeg"))
         with open(ek_yolu, "rb") as f:
-            ileti.add_attachment(f.read(), maintype="application", subtype="pdf", filename=os.path.basename(ek_yolu))
+            ileti.add_attachment(f.read(), maintype="image" if resim else "application",
+                                 subtype="jpeg" if resim else "pdf", filename=os.path.basename(ek_yolu))
     try:
         if guvenlik == "ssl":
             baglanti = smtplib.SMTP_SSL(sunucu, port, timeout=20, context=ssl.create_default_context())
