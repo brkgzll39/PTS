@@ -961,6 +961,7 @@
     </div>
     <span class="kapi-vardiya d-none" id="kapiVardiya"></span>
     <div class="kapi-sag"><b id="kapiKullanici"></b><br><span id="kapiSaat"></span></div>
+    <button class="kapi-kucuk-dugme" id="kapiSesDugme" onclick="kapiSesDegistir()" title="Sesli uyarı: açık" aria-label="Sesli uyarıyı aç/kapat"><i class="bi bi-volume-up-fill"></i></button>
     <a class="kapi-kucuk-dugme" href="/kilavuz#kapi-modu" target="_blank" onclick="return kilavuzAc(event)" title="Kullanım kılavuzu"><i class="bi bi-question-circle"></i> Kılavuz</a>
     <button class="kapi-kucuk-dugme" onclick="gorunumDegistir('klasik')" title="Tüm menülerin olduğu klasik panel"><i class="bi bi-grid-3x3-gap"></i> Gelişmiş</button>
     <button class="kapi-kucuk-dugme d-none" id="kapiFarkliKullanici" onclick="farkliKullaniciylaGiris()" title="Başka bir hesapla giriş"><i class="bi bi-person-gear"></i></button>
@@ -978,6 +979,7 @@
       <div class="okunamayan-alan okunamayan-kapi d-none" id="kapiKlonAlani" data-klon></div>
       <div class="okunamayan-alan okunamayan-kapi d-none" id="kapiResmiAlani" data-klon></div>
       <div class="okunamayan-alan okunamayan-kapi d-none" id="kapiKesintiAlani" data-klon></div>
+      <div class="okunamayan-alan okunamayan-kapi d-none" id="kapiSessizAlani" data-klon></div>
       <div class="okunamayan-alan okunamayan-kapi d-none"></div>
       <div class="kapi-izgara">
         <div class="kapi-kart kapi-son" id="kapiSonKart"></div>
@@ -1294,6 +1296,14 @@
 
       <!-- KAÇIRILAN GEÇİŞLER (2026-10-26): hangi nizamiyenin kamerası giriş/çıkış
            kaçırıyor (bkz. main.py::kacirilan_gecisler, app.js::kacirilanGecisleriYukle). -->
+      <div class="card mb-3">
+        <div class="card-header d-flex flex-wrap align-items-center gap-2">
+          <span><i class="bi bi-file-earmark-pdf me-1"></i>Günlük Yönetici Raporu</span>
+          <span class="small text-muted">Bir günün özeti tek PDF'te: geçişler, alarmlar, kara liste, onaysız ziyaretçiler, kameralar.</span>
+          <span class="d-flex gap-2 ms-auto"><input type="date" class="form-control form-control-sm w-auto" id="kmRaporGun" aria-label="Rapor günü">
+            <button class="btn btn-sm btn-outline-primary text-nowrap" onclick="gunlukRaporIndir('kmRaporGun')"><i class="bi bi-download"></i> PDF indir</button></span>
+        </div>
+      </div>
       <div class="card mb-3">
         <div class="card-header d-flex flex-wrap align-items-center gap-2">
           <span><i class="bi bi-camera-video-off me-1"></i>Kaçırılan Geçişler</span>
@@ -1730,6 +1740,19 @@
               </form>
             </div>
           </div>
+          <!-- SIK GELEN TANIMSIZ ARAÇLAR (2026-10-31): bkz. main.py::kisi_onerileri -->
+          <div class="card mt-3" data-rol-min="operatör" data-rol-davranis="gizle">
+            <div class="card-header d-flex justify-content-between align-items-center">
+              <span><i class="bi bi-lightbulb me-1"></i>Sık Gelen Tanımsız Araçlar</span>
+              <button class="btn btn-sm btn-outline-secondary" onclick="kisiOnerileriYukle()" title="Yenile" aria-label="Yenile"><i class="bi bi-arrow-clockwise"></i></button>
+            </div>
+            <div class="card-body p-0">
+              <div class="small text-muted px-3 pt-2">Son 30 günde en az 5 farklı gün gelen ama tanımlı olmayan araçlar. Tanımlarsanız
+                görevli her gelişte not yazıp onaylamak zorunda kalmaz.</div>
+              <div class="table-responsive" style="max-height:360px"><table class="table table-sm mb-0 align-middle">
+                <tbody id="kisiOneriTablo"><tr><td class="text-muted small p-3">Yükleniyor…</td></tr></tbody></table></div>
+            </div>
+          </div>
         </div>
 
         <div class="col-lg-8">
@@ -1962,6 +1985,25 @@
       <div class="row g-3">
         <div class="col-lg-5"><div class="card"><div class="card-header"><i class="bi bi-camera-video-fill me-1"></i>Kamera Ekle</div><div class="card-body"><form id="kameraForm" data-rol-min="operatör"><div class="mb-3"><label class="form-label small" for="kameraAd">Kamera adı</label><input class="form-control" id="kameraAd" placeholder="Nizamiye Giriş" required></div><div class="mb-3"><label class="form-label small" for="kameraRtsp">RTSP adresi</label><input class="form-control" id="kameraRtsp" placeholder="rtsp://kullanici:sifre@192.168.1.20:554/..." required></div><div class="mb-3"><label class="form-label small" for="kameraYon">Yön</label><select class="form-select" id="kameraYon"><option value="giris">Giriş</option><option value="cikis">Çıkış</option></select></div><button class="btn btn-primary" type="submit"><i class="bi bi-plus-circle"></i> Kamerayı Kaydet</button></form><div id="kameraSonuc" class="small mt-3"></div></div></div></div>
         <div class="col-lg-7"><div class="card"><div class="card-header d-flex justify-content-between"><span><i class="bi bi-list-ul me-1"></i>Tanımlı Kameralar</span><div class="d-flex gap-2 align-items-center"><span id="kameraSayac" class="small text-muted">-</span><button class="btn btn-sm btn-outline-info" onclick="tumKameralarSaglikKontrol()" title="Tüm kameraları ping'le"><i class="bi bi-activity"></i> Sağlık</button></div></div><div class="card-body p-0"><div class="table-responsive"><table class="table table-hover mb-0 align-middle"><thead class="table-light"><tr><th>Ad</th><th>Yön</th><th>RTSP adresi</th><th>Pipeline</th><th>TCP</th><th></th></tr></thead><tbody id="kameralarTablo"></tbody></table></div></div></div></div>
+        <!-- GECE MUTABAKATI + SESSİZ KAMERA (2026-10-31) -->
+        <div class="col-12"><div class="card"><div class="card-header d-flex justify-content-between align-items-center flex-wrap gap-2">
+          <span><i class="bi bi-arrow-left-right me-1"></i>Kamera Mutabakatı <span class="small text-muted">— PTS, kameranın kendi okuduğu geçişlerin ne kadarını yakaladı</span></span>
+          <span class="d-flex gap-2">
+            <button class="btn btn-sm btn-outline-primary" data-rol-min="yonetici" data-rol-davranis="gizle" onclick="mutabakatCalistir()"><i class="bi bi-play"></i> Dünü şimdi karşılaştır</button>
+            <button class="btn btn-sm btn-outline-secondary" onclick="mutabakatYukle()" title="Yenile" aria-label="Yenile"><i class="bi bi-arrow-clockwise"></i></button></span></div>
+          <div class="card-body p-0"><div class="table-responsive" style="max-height:320px"><table class="table table-sm mb-0 align-middle">
+            <thead class="table-light"><tr><th>Gün</th><th>Kamera</th><th class="text-end">Kamera okudu</th><th class="text-end">PTS yakaladı</th><th class="text-end">Oran</th><th class="text-end">Sonradan eklenen</th><th class="text-end">Eksik okuma</th></tr></thead>
+            <tbody id="mutabakatTablo"></tbody></table></div>
+            <form class="d-flex flex-wrap gap-3 align-items-end px-3 py-2 border-top" id="mutabakatAyarForm" data-rol-min="yonetici" data-rol-davranis="gizle">
+              <div><label class="form-label small mb-1" for="mutabakatSaat">Her gece karşılaştırma saati</label>
+                <input type="time" class="form-control form-control-sm" id="mutabakatSaat"></div>
+              <div><label class="form-label small mb-1" for="sessizKameraDk">Sessiz kamera uyarısı (dk, 0 = kapalı)</label>
+                <input type="number" min="0" max="1440" class="form-control form-control-sm" id="sessizKameraDk"></div>
+              <button type="submit" class="btn btn-sm btn-outline-primary">Kaydet</button>
+              <div class="small text-muted flex-grow-1" style="min-width:260px">Karşılaştırma "Kameranın kendi plaka okuması" açık kameralarda
+                yapılır; PTS'in kaçırdığı geçişler kameradan eklenir. Sessiz kamera: görüntü gelen ama normalde trafik olan saatlerde
+                bu kadar dakika plaka okumayan kamera için uyarı.</div>
+            </form></div></div></div>
         <!-- SUNUCU KESİNTİSİ (2026-10-30): kapalı kalınan süreler ve kameradan aktarılan geçişler -->
         <div class="col-12"><div class="card"><div class="card-header d-flex justify-content-between align-items-center">
           <span><i class="bi bi-power me-1"></i>Sunucu Kesintileri</span>
@@ -2535,6 +2577,7 @@
                     <option value="webhook">Webhook</option>
                     <option value="telegram">Telegram</option>
                     <option value="push">Push Bildirim (Mobil Uygulama)</option>
+                    <option value="email">E-posta</option>
                   </select>
                 </div>
                 <div class="mb-2"><label class="form-label small" for="bildirimHedef" id="bildirimHedefEtiket">Webhook URL</label>
@@ -2553,6 +2596,7 @@
                     <option value="klon_plaka">Sadece klon plaka şüphesi</option>
                     <option value="resmi_arac">Sadece resmi araç uyarıları</option>
                     <option value="sunucu_kesintisi">Sadece sunucu kesintileri</option>
+                    <option value="sessiz_kamera">Sadece sessiz kamera (plaka okumayan kamera)</option>
                     <option value="bariyer_hatasi">Sadece bariyer açma hatası</option>
                     <option value="kamera_arizasi">Sadece kamera arızası</option>
                     <option value="disk_hatasi">Sadece disk/görsel yazma hatası</option>
@@ -2560,7 +2604,7 @@
                     <option value="yedek_bozuk">Sadece otomatik yedek bozuk üretildi</option>
                     <option value="yedek_hatasi">Sadece otomatik yedek ALINAMADI (SQL Server)</option>
                     <option value="sertifika_bitiyor">Sadece HTTPS sertifikası bitiyor (30 gün kala)</option>
-                    <option value="gunluk_ozet">Sadece günlük özet (her sabah)</option>
+                    <option value="gunluk_ozet">Sadece günlük özet + yönetici raporu PDF'i (her sabah)</option>
                   </select>
                 </div>
                 <button type="submit" class="btn btn-primary w-100"><i class="bi bi-save"></i> Kaydet</button>
@@ -2587,6 +2631,32 @@
                 <thead class="table-light"><tr><th>Ad</th><th>Tip</th><th>Hedef</th><th>Tetikleyici</th><th>Aktif</th><th></th></tr></thead>
                 <tbody id="bildirimAyarTablo"></tbody>
               </table>
+            </div>
+          </div>
+          <!-- TELEGRAM SORGU + GÜNLÜK RAPOR (2026-10-31) -->
+          <div class="card mt-3">
+            <div class="card-header"><i class="bi bi-chat-dots me-1"></i>Telegram'dan Soru Sorma</div>
+            <div class="card-body">
+              <div class="form-check form-switch mb-2">
+                <input class="form-check-input" type="checkbox" id="telegramSorguAktif" onchange="telegramSorguKaydet(this)">
+                <label class="form-check-label" for="telegramSorguAktif">Kayıtlı Telegram sohbetleri bota soru sorabilsin</label>
+              </div>
+              <p class="small text-muted mb-0">Yalnızca yukarıda Telegram bildirimi tanımlı sohbetlere cevap verilir. Bota bir plaka
+                (ör. <code>34ABC123</code>) yazınca aracın içeride olup olmadığı, kime ait olduğu ve son geçişleri gelir;
+                <code>içeride</code>, <code>özet</code>, <code>alarmlar</code> da yazılabilir. Her sorgu Denetim Kayıtları'na düşer.
+                Tanımsız bir sohbet yazarsa bot ona sohbet numarasını söyler; o numarayla bildirim tanımlayınca yetkili olur.</p>
+            </div>
+          </div>
+          <div class="card mt-3">
+            <div class="card-header"><i class="bi bi-file-earmark-pdf me-1"></i>Günlük Yönetici Raporu</div>
+            <div class="card-body">
+              <p class="small text-muted mb-2">Her sabah "Günlük özet" bildirimiyle birlikte dünün PDF raporu gider: e-posta alıcılarına
+                ek, Telegram sohbetlerine dosya olarak. Giriş/çıkışlar, saatlik yoğunluk, alarmlar, kara liste ve onaysız
+                ziyaretçiler, resmi araçlar, kamera mutabakatı ve sistem olayları yer alır. E-posta için sunucuda
+                <code>PTS_SMTP_SUNUCU</code> (ve gerekirse <code>PTS_SMTP_KULLANICI</code> / <code>PTS_SMTP_PAROLA</code> /
+                <code>PTS_SMTP_GONDEREN</code>) ayarlı olmalı.</p>
+              <div class="d-flex gap-2"><input type="date" class="form-control form-control-sm w-auto" id="gunlukRaporGun" aria-label="Rapor günü">
+                <button class="btn btn-sm btn-outline-primary" onclick="gunlukRaporIndir('gunlukRaporGun')"><i class="bi bi-download"></i> PDF indir</button></div>
             </div>
           </div>
         </div>

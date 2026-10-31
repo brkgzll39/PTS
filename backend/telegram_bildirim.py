@@ -148,3 +148,60 @@ def _http_hatasi_aciklamasi(exc: urllib.error.HTTPError) -> str:
         return govde.get("description") or str(exc)
     except Exception:
         return str(exc)
+
+
+# ------------------------------------------------------------------
+# 2026-10-31: iki yönlü kullanım (bkz. backend/telegram_sorgu.py) ve günlük PDF.
+# ------------------------------------------------------------------
+
+def _istek(yol: str, govde: bytes, icerik_turu: str, zaman_asimi: float = 15):
+    token = bot_token_al()
+    if not token:
+        raise RuntimeError("PTS_TELEGRAM_BOT_TOKEN ortam değişkeni ayarlanmamış")
+    req = urllib.request.Request(f"{TELEGRAM_API_KOKU}/bot{token}/{yol}", data=govde, method="POST",
+                                 headers={"Content-Type": icerik_turu, "User-Agent": "PTS/2.0"})
+    with urllib.request.urlopen(req, timeout=zaman_asimi) as yanit:
+        return json.loads(yanit.read().decode("utf-8") or "{}")
+
+
+def metin_gonder_sync(chat_id: str, metin: str) -> "tuple[bool, Optional[str]]":
+    """Hazır metni olduğu gibi gönderir (sorgu cevapları)."""
+    try:
+        _istek("sendMessage", json.dumps({"chat_id": str(chat_id), "text": metin[:4000]}, ensure_ascii=False).encode(),
+               "application/json")
+        return True, None
+    except urllib.error.HTTPError as exc:
+        return False, _http_hatasi_aciklamasi(exc)
+    except Exception as exc:
+        return False, _disaridan_baglanti_hatasi_aciklamasi(exc)
+
+
+def dosya_gonder_sync(chat_id: str, dosya_yolu: str, aciklama: str = "") -> "tuple[bool, Optional[str]]":
+    """Dosyayı (günlük PDF) belge olarak gönderir (multipart/form-data)."""
+    import uuid
+    sinir = uuid.uuid4().hex
+    with open(dosya_yolu, "rb") as f:
+        icerik = f.read()
+    ad = os.path.basename(dosya_yolu)
+    parcalar = []
+    for alan, deger in (("chat_id", str(chat_id)), ("caption", aciklama[:1000])):
+        parcalar.append(f'--{sinir}\r\nContent-Disposition: form-data; name="{alan}"\r\n\r\n{deger}\r\n'.encode("utf-8"))
+    parcalar.append(f'--{sinir}\r\nContent-Disposition: form-data; name="document"; filename="{ad}"\r\n'
+                    f'Content-Type: application/pdf\r\n\r\n'.encode("utf-8") + icerik + b"\r\n")
+    parcalar.append(f"--{sinir}--\r\n".encode())
+    try:
+        _istek("sendDocument", b"".join(parcalar), f"multipart/form-data; boundary={sinir}", zaman_asimi=60)
+        return True, None
+    except urllib.error.HTTPError as exc:
+        return False, _http_hatasi_aciklamasi(exc)
+    except Exception as exc:
+        return False, _disaridan_baglanti_hatasi_aciklamasi(exc)
+
+
+def guncellemeleri_al(offset: Optional[int], bekleme_sn: int = 25) -> list:
+    """Bota gelen yeni mesajlar (uzun yoklama, getUpdates). Hata durumunda istisna fırlatır."""
+    govde = {"timeout": bekleme_sn, "allowed_updates": ["message"]}
+    if offset is not None:
+        govde["offset"] = offset
+    cevap = _istek("getUpdates", json.dumps(govde).encode(), "application/json", zaman_asimi=bekleme_sn + 10)
+    return cevap.get("result") or []

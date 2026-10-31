@@ -17,6 +17,7 @@ Tarayıcıda açın: http://localhost:8000
 """
 import os
 import re
+import glob
 import hashlib
 import hmac
 import json
@@ -286,6 +287,14 @@ _VARSAYILAN_AYARLAR = {
     # KLON PLAKA (2026-10-30) -- bkz. _klon_plaka_suphesi. Aynı plaka bu kadar
     # dakika içinde iki AYRI nizamiyeden aynı yönde geçerse alarm. 0 = kapalı.
     "klon_sure_dk": 10,
+    # GECE MUTABAKATI (2026-10-31): her gün bu saatte kameraların dünkü kendi
+    # kayıtları PTS ile karşılaştırılır, kaçırılan geçişler eklenir ("" = kapalı).
+    "gece_mutabakati_saat": "03:30",
+    # SESSİZ KAMERA (2026-10-31): normalde trafik olan saatlerde bu kadar dakika
+    # hiç plaka okumayan kamera için alarm (0 = kapalı).
+    "sessiz_kamera_dk": 60,
+    # TELEGRAM SORGU (2026-10-31): kayıtlı Telegram sohbetlerinden plaka/özet sorgusu.
+    "telegram_sorgu_aktif": False,
     # RESMİ ARAÇ (2026-10-30) -- bkz. _resmi_arac_kontrol. Mesai saatleri ve
     # görev emrinin başına/sonuna tanınan pay (erken çıkış / geç dönüş).
     "resmi_mesai_baslangic": "08:00",
@@ -6027,7 +6036,7 @@ def _webhook_gonder_sync(url: str, metot: str, veri: dict) -> "tuple[bool, Optio
         return False, aciklama
 
 
-_BILDIRIM_TIPLERI = ("webhook", "telegram", "push")
+_BILDIRIM_TIPLERI = ("webhook", "telegram", "push", "email")
 
 
 def _bildirim_gonder_sync(tip: str, hedef: str, http_metot: str, veri: dict) -> "tuple[bool, Optional[str]]":
@@ -6050,12 +6059,23 @@ def _bildirim_gonder_sync(tip: str, hedef: str, http_metot: str, veri: dict) -> 
     değil, hangi role gönderileceğini belirten bir FİLTRE metnidir
     ("yonetici" | "izleyici" | "operatör" | "güvenlik" | "hepsi") -- bkz.
     expo_push.py'nin başındaki mimari not."""
+    pdf_yolu = veri.get("pdf_yolu")  # günlük yönetici raporu (bkz. _gunluk_ozet_gonder)
+    if pdf_yolu:
+        veri = {k: v for k, v in veri.items() if k != "pdf_yolu"}  # sunucu dosya yolu dışarı gitmesin
     if tip == "webhook":
         return _webhook_gonder_sync(hedef, http_metot, veri)
     if tip == "telegram":
-        return telegram_bildirim.telegram_gonder_sync(hedef, veri)
+        sonuc = telegram_bildirim.telegram_gonder_sync(hedef, veri)
+        if pdf_yolu and sonuc[0] and os.path.isfile(pdf_yolu):
+            return telegram_bildirim.dosya_gonder_sync(hedef, pdf_yolu, f"Günlük yönetici raporu {veri.get('tarih', '')}")
+        return sonuc
     if tip == "push":
         return expo_push.expo_push_gonder_sync(hedef, veri)
+    if tip == "email":  # 2026-10-31: bkz. backend/eposta.py
+        from backend import eposta
+        konu = f"PTS: {veri.get('olay') or veri.get('alarm_tipi') or 'Bildirim'}" + (f" {veri['tarih']}" if pdf_yolu and veri.get("tarih") else "")
+        return eposta.eposta_gonder_sync(hedef, konu, telegram_bildirim._mesaj_metni_olustur(veri),
+                                         ek_yolu=pdf_yolu if pdf_yolu and os.path.isfile(pdf_yolu) else None)
     return False, f"Desteklenmeyen bildirim tipi: '{tip}' (yalnızca {'/'.join(_BILDIRIM_TIPLERI)} desteklenir)"
 
 
@@ -6173,6 +6193,10 @@ def _gunluk_ozet_gonder() -> None:
     db = SessionLocal()
     try:
         veri = _gunluk_ozet_verisi_hesapla(db)
+        try:  # 2026-10-31: dünün yönetici raporu PDF'i (e-postaya ek, Telegram'a dosya)
+            veri["pdf_yolu"] = _gunluk_rapor_pdf(db, date.today() - timedelta(days=1))
+        except Exception:
+            logger.exception("Günlük yönetici raporu PDF'i oluşturulamadı (özet metni yine de gönderilecek)")
         _bildirim_tetikle(db, "gunluk_ozet", veri)
     finally:
         db.close()
@@ -9000,6 +9024,13 @@ def bildirim_ayari_ekle(istek: dict = Body(...), db: Session = Depends(get_db), 
             "Telegram bildirimi eklenemedi: sunucuda PTS_TELEGRAM_BOT_TOKEN ortam değişkeni ayarlanmamış "
             "(bkz. README.md'deki Telegram kurulum notu)",
         )
+    if tip == "email":
+        from backend import eposta
+        if not eposta.ADRES_DESENI.match(hedef):
+            raise HTTPException(400, f"Geçersiz e-posta adresi: {hedef}")
+        if not eposta.eposta_ayarli_mi():
+            raise HTTPException(400, "E-posta bildirimi eklenemedi: sunucuda PTS_SMTP_SUNUCU ortam değişkeni ayarlanmamış "
+                                     "(e-posta sunucusu; bkz. kılavuz)")
     # tip="push" için `hedef` bir adres değil bir ROL FİLTRESİ (bkz.
     # expo_push.py'nin başındaki mimari not) -- burada da erken, açık bir
     # hata ile yakalanır; aksi halde bir yazım hatası ("yönetci" gibi)
@@ -9497,6 +9528,9 @@ def _ayar_klasor_yolu_veya_bos_dogrula(v) -> str:
 _AYAR_DOGRULAYICILAR = {
     "supheli_esik": lambda v: _ayar_int_dogrula(v, 0, 1000),
     "klon_sure_dk": lambda v: _ayar_int_dogrula(v, 0, 720),
+    "gece_mutabakati_saat": lambda v: "" if not str(v or "").strip() else _ayar_saat_dogrula(v),
+    "sessiz_kamera_dk": lambda v: _ayar_int_dogrula(v, 0, 1440),
+    "telegram_sorgu_aktif": _ayar_bool_dogrula,
     "resmi_mesai_baslangic": lambda v: _ayar_saat_dogrula(v),
     "resmi_mesai_bitis": lambda v: _ayar_saat_dogrula(v),
     "resmi_mesai_gunleri": lambda v: _ayar_gunler_dogrula(v),
@@ -10425,11 +10459,40 @@ def _gecerli_tr_plaka(plaka: str) -> bool:
     return bool(_TR_PLAKA.match(_plaka_normalize(plaka)))
 
 
-def _sistemde_var_mi(db: Session, plaka: str, zaman: datetime) -> bool:
+def _tr_plaka_bicimle(plaka: str) -> str:
+    """"34MUT04" -> "34 MUT 04" (PTS'in kendi kayıtlarındaki biçim); TR plakası değilse olduğu gibi."""
+    m = re.match(r"^(\d{2})([A-Z]{1,3})(\d{2,5})$", _plaka_normalize(plaka))
+    return f"{m.group(1)} {m.group(2)} {m.group(3)}" if m and _gecerli_tr_plaka(plaka) else plaka
+
+
+_BENZER_OKUMA_SN = 30
+
+
+def _karakter_farki(a: str, b: str) -> int:
+    """İki plaka arasındaki düzenleme uzaklığı (Levenshtein)."""
+    onceki = list(range(len(b) + 1))
+    for i, ca in enumerate(a, 1):
+        simdiki = [i]
+        for j, cb in enumerate(b, 1):
+            simdiki.append(min(onceki[j] + 1, simdiki[j - 1] + 1, onceki[j - 1] + (ca != cb)))
+        onceki = simdiki
+    return onceki[-1]
+
+
+def _sistemde_var_mi(db: Session, plaka: str, zaman: datetime, kamera_ad: Optional[str] = None) -> bool:
+    """Aynı plaka ±2 dk içinde kayıtlıysa ya da AYNI kamerada ±30 sn içinde 1-2 karakter farklı
+    okunmuş bir plaka varsa (PTS ile kamera aynı aracı farklı okumuş) geçiş zaten vardır."""
     K = models.Kayit
-    return db.query(K.id).filter(_plaka_normalize_sql(K.plaka_no) == _plaka_normalize(plaka),
-                                 K.tarih_saat >= zaman - _AKTARIM_ESLESME,
-                                 K.tarih_saat <= zaman + _AKTARIM_ESLESME).first() is not None
+    if db.query(K.id).filter(_plaka_normalize_sql(K.plaka_no) == _plaka_normalize(plaka),
+                             K.tarih_saat >= zaman - _AKTARIM_ESLESME,
+                             K.tarih_saat <= zaman + _AKTARIM_ESLESME).first() is not None:
+        return True
+    if not kamera_ad:
+        return False
+    yakin = db.query(K.plaka_no).filter(K.kamera_id == kamera_ad, K.tarih_saat >= zaman - timedelta(seconds=_BENZER_OKUMA_SN),
+                                        K.tarih_saat <= zaman + timedelta(seconds=_BENZER_OKUMA_SN)).limit(20).all()
+    hedef = _plaka_normalize(plaka)
+    return any(_karakter_farki(_plaka_normalize(p), hedef) <= 2 for (p,) in yakin)
 
 
 def _sure_yazi(sn: float) -> str:
@@ -10521,7 +10584,8 @@ def _dahua_saat_farki(db: Session, kamera: dict, secim: str = "otomatik") -> tup
 
 
 def _gecmis_gecisleri_aktar(db: Session, kamera: dict, bas: datetime, bit: datetime,
-                            yalniz_onizle: bool = False, saat_secimi: str = "otomatik") -> dict:
+                            yalniz_onizle: bool = False, saat_secimi: str = "otomatik",
+                            neden: str = "sunucu kapalıyken") -> dict:
     """Kameranın hafızasındaki `bas`–`bit` geçişlerini alır; sistemde olmayanları ekler."""
     from backend import dahua_kayit
 
@@ -10544,11 +10608,11 @@ def _gecmis_gecisleri_aktar(db: Session, kamera: dict, bas: datetime, bit: datet
     K = models.Kayit
     onizleme = []
     for r in s["kayitlar"]:
-        plaka, zaman = r["plaka"], r["zaman"]
+        plaka, zaman = _tr_plaka_bicimle(r["plaka"]), r["zaman"]
         if zaman > datetime.now() + timedelta(minutes=1):
             continue
         gecerli = _gecerli_tr_plaka(plaka)
-        var = gecerli and _sistemde_var_mi(db, plaka, zaman)
+        var = gecerli and _sistemde_var_mi(db, plaka, zaman, kamera_ad)
         if yalniz_onizle:
             if len(onizleme) < 500:
                 onizleme.append({"plaka_no": plaka, "zaman": zaman.isoformat(), "zaten_var": var,
@@ -10584,12 +10648,12 @@ def _gecmis_gecisleri_aktar(db: Session, kamera: dict, bas: datetime, bit: datet
         if yetki == "kara_liste":
             sonuc["kara_liste"] += 1
             db.add(models.Alarm(kayit_id=kayit.id, plaka_no=plaka, alarm_tipi="kara_liste", tarih_saat=zaman,
-                                mesaj=f"KARA LİSTEDEKİ ARAÇ (sunucu kapalıyken): {plaka} {zaman:%d.%m %H:%M} {kamera_ad}"[:255]))
+                                mesaj=f"KARA LİSTEDEKİ ARAÇ ({neden}): {plaka} {zaman:%d.%m %H:%M} {kamera_ad}"[:255]))
         try:
             resmi = _resmi_arac_kontrol(db, kayit)
             if resmi:
                 db.add(models.Alarm(kayit_id=kayit.id, plaka_no=plaka, alarm_tipi="resmi_arac", tarih_saat=zaman,
-                                    mesaj=f"{resmi} (sunucu kapalıyken)"[:255]))
+                                    mesaj=f"{resmi} ({neden})"[:255]))
         except Exception as exc:
             logger.error("Aktarılan geçişte resmi araç kontrolü hatası: %s", exc)
         sonuc["aktarilan"] += 1
@@ -10678,6 +10742,14 @@ async def _nabiz_dongu() -> None:
 
 
 @app.on_event("startup")
+async def _gece_isleri_baslangic():
+    """Gece mutabakatı, sessiz kamera kontrolü ve Telegram sorgu dinleyicisi (2026-10-31)."""
+    asyncio.ensure_future(_mutabakat_dongu())
+    asyncio.ensure_future(_sessiz_kamera_dongu())
+    threading.Thread(target=_telegram_sorgu_dongu, name="telegram-sorgu", daemon=True).start()
+
+
+@app.on_event("startup")
 async def _sunucu_kesintisi_baslangic():
     onceki = _nabiz_oku()
     simdi = datetime.now()
@@ -10737,6 +10809,469 @@ async def kamera_dahua_gecmis(kamera_id: str, istek: schemas.DahuaGecmisIstek, d
         _denetim_kaydet(db, kullanici.kullanici_adi, "kamera_gecmis_aktar",
                         f"{kamera.get('ad')} {bas:%d.%m.%Y %H:%M}-{bit:%d.%m.%Y %H:%M}: {sonuc['aktarilan']} geçiş aktarıldı")
     return sonuc
+
+
+# ==================================================================
+# GECE MUTABAKATI (2026-10-31, kullanıcı isteği). Her gün `gece_mutabakati_saat`te
+# (varsayılan 03:30) Dahua okuması açık her kameranın DÜNKÜ kendi plaka kayıtları
+# PTS'in kayıtlarıyla karşılaştırılır: PTS'in kaçırdığı geçişler kameradan eklenir
+# (bkz. _gecmis_gecisleri_aktar) ve kamera başına "PTS kameranın gördüklerinin %
+# kaçını yakaladı" oranı kaydedilir (Kameralar ekranı + günlük yönetici raporu).
+# ==================================================================
+_MUTABAKAT_NEDENI = "PTS kaçırmıştı, kameradan eklendi"
+_son_mutabakat_gunu = None
+
+
+def _mutabakat_calistir(gun: date, kameralar: Optional[list] = None) -> list:
+    """`gun`ün (00:00–23:59) mutabakatını yapar; kamera başına bir satır yazar (aynı gün yeniden
+    çalıştırılırsa o kameranın eski satırı silinir)."""
+    db = SessionLocal()
+    sonuclar = []
+    try:
+        bas = datetime.combine(gun, datetime.min.time())
+        bit = bas + timedelta(days=1) - timedelta(seconds=1)
+        for kamera in (kameralar if kameralar is not None else _dahua_kayitli_kameralar()):
+            ad = _kamera_adini_kayit_icin_temizle(kamera.get("ad"))
+            try:
+                s = _gecmis_gecisleri_aktar(db, kamera, bas, bit, neden=_MUTABAKAT_NEDENI)
+            except Exception as exc:
+                db.rollback()
+                logger.exception("[%s] Gece mutabakatı başarısız", ad)
+                s = {"basarili": False, "hata": f"Beklenmeyen hata: {exc}", "aktarilan": 0, "zaten_vardi": 0, "eksik_okuma": 0}
+            M = models.KameraMutabakati
+            db.query(M).filter(M.gun == gun, M.kamera_ad == ad).delete()
+            m = M(gun=gun, kamera_ad=ad, kamera_gecis=s["aktarilan"] + s["zaten_vardi"], pts_yakalanan=s["zaten_vardi"],
+                  eklenen=s["aktarilan"], eksik_okuma=s.get("eksik_okuma", 0), hata=None if s["basarili"] else s["hata"])
+            db.add(m)
+            db.commit()
+            sonuclar.append(_mutabakat_cevap(m))
+            logger.info("[%s] Gece mutabakatı %s: kamera %d, PTS %d, eklenen %d%s", ad, gun, m.kamera_gecis,
+                        m.pts_yakalanan, m.eklenen, f" (hata: {m.hata})" if m.hata else "")
+        return sonuclar
+    finally:
+        db.close()
+
+
+def _mutabakat_cevap(m: models.KameraMutabakati) -> dict:
+    oran = round(100.0 * m.pts_yakalanan / m.kamera_gecis, 1) if m.kamera_gecis else None
+    return {"id": m.id, "gun": m.gun.isoformat(), "kamera": m.kamera_ad, "kamera_gecis": m.kamera_gecis,
+            "pts_yakalanan": m.pts_yakalanan, "eklenen": m.eklenen, "eksik_okuma": m.eksik_okuma, "oran": oran,
+            "hata": m.hata}
+
+
+def _mutabakat_bir_kontrol(simdi: datetime) -> bool:
+    """Ayarlı saat geçildiyse ve bugün yapılmadıysa dünün mutabakatını yapar (sunucu geç açılsa da yakalar)."""
+    global _son_mutabakat_gunu
+    saat = str(_sistem_ayarlari_oku().get("gece_mutabakati_saat") or "").strip()
+    if not saat or simdi.strftime("%H:%M") < saat or _son_mutabakat_gunu == simdi.date():
+        return False
+    _son_mutabakat_gunu = simdi.date()
+    dun = simdi.date() - timedelta(days=1)
+    kameralar = _dahua_kayitli_kameralar()
+    if not kameralar:
+        return False
+    db = SessionLocal()
+    try:
+        yapilan = {a for (a,) in db.query(models.KameraMutabakati.kamera_ad).filter(models.KameraMutabakati.gun == dun)}
+    finally:
+        db.close()
+    kalan = [k for k in kameralar if _kamera_adini_kayit_icin_temizle(k.get("ad")) not in yapilan]
+    if kalan:
+        _mutabakat_calistir(dun, kalan)
+    return True
+
+
+async def _mutabakat_dongu() -> None:
+    while True:
+        try:
+            await asyncio.to_thread(_mutabakat_bir_kontrol, datetime.now())
+        except Exception:
+            logger.exception("[mutabakat] Döngüde beklenmeyen hata")
+        await asyncio.sleep(60)
+
+
+@app.get("/kamera-mutabakati")
+def kamera_mutabakati(gun: int = Query(14, ge=1, le=90), db: Session = Depends(get_db),
+                      kullanici: models.Kullanici = Depends(_personel_girisi_gerekli)):
+    _rol_dogrula(kullanici, ROL_YONETICI, ROL_OPERATOR, ROL_IZLEYICI)
+    M = models.KameraMutabakati
+    satirlar = (db.query(M).filter(M.gun >= date.today() - timedelta(days=gun))
+                .order_by(desc(M.gun), M.kamera_ad).all())
+    return [_mutabakat_cevap(m) for m in satirlar]
+
+
+@app.post("/kamera-mutabakati/calistir")
+def kamera_mutabakati_calistir(gun: Optional[date] = None, db: Session = Depends(get_db),
+                               kullanici: models.Kullanici = Depends(_personel_girisi_gerekli)):
+    """Bir günün mutabakatını hemen yapar (varsayılan dün); arka planda çalışır."""
+    _rol_dogrula(kullanici, ROL_YONETICI)
+    gun = gun or (date.today() - timedelta(days=1))
+    if gun >= date.today():
+        raise HTTPException(400, "Yalnızca bitmiş günler karşılaştırılabilir (dün ve öncesi)")
+    if not _dahua_kayitli_kameralar():
+        raise HTTPException(400, "Kameranın kendi plaka okuması (Dahua) açık kamera yok")
+    _denetim_kaydet(db, kullanici.kullanici_adi, "kamera_mutabakati", f"{gun:%d.%m.%Y} elle başlatıldı")
+    threading.Thread(target=_mutabakat_calistir, args=(gun,), daemon=True).start()
+    return {"basladi": True, "gun": gun.isoformat()}
+
+
+# ==================================================================
+# SESSİZ KAMERA ALARMI (2026-10-31, kullanıcı isteği; sahada .74 kamerası bağlıydı
+# ama 30 saattir plaka okumuyordu ve fark edilmemişti). Görüntüsü gelen (pipeline
+# çalışan) bir kamera `sessiz_kamera_dk` dakikadır hiç plaka kaydetmediyse VE son 14
+# günde aynı saatlerde bu kamerada ortalama en az 3 geçiş oluyorsa alarm + bildirim.
+# Gece/hafta sonu gibi zaten trafiğin olmadığı saatler bu yüzden alarm vermez.
+# Aynı sessizlik için bir kez uyarılır; kamera yeniden plaka okuyunca sıfırlanır.
+# ==================================================================
+_SESSIZ_KONTROL_SN = 300
+_SESSIZ_BEKLENEN_ESIK = 3
+
+
+def _sessiz_kamera_bir_kontrol(simdi: Optional[datetime] = None) -> list:
+    dk = int(_sistem_ayarlari_oku().get("sessiz_kamera_dk") or 0)
+    if dk <= 0:
+        return []
+    simdi = simdi or datetime.now()
+    K, A = models.Kayit, models.Alarm
+    uretilen = []
+    db = SessionLocal()
+    try:
+        for kam in _kameralari_oku():
+            if not kam.get("aktif", True):
+                continue
+            p = _aktif_pipelineler.get(kam.get("id"))
+            if p is None or not getattr(p, "calisiyor", False):
+                continue  # görüntü gelmiyorsa kamera arızası alarmı zaten verilir
+            ad = _kamera_adini_kayit_icin_temizle(kam.get("ad"))
+            son = db.query(func.max(K.tarih_saat)).filter(K.kamera_id == ad).scalar()
+            bas = simdi - timedelta(minutes=dk)
+            if son is not None and son >= bas:
+                continue
+            gecmis = sum(db.query(func.count(K.id)).filter(K.kamera_id == ad, K.tarih_saat >= bas - timedelta(days=g),
+                                                          K.tarih_saat < simdi - timedelta(days=g)).scalar() or 0
+                         for g in range(1, 15))
+            beklenen = gecmis / 14.0
+            if beklenen < _SESSIZ_BEKLENEN_ESIK:
+                continue
+            esik = son or (simdi - timedelta(days=1))
+            if db.query(A.id).filter(A.alarm_tipi == "sessiz_kamera", A.mesaj.like(f"%{ad}%"), A.tarih_saat >= esik).first():
+                continue
+            son_metin = f"son plaka {son:%d.%m %H:%M}" if son else "son 24 saatte hiç plaka yok"
+            mesaj = (f"SESSİZ KAMERA: {ad} {dk} dakikadır plaka okumuyor ({son_metin}); bu saatlerde normalde "
+                     f"~{round(beklenen)} geçiş olur. Kamerayı (lens, açı, ANPR ayarı) kontrol edin.")
+            db.add(A(plaka_no="-", alarm_tipi="sessiz_kamera", mesaj=mesaj[:255]))
+            db.commit()
+            logger.warning(mesaj)
+            _bildirim_tetikle(db, "sessiz_kamera", {"olay": "sessiz_kamera", "alarm_tipi": "sessiz_kamera",
+                                                    "kamera_ad": ad, "mesaj": mesaj})
+            uretilen.append(ad)
+        return uretilen
+    finally:
+        db.close()
+
+
+async def _sessiz_kamera_dongu() -> None:
+    while True:
+        await asyncio.sleep(_SESSIZ_KONTROL_SN)
+        try:
+            await asyncio.to_thread(_sessiz_kamera_bir_kontrol)
+        except Exception:
+            logger.exception("[sessiz-kamera] Döngüde beklenmeyen hata")
+
+
+# ==================================================================
+# SIK GELEN TANIMSIZ ARAÇLAR (2026-10-31): son `gun` günde en az `en_az_gun` farklı
+# günde gelen ama kişi olarak tanımlı olmayan araçlar. Görevli "Tanımla" ile kişi
+# formunu doldurur ya da "Gösterme" der (KisiOnerisiYoksay).
+# ==================================================================
+@app.get("/kisi-onerileri")
+def kisi_onerileri(gun: int = Query(30, ge=7, le=180), en_az_gun: int = Query(5, ge=2, le=60),
+                   db: Session = Depends(get_db), kullanici: models.Kullanici = Depends(_personel_girisi_gerekli)):
+    _rol_dogrula(kullanici, ROL_YONETICI, ROL_OPERATOR, ROL_GUVENLIK)
+    from collections import Counter
+    K = models.Kayit
+    satirlar = (db.query(K.plaka_no, K.tarih_saat, K.yon, K.not_metni, K.misafir_adi, K.kamera_id)
+                .filter(K.tarih_saat >= datetime.now() - timedelta(days=gun), K.kisi_id == None,  # noqa: E711
+                        K.yetki_durumu.in_(("yetkisiz", "ziyaretci_onayli", "suresi_dolmus", "bilinmiyor")))
+                .all())
+    haric = {_plaka_normalize(p) for (p,) in db.query(models.Kisi.plaka_no).filter(models.Kisi.aktif == True)}  # noqa: E712
+    haric |= {_plaka_normalize(p) for (p,) in db.query(models.KisiPlaka.plaka_no).filter(models.KisiPlaka.aktif == True)}  # noqa: E712
+    haric |= {_plaka_normalize(p) for (p,) in db.query(models.KaraListesi.plaka_no)}
+    haric |= {_plaka_normalize(p) for (p,) in db.query(models.KisiOnerisiYoksay.plaka_no)}
+    gruplar = {}
+    for plaka, zaman, yon, not_metni, misafir, kamera in satirlar:
+        anahtar = _plaka_normalize(plaka)
+        if anahtar in haric or not _gecerli_tr_plaka(plaka):
+            continue
+        g = gruplar.setdefault(anahtar, {"plakalar": Counter(), "gunler": set(), "giris": 0, "son": zaman,
+                                         "notlar": Counter(), "misafir": Counter(), "kamera": Counter()})
+        g["plakalar"][plaka] += 1
+        g["gunler"].add(zaman.date())
+        g["giris"] += 1 if yon == "giris" else 0
+        g["son"] = max(g["son"], zaman)
+        if not_metni:
+            g["notlar"][not_metni.strip()] += 1
+        if misafir:
+            g["misafir"][misafir.strip()] += 1
+        g["kamera"][kamera] += 1
+    sonuc = []
+    for g in gruplar.values():
+        if len(g["gunler"]) < en_az_gun:
+            continue
+        sonuc.append({
+            "plaka_no": g["plakalar"].most_common(1)[0][0], "gun_sayisi": len(g["gunler"]), "giris_sayisi": g["giris"],
+            "son_gecis": g["son"].isoformat(),
+            "en_sik_not": g["notlar"].most_common(1)[0][0] if g["notlar"] else None,
+            "misafir_adi": g["misafir"].most_common(1)[0][0] if g["misafir"] else None,
+            "kamera": g["kamera"].most_common(1)[0][0],
+        })
+    sonuc.sort(key=lambda x: (-x["gun_sayisi"], -x["giris_sayisi"]))
+    return sonuc[:50]
+
+
+@app.post("/kisi-onerileri/yoksay")
+def kisi_onerisi_yoksay(istek: dict = Body(...), db: Session = Depends(get_db),
+                        kullanici: models.Kullanici = Depends(_personel_girisi_gerekli)):
+    _rol_dogrula(kullanici, ROL_YONETICI, ROL_OPERATOR, ROL_GUVENLIK)
+    plaka = re.sub(r"[^A-Za-z0-9 ]", "", str(istek.get("plaka_no", ""))).strip().upper()[:15]
+    if not plaka:
+        raise HTTPException(400, "Plaka gerekli")
+    Y = models.KisiOnerisiYoksay
+    if not db.query(Y.id).filter(_plaka_normalize_sql(Y.plaka_no) == _plaka_normalize(plaka)).first():
+        db.add(Y(plaka_no=plaka, ekleyen=kullanici.kullanici_adi))
+        db.commit()
+    return {"ok": True}
+
+
+# ==================================================================
+# TELEGRAM'DAN SORU SORMA (2026-10-31) -- bkz. backend/telegram_sorgu.py. Yalnız
+# Bildirim ayarlarında tip="telegram" kayıtlı sohbetlere cevap verilir; her sorgu
+# denetim kaydına yazılır. Açma/kapama: sistem ayarı `telegram_sorgu_aktif`.
+# ==================================================================
+_TELEGRAM_ESKI_MESAJ_SN = 300  # sunucu kapalıyken birikmiş eski sorular cevaplanmaz
+
+
+def _telegram_izinli_sohbetler(db: Session) -> set:
+    B = models.BildirimAyarlari
+    return {str(h).strip() for (h,) in db.query(B.hedef).filter(B.tip == "telegram", B.aktif == True)}  # noqa: E712
+
+
+def _tr_saat(z: Optional[datetime]) -> str:
+    return z.strftime("%d.%m %H:%M") if z else "-"
+
+
+def _telegram_plaka_cevabi(db: Session, aranan: str) -> str:
+    K = models.Kayit
+    simdi = datetime.now()
+    son = (db.query(K).filter(_plaka_normalize_sql(K.plaka_no) == aranan, K.tarih_saat >= simdi - timedelta(days=60))
+           .order_by(desc(K.tarih_saat), desc(K.id)).limit(5).all())
+    if not son:
+        benzer = sorted({p for (p,) in db.query(K.plaka_no).filter(
+            _plaka_normalize_sql(K.plaka_no).like(f"%{aranan}%"), K.tarih_saat >= simdi - timedelta(days=30)).limit(200)})
+        if not benzer:
+            return f"{aranan}: son 60 günde geçiş yok."
+        return "Tam eşleşme yok. Benzer plakalar (son 30 gün):\n" + "\n".join(f"• {p}" for p in benzer[:8])
+    plaka = son[0].plaka_no
+    yetki, kisi_id, kisi_tip = _plaka_yetki_kontrol(db, plaka)
+    satirlar = [f"🚗 {plaka}"]
+    if yetki == "kara_liste":
+        satirlar.append("⛔ KARA LİSTEDE")
+    kisi = db.get(models.Kisi, kisi_id) if kisi_id else None
+    if kisi:
+        satirlar.append(f"Kişi: {kisi.ad_soyad} ({kisi.tip}{', ' + kisi.daire_departman if kisi.daire_departman else ''})")
+    elif yetki != "kara_liste":
+        satirlar.append("Tanımlı değil (ziyaretçi)")
+    ilk = son[0]
+    if ilk.yon == "giris" and ilk.elle_cikis_zamani is None:
+        satirlar.append(f"📍 İÇERİDE — {_tr_saat(ilk.tarih_saat)}'den beri ({ilk.kamera_id})")
+    else:
+        satirlar.append(f"📍 Dışarıda — son çıkış {_tr_saat(ilk.elle_cikis_zamani or ilk.tarih_saat)}")
+    if ilk.not_metni:
+        satirlar.append(f"Not: {ilk.not_metni}")
+    satirlar.append("Son geçişler:")
+    satirlar += [f"• {_tr_saat(k.tarih_saat)} {'Giriş' if k.yon == 'giris' else 'Çıkış'} · {k.kamera_id}" for k in son]
+    return "\n".join(satirlar)
+
+
+def _telegram_sorgu_cevabi(db: Session, komut: str, arg) -> str:
+    from backend import telegram_sorgu
+    simdi = datetime.now()
+    if komut == "yardim":
+        return telegram_sorgu.YARDIM
+    if komut == "plaka":
+        return _telegram_plaka_cevabi(db, arg)
+    if komut == "iceride":
+        iceride, onaysiz, _ = _iceride_durumu_hesapla(db, simdi)
+        ziyaretciler = [k for k in iceride if k.yetki_durumu != "yetkili"]
+        satirlar = [f"İçeride {len(iceride)} araç; {len(ziyaretciler)} ziyaretçi, {len(onaysiz)} onaysız giriş."]
+        for k in sorted(ziyaretciler, key=lambda x: x.tarih_saat)[:10]:
+            satirlar.append(f"• {k.plaka_no} — {_tr_saat(k.tarih_saat)}'den beri{' · ' + k.not_metni if k.not_metni else ''}")
+        return "\n".join(satirlar)
+    if komut == "ozet":
+        bugun = simdi.replace(hour=0, minute=0, second=0, microsecond=0)
+        K = models.Kayit
+        kayitlar = db.query(K.yon, K.yetki_durumu, K.plaka_no).filter(K.tarih_saat >= bugun).all()
+        okunmamis = db.query(func.count(models.Alarm.id)).filter(models.Alarm.okundu == False,  # noqa: E712
+                                                                 models.Alarm.tarih_saat >= bugun).scalar() or 0
+        iceride, _, _ = _iceride_durumu_hesapla(db, simdi)
+        return (f"Bugün ({simdi:%d.%m %H:%M}):\n"
+                f"Giriş: {sum(1 for k in kayitlar if k.yon == 'giris')} · Çıkış: {sum(1 for k in kayitlar if k.yon == 'cikis')}\n"
+                f"Farklı araç: {len({_plaka_normalize(k.plaka_no) for k in kayitlar})}\n"
+                f"Ziyaretçi girişi: {sum(1 for k in kayitlar if k.yon == 'giris' and k.yetki_durumu in ('yetkisiz', 'ziyaretci_onayli'))}\n"
+                f"Kara liste: {sum(1 for k in kayitlar if k.yetki_durumu == 'kara_liste')}\n"
+                f"Şu an içeride: {len(iceride)} · Okunmamış alarm: {okunmamis}")
+    if komut == "alarmlar":
+        A = models.Alarm
+        alarmlar = db.query(A).filter(A.okundu == False).order_by(desc(A.tarih_saat)).limit(8).all()  # noqa: E712
+        if not alarmlar:
+            return "Okunmamış alarm yok."
+        return "Okunmamış son alarmlar:\n" + "\n".join(f"• {_tr_saat(a.tarih_saat)} {a.mesaj}" for a in alarmlar)
+    return "Anlayamadım. " + telegram_sorgu.YARDIM
+
+
+def _telegram_mesaji_isle(db: Session, mesaj: dict) -> Optional[tuple]:
+    """Gelen mesaja (chat_id, cevap) ya da cevap verilmeyecekse None."""
+    from backend import telegram_sorgu
+    metin = (mesaj or {}).get("text") or ""
+    chat_id = str(((mesaj or {}).get("chat") or {}).get("id") or "")
+    if not metin or not chat_id:
+        return None
+    if time.time() - float(mesaj.get("date") or 0) > _TELEGRAM_ESKI_MESAJ_SN:
+        return None
+    if chat_id not in _telegram_izinli_sohbetler(db):
+        return chat_id, (f"Bu sohbet PTS'te yetkili değil. Yöneticiniz Bildirimler ekranında bu sohbet numarasıyla "
+                         f"Telegram bildirimi tanımlarsa sorgu yapabilirsiniz: {chat_id}")
+    komut, arg = telegram_sorgu.komut_coz(metin)
+    cevap = _telegram_sorgu_cevabi(db, komut, arg)
+    _denetim_kaydet(db, f"telegram:{chat_id}", "telegram_sorgu", metin[:100])
+    return chat_id, cevap
+
+
+def _telegram_sorgu_dongu() -> None:
+    """Arka plan iş parçacığı: getUpdates uzun yoklaması (bkz. telegram_sorgu modül notu)."""
+    offset = None
+    while True:
+        if (not _sistem_ayarlari_oku().get("telegram_sorgu_aktif") or not telegram_bildirim.telegram_ayarli_mi()
+                or not _modul_acik_mi("bildirim")):
+            offset = None
+            time.sleep(30)
+            continue
+        try:
+            guncellemeler = telegram_bildirim.guncellemeleri_al(offset, 25)
+        except Exception as exc:
+            logger.info("Telegram sorgu: mesajlar alınamadı (%s); 30 sn sonra yeniden denenecek", exc)
+            time.sleep(30)
+            continue
+        for g in guncellemeler:
+            offset = int(g.get("update_id", 0)) + 1
+            db = SessionLocal()
+            try:
+                sonuc = _telegram_mesaji_isle(db, g.get("message"))
+            except Exception:
+                logger.exception("Telegram sorgusu işlenemedi")
+                sonuc = None
+            finally:
+                db.close()
+            if sonuc:
+                telegram_bildirim.metin_gonder_sync(*sonuc)
+
+
+# ==================================================================
+# GÜNLÜK YÖNETİCİ RAPORU (2026-10-31): dünün PDF raporu (backend/gunluk_rapor.py).
+# Her sabahki "Günlük özet" bildirimiyle birlikte gider: e-posta alıcılarına ek
+# olarak, Telegram sohbetlerine dosya olarak. Panelden istenen günün PDF'i indirilir.
+# ==================================================================
+_GUNLUK_RAPOR_KLASORU = os.path.join(os.path.dirname(SISTEM_AYARLARI_DOSYASI), "gunluk_raporlar")
+_GUNLUK_RAPOR_SAKLAMA_GUN = 90
+_ALARM_ADLARI = {
+    "yetkisiz_arac": "Yetkisiz araç", "kara_liste": "Kara liste geçişi", "suresi_dolmus": "Süresi dolmuş",
+    "supheli_arac": "Şüpheli araç", "klon_plaka": "Klon plaka şüphesi", "resmi_arac": "Resmi araç",
+    "sunucu_kesintisi": "Sunucu kapalı kaldı", "sessiz_kamera": "Sessiz kamera", "kamera_arizasi": "Kamera arızası",
+    "bariyer_hatasi": "Bariyer hatası", "disk_hatasi": "Disk hatası",
+}
+
+
+def _gunluk_rapor_verisi(db: Session, gun: date) -> dict:
+    from collections import Counter
+    bas = datetime.combine(gun, datetime.min.time())
+    bit = bas + timedelta(days=1)
+    K, A = models.Kayit, models.Alarm
+    kayitlar = db.query(K).filter(K.tarih_saat >= bas, K.tarih_saat < bit).order_by(K.tarih_saat).all()
+    girisler = [k for k in kayitlar if k.yon == "giris"]
+    alarmlar = db.query(A).filter(A.tarih_saat >= bas, A.tarih_saat < bit).all()
+
+    def tur(k):
+        if k.yetki_durumu == "yetkili":
+            return {"vip": "VIP", "alt_isveren": "Alt işveren"}.get(k.kisi_tip_anlik, "Personel")
+        return {"ziyaretci_onayli": "Ziyaretçi (onaylı)", "yetkisiz": "Ziyaretçi (onaysız)", "kara_liste": "Kara liste",
+                "suresi_dolmus": "Süresi dolmuş"}.get(k.yetki_durumu, "Diğer")
+
+    saatlik = [0] * 24
+    for k in kayitlar:
+        saatlik[k.tarih_saat.hour] += 1
+    onaysiz = [k for k in girisler if k.yetki_durumu == "yetkisiz"]
+    veri = {
+        "tarih": gun.strftime("%d.%m.%Y"),
+        "kurum": marka.oku().get("kurum_adi"),
+        "ozet": [("Giriş", len(girisler)), ("Çıkış", len(kayitlar) - len(girisler)),
+                 ("Farklı araç", len({_plaka_normalize(k.plaka_no) for k in kayitlar})),
+                 ("Ziyaretçi girişi", sum(1 for k in girisler if k.yetki_durumu in ("yetkisiz", "ziyaretci_onayli"))),
+                 ("Alarm", len(alarmlar))],
+        "saatlik": saatlik,
+        "turler": Counter(tur(k) for k in kayitlar).most_common(),
+        "alarmlar": [(_ALARM_ADLARI.get(t, t), n) for t, n in Counter(a.alarm_tipi for a in alarmlar).most_common()],
+        "kara_liste": [(f"{k.tarih_saat:%H:%M}", k.plaka_no, k.kamera_id or "") for k in kayitlar if k.yetki_durumu == "kara_liste"],
+        "onaysiz": [(f"{k.tarih_saat:%H:%M}", k.plaka_no, k.kamera_id or "", (k.not_metni or "")[:60]) for k in onaysiz[:25]],
+        "onaysiz_fazla": max(0, len(onaysiz) - 25),
+        "resmi": None,
+        "mutabakat": [],
+        "kesintiler": [],
+        "sessiz": [(f"{a.tarih_saat:%H:%M}", a.mesaj) for a in alarmlar if a.alarm_tipi == "sessiz_kamera"],
+    }
+    if _modul_acik_mi("resmi_arac"):
+        satirlar = [s for s in _resmi_arac_raporu(db, gun.year, gun.month)["satirlar"]
+                    if s["cikis"][:10] == gun.isoformat()]
+        if satirlar:
+            gorevsiz = [s for s in satirlar if not s["gorev_emri_id"]]
+            veri["resmi"] = {"cikis": len(satirlar), "gorevli": len(satirlar) - len(gorevsiz), "gorevsiz": len(gorevsiz),
+                             "gec": sum(1 for s in satirlar if s["gec_donus"]),
+                             "gorevsiz_liste": [(s["cikis"][11:16], s["plaka_no"], s["ad"]) for s in gorevsiz[:15]]}
+    for m in db.query(models.KameraMutabakati).filter(models.KameraMutabakati.gun == gun).order_by(models.KameraMutabakati.kamera_ad):
+        c = _mutabakat_cevap(m)
+        veri["mutabakat"].append((c["kamera"], str(c["kamera_gecis"]), str(c["pts_yakalanan"]),
+                                  f"%{c['oran']:.1f}" if c["oran"] is not None else (c["hata"] or "-")[:40], str(c["eklenen"])))
+    S = models.SunucuKesintisi
+    for k in db.query(S).filter(S.baslangic < bit, S.bitis >= bas).order_by(S.baslangic):
+        veri["kesintiler"].append((f"{k.baslangic:%H:%M}", f"Sunucu kapalı kaldı: {k.baslangic:%d.%m %H:%M} – {k.bitis:%d.%m %H:%M} "
+                                                          f"({_sure_metni(k.bitis - k.baslangic)}); kameradan {k.aktarilan or 0} geçiş aktarıldı"))
+    return veri
+
+
+def _gunluk_rapor_pdf(db: Session, gun: date, dosya_yolu: Optional[str] = None) -> str:
+    from backend import gunluk_rapor
+    if dosya_yolu is None:
+        os.makedirs(_GUNLUK_RAPOR_KLASORU, exist_ok=True)
+        dosya_yolu = os.path.join(_GUNLUK_RAPOR_KLASORU, f"gunluk_rapor_{gun.isoformat()}.pdf")
+        sinir = datetime.now() - timedelta(days=_GUNLUK_RAPOR_SAKLAMA_GUN)
+        for eski in glob.glob(os.path.join(_GUNLUK_RAPOR_KLASORU, "gunluk_rapor_*.pdf")):
+            try:
+                if datetime.fromtimestamp(os.path.getmtime(eski)) < sinir:
+                    os.remove(eski)
+            except OSError:
+                pass
+    return gunluk_rapor.rapor_olustur(_gunluk_rapor_verisi(db, gun), dosya_yolu)
+
+
+@app.get("/raporlar/gunluk.pdf")
+def gunluk_rapor_indir(gun: Optional[date] = None, db: Session = Depends(get_db),
+                       kullanici: models.Kullanici = Depends(_personel_girisi_gerekli)):
+    _rol_dogrula(kullanici, ROL_YONETICI, ROL_OPERATOR, ROL_IZLEYICI)
+    gun = gun or (date.today() - timedelta(days=1))
+    if gun > date.today():
+        raise HTTPException(400, "Gelecek bir gün için rapor olmaz")
+    dosya = _gecici_rapor_yolu(f"gunluk_rapor_{gun.isoformat()}", "pdf")
+    _gunluk_rapor_pdf(db, gun, dosya)
+    return _indirip_sil(dosya, f"gunluk_rapor_{gun.isoformat()}.pdf", "application/pdf")
 
 
 # ==================================================================

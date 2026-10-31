@@ -6166,14 +6166,14 @@ def _bildirim_ayari_sil(client, yetkili_header, ayar_id: int) -> None:
 
 
 def test_bildirim_ayari_desteklenmeyen_tip_400_doner(client, yetkili_header):
-    """Kök neden regresyonu: `tip="email"` (şemada belgelenen ama hiçbir
-    zaman uygulanmamış bir değer) artık ayar OLUŞTURULURKEN açıkça
-    reddedilir -- önceden sessizce kabul edilip hiç çalışmıyordu."""
+    """Kök neden regresyonu: desteklenmeyen tip ayar OLUŞTURULURKEN açıkça reddedilir.
+    "email" 2026-10-31'de eklendi (backend/eposta.py): e-posta sunucusu ayarlı değilse
+    yine sessizce kabul edilmez, nedeni söylenir."""
     r = client.post("/bildirim/ayarlar", json={
         "ad": "X", "hedef": "test@example.com", "tip": "email",
     }, headers=yetkili_header)
     assert r.status_code == 400, r.text
-    assert "email" in r.json()["detail"]
+    assert "PTS_SMTP_SUNUCU" in r.json()["detail"]
 
     r2 = client.post("/bildirim/ayarlar", json={
         "ad": "X", "hedef": "https://example.com", "tip": "webbhook",
@@ -8892,3 +8892,157 @@ def test_tr_plaka_bicimi():
         assert pts_main._gecerli_tr_plaka(p), p
     for p in ("72AB", "EAJ910", "394208", "9AAE958", "45FR", "ACY6", "06285", "39XXC"):
         assert not pts_main._gecerli_tr_plaka(p), p
+
+
+# ---------------- Gece mutabakatı, sessiz kamera, öneriler, Telegram sorgu, günlük rapor (2026-10-31) ----------------
+
+def test_gece_mutabakati_eksikleri_ekler_ve_oran_kaydeder(client, yetkili_header, dahua_kamera, monkeypatch):
+    kamera, simdi = dahua_kamera
+    dun = (datetime.now() - timedelta(days=1)).date()
+    z = lambda saat, dk=0: datetime.combine(dun, datetime.min.time()) + timedelta(hours=saat, minutes=dk)
+    # PTS'te olan iki geçiş; biri PTS'te 1 karakter farklı okunmuş
+    for plaka, an in (("34 MUT 01", z(9)), ("34 MUT 02", z(10)), ("34 MUT O3", z(11))):
+        _kayit_ekle_db(plaka, "giris", kamera="Kesinti Nizamiye Giriş", once=datetime.now() - an)
+    kayitlar = [{"plaka": "34MUT01", "zaman": z(9), "dosya": None},
+                {"plaka": "34MUT02", "zaman": z(10, 1), "dosya": None},
+                {"plaka": "34MUT03", "zaman": z(11), "dosya": None},   # PTS "34 MUT O3" okumuş: aynı geçiş
+                {"plaka": "34MUT04", "zaman": z(12), "dosya": None},   # PTS kaçırmış
+                {"plaka": "34MU", "zaman": z(13), "dosya": None}]      # yarım okuma
+    monkeypatch.setattr("backend.dahua_kayit.kayitlari_getir",
+                        lambda *a, **k: {"basarili": True, "yontem": "recordFinder", "kayitlar": kayitlar, "ham": [], "hata": None})
+    sonuc = pts_main._mutabakat_calistir(dun, [next(k for k in pts_main._kameralari_oku() if k["id"] == "kesinti-kam")])
+    m = sonuc[0]
+    assert (m["kamera_gecis"], m["pts_yakalanan"], m["eklenen"], m["eksik_okuma"]) == (4, 3, 1, 1) and m["oran"] == 75.0
+    eklenen = client.get("/kayitlar?plaka=34 MUT 04", headers=yetkili_header).json()[0]
+    assert eklenen["sonradan_aktarildi"] is True
+    liste = client.get("/kamera-mutabakati", headers=yetkili_header).json()
+    assert any(x["kamera"] == "Kesinti Nizamiye Giriş" and x["gun"] == dun.isoformat() for x in liste)
+    # Aynı gün yeniden: satır yenilenir, ikinci kez eklenmez
+    m2 = pts_main._mutabakat_calistir(dun, [next(k for k in pts_main._kameralari_oku() if k["id"] == "kesinti-kam")])[0]
+    assert (m2["pts_yakalanan"], m2["eklenen"]) == (4, 0)
+    assert sum(1 for x in client.get("/kamera-mutabakati", headers=yetkili_header).json()
+               if x["kamera"] == "Kesinti Nizamiye Giriş" and x["gun"] == dun.isoformat()) == 1
+
+
+def test_gece_mutabakati_gunde_bir_kez_ayarli_saatte(monkeypatch):
+    cagrilar = []
+    monkeypatch.setattr(pts_main, "_mutabakat_calistir", lambda gun, kameralar=None: cagrilar.append((gun, len(kameralar))))
+    monkeypatch.setattr(pts_main, "_dahua_kayitli_kameralar", lambda: [{"id": "x", "ad": "Mutabakat Test Kam"}])
+    monkeypatch.setattr(pts_main, "_son_mutabakat_gunu", None)
+    monkeypatch.setattr(pts_main, "_sistem_ayarlari_oku", lambda: {"gece_mutabakati_saat": "03:30"})
+    assert pts_main._mutabakat_bir_kontrol(datetime(2026, 11, 2, 3, 0)) is False
+    assert pts_main._mutabakat_bir_kontrol(datetime(2026, 11, 2, 3, 31)) is True
+    assert pts_main._mutabakat_bir_kontrol(datetime(2026, 11, 2, 9, 0)) is False
+    assert cagrilar == [(datetime(2026, 11, 1).date(), 1)]
+    monkeypatch.setattr(pts_main, "_sistem_ayarlari_oku", lambda: {"gece_mutabakati_saat": ""})
+    assert pts_main._mutabakat_bir_kontrol(datetime(2026, 11, 3, 4, 0)) is False
+
+
+def test_sessiz_kamera_alarmi(client, yetkili_header, monkeypatch):
+    simdi = datetime.now().replace(microsecond=0)
+    kam = {"id": "sessiz-kam", "ad": "Sessiz Test Kamera", "aktif": True, "rtsp_url": "rtsp://x"}
+    monkeypatch.setattr(pts_main, "_kameralari_oku", lambda: [kam])
+    monkeypatch.setitem(pts_main._aktif_pipelineler, "sessiz-kam", type("P", (), {"calisiyor": True})())
+    monkeypatch.setattr(pts_main, "_sistem_ayarlari_oku", lambda: {"sessiz_kamera_dk": 60})
+    # Son 14 günde her gün bu saatlerde 5 geçiş; son kayıt 3 saat önce
+    for g in range(1, 15):
+        for i in range(5):
+            _kayit_ekle_db(f"34 SES {g:02d}{i}", "giris", kamera="Sessiz Test Kamera", once=timedelta(days=g, minutes=10 * i + 5))
+    _kayit_ekle_db("34 SES 999", "giris", kamera="Sessiz Test Kamera", once=timedelta(hours=3))
+    assert pts_main._sessiz_kamera_bir_kontrol(simdi) == ["Sessiz Test Kamera"]
+    alarm = [a for a in client.get("/alarmlar?alarm_tipi=sessiz_kamera&limit=50", headers=yetkili_header).json()
+             if "Sessiz Test Kamera" in a["mesaj"]]
+    assert alarm and alarm[0]["mesaj"].startswith("SESSİZ KAMERA: Sessiz Test Kamera 60 dakikadır plaka okumuyor (son plaka")
+    assert pts_main._sessiz_kamera_bir_kontrol(simdi) == []  # aynı sessizlik için ikinci alarm yok
+    # Yeni plaka gelince sessizlik biter
+    _kayit_ekle_db("34 SES 998", "giris", kamera="Sessiz Test Kamera", once=timedelta(minutes=1))
+    assert pts_main._sessiz_kamera_bir_kontrol(simdi) == []
+    # Trafiği olmayan kamera (gece/az kullanılan) alarm vermez
+    kam2 = {"id": "sakin-kam", "ad": "Sakin Kamera", "aktif": True}
+    monkeypatch.setattr(pts_main, "_kameralari_oku", lambda: [kam2])
+    monkeypatch.setitem(pts_main._aktif_pipelineler, "sakin-kam", type("P", (), {"calisiyor": True})())
+    assert pts_main._sessiz_kamera_bir_kontrol(simdi) == []
+
+
+def test_sik_gelen_tanimsiz_arac_onerileri(client, operator_header, izleyici_header):
+    for g in range(6):
+        _kayit_ekle_db("34 ONR 01", "giris", yetki="yetkisiz", once=timedelta(days=g, hours=1), not_metni="Kargo")
+    for g in range(2):
+        _kayit_ekle_db("34 ONR 02", "giris", yetki="yetkisiz", once=timedelta(days=g, hours=2))
+    for g in range(6):
+        _kayit_ekle_db("34 ONR 03", "giris", yetki="yetkisiz", once=timedelta(days=g, hours=3))
+    client.post("/kisiler", json={"ad_soyad": "Tanımlı", "plaka_no": "34 ONR 03", "tip": "personel"}, headers=operator_header)
+    assert client.get("/kisi-onerileri", headers=izleyici_header).status_code == 403
+    liste = client.get("/kisi-onerileri", headers=operator_header).json()
+    o = next(x for x in liste if x["plaka_no"] == "34 ONR 01")
+    assert o["gun_sayisi"] == 6 and o["en_sik_not"] == "Kargo"
+    assert not any(x["plaka_no"] in ("34 ONR 02", "34 ONR 03") for x in liste)  # az gelen / zaten tanımlı
+    assert client.post("/kisi-onerileri/yoksay", json={"plaka_no": "34 ONR 01"}, headers=operator_header).status_code == 200
+    assert not any(x["plaka_no"] == "34 ONR 01" for x in client.get("/kisi-onerileri", headers=operator_header).json())
+
+
+def test_telegram_komut_cozme():
+    from backend.telegram_sorgu import komut_coz
+    assert komut_coz("/start") == ("yardim", None)
+    assert komut_coz("İçeride") == ("iceride", None)
+    assert komut_coz("özet") == ("ozet", None)
+    assert komut_coz("alarmlar") == ("alarmlar", None)
+    assert komut_coz("34 abc 123") == ("plaka", "34ABC123")
+    assert komut_coz("merhaba nasılsın") == ("bilinmiyor", "merhaba nasılsın")
+
+
+def test_telegram_sorgu_yalniz_kayitli_sohbete_cevap_verir(client, operator_header):
+    from backend.database import SessionLocal
+    from backend import models as _m
+    db = SessionLocal()
+    try:
+        db.add(_m.BildirimAyarlari(ad="Amir", tip="telegram", hedef="555001", tetikleyici="gunluk_ozet", aktif=True))
+        db.commit()
+        _kayit_ekle_db("34 TLG 01", "giris", once=timedelta(minutes=20), not_metni="Teknik servis")
+        simdi = time.time()
+        sohbet, cevap = pts_main._telegram_mesaji_isle(db, {"chat": {"id": 555001}, "text": "34 tlg 01", "date": simdi})
+        assert sohbet == "555001" and "İÇERİDE" in cevap and "Teknik servis" in cevap
+        _, cevap = pts_main._telegram_mesaji_isle(db, {"chat": {"id": 555001}, "text": "TLG0", "date": simdi})
+        assert "Benzer plakalar" in cevap and "34 TLG 01" in cevap
+        _, cevap = pts_main._telegram_mesaji_isle(db, {"chat": {"id": 555001}, "text": "özet", "date": simdi})
+        assert "Giriş:" in cevap and "Şu an içeride" in cevap
+        _, cevap = pts_main._telegram_mesaji_isle(db, {"chat": {"id": 999}, "text": "34 TLG 01", "date": simdi})
+        assert "yetkili değil" in cevap and "TLG" not in cevap
+        assert pts_main._telegram_mesaji_isle(db, {"chat": {"id": 555001}, "text": "özet", "date": simdi - 3600}) is None
+        assert db.query(_m.DenetimKaydi).filter(_m.DenetimKaydi.eylem == "telegram_sorgu").count() >= 3
+    finally:
+        db.close()
+
+
+def test_gunluk_yonetici_raporu_pdf(client, yetkili_header, izleyici_header):
+    dun = (datetime.now() - timedelta(days=1)).date()
+    an = datetime.combine(dun, datetime.min.time()) + timedelta(hours=9)
+    _kayit_ekle_db("34 GRP 01", "giris", yetki="kara_liste", kamera="Rapor Kapı", once=datetime.now() - an)
+    r = client.get(f"/raporlar/gunluk.pdf?gun={dun.isoformat()}", headers=izleyici_header)
+    assert r.status_code == 200 and r.content[:4] == b"%PDF"
+    from backend.database import SessionLocal
+    db = SessionLocal()
+    try:
+        v = pts_main._gunluk_rapor_verisi(db, dun)
+    finally:
+        db.close()
+    assert any(p == "34 GRP 01" for _, p, _ in v["kara_liste"]) and sum(v["saatlik"]) >= 1
+    assert client.get(f"/raporlar/gunluk.pdf?gun={(datetime.now() + timedelta(days=2)).date().isoformat()}",
+                      headers=yetkili_header).status_code == 400
+
+
+def test_gunluk_ozet_pdf_eposta_eki_ve_webhooka_yol_gitmez(monkeypatch):
+    yakalanan = {}
+    monkeypatch.setattr(pts_main, "_bildirim_tetikle", lambda db, t, veri: yakalanan.update(veri))
+    pts_main._gunluk_ozet_gonder()
+    assert os.path.isfile(yakalanan["pdf_yolu"]) and yakalanan["pdf_yolu"].endswith(".pdf")
+    from backend import eposta
+    gonderilen = {}
+    monkeypatch.setattr(eposta, "eposta_gonder_sync", lambda alici, konu, metin, ek_yolu=None: gonderilen.update(
+        alici=alici, konu=konu, ek=ek_yolu) or (True, None))
+    assert pts_main._bildirim_gonder_sync("email", "mudur@kurum.gov.tr", "POST", yakalanan) == (True, None)
+    assert gonderilen["ek"] == yakalanan["pdf_yolu"] and gonderilen["konu"].startswith("PTS: Günlük Özet")
+    webhook = {}
+    monkeypatch.setattr(pts_main, "_webhook_gonder_sync", lambda h, m, veri: webhook.update(veri) or (True, None))
+    pts_main._bildirim_gonder_sync("webhook", "https://x", "POST", yakalanan)
+    assert "pdf_yolu" not in webhook and webhook["olay"] == "Günlük Özet"

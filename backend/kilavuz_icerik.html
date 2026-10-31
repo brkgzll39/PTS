@@ -92,11 +92,19 @@
           <!--MODUL:resmi_arac--><li><b>Resmi araç uyarısı</b>: Kurumun resmi aracı görev emri olmadan ya da mesai dışında çıktı veya görev süresinden geç döndü
             (bkz. <a href="#resmi-arac-kapi">Resmi Araçlar</a>). <span class="dugme">Görev bilgisi gir</span> ile çıkışı işleyin.</li><!--/MODUL-->
           <li><b>Sunucu kapalı kaldı</b>: Sunucu bilgisayarı kapatılmış ya da uykuya alınmış. Bu sürede geçişler canlı kaydedilemedi;
-            kameranın kendi hafızasından alınabilenler sisteme eklendi (listede <i class="bi bi-sd-card"></i> "Sunucu kapalıyken" yazar).
+            kameranın kendi hafızasından alınabilenler sisteme eklendi (listede <i class="bi bi-sd-card"></i> "Kameradan eklendi" yazar).
             Kimin, neden kapattığını amirinize bildirin, sonra <span class="dugme">Kontrol ettim</span>'e basın.</li>
+          <li><b>Kamera plaka okumuyor</b>: Kameranın görüntüsü geliyor ama normalde araç geçen saatlerde uzun süredir plaka okumadı
+            (lens kirli, kamera döndü, plaka okuma kapandı…). Geçen araçları elle kontrol edin, teknik birime haber verin.</li>
           <li><b>Okunamayan geçiş</b> (Kapı Kutusu kuruluysa): Yerdeki sensör araç gördü ama kamera plakayı okuyamadı. Fotoğrafa bakıp plakayı
             yazın ya da "araç değil" deyin.</li>
         </ul>
+
+        <h4 id="sesli-uyari">Sesli uyarı</h4>
+        <p>Kara listedeki araç geçtiğinde ya da yeni bir uyarı (klon plaka, resmi araç, sunucu kapandı, kamera plaka okumuyor) geldiğinde
+          kısa bir uyarı sesi çalar ve ekranın kenarı kırmızı yanıp söner. Sesi üst çubuktaki <span class="dugme"><i class="bi bi-volume-up-fill"></i></span>
+          düğmesiyle kapatıp açabilirsiniz; tercih o bilgisayarda hatırlanır. Tarayıcı kuralı gereği ses, sayfayı açtıktan sonra
+          ekrana bir kez dokunulunca çalışmaya başlar.</p>
 
         <h3 id="iceridekiler-kapi">İçeridekiler sekmesi</h3>
         <p>Şu an içeride sayılan araçlar. Üstteki kutulara basarak süzün: <b>Şu an içeride</b>, <b>Personel / Alt İşveren</b>,
@@ -161,6 +169,9 @@
           <li><b>En Sık Yetkisiz/Engellenen Plakalar</b>: tekrar tekrar gelen tanımsız araçlar.</li>
           <li><b>Kaçırılan Geçişler</b>: kameranın büyük olasılıkla okuyamadığı geçişler. Örneğin arka arkaya iki giriş görülen
             araç aradaki çıkışı kaçırmıştır. Kamera açısı/ışık sorunlarını bulmak için kullanın.</li>
+          <li id="gunluk-rapor"><b>Günlük Yönetici Raporu</b>: bir günü seçip <span class="dugme">PDF indir</span>. Raporda giriş/çıkış sayıları, saatlik
+            yoğunluk, araç türleri, alarmlar, kara liste ve onaysız ziyaretçi geçişleri, resmi araç hareketleri, kamera mutabakatı ve
+            sistem olayları (sunucu kesintisi, sessiz kamera) yer alır. Aynı rapor her sabah e-posta / Telegram ile de gönderilebilir.</li>
         </ul>
 
         <h3 id="son-gecisler">Son Geçişler <span class="rol rol-herkes">Herkes</span></h3>
@@ -214,6 +225,10 @@
         <p>Çok sayıda kişiyi Excel'den toplu aktarabilirsiniz: <span class="dugme">Şablon İndir</span> ile şablonu alın, doldurun,
           <span class="dugme">Excel İçe Aktar</span> ile yükleyin ("Mevcut kişileri güncelle" işaretliyse aynı plakalı kişiler güncellenir). Listeyi
           <span class="dugme">Excel İndir</span> ile dışarı alabilirsiniz (arama kutusu doluysa yalnız görünenler iner).</p>
+        <h4 id="sik-gelenler">Sık gelen tanımsız araçlar</h4>
+        <p>Kişi ekleme formunun altındaki kart, son 30 günde en az 5 farklı gün gelen ama tanımlı olmayan araçları listeler (kaç gün geldiği,
+          son gelişi, en çok yazılan not). <span class="dugme">Tanımla</span> plakayı ve adı forma doldurur; tipi seçip kaydedin. Tanımlanan araç
+          artık her gelişte ziyaretçi sayılmaz. Tanımlanmayacak araçlar için <span class="dugme">Gösterme</span>.</p>
 
         <h3 id="kara-liste">Kara Liste <span class="rol rol-gorevli">Görevli</span></h3>
         <p>Girişi yasaklı plakalar. <b>Kara Listeye Ekle</b> kartına plakayı ve sebebi yazın. Bu araç geçtiğinde kırmızı alarm verilir ve
@@ -263,6 +278,7 @@
             <tr><td>Klon plaka şüphesi</td><td>Aynı plaka kısa sürede iki ayrı kapıda okundu (başka araçta aynı plaka olabilir).</td></tr>
             <!--MODUL:resmi_arac--><tr><td>Resmi araç</td><td>Görevsiz çıkış, geç dönüş, mesai dışı hareket.</td></tr><!--/MODUL-->
             <tr><td>Sunucu kapalı kaldı</td><td>Sunucu 3 dakikadan uzun kapalı kaldı ya da uykuya alındı; ardından kameradan kaç geçiş aktarıldığı da bildirilir.</td></tr>
+            <tr><td>Sessiz kamera</td><td>Kamera görüntü veriyor ama normalde trafik olan saatlerde uzun süredir plaka okumuyor.</td></tr>
             <tr><td>Kamera arızası</td><td>Kamera bağlantısı koptu ya da görüntü gelmiyor.</td></tr>
             <tr><td>Bariyer otomatik açılamadı</td><td>Tanımlı araç için bariyer komutu başarısız oldu.</td></tr>
           </tbody>
@@ -282,6 +298,16 @@
           <b>Okuma Kalitesi</b> ve <b>Kamera Karşılaştırma</b> kartları hangi kameranın ne kadar iyi okuduğunu gösterir.</p>
         <div class="ipucu">Aynı nizamiyenin kameralarına ortak bir başlangıç verin ("Nizamiye Giriş", "Nizamiye Çıkış"): sistem bunları tek
           nizamiye sayar, raporlarda birlikte gösterir.</div>
+
+        <h3 id="mutabakat">Kamera mutabakatı ve sessiz kamera</h3>
+        <p>"Kameranın kendi plaka okuması" (Dahua) açık her kameranın dünkü kayıtları her gece (varsayılan 03:30) sistemle karşılaştırılır.
+          PTS'in kaçırdığı geçişler kameradan eklenir (listede "Kameradan eklendi" yazar). Kameralar ekranındaki <b>Kamera Mutabakatı</b>
+          kartında gün ve kamera başına "kameranın okuduğu geçiş", "PTS'in yakaladığı" ve oran görünür. %97 üzeri yeşil, %90 altı kırmızıdır;
+          oran düşüyorsa kamera açısı, ışık ya da görüntü kalitesine bakılmalıdır. <span class="dugme">Dünü şimdi karşılaştır</span>
+          karşılaştırmayı hemen yapar. Aynı kartın altından karşılaştırma saati ve sessiz kamera süresi değiştirilir.</p>
+        <p><b>Sessiz kamera:</b> Görüntüsü gelen bir kamera, son 14 günde aynı saatlerde ortalama en az 3 geçiş olmasına rağmen ayarlanan süre
+          (varsayılan 60 dakika) boyunca hiç plaka okumazsa alarm ve bildirim verilir. Gece ya da hafta sonu gibi zaten trafik olmayan
+          saatlerde uyarı vermez. Kamera yeniden plaka okuyunca uyarı kendiliğinden biter.</p>
 
         <h3 id="sunucu-kesintisi">Sunucu kapanırsa: kameradan geçiş aktarma</h3>
         <p>Dahua ANPR kameraları plakaları kendi hafıza kartına da kaydeder; sunucu kapalıyken de bunu sürdürür. Sunucu her dakika
@@ -306,9 +332,22 @@
           Bariyer listeden elle de açılabilir; her açma kayda geçer. <b>Kapı Kutuları</b> kartında nizamiyedeki Kapı Kutusu cihazları tanımlanır
           (sensör girişleri, kamera eşlemesi, anahtar).</p>
 
-        <h3 id="bildirimler">Bildirimler (Webhook / Telegram)</h3>
-        <p><b>Yeni Bildirim Ayarı</b>: Telegram botu ya da webhook adresi ve hangi olaylarda gönderileceği (yetkisiz, kara liste, klon plaka,
-          resmi araç, kamera arızası, disk/yedek uyarıları, günlük özet…). Kaydettikten sonra test mesajı gönderip deneyin.</p>
+        <h3 id="bildirimler">Bildirimler (Telegram / E-posta / Webhook)</h3>
+        <p><b>Yeni Bildirim Ayarı</b>: Telegram sohbeti, e-posta adresi ya da webhook adresi ve hangi olaylarda gönderileceği (yetkisiz,
+          kara liste, klon plaka, resmi araç, sunucu kesintisi, sessiz kamera, kamera arızası, disk/yedek uyarıları, günlük özet…).
+          Kaydettikten sonra test mesajı gönderip deneyin. E-posta için sunucuda <code>PTS_SMTP_SUNUCU</code> (gerekirse
+          <code>PTS_SMTP_PORT</code>, <code>PTS_SMTP_KULLANICI</code>, <code>PTS_SMTP_PAROLA</code>, <code>PTS_SMTP_GONDEREN</code>) ayarlanmalıdır.</p>
+        <p><b>Günlük özet</b> tetikleyicisi seçilen alıcılara her sabah dünün özeti gider; e-postada <b>yönetici raporu PDF'i</b> ek olarak,
+          Telegram'da dosya olarak gelir.</p>
+        <h4 id="telegram-sorgu">Telegram'dan soru sorma</h4>
+        <p><b>Telegram'dan Soru Sorma</b> kartındaki anahtarı açın. Telegram bildirimi tanımlı sohbetler bota şunları yazabilir:</p>
+        <ul>
+          <li>Plaka (ör. <code>34ABC123</code>): araç içeride mi, kime ait, notu, son 5 geçişi. Plakanın bir kısmı yazılırsa benzer plakalar listelenir.</li>
+          <li><code>içeride</code>: içerideki araç, ziyaretçi ve onaysız giriş sayıları, içerideki ziyaretçiler.</li>
+          <li><code>özet</code>: bugünün giriş/çıkış ve alarm özeti. <code>alarmlar</code>: okunmamış son alarmlar.</li>
+        </ul>
+        <p>Tanımlı olmayan bir sohbete bilgi verilmez; bot yalnızca sohbet numarasını söyler (o numarayla Telegram bildirimi tanımlanırsa
+          sohbet yetkili olur). Her sorgu Denetim Kayıtları'na yazılır.</p>
 
         <h3 id="led">LED Paneller</h3>
         <p>Nizamiyedeki LED tabelanın bağlantı ayarları ve <b>Test Mesajı Gönder</b>. Araç geçtiğinde tabelada karşılama yazısı çıkar.</p>

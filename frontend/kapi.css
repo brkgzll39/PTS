@@ -280,3 +280,9 @@ body.kapi-nobet .app-main { max-width: 1400px; margin: 0 auto; }
 .kapi-resmi-ust .kapi-arama { background: var(--k-kart); }
 .kr-dugmeler .kapi-dugme { min-height: 52px; }
 a.kapi-kucuk-dugme { text-decoration: none; display: inline-flex; align-items: center; gap: 4px; } a.kapi-kucuk-dugme:hover { color: #fff; }
+
+/* Sesli uyarı: ekran kenarında kırmızı yanıp sönme (bkz. kapi.js "Sesli uyarı") */
+#kapiModu.kapi-alarm-flas::after { content: ""; position: fixed; inset: 0; pointer-events: none; z-index: 2000;
+  box-shadow: inset 0 0 0 10px #dc2626; animation: kapiFlas .75s ease-in-out 8; }
+@keyframes kapiFlas { 50% { box-shadow: inset 0 0 0 10px rgba(220, 38, 38, 0); } }
+.kapi-kucuk-dugme.kapi-ses-kapali { color: #fca5a5; border-color: rgba(252, 165, 165, .6); }

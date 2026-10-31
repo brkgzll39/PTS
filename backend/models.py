@@ -596,6 +596,32 @@ class SunucuKesintisi(Base):
     ayrinti = Column(Text, nullable=True)                      # kamera başına sonuç (JSON)
 
 
+class KameraMutabakati(Base):
+    """Gece mutabakatı (2026-10-31): bir kameranın bir günlük kendi plaka kayıtları ile
+    PTS'in kayıtlarının karşılaştırması (bkz. main.py "GECE MUTABAKATI")."""
+    __tablename__ = "kamera_mutabakatlari"
+
+    id = Column(Integer, primary_key=True, index=True)
+    gun = Column(Date, nullable=False, index=True)
+    kamera_ad = Column(String(80), nullable=False)
+    kamera_gecis = Column(Integer, default=0)   # kameranın okuduğu geçerli plakalı geçiş
+    pts_yakalanan = Column(Integer, default=0)  # bunlardan PTS'te zaten olan
+    eklenen = Column(Integer, default=0)        # PTS'in kaçırdığı, kameradan eklenen
+    eksik_okuma = Column(Integer, default=0)    # kameranın plaka biçimine uymayan okumaları
+    hata = Column(Text, nullable=True)
+    zaman = Column(DateTime, default=datetime.now)
+
+
+class KisiOnerisiYoksay(Base):
+    """"Sık gelen tanımsız araç" önerilerinden görevlinin "gösterme" dediği plakalar."""
+    __tablename__ = "kisi_onerisi_yoksay"
+
+    id = Column(Integer, primary_key=True, index=True)
+    plaka_no = Column(String(15), nullable=False, unique=True, index=True)
+    ekleyen = Column(String(80), nullable=True)
+    zaman = Column(DateTime, default=datetime.now)
+
+
 class ResmiArac(Base):
     """Kurumun resmi aracı (2026-10-30, lisans modülü "resmi_arac"). Bu plakanın
     her çıkışında geçerli bir görev emri (models.GorevEmri) aranır; yoksa ya da

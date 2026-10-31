@@ -187,7 +187,8 @@ async function kapiSonGecisleriYukle() {
 }
 
 // app.js::_sseKayitAl'dan çağrılır (yeni geçiş).
-function kapiYeniKayit() {
+function kapiYeniKayit(kayit) {
+  if (kayit && kayit.yetki_durumu === "kara_liste") kapiUyariVer();
   if (_kapiSekmeAdi === "kapi" && !_kapiAcikPencere) kapiSonGecisleriYukle();
   if (_kapiSekmeAdi === "resmi") kapiResmiYukle();
   else if (typeof klonUyarilariYukle === "function") klonUyarilariYukle();  // görevsiz çıkış penceresi her sekmede
@@ -430,7 +431,7 @@ function _kapiListeCiz() {
       const kim = k.kisi_adi || k.misafir_adi;
       const not = _kapiEkNot(k.not_metni, kim, k.kisi_departman);
       const alt = [kim ? `<b>${escapeHtml(kim)}</b>` : "", escapeHtml(tur.etiket),
-        k.sonradan_aktarildi ? '<i class="bi bi-sd-card"></i> Sunucu kapalıyken' : "",
+        k.sonradan_aktarildi ? '<i class="bi bi-sd-card"></i> Kameradan eklendi' : "",
         not ? `<i class="bi bi-chat-left-text"></i> ${escapeHtml(not)}` : ""].filter(Boolean).join(" · ");
       return `<button type="button" class="kapi-satir ${gosterilen && gosterilen.id === k.id ? "secili" : ""}" data-kapi-kayit="${k.id}">
         <span class="serit ks-${tur.sinif}"></span>
@@ -842,3 +843,65 @@ document.addEventListener("DOMContentLoaded", () => {
     });
   }
 });
+
+// ---------------------------------------------------------------- Sesli uyarı (2026-10-31)
+// Kara listedeki araç geçince ya da yeni klon plaka / resmi araç / sunucu kesintisi /
+// sessiz kamera uyarısı gelince kısa bir uyarı sesi ve ekran kenarında kırmızı yanıp
+// sönme. Ses, tarayıcı kuralı gereği ekrana ilk dokunuştan sonra çalabilir. Açık/kapalı
+// tercihi bu bilgisayarda hatırlanır.
+let _kapiSesAcik = (() => { try { return localStorage.getItem("pts_kapi_ses") !== "0"; } catch (e) { return true; } })();
+let _kapiSesBaglam = null;
+
+function _kapiSesDugmesi() {
+  const d = document.getElementById("kapiSesDugme");
+  if (!d) return;
+  d.innerHTML = `<i class="bi ${_kapiSesAcik ? "bi-volume-up-fill" : "bi-volume-mute-fill"}"></i>`;
+  d.title = `Sesli uyarı: ${_kapiSesAcik ? "açık" : "kapalı"}`;
+  d.classList.toggle("kapi-ses-kapali", !_kapiSesAcik);
+}
+
+function kapiSesDegistir() {
+  _kapiSesAcik = !_kapiSesAcik;
+  try { localStorage.setItem("pts_kapi_ses", _kapiSesAcik ? "1" : "0"); } catch (e) { /* yok say */ }
+  _kapiSesDugmesi();
+  if (_kapiSesAcik) _kapiSesCal();  // deneme sesi
+}
+
+function _kapiSesCal() {
+  if (!_kapiSesAcik) return;
+  try {
+    _kapiSesBaglam = _kapiSesBaglam || new (window.AudioContext || window.webkitAudioContext)();
+    const b = _kapiSesBaglam;
+    if (b.state === "suspended") b.resume();
+    const t0 = b.currentTime + 0.02;
+    [0, 0.28, 0.56].forEach((gecikme, i) => {
+      const osc = b.createOscillator(), kazanc = b.createGain();
+      osc.type = "square";
+      osc.frequency.value = i % 2 ? 660 : 880;
+      kazanc.gain.setValueAtTime(0.0001, t0 + gecikme);
+      kazanc.gain.exponentialRampToValueAtTime(0.25, t0 + gecikme + 0.02);
+      kazanc.gain.exponentialRampToValueAtTime(0.0001, t0 + gecikme + 0.22);
+      osc.connect(kazanc).connect(b.destination);
+      osc.start(t0 + gecikme);
+      osc.stop(t0 + gecikme + 0.24);
+    });
+  } catch (e) { /* ses desteklenmiyor */ }
+}
+
+function kapiUyariVer() {
+  if (!document.body.classList.contains("kapi-modu")) return;
+  _kapiSesCal();
+  const kapi = document.getElementById("kapiModu");
+  kapi.classList.remove("kapi-alarm-flas");
+  void kapi.offsetWidth;  // animasyonu yeniden başlat
+  kapi.classList.add("kapi-alarm-flas");
+  clearTimeout(kapiUyariVer._z);
+  kapiUyariVer._z = setTimeout(() => kapi.classList.remove("kapi-alarm-flas"), 6000);
+}
+
+// Tarayıcı sesi ancak bir kullanıcı etkileşiminden sonra başlatır: ilk dokunuşta hazırla.
+document.addEventListener("pointerdown", () => {
+  if (!_kapiSesAcik || _kapiSesBaglam) return;
+  try { _kapiSesBaglam = new (window.AudioContext || window.webkitAudioContext)(); } catch (e) { /* yok say */ }
+}, { passive: true });
+_kapiSesDugmesi();

@@ -626,6 +626,7 @@ function alarmTipiEtiketi(tip) {
     klon_plaka: "Klon plaka şüphesi",
     resmi_arac: "Resmi araç (görevsiz / mesai dışı / geç dönüş)",
     sunucu_kesintisi: "Sunucu kapalı kaldı",
+    sessiz_kamera: "Sessiz kamera (plaka okumuyor)",
     kamera_arizasi: "Kamera arızası / bağlantı sorunu",
     // 2026-09-25 (sistem taraması): bu iki alarm tipi backend'de üretiliyor
     // ama burada etiketi yoktu -- panelde ham "bariyer_hatasi" metni görünüyordu.
@@ -669,7 +670,7 @@ function kayitIsimGoster(kayit) {
 function dogrulamaRozeti(kareSayisi, farkliOkumaSayisi, kameraOkumasi, sonradanAktarildi) {
   // 2026-10-30: sunucu kapalıyken kameranın kendi hafızasına yazdığı, sonradan alınan geçiş.
   if (sonradanAktarildi) {
-    return '<span class="badge text-bg-secondary" title="Sunucu kapalıyken kameranın kendi hafızasına kaydettiği geçiş; sunucu açılınca kameradan alındı. Plaka kameranın okumasıdır.">Sunucu kapalıyken (kameradan)</span>';
+    return '<span class="badge text-bg-secondary" title="PTS bu geçişi canlı kaydedemedi (sunucu kapalıydı ya da plakayı okuyamadı); kameranın kendi hafızasından sonradan eklendi. Plaka kameranın okumasıdır.">Kameradan sonradan eklendi</span>';
   }
   if (kareSayisi === null || kareSayisi === undefined) return '<span class="text-muted small">-</span>';
   // 2026-10-12: kameranın kendi ANPR'ı kayıttan FARKLI bir plaka okuduysa
@@ -3798,6 +3799,116 @@ document.getElementById("resmiMesaiForm")?.addEventListener("submit", async (e) 
   }));
 })();
 
+// ---------------------- GECE MUTABAKATI / SESSİZ KAMERA (2026-10-31) ----------------------
+async function mutabakatYukle() {
+  const tablo = document.getElementById("mutabakatTablo");
+  if (!tablo) return;
+  let liste;
+  try { liste = await apiCagir("/kamera-mutabakati?gun=14"); } catch (e) { tablo.innerHTML = `<tr><td colspan="7" class="text-danger small p-3">${escapeHtml(e.message)}</td></tr>`; return; }
+  tablo.innerHTML = liste.length ? liste.map(m => {
+    const renk = m.oran === null ? "" : m.oran >= 97 ? "text-success" : m.oran >= 90 ? "text-warning-emphasis" : "text-danger";
+    return m.hata ? `<tr><td class="text-nowrap">${escapeHtml(new Date(m.gun).toLocaleDateString("tr-TR"))}</td><td>${escapeHtml(m.kamera)}</td>
+        <td colspan="5" class="small text-danger">${escapeHtml(m.hata)}</td></tr>`
+      : `<tr><td class="text-nowrap">${escapeHtml(new Date(m.gun).toLocaleDateString("tr-TR"))}</td><td>${escapeHtml(m.kamera)}</td>
+        <td class="text-end">${m.kamera_gecis}</td><td class="text-end">${m.pts_yakalanan}</td>
+        <td class="text-end fw-bold ${renk}">${m.oran === null ? "—" : "%" + m.oran.toFixed(1)}</td>
+        <td class="text-end">${m.eklenen}</td><td class="text-end text-muted">${m.eksik_okuma}</td></tr>`;
+  }).join("") : '<tr><td colspan="7" class="text-muted small p-3">Henüz karşılaştırma yok. Her gece kendiliğinden yapılır; "Kameranın kendi plaka okuması" açık kamera gerekir.</td></tr>';
+}
+
+async function mutabakatCalistir() {
+  try {
+    await apiCagir("/kamera-mutabakati/calistir", { method: "POST" });
+    toastGoster("Dünün karşılaştırması başladı; kamera başına birkaç saniye-dakika sürer.", "bilgi");
+    setTimeout(mutabakatYukle, 15000);
+  } catch (e) { toastGoster(e.message, "hata"); }
+}
+
+async function mutabakatAyarYukle() {
+  if (!rolYeterli("yonetici")) return;
+  try {
+    const a = await apiCagir("/sistem/ayarlar");
+    document.getElementById("mutabakatSaat").value = a.gece_mutabakati_saat || "";
+    document.getElementById("sessizKameraDk").value = a.sessiz_kamera_dk ?? 60;
+  } catch (e) { /* yetki yok */ }
+}
+
+document.getElementById("mutabakatAyarForm")?.addEventListener("submit", async (e) => {
+  e.preventDefault();
+  try {
+    const a = await apiCagir("/sistem/ayarlar");
+    await apiCagir("/sistem/ayarlar", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({
+      ...a, gece_mutabakati_saat: document.getElementById("mutabakatSaat").value,
+      sessiz_kamera_dk: Number(document.getElementById("sessizKameraDk").value || 0) }) });
+    toastGoster("Kaydedildi", "basari");
+  } catch (err) { toastGoster("Kaydedilemedi: " + err.message, "hata"); }
+});
+
+document.querySelector('[data-bs-target="#kamera-sekme"]')?.addEventListener("shown.bs.tab", () => { mutabakatYukle(); mutabakatAyarYukle(); });
+
+// ---------------------- SIK GELEN TANIMSIZ ARAÇLAR (2026-10-31) ----------------------
+let _kisiOnerileri = [];
+
+async function kisiOnerileriYukle() {
+  const tablo = document.getElementById("kisiOneriTablo");
+  if (!tablo || !rolYeterli("operatör")) return;
+  try { _kisiOnerileri = await apiCagir("/kisi-onerileri"); } catch (e) { tablo.innerHTML = `<tr><td class="text-danger small p-3">${escapeHtml(e.message)}</td></tr>`; return; }
+  tablo.innerHTML = _kisiOnerileri.length ? _kisiOnerileri.map((o, i) => `<tr>
+      <td><b class="text-nowrap">${escapeHtml(o.plaka_no)}</b>
+        <div class="small text-muted">${o.gun_sayisi} gün · ${o.giris_sayisi} giriş · son ${escapeHtml(tarihFormatla(o.son_gecis))}</div>
+        ${o.misafir_adi || o.en_sik_not ? `<div class="small">${escapeHtml([o.misafir_adi, o.en_sik_not].filter(Boolean).join(" · "))}</div>` : ""}</td>
+      <td class="text-end text-nowrap"><button class="btn btn-sm btn-primary" onclick="kisiOnerisiTanimla(${i})">Tanımla</button>
+        <button class="btn btn-sm btn-outline-secondary" onclick="kisiOnerisiYoksay(${i})" title="Bu aracı önerme">Gösterme</button></td></tr>`).join("")
+    : '<tr><td class="text-muted small p-3">Şu an öneri yok.</td></tr>';
+}
+
+function kisiOnerisiTanimla(i) {
+  const o = _kisiOnerileri[i];
+  if (!o) return;
+  document.getElementById("kisiPlaka").value = o.plaka_no;
+  document.getElementById("kisiAdSoyad").value = o.misafir_adi || o.en_sik_not || "";
+  const not = document.getElementById("kisiOtomatikNot");
+  if (not && !not.value && o.en_sik_not) not.value = o.en_sik_not.slice(0, 100);
+  document.getElementById("kisiForm").scrollIntoView({ behavior: "smooth", block: "start" });
+  setTimeout(() => document.getElementById("kisiAdSoyad").focus(), 400);
+  toastGoster(`${o.plaka_no}: kişi tipini seçip adı kontrol edin, sonra Kaydet.`, "bilgi");
+}
+
+async function kisiOnerisiYoksay(i) {
+  const o = _kisiOnerileri[i];
+  if (!o) return;
+  try {
+    await apiCagir("/kisi-onerileri/yoksay", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ plaka_no: o.plaka_no }) });
+    kisiOnerileriYukle();
+  } catch (e) { toastGoster(e.message, "hata"); }
+}
+
+document.querySelector('[data-bs-target="#kisiler-sekme"]')?.addEventListener("shown.bs.tab", kisiOnerileriYukle);
+
+// ---------------------- TELEGRAM SORGU + GÜNLÜK RAPOR (2026-10-31) ----------------------
+async function telegramSorguYukle() {
+  const el = document.getElementById("telegramSorguAktif");
+  if (!el || !rolYeterli("yonetici")) return;
+  try { el.checked = !!(await apiCagir("/sistem/ayarlar")).telegram_sorgu_aktif; } catch (e) { /* yetki yok */ }
+}
+
+async function telegramSorguKaydet(el) {
+  try {
+    const a = await apiCagir("/sistem/ayarlar");
+    await apiCagir("/sistem/ayarlar", { method: "PUT", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ...a, telegram_sorgu_aktif: el.checked }) });
+    toastGoster(el.checked ? "Telegram sorgusu açıldı (yarım dakika içinde devreye girer)" : "Telegram sorgusu kapatıldı", "basari");
+  } catch (e) { el.checked = !el.checked; toastGoster(e.message, "hata"); }
+}
+
+function gunlukRaporIndir(girdiId) {
+  const el = document.getElementById(girdiId);
+  if (!el.value) { const d = new Date(); d.setDate(d.getDate() - 1); el.value = _yerelTarihMetni(d); }
+  window.open(indirmeUrlOlustur("/raporlar/gunluk.pdf", new URLSearchParams({ gun: el.value })), "_blank");
+}
+
+document.querySelector('[data-bs-target="#bildirim-sekme"]')?.addEventListener("shown.bs.tab", telegramSorguYukle);
+
 // ---------------------- SUNUCU KESİNTİSİ (2026-10-30) ----------------------
 function _dahuaGecmisVarsayilan() {
   const bit = new Date(), bas = new Date(bit.getTime() - 24 * 3600 * 1000);
@@ -3919,6 +4030,8 @@ async function klonUyarilariYukle() {
   // SUNUCU KESİNTİSİ (2026-10-30): sunucu kapalı kaldıysa görevli bilsin.
   _kapiAlarmAlani("kapiKesintiAlani", "sunucu_kesintisi", '<i class="bi bi-power"></i> Sunucu kapalı kaldı',
     "Bu sürede geçişler canlı kaydedilemedi; kameranın hafızasından alınabilenler sisteme eklenir. Kimin kapattığını amirinize bildirin.");
+  _kapiAlarmAlani("kapiSessizAlani", "sessiz_kamera", '<i class="bi bi-camera-video-off"></i> Kamera plaka okumuyor',
+    "Görüntü geliyor ama kamera bir süredir plaka okumuyor. Geçen araçları elle kontrol edin ve teknik birime haber verin.");
   // RESMİ ARAÇ (2026-10-30): görev emirsiz çıkış, mesai dışı hareket, geç dönüş.
   if (_resmiModulAcik) {
     _kapiAlarmAlani("kapiResmiAlani", "resmi_arac", '<i class="bi bi-briefcase-fill"></i> Resmi araç uyarısı',
@@ -3939,6 +4052,11 @@ async function _kapiAlarmAlani(alanId, tip, baslik, aciklama, ekDugme = () => ""
   } catch (e) {
     return;
   }
+  // Sesli uyarı (2026-10-31): ilk yüklemeden SONRA gelen yeni alarm için Kapı Modu'nda ses.
+  const gorulen = _kapiAlarmAlani.gorulen || (_kapiAlarmAlani.gorulen = {});
+  const yeni = gorulen[tip] && liste.some(a => !gorulen[tip].has(a.id));
+  gorulen[tip] = new Set([...(gorulen[tip] || []), ...liste.map(a => a.id)]);
+  if (yeni && typeof kapiUyariVer === "function") kapiUyariVer();
   const islem = rolYeterli("operatör");
   alan.classList.toggle("d-none", !liste.length);
   alan.innerHTML = liste.length ? `
@@ -7216,6 +7334,9 @@ function bildirimTipDegisti() {
     // açıkça reddediyor, bkz. main.py::bildirim_ayari_ekle).
     etiket.textContent = "Hedef rol (hepsi / yonetici / operatör / güvenlik / izleyici)";
     hedefGirdi.placeholder = "hepsi";
+  } else if (tip === "email") {
+    etiket.textContent = "E-posta adresi";
+    hedefGirdi.placeholder = "mudur@kurum.gov.tr";
   } else {
     etiket.textContent = "Telegram chat_id";
     hedefGirdi.placeholder = "123456789";
@@ -7233,7 +7354,7 @@ async function bildirimAyarlariYukle() {
     const tetikleyiciEtiketleri = {
       hepsi: "Hepsi", yetkisiz: "Yetkisiz araç", kara_liste: "Kara liste",
       suresi_dolmus: "Süresi dolmuş", supheli_arac: "Şüpheli araç", klon_plaka: "Klon plaka şüphesi",
-      resmi_arac: "Resmi araç uyarısı", sunucu_kesintisi: "Sunucu kapalı kaldı", bariyer_hatasi: "Bariyer hatası", kamera_arizasi: "Kamera arızası",
+      resmi_arac: "Resmi araç uyarısı", sunucu_kesintisi: "Sunucu kapalı kaldı", sessiz_kamera: "Sessiz kamera", bariyer_hatasi: "Bariyer hatası", kamera_arizasi: "Kamera arızası",
       disk_hatasi: "Disk hatası", yedek_bozuk: "Otomatik yedek bozuk", yedek_hatasi: "Otomatik yedek alınamadı",
       disk_doluyor: "Disk doluluk erken uyarısı", sertifika_bitiyor: "HTTPS sertifikası bitiyor", gunluk_ozet: "Günlük özet (her sabah)",
     };
