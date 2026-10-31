@@ -9,10 +9,12 @@ ekler (bkz. main.py "SUNUCU KESİNTİSİ").
 
 BİLİNEN BELİRSİZLİK (dahua_olay.py'deki gibi): Dahua'nın yazılım sürümleri
 kayıt sorgusunu farklı uçlarla ve farklı alan adlarıyla yanıtlıyor. Bu yüzden
-sırayla üç sorgu denenir ve ilk sonuç veren kullanılır:
+sırayla üç yöntem denenir ve aralığı doğru okuyan ilk yöntem kullanılır:
 
-  1. recordFinder.cgi?action=find&name=TrafficSnapEventInfo&condition.StartTime=<unix>&...
-  2. Aynısı, "condition." öneki olmadan (eski sürümler).
+  1. recordFinder.cgi?action=find&name=TrafficSnapEventInfo + zaman süzgeci; birkaç
+     yazım denenir, dönen kayıtların gerçekten aralıkta olduğu doğrulanır.
+  2. Süzgeç yok sayılıyorsa: recordFinder doSeekFind (offset/count) ile kayıt
+     sırasında ikili arama (bkz. _record_finder_arama).
   3. mediaFileFind.cgi (factory.create -> findFile -> findNextFile -> close):
      kart üzerindeki olay fotoğraflarını listeler; plaka olay özetinden okunur,
      fotoğraf RPC_Loadfile ile indirilir.
@@ -134,16 +136,125 @@ class _Baglanti:
         return self.oturum.get(self.kok + yol, timeout=ZAMAN_ASIMI_SN)
 
 
-def _record_finder(bag: _Baglanti, bas: datetime, bit: datetime, onekli: bool, ham: list) -> Optional[list]:
-    onek = "condition." if onekli else ""
-    yol = (f"/cgi-bin/recordFinder.cgi?action=find&name=TrafficSnapEventInfo"
-           f"&{onek}StartTime={int(bas.timestamp())}&{onek}EndTime={int(bit.timestamp())}&count={EN_FAZLA_KAYIT}")
-    y = bag.getir(yol)
-    ham.append({"yontem": f"recordFinder{'' if onekli else ' (öneksiz)'}", "http": y.status_code,
-                "ornek": y.text[:_HAM_ORNEK_UZUNLUK]})
+# recordFinder zaman süzgeci yazımları. SAHADA GÖRÜLDÜ (2026-10-31, TPAO Lojman,
+# Dahua ITC): "condition.StartTime=<unix>" ve "StartTime=<unix>" ile kamera HTTP 200
+# döndü ama süzgeci YOK SAYDI -- en eski kayıttan (RecNo=1) başlayıp en fazla 1024
+# kayıt gönderdi. Bu yüzden her yazımın sonucu doğrulanır (dönen kayıtlar istenen
+# aralıkta mı); hiçbiri uymazsa doSeekFind ile kayıt sırasında ikili arama yapılır.
+_SAYFA_UST = 1024  # kameranın bir yanıtta verdiği en fazla kayıt
+
+
+def _rf_varyantlari(bas: datetime, bit: datetime) -> list:
+    u1, u2 = str(int(bas.timestamp())), str(int(bit.timestamp()))
+    t1, t2 = bas.strftime("%Y-%m-%d %H:%M:%S"), bit.strftime("%Y-%m-%d %H:%M:%S")
+    return [
+        ("condition.StartTime (unix)", {"condition.StartTime": u1, "condition.EndTime": u2}),
+        ("condition.StartTime (tarih)", {"condition.StartTime": t1, "condition.EndTime": t2}),
+        ("StartTime (unix)", {"StartTime": u1, "EndTime": u2}),
+        ("StartTime (tarih)", {"StartTime": t1, "EndTime": t2}),
+        ("condition.Time (unix)", {"condition.Time[0]": u1, "condition.Time[1]": u2}),
+    ]
+
+
+def _rf_get(bag: "_Baglanti", eylem: str, parametreler: dict):
+    from urllib.parse import urlencode
+    sorgu = urlencode({"action": eylem, "name": "TrafficSnapEventInfo", **parametreler}, safe="[].:")
+    return bag.getir("/cgi-bin/recordFinder.cgi?" + sorgu)
+
+
+def _rf_satirlari(metin: str) -> list:
+    """Her kayıt için (zaman, ayıklanmış kayıt ya da None) -- plakasız kayıtların zamanı da arama için gerekir."""
+    return [(zaman_coz(_alan(k, _ZAMAN_ALANLARI)), kayit_ayikla(k)) for k in kayitlari_grupla(metin)]
+
+
+def _rf_ozet(satirlar: list) -> str:
+    zamanlar = [z for z, _ in satirlar if z]
+    if not zamanlar:
+        return f"{len(satirlar)} kayıt"
+    return f"{len(satirlar)} kayıt, {min(zamanlar):%d.%m.%Y %H:%M} – {max(zamanlar):%d.%m.%Y %H:%M}"
+
+
+def _record_finder_suzgecli(bag: "_Baglanti", bas: datetime, bit: datetime, ham: list,
+                            bos_yanit: Optional[list] = None) -> Optional[list]:
+    """Süzgeci gerçekten uygulayan (aralıkta kayıt döndüren) bir yazım bulunursa onun
+    kayıtları; yoksa None. Hiç kayıt döndürmeyen yazım kesin sayılmaz (kamera yazımı
+    anlamamış da olabilir): `bos_yanit` listesine işaretlenir, sıra araması denenir."""
+    pay = timedelta(hours=1)
+    for etiket, parametreler in _rf_varyantlari(bas, bit):
+        y = _rf_get(bag, "find", {**parametreler, "count": _SAYFA_UST})
+        satirlar = _rf_satirlari(y.text) if y.status_code == 200 else []
+        ham.append({"yontem": f"recordFinder · {etiket}", "http": y.status_code,
+                    "ornek": (_rf_ozet(satirlar) + "\n" if y.status_code == 200 else "") + y.text[:600]})
+        if y.status_code != 200 or "Error" in y.text[:50]:
+            continue
+        zamanlar = [z for z, _ in satirlar if z]
+        if not zamanlar:
+            if bos_yanit is not None:
+                bos_yanit.append(etiket)
+            continue
+        if not all(bas - pay <= z <= bit + pay for z in zamanlar):
+            continue  # kamera bu yazımı yok saydı (aralık dışı kayıtlar döndü)
+        kayitlar = [a for _, a in satirlar if a]
+        offset = len(satirlar)
+        while len(satirlar) >= _SAYFA_UST and offset < EN_FAZLA_KAYIT:  # aralıkta 1024'ten fazla kayıt
+            y = _rf_get(bag, "doSeekFind", {**parametreler, "offset": offset, "count": _SAYFA_UST})
+            satirlar = _rf_satirlari(y.text) if y.status_code == 200 else []
+            kayitlar += [a for _, a in satirlar if a]
+            offset += len(satirlar)
+        return kayitlar
+    return None
+
+
+def _seek(bag: "_Baglanti", offset: int, adet: int) -> Optional[list]:
+    y = _rf_get(bag, "doSeekFind", {"offset": offset, "count": adet})
     if y.status_code != 200 or "Error" in y.text[:50]:
         return None
-    return [a for a in (kayit_ayikla(k) for k in kayitlari_grupla(y.text)) if a]
+    return _rf_satirlari(y.text)
+
+
+def _record_finder_arama(bag: "_Baglanti", bas: datetime, bit: datetime, ham: list) -> Optional[list]:
+    """Süzgeç yoksa: doSeekFind ile kayıt sırası (RecNo) üzerinde ikili arama. Kayıtlar
+    zamana göre sıralı kabul edilir; önce toplam kayıt sayısı, sonra `bas`tan sonraki
+    ilk kayıt bulunur ve oradan `bit`e kadar sayfa sayfa okunur."""
+    def zaman(i):
+        r = _seek(bag, i, 1)
+        return r[0][0] if r else None
+
+    ilk, ikinci = _seek(bag, 0, 1), _seek(bag, 1, 1)
+    if not ilk or not ikinci or ilk == ikinci:
+        ham.append({"yontem": "recordFinder · doSeekFind", "http": None,
+                    "ornek": "Kamera doSeekFind (sayfalı okuma) desteklemiyor ya da kayıt yok."})
+        return None
+    # Toplam kayıt sayısı: üstel yoklama + ikili arama (son dolu sıra)
+    alt, ust = 0, _SAYFA_UST
+    while zaman(ust) is not None and ust < (1 << 24):
+        alt, ust = ust, ust * 2
+    while ust - alt > 1:
+        orta = (alt + ust) // 2
+        alt, ust = (orta, ust) if zaman(orta) is not None else (alt, orta)
+    toplam = alt + 1
+    # `bas`tan sonraki ilk kayıt (zamanı okunamayan kayıt "önce" sayılır)
+    sol, sag = 0, toplam
+    while sol < sag:
+        orta = (sol + sag) // 2
+        z = zaman(orta)
+        if z is not None and z >= bas:
+            sag = orta
+        else:
+            sol = orta + 1
+    kayitlar, offset = [], sol
+    while offset < toplam and len(kayitlar) < EN_FAZLA_KAYIT:
+        satirlar = _seek(bag, offset, _SAYFA_UST) or []
+        if not satirlar:
+            break
+        kayitlar += [a for z, a in satirlar if a and z and bas <= z <= bit]
+        offset += len(satirlar)
+        son = [z for z, _ in satirlar if z]
+        if son and max(son) > bit:
+            break
+    ham.append({"yontem": "recordFinder · doSeekFind (sıra araması)", "http": 200,
+                "ornek": f"Kamerada toplam {toplam} kayıt; aralığın ilk kaydı {sol}. sırada; {len(kayitlar)} geçiş okundu."})
+    return kayitlar
 
 
 def _media_file_find(bag: _Baglanti, bas: datetime, bit: datetime, olay: str, ham: list) -> Optional[list]:
@@ -194,9 +305,10 @@ def kayitlari_getir(rtsp_url: str, bas: datetime, bit: datetime, http_port: Opti
         return sonuc
     sonuc["adres"] = bag.adres
     olay = (olaylar or "TrafficJunction").split(",")[0].strip() or "TrafficJunction"
+    bos_yanit = []
     denemeler = (
-        ("recordFinder", lambda: _record_finder(bag, bas, bit, True, sonuc["ham"])),
-        ("recordFinder (öneksiz)", lambda: _record_finder(bag, bas, bit, False, sonuc["ham"])),
+        ("recordFinder", lambda: _record_finder_suzgecli(bag, bas, bit, sonuc["ham"], bos_yanit)),
+        ("recordFinder (sıra araması)", lambda: _record_finder_arama(bag, bas, bit, sonuc["ham"])),
         ("mediaFileFind", lambda: _media_file_find(bag, bas, bit, olay, sonuc["ham"])),
     )
     for ad, dene in denemeler:
@@ -214,8 +326,10 @@ def kayitlari_getir(rtsp_url: str, bas: datetime, bit: datetime, http_port: Opti
             continue
         sonuc.update(basarili=True, yontem=ad, kayitlar=_tekillestir(
             [k for k in bulunan if bas - timedelta(minutes=1) <= k["zaman"] <= bit + timedelta(minutes=1)]))
-        if sonuc["kayitlar"] or ad == denemeler[-1][0]:
-            break
+        break  # yöntem aralığı doğru okudu (boş olsa bile: o aralıkta geçiş yok)
+    if not sonuc["basarili"] and bos_yanit:
+        # Kamera süzgeçli sorguya boş yanıt verdi, sıra araması da yok: aralıkta geçiş yok kabul edilir.
+        sonuc.update(basarili=True, yontem=f"recordFinder · {bos_yanit[0]}", kayitlar=[], hata=None)
     if not sonuc["basarili"]:
         sonuc["hata"] = ("Kamera kayıt sorgusunu kabul etmedi. Kameranın kartında ANPR kayıtlarının tutulduğunu "
                          "(Depolama ayarları) ve kullanıcının yetkisini kontrol edin; ham yanıtlar aşağıda.")

@@ -16,9 +16,25 @@ os.environ["no_proxy"] = os.environ.get("NO_PROXY", "127.0.0.1,localhost")
 JPEG = b"\xff\xd8\xff\xe0" + b"x" * 3000 + b"\xff\xd9"
 
 
+def _yoksayan_veri():
+    """TPAO Lojman kamerasında görülen davranış (2026-10-31): 3000 kayıt, dakikada bir."""
+    t0 = int((datetime.now() - timedelta(days=3)).timestamp())
+    return [(i + 1, t0 + 60 * i, f"34TPA{i:04d}") for i in range(3000)]
+
+
+def _rf_metin(kayitlar):
+    satirlar = [f"found={len(kayitlar)}"]
+    for j, (rec, t, plaka) in enumerate(kayitlar):
+        satirlar += [f"records[{j}].RecNo={rec}", f"records[{j}].Time={t}", f"records[{j}].PlateNumber={plaka}",
+                     f"records[{j}].VehicleDirection=Tail"]
+    return "\r\n".join(satirlar) + "\r\n"
+
+
 def _sahte_kamera(mod: str):
-    """mod: 'record' (recordFinder çalışır) | 'media' (yalnız mediaFileFind çalışır)."""
+    """mod: 'record' (recordFinder süzgeci çalışır) | 'media' (yalnız mediaFileFind çalışır) |
+    'yoksay' (süzgeç yok sayılır, en eskiden 1024 kayıt; doSeekFind çalışır)."""
     istekler = []
+    veri = _yoksayan_veri()
 
     class Isleyici(BaseHTTPRequestHandler):
         def log_message(self, *a):
@@ -36,8 +52,13 @@ def _sahte_kamera(mod: str):
             istekler.append(self.path)
             u = urlsplit(self.path)
             q = {k: v[0] for k, v in parse_qs(u.query).items()}
+            if u.path == "/cgi-bin/recordFinder.cgi" and mod == "yoksay":
+                if q.get("action") == "doSeekFind":
+                    o, n = int(q.get("offset", 0)), int(q.get("count", 1))
+                    return self._yaz(200, _rf_metin(veri[o:o + min(n, 1024)]))
+                return self._yaz(200, _rf_metin(veri[:1024]))
             if u.path == "/cgi-bin/recordFinder.cgi":
-                if mod != "record" or "condition.StartTime" not in q:
+                if mod != "record" or "condition.StartTime" not in q or not q["condition.StartTime"].isdigit():
                     return self._yaz(400, "Error\r\nBad Request!")
                 t = int(q["condition.StartTime"]) + 600
                 return self._yaz(200, "totalCount=3\r\nfound=3\r\n"
@@ -119,3 +140,26 @@ def test_media_file_find_yedek_yontem_ve_fotograf(kamera_media):
 def test_kameraya_ulasilamazsa_hata():
     s = dahua_kayit.kayitlari_getir("rtsp://a:b@127.0.0.1:554/x", datetime.now() - timedelta(hours=1), datetime.now(), http_port=9)
     assert not s["basarili"] and "bağlanılamadı" in s["hata"]
+
+
+@pytest.fixture
+def kamera_yoksay():
+    s, istekler = _sahte_kamera("yoksay")
+    yield f"rtsp://admin:parola@127.0.0.1:554/cam", s.server_address[1], istekler
+    s.shutdown()
+
+
+def test_suzgeci_yok_sayan_kamerada_sira_aramasi(kamera_yoksay):
+    rtsp, port, istekler = kamera_yoksay
+    veri = _yoksayan_veri()
+    # 2000. kaydın saatinden itibaren 90 dakika (1024'lük ilk sayfanın çok ötesi)
+    bas = datetime.fromtimestamp(veri[2000][1])
+    s = dahua_kayit.kayitlari_getir(rtsp, bas, bas + timedelta(minutes=90), http_port=port)
+    assert s["basarili"] and s["yontem"] == "recordFinder (sıra araması)", s
+    plakalar = [k["plaka"] for k in s["kayitlar"]]
+    assert plakalar[0] == "34TPA2000" and plakalar[-1] == "34TPA2090" and len(plakalar) == 91
+    assert any("toplam 3000 kayıt" in h["ornek"] for h in s["ham"])
+    assert sum("doSeekFind" in i for i in istekler) < 60  # ikili arama: binlerce kaydı tek tek okumaz
+    # Aralık kayıtların sonundan sonra: boş ama başarılı
+    s = dahua_kayit.kayitlari_getir(rtsp, datetime.now() + timedelta(days=1), datetime.now() + timedelta(days=2), http_port=port)
+    assert s["basarili"] and s["kayitlar"] == []
