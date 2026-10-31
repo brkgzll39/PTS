@@ -2721,6 +2721,16 @@
             </div>
           </div>
         </div>
+        <!-- SİSTEM AYARLARI (2026-10-31, kullanıcı isteği "göz yormayacak, sade"): tam genişlik,
+             gruplu; açıklamalar ⓘ ile açılır (bkz. app.js::sistemAyarlariYukle). -->
+        <div class="col-12">
+          <div class="card">
+            <div class="card-header"><i class="bi bi-gear-fill me-1"></i>Sistem Ayarları</div>
+            <div class="card-body" id="sistemAyarlariPaneli">
+              <div class="text-center text-muted py-2"><div class="spinner-border spinner-border-sm"></div></div>
+            </div>
+          </div>
+        </div>
         <div class="col-lg-4">
           <div class="card mb-3">
             <div class="card-header"><i class="bi bi-activity me-1"></i>Sistem Durumu</div>
@@ -2755,12 +2765,6 @@
               </form>
               <div id="merkezDurum" class="small mt-2"></div>
               <pre id="merkezOzet" class="small bg-light border rounded p-2 mt-2 d-none" style="max-height:300px;overflow:auto"></pre>
-            </div>
-          </div>
-          <div class="card mb-3">
-            <div class="card-header"><i class="bi bi-gear-fill me-1"></i>Sistem Ayarları</div>
-            <div class="card-body" id="sistemAyarlariPaneli">
-              <div class="text-center text-muted py-2"><div class="spinner-border spinner-border-sm"></div></div>
             </div>
           </div>
           <div class="card">
@@ -2825,7 +2829,7 @@
           </div>
         </div>
         <div class="col-lg-8">
-          <div class="card h-100">
+          <div class="card">
             <div class="card-header d-flex justify-content-between">
               <span><i class="bi bi-terminal-fill me-1"></i>Uygulama Logları</span>
               <button class="btn btn-sm btn-outline-secondary" onclick="loglariYukle()"><i class="bi bi-arrow-clockwise"></i> Yenile</button>

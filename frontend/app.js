@@ -7565,81 +7565,85 @@ async function sistemAyarlariYukle() {
     const ayarlar = await apiCagir("/sistem/ayarlar");
     const el = document.getElementById("sistemAyarlariPaneli");
     if (!el) return;
+    // SADE GÖRÜNÜM (2026-10-31, kullanıcı isteği): kısa etiket + birim; uzun açıklama
+    // yalnız ⓘ'ye basınca açılır. Ayar anahtarları ve alan id'leri değişmedi.
     const satirlar = [
-      { key: "supheli_esik", label: "Şüpheli araç eşiği (red/saat)", tip: "number" },
-      // KLON PLAKA (2026-10-30) -- bkz. main.py::_klon_plaka_suphesi.
-      { key: "klon_sure_dk", label: "Klon plaka: aynı plaka bu kadar dakika içinde iki ayrı kapıdan aynı yönde geçerse alarm (0 = kapalı)", tip: "number" },
-      { key: "goruntu_saklama_gun", label: "Görüntü saklama süresi (gün)", tip: "number" },
-      // KVKK (2026-10-23) -- bkz. main.py::_kayitlari_anonimlestir.
-      { key: "kayit_anonimlestirme_gun", label: "KVKK: bu kadar günden eski geçişlerin plaka/kişi/not bilgisini sil (0 = kapalı, en az 30; geri alınamaz)", tip: "number" },
-      { key: "panel_yenileme_sn", label: "Panel yenileme aralığı (sn)", tip: "number" },
-      { key: "min_tanima_guveni", label: "Min. OCR okuma güveni — oy birikimine giriş eşiği (0-1)", tip: "number", step: "0.05" },
-      { key: "otomatik_kayit_min_guven_skoru", label: "Min. kayıt güven skoru — kayda düşme eşiği (0-1)", tip: "number", step: "0.01" },
-      { key: "otomatik_kayit_min_guven_skoru_bilinen_arac", label: "Min. kayıt güven skoru — BİLİNEN araç istisnası (0-1)", tip: "number", step: "0.01" },
-      { key: "tekrar_gecikme_sn", label: "Aynı kameranın kendi tekrarını bastırma gecikmesi (sn)", tip: "number" },
-      { key: "capraz_kamera_tekrar_penceresi_sn", label: "Farklı kameralar arası kısa süreli tekrar penceresi (sn, 0 = kapalı)", tip: "number" },
-      // OTOMATİK VERİTABANI YEDEKLEME (2026-09-25, kullanıcı isteği: "günlük
-      // otomatik yedek ekle") -- bkz. main.py::_otomatik_yedek_dongu.
-      { key: "otomatik_yedek_saklama_gun", label: "Otomatik yedek saklama süresi (gün, 0 = süresiz sakla)", tip: "number" },
-      // DİSKİN GERÇEKTEN DOLMASINA KARŞI ERKEN UYARI (2026-09-26, kullanıcı
-      // isteği) -- bkz. main.py::_disk_izleme_dongu.
-      { key: "disk_uyari_esik_yuzde", label: "Disk doluluk uyarı eşiği (%, 50-99)", tip: "number" },
-      // İÇERİDEKİ ARAÇLAR (2026-10-12) -- bkz. main.py::_iceride_durumu_hesapla.
-      { key: "iceride_ziyaretci_uyari_saat", label: "İçerideki ziyaretçi uyarısı (saat, 0 = kapalı)", tip: "number" },
-      { key: "iceride_takip_gun", label: "İçeride sayılma süresi (gün; son geçişi daha eski araç sayılmaz)", tip: "number" },
+      { key: "min_tanima_guveni", grup: "okuma", label: "Kare okuma güveni", birim: "0–1", step: "0.05", oran: true,
+        yardim: "Kameradan gelen tek bir karedeki okumanın oylamaya katılması için gereken en düşük güven." },
+      { key: "otomatik_kayit_min_guven_skoru", grup: "okuma", label: "Kayıt güven eşiği", birim: "0–1", step: "0.01", oran: true,
+        yardim: "Okuma tamamlandıktan sonra geçişin kaydedilmesi için gereken güven. Hatalı okumaların kayıtları şişirmesini önler (varsayılan 0,97)." },
+      { key: "otomatik_kayit_min_guven_skoru_bilinen_arac", grup: "okuma", label: "Kayıtlı araç eşiği", birim: "0–1", step: "0.01", oran: true,
+        yardim: "Kayıtlı (personel/abone) bir plakayla eşleşen okuma, genel eşiğin altında kalsa da bu eşiği geçerse kaydedilir (varsayılan 0,80). Kayıtlı aracın kötü ışıkta girişte kaydedilmemesini önler." },
+      { key: "tekrar_gecikme_sn", grup: "tekrar", label: "Aynı kamerada tekrar", birim: "sn",
+        yardim: "Bariyer önünde bekleyen araç bu süre içinde aynı kamerada yeniden kaydedilmez." },
+      { key: "capraz_kamera_tekrar_penceresi_sn", grup: "tekrar", label: "Kameralar arası tekrar", birim: "sn",
+        yardim: "Giriş ve çıkış kameraları aynı yolu görüyorsa tek geçiş iki kayıt oluşturabilir; bu süre içinde diğer kameradan gelen aynı plaka yeni kayıt sayılmaz. 0 = kapalı." },
+      { key: "supheli_esik", grup: "tekrar", label: "Şüpheli araç eşiği", birim: "red/saat",
+        yardim: "Bir saat içinde bu kadar kez geri çevrilen araç şüpheli sayılır ve alarm verilir." },
+      { key: "klon_sure_dk", grup: "tekrar", label: "Klon plaka süresi", birim: "dk",
+        yardim: "Aynı plaka bu süre içinde iki ayrı kapıdan aynı yönde geçerse klon plaka alarmı verilir. 0 = kapalı." },
+      { key: "iceride_ziyaretci_uyari_saat", grup: "iceride", label: "Ziyaretçi içeride uyarısı", birim: "saat",
+        yardim: "Ziyaretçi bu kadar saattir içerideyse uyarı verilir. 0 = kapalı." },
+      { key: "iceride_takip_gun", grup: "iceride", label: "İçeride sayılma süresi", birim: "gün",
+        yardim: "Son geçişi bundan eski olan araç 'içeride' listesinde sayılmaz (çıkışı okunmamış araçlar sonsuza kadar içeride görünmesin)." },
+      { key: "goruntu_saklama_gun", grup: "saklama", label: "Görüntü saklama", birim: "gün",
+        yardim: "Bu süreden eski araç fotoğrafları silinir; geçiş kaydı kalır." },
+      { key: "kayit_anonimlestirme_gun", grup: "saklama", label: "KVKK kayıt silme", birim: "gün",
+        yardim: "Bu süreden eski geçişlerin plaka, kişi, not ve görüntü bilgisi kalıcı olarak silinir; geri alınamaz. 0 = kapalı, en az 30." },
+      { key: "otomatik_yedek_saklama_gun", grup: "yedek", label: "Yedek saklama", birim: "gün",
+        yardim: "Bu süreden eski otomatik yedekler silinir. 0 = süresiz sakla. (SQL Server'da yedekler 14 gün döngüsel saklanır.)" },
+      { key: "disk_uyari_esik_yuzde", grup: "genel", label: "Disk uyarı eşiği", birim: "%",
+        yardim: "Veritabanı, görüntü ya da yedek diski bu doluluğa ulaşınca disk dolmadan önce alarm ve bildirim verilir (50–99)." },
+      { key: "panel_yenileme_sn", grup: "genel", label: "Panel yenileme", birim: "sn",
+        yardim: "Panelin verileri kendiliğinden yenileme aralığı." },
     ];
-    el.innerHTML = `<form id="sistemAyarlariForm" data-rol-min="yonetici">${satirlar.map(s =>
-      `<div class="mb-2"><label class="form-label small">${escapeHtml(s.label)}</label>
-       <input type="number" ${s.step ? `step="${s.step}" min="0" max="1"` : ""} class="form-control form-control-sm" id="ayar_${s.key}" value="${escapeHtml(String(ayarlar[s.key] ?? ""))}"></div>`
-    ).join("")}
-      <p class="small text-muted mb-2">"OCR okuma güveni" tek tek kamera karelerinin oylamaya katılıp
-        katılmayacağına bakar; "kayıt güven skoru" ise oturum kapanıp nihai güven belirlendikten sonra
-        tespitin panele/kayıtlara hiç düşüp düşmeyeceğine karar verir — düşük güvenli, hatalı okunan
-        plakaların kayıtları şişirmesini engellemek için varsayılan %97'dir. "BİLİNEN araç istisnası"
-        (varsayılan %80), sahada zaten kayıtlı (abone/personel) bir plakayla tam/çok yakın eşleşen bir
-        tespitin, genel eşiğin altında kalsa bile bu daha düşük eşiği geçtiği sürece yine de kaydedilmesini
-        sağlar — kayıtlı bir aracın düşük ışık/açı yüzünden düşük OCR güveniyle okunup girişte hiç
-        kaydedilmemesi (ama çıkışta kaydedilmesi gibi tutarsızlıklar) buradan kaynaklanır.
-        "Aynı kameranın kendi tekrarı", TEK bir kameranın (örn. bariyer önünde bekleyen bir aracı)
-        art arda birden fazla kez "yeni bir geçiş" olarak kaydetmesini engeller. "Farklı kameralar
-        arası kısa süreli tekrar" ise FARKLI bir sorunu çözer: giriş ve çıkış kameraları aynı fiziksel
-        geçidi/yolu paylaşıyorsa, bir aracın TEK geçişi her iki kameranın da görüş alanına girip iki
-        AYRI (ve çelişkili yönde) kayıt oluşturabilir -- bu pencere içinde farklı bir kameradan gelen
-        aynı plaka, yeni bir kayıt olarak SAYILMAZ.</p>
-      <div class="form-check mb-2">
-        <input type="checkbox" class="form-check-input" id="ayar_alarm_otomatik_okundu" ${ayarlar.alarm_otomatik_okundu !== false ? "checked" : ""}>
-        <label class="form-check-label small" for="ayar_alarm_otomatik_okundu">Yeni araç geçtiğinde önceki "yetkisiz/süresi dolmuş" alarmlarını otomatik okundu işaretle (kara liste ve şüpheli araç alarmları hariç)</label>
-      </div>
-      <div class="form-check mb-2">
-        <input type="checkbox" class="form-check-input" id="ayar_bilinen_plaka_duzeltme_aktif" ${ayarlar.bilinen_plaka_duzeltme_aktif ? "checked" : ""}>
-        <label class="form-check-label small" for="ayar_bilinen_plaka_duzeltme_aktif">Bilinen plakaya göre OCR düzeltmesi (tek karakter hataları)</label>
-      </div>
-      <hr>
-      <div class="form-check mb-2">
-        <input type="checkbox" class="form-check-input" id="ayar_otomatik_yedek_aktif" ${ayarlar.otomatik_yedek_aktif ? "checked" : ""}>
-        <label class="form-check-label small" for="ayar_otomatik_yedek_aktif">Veritabanını günde bir kez otomatik yedekle</label>
-      </div>
-      <div class="mb-2" id="sqliteYedekKlasoruAlani"><label class="form-label small" for="ayar_otomatik_yedek_klasoru">Otomatik yedek klasörü</label>
-        <input type="text" class="form-control form-control-sm" id="ayar_otomatik_yedek_klasoru" value="${escapeHtml(String(ayarlar.otomatik_yedek_klasoru ?? ""))}"></div>
-      <div class="mb-2 d-none" id="mssqlYedekKlasoruAlani"><label class="form-label small" for="ayar_mssql_yedek_klasoru">SQL Server yedek klasörü <span class="text-muted">(SQL Server makinesindeki yol; boş = SQL Server'ın varsayılan yedek klasörü)</span></label>
-        <input type="text" class="form-control form-control-sm" id="ayar_mssql_yedek_klasoru" placeholder="Boş bırakın (önerilir)" value="${escapeHtml(String(ayarlar.mssql_yedek_klasoru ?? ""))}"></div>
-      <p class="small text-muted mb-2">Canlı veritabanı çalışırken bile tutarlı bir kopya alınır (WAL
-        modunda bekleyen son işlemler dahil, bkz. README) ve seçilen saklama süresinden eski otomatik
-        yedekler otomatik silinir. Uzun süreli/afet kurtarma amaçlı saklama için bu klasörü ayrı bir
-        diske/harici depolamaya yönlendirmeniz önerilir.</p>
-      <div id="otomatikYedekDurumu" class="small mb-2"></div>
-      <hr>
-      <div class="form-check mb-2">
-        <input type="checkbox" class="form-check-input" id="ayar_disk_izleme_aktif" ${ayarlar.disk_izleme_aktif ? "checked" : ""}>
-        <label class="form-check-label small" for="ayar_disk_izleme_aktif">Disk doluluk oranını izle, eşiği aşınca ERKEN uyar</label>
-      </div>
-      <p class="small text-muted mb-2">Veritabanı/görsel/otomatik-yedek klasörlerinin bulunduğu disklerin
-        doluluk yüzdesi her 30 dakikada bir kontrol edilir — bir yazma İSTİSNASI oluşmadan (disk henüz
-        dolmadan), yukarıdaki eşiği aşan bir disk için panelde alarm ve (Bildirim sekmesinden
-        tanımlanmışsa) Telegram/webhook bildirimi üretilir. Bu, sadece bir yazma FİİLEN başarısız
-        OLDUKTAN SONRA tetiklenen "disk hatası" alarmından FARKLIDIR.</p>
-      ${rolYeterli("yonetici") ? '' : '<p class="small text-muted mb-2"><i class="bi bi-lock-fill"></i> Bu ayarları sadece yönetici değiştirebilir.</p>'}
-      <button type="submit" class="btn btn-sm btn-primary w-100 mt-1"><i class="bi bi-save"></i> Kaydet</button></form>`;
+    const kutular = {
+      alarm_otomatik_okundu: { grup: "tekrar", label: "Araç yeniden geçince eski alarmları okundu say",
+        yardim: "Yetkisiz/süresi dolmuş alarmları için geçerlidir; kara liste ve şüpheli araç alarmları okunmadan kalır.",
+        acik: ayarlar.alarm_otomatik_okundu !== false },
+      bilinen_plaka_duzeltme_aktif: { grup: "okuma", label: "Kayıtlı plakaya göre tek harf düzeltmesi",
+        yardim: "Okunan plaka kayıtlı bir plakadan yalnız bir karakter farklıysa kayıtlı plakaya düzeltilir.",
+        acik: !!ayarlar.bilinen_plaka_duzeltme_aktif },
+      otomatik_yedek_aktif: { grup: "yedek", label: "Günlük otomatik yedek", acik: !!ayarlar.otomatik_yedek_aktif,
+        yardim: "Veritabanı çalışırken bile tutarlı bir kopyası günde bir alınır. Afete karşı yedek klasörünü ayrı bir diske yönlendirin." },
+      disk_izleme_aktif: { grup: "genel", label: "Disk doluluğunu izle", acik: !!ayarlar.disk_izleme_aktif,
+        yardim: "Diskler 30 dakikada bir kontrol edilir; eşik aşılınca alarm ve bildirim verilir." },
+    };
+    const gruplar = [
+      ["okuma", "bi-eye", "Plaka okuma"], ["tekrar", "bi-bell", "Tekrar ve alarmlar"], ["iceride", "bi-box-arrow-in-right", "İçerideki araçlar"],
+      ["saklama", "bi-shield-lock", "Saklama ve KVKK"], ["yedek", "bi-hdd-stack", "Yedekleme"], ["genel", "bi-sliders", "Disk ve panel"],
+    ];
+    const yardimDugme = (id, metin) => metin ? `<button type="button" class="ayar-bilgi" aria-label="Açıklama" aria-expanded="false"
+      onclick="const y=document.getElementById('${id}_yardim');y.hidden=!y.hidden;this.setAttribute('aria-expanded',!y.hidden)"><i class="bi bi-info-circle"></i></button>` : "";
+    const yardimMetni = (id, metin) => metin ? `<div class="ayar-yardim" id="${id}_yardim" hidden>${escapeHtml(metin)}</div>` : "";
+    const sayiSatiri = s => `<div class="ayar-satir">
+        <label for="ayar_${s.key}">${escapeHtml(s.label)}</label>${yardimDugme(`ayar_${s.key}`, s.yardim)}
+        <div class="input-group input-group-sm ayar-deger">
+          <input type="number" ${s.oran ? `step="${s.step}" min="0" max="1"` : 'min="0"'} class="form-control" id="ayar_${s.key}" value="${escapeHtml(String(ayarlar[s.key] ?? ""))}">
+          <span class="input-group-text">${escapeHtml(s.birim)}</span></div>
+      </div>${yardimMetni(`ayar_${s.key}`, s.yardim)}`;
+    const kutuSatiri = ([key, k]) => `<div class="ayar-satir">
+        <div class="form-check form-switch mb-0"><input type="checkbox" class="form-check-input" role="switch" id="ayar_${key}" ${k.acik ? "checked" : ""}>
+          <label class="form-check-label" for="ayar_${key}">${escapeHtml(k.label)}</label></div>${yardimDugme(`ayar_${key}`, k.yardim)}
+      </div>${yardimMetni(`ayar_${key}`, k.yardim)}`;
+    const grupHtml = ([ad, ikon, baslik]) => {
+      let icerik = Object.entries(kutular).filter(([, k]) => k.grup === ad).map(kutuSatiri).join("")
+        + satirlar.filter(s => s.grup === ad).map(sayiSatiri).join("");
+      if (ad === "yedek") {
+        icerik += `<div id="sqliteYedekKlasoruAlani" class="mt-2"><label class="form-label small text-muted mb-1" for="ayar_otomatik_yedek_klasoru">Yedek klasörü</label>
+            <input type="text" class="form-control form-control-sm" id="ayar_otomatik_yedek_klasoru" value="${escapeHtml(String(ayarlar.otomatik_yedek_klasoru ?? ""))}"></div>
+          <div id="mssqlYedekKlasoruAlani" class="mt-2 d-none"><label class="form-label small text-muted mb-1" for="ayar_mssql_yedek_klasoru">SQL Server yedek klasörü</label>
+            <input type="text" class="form-control form-control-sm" id="ayar_mssql_yedek_klasoru" placeholder="Boş = SQL Server'ın varsayılanı (önerilir)" value="${escapeHtml(String(ayarlar.mssql_yedek_klasoru ?? ""))}"></div>
+          <div id="otomatikYedekDurumu" class="small mt-2"></div>`;
+      }
+      return `<div class="col-md-6 col-xl-4"><section class="ayar-grup"><h6><i class="bi ${ikon}"></i>${baslik}</h6>${icerik}</section></div>`;
+    };
+    el.innerHTML = `<form id="sistemAyarlariForm" data-rol-min="yonetici">
+      <div class="row g-3">${gruplar.map(grupHtml).join("")}</div>
+      <div class="d-flex align-items-center justify-content-end gap-3 mt-3 pt-3 border-top">
+        ${rolYeterli("yonetici") ? '<span class="small text-muted me-auto"><i class="bi bi-info-circle"></i> simgesine basarak ayarın açıklamasını görebilirsiniz.</span>'
+          : '<span class="small text-muted me-auto"><i class="bi bi-lock-fill"></i> Bu ayarları sadece yönetici değiştirebilir.</span>'}
+        <button type="submit" class="btn btn-sm btn-primary px-4"><i class="bi bi-save"></i> Kaydet</button></div></form>`;
     document.getElementById("sistemAyarlariForm").addEventListener("submit", async (ev) => {
       ev.preventDefault();
       const guncel = {};
@@ -7701,8 +7705,8 @@ async function otomatikYedekDurumunuYukle() {
     document.getElementById("sqliteYedekKlasoruAlani")?.classList.toggle("d-none", veri.mod === "mssql");
     if (veri.mod === "mssql") { _mssqlYedekDurumunuCiz(el, veri); return; }
     if (!veri.yedekler.length) {
-      el.className = "small mb-2 text-muted";
-      el.textContent = `Henüz otomatik yedek alınmadı (klasör: ${veri.klasor}). İlk yedek en geç 6 saat içinde alınır.`;
+      el.className = "small mt-2 text-muted";
+      el.textContent = "Henüz otomatik yedek alınmadı. İlk yedek en geç 6 saat içinde alınır.";
       return;
     }
     const son = veri.yedekler[0];
@@ -7715,8 +7719,9 @@ async function otomatikYedekDurumunuYukle() {
     } else {
       saglamlikRozeti = '<span class="badge bg-secondary">Henüz doğrulanmadı</span>';
     }
-    el.className = "small mb-2 text-muted";
-    el.innerHTML = `Son otomatik yedek: ${new Date(son.tarih_saat).toLocaleString("tr-TR")} (${boyutMb} MB) — toplam ${veri.yedekler.length} yedek, klasör: ${escapeHtml(veri.klasor)}<br>
+    el.className = "small mt-2 text-muted";
+    el.innerHTML = `Son yedek: <strong>${new Date(son.tarih_saat).toLocaleString("tr-TR")}</strong> · ${boyutMb} MB · ${veri.yedekler.length} yedek
+      <span class="text-break d-block">Klasör: ${escapeHtml(veri.klasor)}</span>
       ${saglamlikRozeti}
       ${rolYeterli("yonetici") ? `<button type="button" class="btn btn-sm btn-outline-secondary ms-2 py-0" onclick="otomatikYedekDogrula('${encodeURIComponent(son.dosya_adi)}')"><i class="bi bi-shield-check"></i> Şimdi Doğrula</button>` : ""}`;
   } catch (e) {
@@ -7725,25 +7730,28 @@ async function otomatikYedekDurumunuYukle() {
 }
 
 function _mssqlYedekDurumunuCiz(el, veri) {
+  // Sade görünüm (2026-10-31): son yedek tek satır; önceki yedekler ve klasör "Ayrıntı"da.
   const boyutMb = (b) => (b / (1024 * 1024)).toFixed(1);
   const son = veri.yedekler[0];
   const parcalar = [];
   if (veri.hata) parcalar.push(`<div class="text-danger"><i class="bi bi-x-octagon-fill"></i> ${escapeHtml(veri.hata)}</div>`);
   if (veri.uyari) parcalar.push(`<div class="text-danger fw-bold"><i class="bi bi-exclamation-triangle-fill"></i> ${escapeHtml(veri.uyari)}</div>`);
-  if (son) {
-    parcalar.push(`<div class="text-muted">SQL Server'daki son yedek: <strong>${new Date(son.tarih_saat).toLocaleString("tr-TR")}</strong> (${boyutMb(son.boyut_bayt)} MB) — <span class="text-break">${escapeHtml(son.yol)}</span></div>`);
-    const eski = veri.yedekler.slice(1, 4).map(y => `${new Date(y.tarih_saat).toLocaleDateString("tr-TR")} · ${escapeHtml(y.dosya_adi)}`);
-    if (eski.length) parcalar.push(`<div class="text-muted">Önceki yedekler: ${eski.join(" | ")}</div>`);
-  }
-  parcalar.push(`<div class="text-muted">Otomatik yedek: ${veri.aktif ? '<span class="badge bg-success">AÇIK</span>' : '<span class="badge bg-secondary">KAPALI</span>'} — yedek klasörü (SQL Server makinesinde): ${escapeHtml(veri.klasor || "belirlenemedi")}</div>`);
-  parcalar.push(`<div class="text-muted">Yedekler SQL Server'ın kendi kayıtlarından (elle SSMS'ten aldığınız <code>pts.bak</code> dahil) listelenir. Otomatik yedek, son yedek 20 saatten eskiyse günde en fazla bir kez alınır; en fazla 14 gün döngüsel saklanır.</div>`);
+  parcalar.push(son
+    ? `<div><i class="bi bi-check-circle text-success"></i> Son yedek: <strong>${new Date(son.tarih_saat).toLocaleString("tr-TR")}</strong> · ${boyutMb(son.boyut_bayt)} MB</div>`
+    : '<div class="text-muted">Henüz yedek yok.</div>');
+  const eski = veri.yedekler.slice(1, 4).map(y => `<li>${new Date(y.tarih_saat).toLocaleString("tr-TR")} · ${escapeHtml(y.dosya_adi)}</li>`).join("");
+  parcalar.push(`<details class="mt-1 text-muted"><summary>Ayrıntı</summary>
+    ${son ? `<div class="text-break">Dosya: ${escapeHtml(son.yol)}</div>` : ""}
+    ${eski ? `<div>Önceki yedekler:</div><ul class="mb-1 ps-3">${eski}</ul>` : ""}
+    <div class="text-break">Klasör (SQL Server makinesinde): ${escapeHtml(veri.klasor || "belirlenemedi")}</div>
+    <div>Otomatik yedek son yedek 20 saatten eskiyse günde en fazla bir kez alınır, 14 gün saklanır. SSMS'ten elle alınan yedekler de listelenir.</div></details>`);
   if (rolYeterli("yonetici")) {
-    parcalar.push(`<div class="mt-1">
+    parcalar.push(`<div class="mt-2 d-flex gap-2 flex-wrap">
       <button type="button" class="btn btn-sm btn-outline-primary py-0" onclick="veritabaniIndir()" id="mssqlSimdiYedekBtn"><i class="bi bi-hdd-fill"></i> Şimdi Yedekle</button>
-      ${son ? `<button type="button" class="btn btn-sm btn-outline-secondary ms-1 py-0" onclick="otomatikYedekDogrula('${encodeURIComponent(son.dosya_adi)}')"><i class="bi bi-shield-check"></i> Son Yedeği Doğrula</button>` : ""}
+      ${son ? `<button type="button" class="btn btn-sm btn-outline-secondary py-0" onclick="otomatikYedekDogrula('${encodeURIComponent(son.dosya_adi)}')"><i class="bi bi-shield-check"></i> Son Yedeği Doğrula</button>` : ""}
     </div>`);
   }
-  el.className = "small mb-2";
+  el.className = "small mt-2";
   el.innerHTML = parcalar.join("");
 }
 

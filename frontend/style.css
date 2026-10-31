@@ -724,3 +724,16 @@ table td, table th {
 #onayModal.onay-ustte { z-index: 1075; }
 .modal-backdrop.onay-ustte { z-index: 1070; }
 a.side-link { text-decoration: none; } a.side-link:hover { color: #fff; }
+
+/* Sistem Ayarları — sade görünüm (2026-10-31): gruplu, kısa etiket, açıklama ⓘ ile */
+.ayar-grup { border: 1px solid #e3e7ee; border-radius: 10px; padding: 12px 14px; height: 100%; }
+.ayar-grup h6 { font-size: .8rem; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; color: #5b6576; margin: 0 0 8px; }
+.ayar-grup h6 .bi { margin-right: 6px; }
+.ayar-satir { display: flex; align-items: center; gap: 6px; padding: 5px 0; font-size: .875rem; }
+.ayar-satir > label, .ayar-satir .form-check { flex: 1; margin: 0; }
+.ayar-deger { width: 140px; flex: none; }
+.ayar-deger .input-group-text { min-width: 54px; justify-content: center; font-size: .75rem; color: #5b6576; }
+.ayar-bilgi { border: 0; background: none; padding: 0 2px; color: #9aa3b2; line-height: 1; }
+.ayar-bilgi:hover, .ayar-bilgi[aria-expanded="true"] { color: var(--bs-primary, #0d6efd); }
+.ayar-yardim { font-size: .78rem; color: #5b6576; background: #f4f6fa; border-radius: 6px; padding: 6px 9px; margin: 0 0 6px; }
+#otomatikYedekDurumu details summary { cursor: pointer; }
