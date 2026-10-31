@@ -1,0 +1,4 @@
+# Caddy otomatik Let's Encrypt sertifikası alır. Alan adının A kaydı VPS'i göstermeli.
+izleme.firmaniz.com.tr {
+    reverse_proxy 127.0.0.1:8100
+}

@@ -31,3 +31,7 @@ sertifika/
 
 # Kapı kutusu derleme çıktısı
 kapi_kutusu/.pio/
+
+# Merkezi izleme (2026-10-31): kurulumun merkez ayarı (anahtar içerir) ve merkez veritabanı
+backend/merkez_izleme.json
+merkez/*.db

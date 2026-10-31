@@ -2728,6 +2728,35 @@
               <div class="text-center text-muted py-3"><div class="spinner-border spinner-border-sm"></div> Kontrol ediliyor…</div>
             </div>
           </div>
+          <!-- MERKEZİ İZLEME (2026-10-31): sağlık özetinin satıcının merkezine gönderilmesi
+               (bkz. backend/merkez_istemci.py, merkez/). Plaka/kişi bilgisi gitmez. -->
+          <div class="card mb-3" data-rol-min="yonetici" data-rol-davranis="gizle">
+            <div class="card-header d-flex justify-content-between align-items-center">
+              <span><i class="bi bi-broadcast me-1"></i>Merkezi İzleme</span>
+              <span id="merkezRozet" class="badge text-bg-secondary">Kapalı</span></div>
+            <div class="card-body">
+              <p class="small text-muted mb-2">Sistemin sağlık durumu (kameralar çalışıyor mu, disk, yedek, lisans) birkaç dakikada bir
+                bakım firmasının izleme merkezine gönderilir; sorun çıkınca firma haberdar olur.
+                <b>Plaka, kişi, fotoğraf ya da geçiş kaydı gönderilmez.</b></p>
+              <form id="merkezForm" class="small">
+                <div class="form-check form-switch mb-2"><input class="form-check-input" type="checkbox" id="merkezAktif">
+                  <label class="form-check-label" for="merkezAktif">Gönderim açık</label></div>
+                <label class="form-label mb-1" for="merkezUrl">Merkez adresi</label>
+                <input type="url" class="form-control form-control-sm mb-2" id="merkezUrl" placeholder="https://izleme.firma.com.tr">
+                <label class="form-label mb-1" for="merkezAnahtar">Kurulum anahtarı</label>
+                <input type="password" class="form-control form-control-sm mb-2" id="merkezAnahtar" autocomplete="off">
+                <label class="form-label mb-1" for="merkezAralik">Gönderim aralığı</label>
+                <select class="form-select form-select-sm mb-2" id="merkezAralik">
+                  <option value="120">2 dakika</option><option value="300">5 dakika</option><option value="600">10 dakika</option><option value="900">15 dakika</option></select>
+                <div class="d-flex gap-2 flex-wrap">
+                  <button type="submit" class="btn btn-sm btn-primary">Kaydet ve gönder</button>
+                  <button type="button" class="btn btn-sm btn-outline-secondary" onclick="merkezOzetGoster()">Gönderilen veriyi göster</button>
+                </div>
+              </form>
+              <div id="merkezDurum" class="small mt-2"></div>
+              <pre id="merkezOzet" class="small bg-light border rounded p-2 mt-2 d-none" style="max-height:300px;overflow:auto"></pre>
+            </div>
+          </div>
           <div class="card mb-3">
             <div class="card-header"><i class="bi bi-gear-fill me-1"></i>Sistem Ayarları</div>
             <div class="card-body" id="sistemAyarlariPaneli">

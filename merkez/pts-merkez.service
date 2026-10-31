@@ -1,0 +1,16 @@
+# systemd birimi: /etc/systemd/system/pts-merkez.service
+# Kurulum: README.md "VPS'e kurulum" bölümü.
+[Unit]
+Description=PTS Merkezi Izleme
+After=network.target
+
+[Service]
+User=ptsmerkez
+WorkingDirectory=/opt/pts-merkez
+EnvironmentFile=/opt/pts-merkez/merkez.env
+ExecStart=/opt/pts-merkez/.venv/bin/uvicorn merkez.uygulama:app --host 127.0.0.1 --port 8100 --proxy-headers --forwarded-allow-ips 127.0.0.1
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

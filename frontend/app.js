@@ -7329,8 +7329,64 @@ async function dogrulukTestiCalistir(olay) {
 // Sistem sekmesi açıldığında logları ve sağlık bilgisini otomatik yükle
 document.querySelector('[data-bs-target="#sistem-sekme"]')?.addEventListener("click", () => {
   sistemSagliginiYukle(); loglariYukle(); sistemAyarlariYukle(); diskBilgisiYukle(); anprModelleriniYukle();
-  bildirimAyarlariYukle();
+  bildirimAyarlariYukle(); merkezIzlemeYukle();
 });
+
+// ================================================================
+// MERKEZİ İZLEME (2026-10-31): sağlık özetinin bakım firmasının merkezine
+// gönderilmesi -- bkz. main.py "MERKEZİ İZLEME", backend/merkez_istemci.py.
+// ================================================================
+function _merkezDurumCiz(d) {
+  const rozet = document.getElementById("merkezRozet");
+  if (!rozet) return;
+  const hata = d.aktif && d.son_hata;
+  rozet.className = `badge text-bg-${!d.aktif ? "secondary" : hata ? "danger" : d.son_basarili ? "success" : "warning"}`;
+  rozet.textContent = !d.aktif ? "Kapalı" : hata ? "Gönderilemiyor" : d.son_basarili ? "Bağlı" : "Bekliyor";
+  document.getElementById("merkezAktif").checked = d.aktif;
+  document.getElementById("merkezUrl").value = d.url || "";
+  const anahtar = document.getElementById("merkezAnahtar");
+  anahtar.value = "";
+  anahtar.placeholder = d.anahtar_var ? `Kayıtlı (${d.anahtar_maskeli}) — değiştirmek için yazın` : "Merkez panelinden alınan anahtar";
+  const aralik = document.getElementById("merkezAralik");
+  if (![...aralik.options].some(o => o.value === String(d.aralik_sn))) aralik.add(new Option(`${d.aralik_sn} sn`, d.aralik_sn));
+  aralik.value = String(d.aralik_sn);
+  const satirlar = [];
+  if (d.son_basarili) satirlar.push(`Son başarılı gönderim: ${escapeHtml(tarihFormatla(d.son_basarili))}`);
+  if (hata) satirlar.push(`<span class="text-danger">Son deneme başarısız: ${escapeHtml(d.son_hata)}${d.ardisik_hata > 1 ? ` (${d.ardisik_hata} kez üst üste)` : ""}</span>`);
+  document.getElementById("merkezDurum").innerHTML = satirlar.join("<br>");
+}
+
+async function merkezIzlemeYukle() {
+  if (!document.getElementById("merkezForm") || !rolYeterli("yonetici")) return;
+  try { _merkezDurumCiz(await apiCagir("/merkez-izleme")); }
+  catch (e) { document.getElementById("merkezDurum").innerHTML = `<span class="text-danger">${escapeHtml(e.message)}</span>`; }
+}
+
+document.getElementById("merkezForm")?.addEventListener("submit", async (olay) => {
+  olay.preventDefault();
+  const govde = {
+    aktif: document.getElementById("merkezAktif").checked,
+    url: document.getElementById("merkezUrl").value.trim(),
+    anahtar: document.getElementById("merkezAnahtar").value.trim() || null,
+    aralik_sn: Number(document.getElementById("merkezAralik").value),
+  };
+  try {
+    const d = await apiCagir("/merkez-izleme", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(govde) });
+    _merkezDurumCiz(d);
+    if (!d.aktif) toastGoster("Merkezi izleme kapatıldı.", "bilgi");
+    else if (d.son_hata) toastGoster(`Kaydedildi ama gönderilemedi: ${d.son_hata}`, "hata");
+    else toastGoster("Kaydedildi; sağlık özeti merkeze gönderildi.", "basari");
+  } catch (e) { toastGoster(e.message, "hata"); }
+});
+
+async function merkezOzetGoster() {
+  const kutu = document.getElementById("merkezOzet");
+  if (!kutu.classList.contains("d-none")) { kutu.classList.add("d-none"); return; }
+  try {
+    kutu.textContent = JSON.stringify(await apiCagir("/merkez-izleme/ozet"), null, 2);
+    kutu.classList.remove("d-none");
+  } catch (e) { toastGoster(e.message, "hata"); }
+}
 
 // ================================================================
 // BİLDİRİM AYARLARI (Webhook / Telegram) -- bu ekran daha önce yalnızca

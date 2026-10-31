@@ -12362,6 +12362,189 @@ def otomatik_yedek_dogrula(dosya_adi: str, kullanici: models.Kullanici = Depends
     return {"dosya_adi": yeni_ad, "saglam": saglam, "hata": hata}
 
 
+
+# ==================================================================
+# MERKEZİ İZLEME (2026-10-31, kullanıcı isteği): kurulum birkaç dakikada bir
+# sağlık özetini satıcının merkez sunucusuna gönderir (bkz. backend/merkez_istemci.py,
+# merkez/ klasörü). KVKK: plaka, kişi, fotoğraf ya da geçiş kaydı GÖNDERİLMEZ.
+# ==================================================================
+from backend import merkez_istemci  # noqa: E402
+
+_SUREC_BASLANGIC = time.time()
+_MERKEZ_AYAR_KLASORU = os.path.dirname(SISTEM_AYARLARI_DOSYASI)
+
+
+def _merkez_kamera_ozetleri(db: Session, simdi: datetime) -> list:
+    K, M = models.Kayit, models.KameraMutabakati
+    gun_basi = datetime.combine(simdi.date(), datetime.min.time())
+    bugun = dict(db.query(K.kamera_id, func.count(K.id)).filter(K.tarih_saat >= gun_basi).group_by(K.kamera_id).all())
+    son = dict(db.query(K.kamera_id, func.max(K.tarih_saat)).filter(K.tarih_saat >= simdi - timedelta(days=7))
+               .group_by(K.kamera_id).all())
+    sonuc = []
+    for kam in _kameralari_oku():
+        ad = _kamera_adini_kayit_icin_temizle(kam.get("ad"))
+        aktif = bool(kam.get("aktif", True))
+        p = _aktif_pipelineler.get(kam.get("id"))
+        goruntu, dahua = None, None
+        if p is not None:
+            try:
+                d = p.durum_bilgisi()
+            except Exception:  # noqa: BLE001 - izleme amaçlı
+                d = {}
+            canli = bool(getattr(p, "calisiyor", False)) and p.thread_canli_mi()
+            goruntu = "baglaniyor" if d.get("baglaniyor") else ("donmus" if d.get("donmus") else ("calisiyor" if canli else "durdu"))
+            if d.get("dahua") is not None:
+                dahua = bool(d["dahua"].get("bagli"))
+        elif aktif and _CAM_LIBS:
+            goruntu = "durdu"
+        son_plaka = son.get(ad)
+        mut = db.query(M).filter(M.kamera_ad == ad).order_by(desc(M.gun), desc(M.id)).first()
+        mutabakat = None
+        if mut is not None:
+            oran = round(mut.pts_yakalanan / mut.kamera_gecis * 100, 1) if mut.kamera_gecis else None
+            mutabakat = {"gun": mut.gun.isoformat(), "kamera_gecis": mut.kamera_gecis or 0,
+                         "oran": oran, "eklenen": mut.eklenen or 0, "hata": bool(mut.hata)}
+        sonuc.append({
+            "ad": ad, "aktif": aktif, "goruntu": goruntu, "dahua_bagli": dahua,
+            "son_okuma_dk": max(0, int((simdi - son_plaka).total_seconds() // 60)) if son_plaka else None,
+            "bugun_okuma": int(bugun.get(ad, 0)), "mutabakat": mutabakat,
+        })
+    return sonuc
+
+
+def _merkez_saglik_ozeti(db: Session) -> dict:
+    """Merkeze giden özet. YALNIZ sayı ve durum içerir; kişisel veri eklemeyin
+    (merkez_istemci.yasakli_alan_var_mi gönderimden önce denetler)."""
+    simdi = datetime.now()
+    saglik = saglik_kontrolu(db)
+    ayarlar = _sistem_ayarlari_oku()
+    lisans = _lisans_kalan_gun_ekle(_lisans_durumunu_oku())
+    A, S = models.Alarm, models.SunucuKesintisi
+    alarmlar = dict(db.query(A.alarm_tipi, func.count(A.id)).filter(A.tarih_saat >= simdi - timedelta(hours=24))
+                    .group_by(A.alarm_tipi).all())
+    kesintiler = [{"baslangic": k.baslangic.isoformat(timespec="minutes"), "bitis": k.bitis.isoformat(timespec="minutes"),
+                   "sure_dk": int((k.bitis - k.baslangic).total_seconds() // 60), "durum": k.durum,
+                   "aktarilan": k.aktarilan or 0}
+                  for k in db.query(S).filter(S.bitis >= simdi - timedelta(days=7)).order_by(desc(S.baslangic)).limit(20)]
+    diskler = [{"ad": etiket, "yuzde": _disk_kullanim_yuzdesi(yol)} for etiket, yol in _izlenen_disk_yollari(ayarlar).items()]
+    return {
+        "sema": 1,
+        "zaman": simdi.isoformat(timespec="seconds"),
+        "kurum": marka.oku().get("kurum_adi") or "",
+        "surum": app.version,
+        "calisma_suresi_sn": int(time.time() - _SUREC_BASLANGIC),
+        "veritabani": saglik["veritabani"],
+        "uyarilar": saglik["uyarilar"],
+        "son_kayit_dk": saglik["son_kayit_dk"],
+        "kameralar": _merkez_kamera_ozetleri(db, simdi),
+        "disk": {"en_dolu_yuzde": saglik["disk_yuzde"], "esik_yuzde": float(ayarlar.get("disk_uyari_esik_yuzde", 90)),
+                 "yollar": diskler},
+        "yedek": {"otomatik_acik": bool(ayarlar.get("otomatik_yedek_aktif", True)), "yas_saat": saglik["son_yedek_saat"]},
+        "lisans": {"aktif": _lisans_aktif_mi(), "musteri": lisans.get("musteri"), "lisans_id": lisans.get("lisans_id"),
+                   "bitis_tarihi": lisans.get("bitis_tarihi"), "kalan_gun": lisans.get("kalan_gun"),
+                   "kamera_limiti": lisans.get("kamera_limiti")},
+        "sertifika_kalan_gun": saglik["sertifika_kalan_gun"],
+        "alarmlar_24s": {str(t): int(n) for t, n in alarmlar.items()},
+        "okunmamis_alarm": int(db.query(func.count(A.id)).filter(A.okundu == False).scalar() or 0),  # noqa: E712
+        "kesintiler_7g": kesintiler,
+    }
+
+
+def _merkeze_gonder_sync() -> dict:
+    ayar = merkez_istemci.ayarlari_oku(_MERKEZ_AYAR_KLASORU)
+    if not (ayar["aktif"] and ayar["url"] and ayar["anahtar"]):
+        raise RuntimeError("Merkezi izleme kapalı ya da adres/anahtar girilmemiş.")
+    db = SessionLocal()
+    try:
+        ozet = _merkez_saglik_ozeti(db)
+    finally:
+        db.close()
+    return merkez_istemci.gonder(ayar["url"], ayar["anahtar"], ozet)
+
+
+async def _merkez_dongu() -> None:
+    await asyncio.sleep(30)   # açılışta kameralar bağlansın
+    while True:
+        ayar = merkez_istemci.ayarlari_oku(_MERKEZ_AYAR_KLASORU)
+        if ayar["aktif"] and ayar["url"] and ayar["anahtar"]:
+            try:
+                await asyncio.to_thread(_merkeze_gonder_sync)
+            except RuntimeError as exc:
+                # Her denemede log yığmasın: ilk hata ve her 12. tekrar.
+                if merkez_istemci.durum()["ardisik_hata"] % 12 == 1:
+                    logger.warning("[merkez] Sağlık özeti gönderilemedi: %s", exc)
+            except Exception:
+                logger.exception("[merkez] Beklenmeyen hata")
+        await asyncio.sleep(ayar["aralik_sn"])
+
+
+@app.on_event("startup")
+async def _merkez_izleme_baslangic():
+    asyncio.ensure_future(_merkez_dongu())
+
+
+def _merkez_durum_cevabi() -> dict:
+    ayar = merkez_istemci.ayarlari_oku(_MERKEZ_AYAR_KLASORU)
+    d = merkez_istemci.durum()
+    zaman = lambda t: datetime.fromtimestamp(t).isoformat(timespec="seconds") if t else None  # noqa: E731
+    return {"aktif": ayar["aktif"], "url": ayar["url"], "anahtar_maskeli": merkez_istemci.anahtari_maskele(ayar["anahtar"]),
+            "anahtar_var": bool(ayar["anahtar"]), "aralik_sn": ayar["aralik_sn"],
+            "son_gonderim": zaman(d["son_gonderim"]), "son_basarili": zaman(d["son_basarili"]),
+            "son_hata": d["son_hata"], "ardisik_hata": d["ardisik_hata"]}
+
+
+@app.get("/merkez-izleme")
+def merkez_izleme_durumu(kullanici: models.Kullanici = Depends(_personel_girisi_gerekli)):
+    _rol_dogrula(kullanici, ROL_YONETICI)
+    return _merkez_durum_cevabi()
+
+
+@app.get("/merkez-izleme/ozet")
+def merkez_izleme_ozeti(db: Session = Depends(get_db), kullanici: models.Kullanici = Depends(_personel_girisi_gerekli)):
+    """Merkeze gidecek verinin kendisi (KVKK şeffaflığı: "ne gönderiyoruz?")."""
+    _rol_dogrula(kullanici, ROL_YONETICI)
+    return _merkez_saglik_ozeti(db)
+
+
+@app.put("/merkez-izleme")
+async def merkez_izleme_ayarla(istek: schemas.MerkezIzlemeAyar, db: Session = Depends(get_db),
+                               kullanici: models.Kullanici = Depends(_personel_girisi_gerekli)):
+    _rol_dogrula(kullanici, ROL_YONETICI)
+    ayar = merkez_istemci.ayarlari_oku(_MERKEZ_AYAR_KLASORU)
+    url = istek.url.strip()
+    if url or istek.aktif:
+        try:
+            url = merkez_istemci.url_dogrula(url)
+        except ValueError as exc:
+            raise HTTPException(400, str(exc))
+    anahtar = (istek.anahtar or "").strip() or ayar["anahtar"]
+    if istek.aktif and not anahtar:
+        raise HTTPException(400, "Merkez panelinde bu kurulum için verilen anahtarı girin.")
+    merkez_istemci.ayarlari_yaz(_MERKEZ_AYAR_KLASORU, {"aktif": istek.aktif, "url": url, "anahtar": anahtar,
+                                                       "aralik_sn": istek.aralik_sn})
+    _denetim_kaydet(db, kullanici.kullanici_adi, "merkez_izleme_ayar",
+                    f"aktif={istek.aktif}, adres={url or '-'}, aralık={istek.aralik_sn}sn"
+                    + (", anahtar değişti" if (istek.anahtar or "").strip() else ""))
+    cevap = _merkez_durum_cevabi()
+    if istek.aktif:
+        try:
+            await asyncio.to_thread(_merkeze_gonder_sync)
+            cevap = _merkez_durum_cevabi()
+        except RuntimeError:
+            cevap = _merkez_durum_cevabi()
+    return cevap
+
+
+@app.post("/merkez-izleme/gonder")
+async def merkez_izleme_simdi_gonder(kullanici: models.Kullanici = Depends(_personel_girisi_gerekli)):
+    _rol_dogrula(kullanici, ROL_YONETICI)
+    try:
+        await asyncio.to_thread(_merkeze_gonder_sync)
+    except RuntimeError as exc:
+        raise HTTPException(400, f"Gönderilemedi: {exc}")
+    return _merkez_durum_cevabi()
+
+
 if __name__ == "__main__":
     import uvicorn
     # NOT: gerçek üretim başlatıcıları (calistir.bat/calistir.sh) zaten doğrudan

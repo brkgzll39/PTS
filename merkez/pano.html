@@ -1,0 +1,282 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PTS Merkezi İzleme</title>
+<style>
+  :root { --zemin:#f3f5f9; --kart:#fff; --yazi:#1b2333; --soluk:#5d6779; --cizgi:#e1e6ee; --mavi:#1f4fd8;
+          --kirmizi:#c62828; --kirmizi-z:#fde7e7; --turuncu:#b45f00; --turuncu-z:#fff1dc; --yesil:#1e7a3c; --yesil-z:#e3f4e8;
+          --gri:#6b7280; --gri-z:#eceff3; --mor:#5b3fb5; --mor-z:#ece7fb; }
+  @media (prefers-color-scheme: dark) {
+    :root { --zemin:#10141c; --kart:#1a202b; --yazi:#e6e9ef; --soluk:#9aa3b2; --cizgi:#2b3341; --mavi:#7aa2ff;
+            --kirmizi:#ff8a80; --kirmizi-z:#3a1c1e; --turuncu:#ffb74d; --turuncu-z:#3a2a14; --yesil:#7bd88f; --yesil-z:#16301f;
+            --gri:#a0a7b4; --gri-z:#262d39; --mor:#b9a6ff; --mor-z:#2a2340; }
+  }
+  * { box-sizing: border-box; }
+  body { margin:0; font-family: system-ui, "Segoe UI", Roboto, sans-serif; background:var(--zemin); color:var(--yazi); font-size:15px; }
+  header { background:#0f1b3d; color:#fff; padding:14px 20px; display:flex; align-items:center; gap:14px; flex-wrap:wrap; }
+  header h1 { font-size:19px; margin:0; font-weight:650; }
+  header .alt { font-size:13px; color:#b9c3dc; }
+  header .bosluk { flex:1; }
+  button { font:inherit; cursor:pointer; border-radius:8px; border:1px solid var(--cizgi); background:var(--kart); color:var(--yazi); padding:6px 12px; }
+  button.ana { background:var(--mavi); border-color:var(--mavi); color:#fff; }
+  button.tehlike { color:var(--kirmizi); }
+  header button { background:transparent; color:#fff; border-color:#ffffff55; }
+  main { max-width:1280px; margin:0 auto; padding:18px 16px 40px; }
+  .sayaclar { display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:12px; margin-bottom:16px; }
+  .sayac { background:var(--kart); border:1px solid var(--cizgi); border-radius:12px; padding:12px 14px; cursor:pointer; }
+  .sayac.secili { outline:2px solid var(--mavi); }
+  .sayac b { font-size:26px; display:block; }
+  .sayac span { font-size:13px; color:var(--soluk); }
+  .ara { width:100%; max-width:320px; padding:7px 10px; border-radius:8px; border:1px solid var(--cizgi); background:var(--kart); color:var(--yazi); font:inherit; }
+  .arac-cubugu { display:flex; gap:10px; align-items:center; flex-wrap:wrap; margin-bottom:10px; }
+  .arac-cubugu .bilgi { font-size:13px; color:var(--soluk); margin-left:auto; }
+  .tablo-kap { background:var(--kart); border:1px solid var(--cizgi); border-radius:12px; overflow-x:auto; }
+  table { width:100%; border-collapse:collapse; }
+  th, td { padding:10px 12px; text-align:left; border-bottom:1px solid var(--cizgi); vertical-align:top; }
+  th { font-size:12.5px; color:var(--soluk); font-weight:600; white-space:nowrap; }
+  tbody tr { cursor:pointer; }
+  tbody tr:hover { background:var(--gri-z); }
+  td.sayi { font-variant-numeric: tabular-nums; white-space:nowrap; }
+  .rozet { display:inline-block; font-size:12px; font-weight:600; padding:2px 9px; border-radius:999px; white-space:nowrap; }
+  .d-kritik { background:var(--kirmizi-z); color:var(--kirmizi); }
+  .d-uyari { background:var(--turuncu-z); color:var(--turuncu); }
+  .d-iyi { background:var(--yesil-z); color:var(--yesil); }
+  .d-cevrimdisi { background:var(--mor-z); color:var(--mor); }
+  .d-pasif { background:var(--gri-z); color:var(--gri); }
+  .sorunlar { margin:4px 0 0; padding:0; list-style:none; font-size:13px; }
+  .sorunlar li { margin:2px 0; }
+  .sorunlar li.kritik { color:var(--kirmizi); }
+  .sorunlar li.uyari { color:var(--turuncu); }
+  .soluk { color:var(--soluk); font-size:13px; }
+  .kirmizi { color:var(--kirmizi); } .turuncu { color:var(--turuncu); }
+  .bos { padding:30px; text-align:center; color:var(--soluk); }
+  dialog { border:1px solid var(--cizgi); border-radius:14px; background:var(--kart); color:var(--yazi); padding:0; width:min(920px, calc(100vw - 24px)); max-height:calc(100vh - 40px); }
+  dialog::backdrop { background:#0008; }
+  .dlg-ust { display:flex; align-items:center; gap:10px; padding:14px 18px; border-bottom:1px solid var(--cizgi); position:sticky; top:0; background:var(--kart); }
+  .dlg-ust h2 { font-size:18px; margin:0; flex:1; }
+  .dlg-govde { padding:16px 18px; }
+  .dlg-govde h3 { font-size:15px; margin:18px 0 6px; }
+  .izgara { display:grid; grid-template-columns:repeat(auto-fit,minmax(170px,1fr)); gap:10px; }
+  .kutu { border:1px solid var(--cizgi); border-radius:10px; padding:10px 12px; }
+  .kutu .e { font-size:12px; color:var(--soluk); } .kutu .d { font-size:17px; font-weight:600; margin-top:2px; }
+  label { display:block; font-size:13px; color:var(--soluk); margin:10px 0 4px; }
+  input[type=text], input[type=date], textarea { width:100%; padding:7px 10px; border-radius:8px; border:1px solid var(--cizgi); background:var(--kart); color:var(--yazi); font:inherit; }
+  .anahtar { font-family: ui-monospace, Consolas, monospace; background:var(--gri-z); padding:10px 12px; border-radius:8px; word-break:break-all; font-size:14px; }
+  .uyari-kutu { background:var(--turuncu-z); color:var(--turuncu); border-radius:8px; padding:10px 12px; font-size:14px; margin:10px 0; }
+  .dugmeler { display:flex; gap:8px; flex-wrap:wrap; margin-top:14px; }
+  pre { background:var(--gri-z); border-radius:8px; padding:10px; font-size:12px; overflow:auto; max-height:320px; }
+  details summary { cursor:pointer; color:var(--soluk); font-size:13px; margin-top:14px; }
+  @media (max-width: 720px) { .gizle-dar { display:none; } th, td { padding:8px; } }
+  @media (max-width: 480px) { .gizle-cokdar { display:none; } .sayaclar { grid-template-columns:repeat(3,1fr); } .sayac b { font-size:21px; } }
+</style>
+</head>
+<body>
+<header>
+  <div><h1>PTS Merkezi İzleme</h1><div class="alt" id="altBaslik">Kurulumların sağlık durumu</div></div>
+  <div class="bosluk"></div>
+  <button onclick="bildirimDene()" title="Telegram/e-posta ayarını dener">Bildirimi dene</button>
+  <button onclick="ekleAc()">+ Kurulum ekle</button>
+</header>
+<main>
+  <div class="sayaclar" id="sayaclar"></div>
+  <div class="arac-cubugu">
+    <input class="ara" id="ara" type="search" placeholder="Kurulum ara…" aria-label="Kurulum ara">
+    <span class="bilgi" id="guncelleme"></span>
+  </div>
+  <div class="tablo-kap">
+    <table>
+      <thead><tr><th>Durum</th><th>Kurulum</th><th>Son haber</th><th class="gizle-cokdar">Kamera</th><th class="gizle-dar">Bugün okuma</th>
+        <th class="gizle-dar">Disk</th><th class="gizle-dar">Yedek</th><th class="gizle-cokdar">Lisans</th><th class="gizle-dar">7 gün erişim</th></tr></thead>
+      <tbody id="liste"><tr><td colspan="9" class="bos">Yükleniyor…</td></tr></tbody>
+    </table>
+  </div>
+</main>
+
+<dialog id="ayrinti"><div class="dlg-ust"><h2 id="aBaslik"></h2><button onclick="ayrinti.close()" aria-label="Kapat">✕</button></div>
+  <div class="dlg-govde" id="aGovde"></div></dialog>
+
+<dialog id="ekle"><div class="dlg-ust"><h2>Kurulum ekle</h2><button onclick="ekle.close()" aria-label="Kapat">✕</button></div>
+  <div class="dlg-govde" id="eGovde"></div></dialog>
+
+<script>
+const DURUM = { kritik:["Kritik","d-kritik"], uyari:["Uyarı","d-uyari"], iyi:["Sorunsuz","d-iyi"],
+                cevrimdisi:["Çevrimdışı","d-cevrimdisi"], pasif:["Devre dışı","d-pasif"] };
+const ALARM_ADI = { kara_liste:"Kara liste", klon_plaka:"Klon plaka", supheli_arac:"Şüpheli araç", sessiz_kamera:"Sessiz kamera",
+  kamera_arizasi:"Kamera arızası", bariyer_hatasi:"Bariyer hatası", bildirim_hatasi:"Bildirim hatası", disk_doluyor:"Disk doluyor",
+  disk_hatasi:"Disk hatası", yedek_bozuk:"Bozuk yedek", sertifika_bitiyor:"Sertifika bitiyor", sunucu_kesintisi:"Sunucu kesintisi",
+  resmi_arac:"Resmi araç", arac_uyusmazligi:"Plaka-araç uyuşmazlığı" };
+let veri = null, filtre = null;
+const $ = id => document.getElementById(id);
+const kacis = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+
+async function api(yol, secenek = {}) {
+  const r = await fetch(yol, { ...secenek, headers: { "Content-Type": "application/json", ...(secenek.headers || {}) } });
+  const govde = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(govde.detail || `HTTP ${r.status}`);
+  return govde;
+}
+
+function once(epoch) {
+  if (!epoch) return "hiç";
+  const sn = Math.max(0, Date.now() / 1000 - epoch);
+  if (sn < 90) return "az önce";
+  if (sn < 3600) return `${Math.round(sn / 60)} dk önce`;
+  if (sn < 172800) return `${Math.round(sn / 3600)} sa önce`;
+  return `${Math.round(sn / 86400)} gün önce`;
+}
+const tarih = epoch => epoch ? new Date(epoch * 1000).toLocaleString("tr-TR") : "—";
+const rozet = d => `<span class="rozet ${DURUM[d]?.[1] || ""}">${DURUM[d]?.[0] || d}</span>`;
+
+function yuzdeHucre(v, uyari, kritik) {
+  if (v == null) return '<span class="soluk">—</span>';
+  const s = v >= kritik ? "kirmizi" : v >= uyari ? "turuncu" : "";
+  return `<span class="${s}">%${Math.round(v)}</span>`;
+}
+
+async function yukle() {
+  try { veri = await api("/api/kurulumlar"); }
+  catch (e) { $("liste").innerHTML = `<tr><td colspan="9" class="bos">${kacis(e.message)}</td></tr>`; return; }
+  const s = veri.sayac, toplam = veri.kurulumlar.length;
+  const kutular = [[null, "Toplam", toplam], ["cevrimdisi", "Çevrimdışı", s.cevrimdisi], ["kritik", "Kritik", s.kritik],
+                   ["uyari", "Uyarı", s.uyari], ["iyi", "Sorunsuz", s.iyi]];
+  $("sayaclar").innerHTML = kutular.map(([d, ad, n]) =>
+    `<div class="sayac ${filtre === d ? "secili" : ""}" onclick="filtreSec(${d ? `'${d}'` : "null"})" role="button" tabindex="0">
+       <b class="${d === "kritik" && n ? "kirmizi" : d === "cevrimdisi" && n ? "kirmizi" : d === "uyari" && n ? "turuncu" : ""}">${n || 0}</b><span>${ad}</span></div>`).join("");
+  $("guncelleme").textContent = `Güncellendi ${new Date().toLocaleTimeString("tr-TR")}` +
+    (veri.bildirim_kanallari.length ? ` · Bildirim: ${veri.bildirim_kanallari.join(", ")}` : " · Bildirim kanalı ayarlı değil");
+  ciz();
+}
+
+function filtreSec(d) { filtre = d; yukle(); }
+
+function ciz() {
+  const aranan = $("ara").value.trim().toLocaleLowerCase("tr-TR");
+  const liste = veri.kurulumlar.filter(k => (!filtre || k.durum === filtre) &&
+    (!aranan || `${k.ad} ${k.kurum || ""} ${k.notlar}`.toLocaleLowerCase("tr-TR").includes(aranan)));
+  $("liste").innerHTML = liste.length ? liste.map(k => {
+    const sorunlar = k.sorunlar.slice(0, 4).map(s => `<li class="${s.seviye}">${kacis(s.mesaj)}</li>`).join("")
+      + (k.sorunlar.length > 4 ? `<li class="soluk">+${k.sorunlar.length - 4} sorun daha</li>` : "");
+    const kamera = k.kamera_toplam ? `<span class="${k.kamera_calisan < k.kamera_toplam ? "kirmizi" : ""}">${k.kamera_calisan}/${k.kamera_toplam}</span>` : '<span class="soluk">—</span>';
+    const yedek = k.yedek_saat == null ? '<span class="soluk">—</span>' :
+      `<span class="${k.yedek_saat >= 72 ? "kirmizi" : k.yedek_saat >= 36 ? "turuncu" : ""}">${k.yedek_saat < 48 ? Math.round(k.yedek_saat) + " sa" : Math.round(k.yedek_saat / 24) + " gün"}</span>`;
+    const lisans = k.lisans_kalan_gun == null ? '<span class="soluk">—</span>' :
+      `<span class="${k.lisans_kalan_gun <= 7 ? "kirmizi" : k.lisans_kalan_gun <= 30 ? "turuncu" : ""}">${k.lisans_kalan_gun} gün</span>`;
+    return `<tr onclick="ayrintiAc(${k.id})">
+      <td>${rozet(k.durum)}</td>
+      <td><b>${kacis(k.ad)}</b>${k.kurum && k.kurum !== k.ad ? `<div class="soluk">${kacis(k.kurum)}</div>` : ""}<ul class="sorunlar">${sorunlar}</ul></td>
+      <td class="sayi" title="${tarih(k.son_nabiz)}">${once(k.son_nabiz)}</td>
+      <td class="sayi gizle-cokdar">${kamera}</td>
+      <td class="sayi gizle-dar">${k.son_nabiz ? k.bugun_okuma.toLocaleString("tr-TR") : "—"}</td>
+      <td class="sayi gizle-dar">${yuzdeHucre(k.disk_yuzde, 85, 95)}</td>
+      <td class="sayi gizle-dar">${yedek}</td>
+      <td class="sayi gizle-cokdar">${lisans}</td>
+      <td class="sayi gizle-dar">${k.erisim_7g == null ? '<span class="soluk">—</span>' : `<span class="${k.erisim_7g < 95 ? "turuncu" : ""}">%${k.erisim_7g}</span>`}</td></tr>`;
+  }).join("") : `<tr><td colspan="9" class="bos">${veri.kurulumlar.length ? "Bu filtreye uyan kurulum yok." : "Henüz kurulum yok. Sağ üstten “+ Kurulum ekle” ile başlayın."}</td></tr>`;
+}
+
+async function ayrintiAc(id) {
+  let k;
+  try { k = await api(`/api/kurulumlar/${id}`); } catch (e) { alert(e.message); return; }
+  const o = k.ozet || {};
+  $("aBaslik").innerHTML = `${kacis(k.ad)} ${rozet(k.durum)}`;
+  const kutu = (e, d) => `<div class="kutu"><div class="e">${e}</div><div class="d">${d}</div></div>`;
+  const sure = sn => sn == null ? "—" : sn < 3600 ? `${Math.round(sn / 60)} dk` : sn < 172800 ? `${Math.round(sn / 3600)} saat` : `${Math.round(sn / 86400)} gün`;
+  const kameralar = (o.kameralar || []).map(c => {
+    const g = { calisiyor: "Çalışıyor", donmus: '<span class="kirmizi">Görüntü donmuş</span>', durdu: '<span class="kirmizi">Durdu</span>',
+                baglaniyor: "Bağlanıyor" }[c.goruntu] || '<span class="soluk">—</span>';
+    const m = c.mutabakat;
+    return `<tr><td>${kacis(c.ad)}${c.aktif ? "" : ' <span class="soluk">(kapalı)</span>'}</td><td>${g}</td>
+      <td>${c.dahua_bagli == null ? '<span class="soluk">—</span>' : c.dahua_bagli ? "Bağlı" : '<span class="turuncu">Kopuk</span>'}</td>
+      <td class="sayi">${c.son_okuma_dk == null ? "—" : sure(c.son_okuma_dk * 60) + " önce"}</td><td class="sayi">${c.bugun_okuma}</td>
+      <td class="sayi">${m ? (m.hata ? '<span class="turuncu">yapılamadı</span>' : m.oran == null ? "—" : `%${m.oran} <span class="soluk">(${m.gun.slice(5)})</span>`) : "—"}</td></tr>`;
+  }).join("");
+  const alarmlar = Object.entries(o.alarmlar_24s || {}).sort((a, b) => b[1] - a[1]).map(([t, n]) => `${kacis(ALARM_ADI[t] || t)}: <b>${n}</b>`).join(" · ");
+  const olaylar = (k.olaylar || []).map(e => `<tr><td class="sayi">${tarih(e.zaman)}</td><td>${e.tur === "duzeldi" ? "✅" : e.seviye === "kritik" ? "🔴" : "🟠"} ${kacis(e.mesaj)}</td></tr>`).join("");
+  const kesintiler = (o.kesintiler_7g || []).map(x => `<tr><td class="sayi">${kacis(x.baslangic.replace("T", " "))}</td><td class="sayi">${x.sure_dk} dk</td><td>${kacis(x.durum)}${x.aktarilan ? ` · ${x.aktarilan} geçiş kameradan alındı` : ""}</td></tr>`).join("");
+  $("aGovde").innerHTML = `
+    ${k.sorunlar.length ? `<ul class="sorunlar" style="font-size:14px">${k.sorunlar.map(s => `<li class="${s.seviye}">${s.seviye === "kritik" ? "🔴" : "🟠"} ${kacis(s.mesaj)}</li>`).join("")}</ul>` : '<p class="soluk">Sorun yok.</p>'}
+    <div class="izgara" style="margin-top:12px">
+      ${kutu("Son haber", once(k.son_nabiz))}${kutu("Sürüm", kacis(o.surum || "—"))}${kutu("PTS çalışma süresi", sure(o.calisma_suresi_sn))}
+      ${kutu("Disk (en dolu)", o.disk?.en_dolu_yuzde == null ? "—" : "%" + Math.round(o.disk.en_dolu_yuzde))}
+      ${kutu("Son yedek", o.yedek?.yas_saat == null ? (o.yedek?.otomatik_acik === false ? "Kapalı" : "—") : sure(o.yedek.yas_saat * 3600) + " önce")}
+      ${kutu("Lisans", o.lisans ? (o.lisans.aktif ? `${o.lisans.kalan_gun ?? "?"} gün` : '<span class="kirmizi">Aktif değil</span>') : "—")}
+      ${kutu("Okunmamış alarm", o.okunmamis_alarm ?? "—")}${kutu("7 gün erişim", k.erisim_7g == null ? "—" : "%" + k.erisim_7g)}
+    </div>
+    <h3>Kameralar</h3>
+    ${kameralar ? `<div class="tablo-kap"><table><thead><tr><th>Kamera</th><th>Görüntü</th><th>Kamera okuması</th><th>Son plaka</th><th>Bugün</th><th>Mutabakat</th></tr></thead><tbody>${kameralar}</tbody></table></div>` : '<p class="soluk">Bilgi yok.</p>'}
+    <h3>Son 24 saatin alarmları</h3><p class="soluk">${alarmlar || "Alarm yok."}</p>
+    ${kesintiler ? `<h3>Sunucu kesintileri (7 gün)</h3><div class="tablo-kap"><table><tbody>${kesintiler}</tbody></table></div>` : ""}
+    ${olaylar ? `<h3>Bildirim geçmişi</h3><div class="tablo-kap"><table><tbody>${olaylar}</tbody></table></div>` : ""}
+    <h3>Kurulum bilgileri</h3>
+    <label for="kAd">Ad</label><input type="text" id="kAd" value="${kacis(k.ad)}">
+    <label for="kIletisim">İletişim (müşteride sorumlu kişi, telefon)</label><input type="text" id="kIletisim" value="${kacis(k.iletisim)}">
+    <label for="kBakim">Bakım sözleşmesi bitişi</label><input type="date" id="kBakim" value="${kacis(k.bakim_bitis)}">
+    <label for="kNot">Notlar</label><textarea id="kNot" rows="3">${kacis(k.notlar)}</textarea>
+    <div class="dugmeler">
+      <button class="ana" onclick="kaydet(${k.id})">Kaydet</button>
+      <button onclick="etkinlik(${k.id}, ${!k.etkin})">${k.etkin ? "Devre dışı bırak" : "Etkinleştir"}</button>
+      <button onclick="anahtarYenile(${k.id})">Anahtarı yenile</button>
+      <button class="tehlike" onclick="sil(${k.id})">Sil</button>
+    </div>
+    <p class="soluk">Son bağlantı adresi: ${kacis(k.son_ip || "—")}</p>
+    <details><summary>Gelen ham özet</summary><pre>${kacis(JSON.stringify(o, null, 2))}</pre></details>`;
+  if (!$("ayrinti").open) $("ayrinti").showModal();
+}
+
+async function kaydet(id) {
+  try {
+    await api(`/api/kurulumlar/${id}`, { method: "PATCH", body: JSON.stringify({ ad: $("kAd").value, iletisim: $("kIletisim").value,
+      bakim_bitis: $("kBakim").value, notlar: $("kNot").value }) });
+    await yukle(); ayrintiAc(id);
+  } catch (e) { alert(e.message); }
+}
+async function etkinlik(id, etkin) {
+  try { await api(`/api/kurulumlar/${id}`, { method: "PATCH", body: JSON.stringify({ etkin }) }); await yukle(); ayrintiAc(id); }
+  catch (e) { alert(e.message); }
+}
+async function sil(id) {
+  if (!confirm("Kurulum ve tüm geçmişi silinsin mi? Müşterideki PTS gönderim yapamaz hale gelir.")) return;
+  try { await api(`/api/kurulumlar/${id}`, { method: "DELETE" }); $("ayrinti").close(); yukle(); } catch (e) { alert(e.message); }
+}
+async function anahtarYenile(id) {
+  if (!confirm("Yeni anahtar üretilsin mi? Eski anahtarla gönderim hemen durur; yenisini müşterinin PTS'ine girmeniz gerekir.")) return;
+  try { const r = await api(`/api/kurulumlar/${id}/anahtar-yenile`, { method: "POST" }); $("ayrinti").close(); anahtarGoster(r.anahtar); }
+  catch (e) { alert(e.message); }
+}
+
+function ekleAc() {
+  $("eGovde").innerHTML = `
+    <label for="yAd">Kurulum adı (ör. TPAO Batman Lojman)</label><input type="text" id="yAd" maxlength="120">
+    <label for="yIletisim">İletişim</label><input type="text" id="yIletisim" maxlength="300">
+    <label for="yBakim">Bakım sözleşmesi bitişi</label><input type="date" id="yBakim">
+    <div class="dugmeler"><button class="ana" onclick="ekleKaydet()">Ekle ve anahtar üret</button></div>`;
+  $("ekle").showModal();
+  $("yAd").focus();
+}
+async function ekleKaydet() {
+  try {
+    const r = await api("/api/kurulumlar", { method: "POST", body: JSON.stringify({ ad: $("yAd").value, iletisim: $("yIletisim").value, bakim_bitis: $("yBakim").value }) });
+    anahtarGoster(r.anahtar); yukle();
+  } catch (e) { alert(e.message); }
+}
+function anahtarGoster(anahtar) {
+  $("eGovde").innerHTML = `
+    <p>Kurulum anahtarı:</p><div class="anahtar" id="yAnahtar">${kacis(anahtar)}</div>
+    <div class="uyari-kutu">Bu anahtar yalnız şimdi gösterilir, merkezde saklanmaz. Kaybolursa “Anahtarı yenile” ile yenisini üretin.</div>
+    <p>Müşterinin PTS'inde: <b>Sistem</b> sekmesi → <b>Merkezi İzleme</b> kartı → adres olarak <b>${kacis(location.origin)}</b>, anahtar olarak yukarıdakini girip “Kaydet ve gönder”e basın.</p>
+    <div class="dugmeler"><button class="ana" onclick="navigator.clipboard.writeText(document.getElementById('yAnahtar').textContent).then(() => this.textContent = 'Kopyalandı')">Anahtarı kopyala</button>
+    <button onclick="ekle.close()">Kapat</button></div>`;
+  if (!$("ekle").open) $("ekle").showModal();
+}
+async function bildirimDene() {
+  try { await api("/api/bildirim-dene", { method: "POST" }); alert("Deneme bildirimi gönderildi."); } catch (e) { alert(e.message); }
+}
+
+$("ara").addEventListener("input", () => veri && ciz());
+yukle();
+setInterval(() => { if (!$("ayrinti").open && !$("ekle").open) yukle(); }, 30000);
+</script>
+</body>
+</html>

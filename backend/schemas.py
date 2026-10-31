@@ -963,3 +963,11 @@ class DahuaGecmisIstek(BaseModel):
     aktar: bool = False
     # Kameranın kayıt saatini nasıl yazdığı; "otomatik" sistemdeki geçişlerle karşılaştırıp bulur.
     saat: Literal["otomatik", "yerel", "utc"] = "otomatik"
+
+
+class MerkezIzlemeAyar(BaseModel):
+    """PUT /merkez-izleme: sağlık özetinin gönderileceği merkez (bkz. backend/merkez_istemci.py)."""
+    aktif: bool = False
+    url: str = Field("", max_length=300)
+    anahtar: Optional[str] = Field(None, max_length=200)   # boş/None: kayıtlı anahtar korunur
+    aralik_sn: int = Field(300, ge=60, le=3600)

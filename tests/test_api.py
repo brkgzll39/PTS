@@ -7,6 +7,7 @@ olduğu için) çalıştırılamadı — kullanıcının kendi ortamında ya da 
 içinde ayarlanan geçici bir SQLite veritabanı ve sabit test secret'larıyla
 tamamen izole çalışacak şekilde tasarlandı.
 """
+import json
 import os
 import time
 from datetime import datetime, timedelta
@@ -9166,3 +9167,87 @@ def test_telegram_plaka_cevabinda_arac(client):
         assert "Araç: Beyaz Ford Pikap" in pts_main._telegram_plaka_cevabi(db, "34UYS05")
     finally:
         db.close()
+
+
+# ------------------------------------------------------------------
+# Merkezi izleme (2026-10-31): sağlık özeti satıcının merkezine gider; kişisel veri gitmez.
+# ------------------------------------------------------------------
+def test_merkez_izleme_yalniz_yonetici(client, operator_header, admin_header):
+    assert client.get("/merkez-izleme", headers=operator_header).status_code == 403
+    assert client.get("/merkez-izleme/ozet", headers=operator_header).status_code == 403
+    d = client.get("/merkez-izleme", headers=admin_header).json()
+    assert d["aktif"] is False and d["anahtar_var"] is False
+
+
+def test_merkez_ozeti_kisisel_veri_icermez(client, admin_header, monkeypatch):
+    from backend import merkez_istemci
+    # Gerçek kurulumdaki gibi kamera tanımlı olsun (2026-10-31: kamera alanı adı yasaklı
+    # listeyle çakışıp gönderimi durduruyordu; kamerasız testte görünmemişti).
+    monkeypatch.setattr(pts_main, "_kameralari_oku", lambda: [
+        {"id": "k1", "ad": "Ana Kapı Giriş", "aktif": True, "rtsp_url": "rtsp://kullanici:parola@10.0.0.5/1"}])
+    client.post("/kayitlar", json={"plaka_no": "34 MRK 001", "yon": "giris", "kamera_id": "Ana Kapı Giriş"}, headers=admin_header)
+    ozet = client.get("/merkez-izleme/ozet", headers=admin_header).json()
+    assert ozet["kameralar"][0]["ad"] == "Ana Kapı Giriş" and ozet["kameralar"][0]["bugun_okuma"] >= 1
+    assert "rtsp" not in json.dumps(ozet) and "parola" not in json.dumps(ozet)
+    for alan in ("kameralar", "disk", "yedek", "lisans", "alarmlar_24s", "kesintiler_7g", "uyarilar", "surum"):
+        assert alan in ozet
+    assert merkez_istemci.yasakli_alan_var_mi(ozet) is None
+    assert "34 MRK 001" not in json.dumps(ozet, ensure_ascii=False)
+    assert "34MRK001" not in json.dumps(ozet, ensure_ascii=False)
+
+
+def test_merkez_izleme_ayar_dogrulama(client, admin_header):
+    r = client.put("/merkez-izleme", json={"aktif": True, "url": "http://izleme.firma.com", "anahtar": "x" * 20}, headers=admin_header)
+    assert r.status_code == 400 and "https" in r.json()["detail"]
+    r = client.put("/merkez-izleme", json={"aktif": True, "url": "https://izleme.firma.com"}, headers=admin_header)
+    assert r.status_code == 400 and "anahtar" in r.json()["detail"]
+
+
+def test_merkez_izleme_uctan_uca(client, admin_header, tmp_path, monkeypatch):
+    """PTS -> merkez: anahtar merkezden alınır, PTS'e girilir, özet gider, panoda görünür."""
+    import base64 as _b64
+    import io
+    from backend import merkez_istemci
+    from merkez import uygulama as merkez_uyg
+    monkeypatch.setenv("MERKEZ_VERITABANI", str(tmp_path / "merkez.db"))
+    monkeypatch.setenv("MERKEZ_YONETICI_PAROLA", "merkez-parola-12345")
+    monkeypatch.setenv("MERKEZ_BILDIRIM_DONGUSU", "0")
+    yetki = {"Authorization": "Basic " + _b64.b64encode(b"yonetici:merkez-parola-12345").decode()}
+    merkez = TestClient(merkez_uyg.app)
+    anahtar = merkez.post("/api/kurulumlar", json={"ad": "Test Lojman"}, headers=yetki).json()["anahtar"]
+
+    class _Yanit(io.BytesIO):
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+    def _sahte_urlopen(istek, timeout=None):
+        assert istek.full_url == "https://merkez.test/api/nabiz"
+        r = merkez.post("/api/nabiz", content=istek.data, headers=dict(istek.header_items()))
+        if r.status_code != 200:
+            raise merkez_istemci.urllib.error.HTTPError(istek.full_url, r.status_code, r.text, {}, None)
+        return _Yanit(r.content)
+
+    monkeypatch.setattr(merkez_istemci.urllib.request, "urlopen", _sahte_urlopen)
+    r = client.put("/merkez-izleme", json={"aktif": True, "url": "https://merkez.test", "anahtar": "yanlis-anahtar-123",
+                                           "aralik_sn": 300}, headers=admin_header)
+    assert r.status_code == 200 and "tanınmıyor" in r.json()["son_hata"]
+
+    r = client.put("/merkez-izleme", json={"aktif": True, "url": "https://merkez.test", "anahtar": anahtar,
+                                           "aralik_sn": 300}, headers=admin_header)
+    d = r.json()
+    assert r.status_code == 200 and d["son_hata"] is None and d["son_basarili"]
+    assert anahtar not in json.dumps(d) and d["anahtar_var"] is True
+    # Anahtar boş gönderilirse kayıtlı anahtar korunur.
+    assert client.post("/merkez-izleme/gonder", headers=admin_header).status_code == 200
+    client.put("/merkez-izleme", json={"aktif": True, "url": "https://merkez.test", "aralik_sn": 600}, headers=admin_header)
+    assert client.post("/merkez-izleme/gonder", headers=admin_header).status_code == 200
+
+    k = merkez.get("/api/kurulumlar", headers=yetki).json()["kurulumlar"][0]
+    assert k["ad"] == "Test Lojman" and k["son_nabiz"] and k["surum"]
+
+    client.put("/merkez-izleme", json={"aktif": False, "url": "https://merkez.test"}, headers=admin_header)
+    r = client.post("/merkez-izleme/gonder", headers=admin_header)
+    assert r.status_code == 400 and "kapalı" in r.json()["detail"]
