@@ -10474,9 +10474,15 @@ def _dahua_saat_farki(db: Session, kamera: dict, secim: str = "otomatik") -> tup
     # Kameranın kendi saatine göre (fark 0) geniş bir pencere: hangi yorum doğruysa son 24 saati kapsar.
     s = dahua_kayit.kayitlari_getir(kamera.get("rtsp_url", ""), simdi - timedelta(hours=30), simdi + timedelta(hours=4),
                                     ayar.get("http_port"), ayar.get("olaylar"), kayma=timedelta(0))
+    _dahua_saat_farki.son_ham = s["ham"]  # ölçüm başarısız olursa önizlemede gösterilir
     if not s["basarili"]:
         return None, s["hata"] or "Kamera kayıtları okunamadı"
     ornek = [r for r in s["kayitlar"] if _gecerli_tr_plaka(r["plaka"])][-400:]
+    if len(ornek) < 5:
+        return None, (f"Kamera saati ölçülemedi: kameranın hafızasında son 30 saatte yalnızca {len(ornek)} geçerli plaka "
+                      f"kaydı var ({len(s['kayitlar'])} kayıt geldi). Kamera plaka okumalarını hafıza kartına yazmıyor ya da "
+                      "çok az okuyor olabilir: kameranın ANPR ve Depolama (kart kaydı) ayarlarını kontrol edin. Aynı modeldeki "
+                      "diğer kameralar gibi çalışıyorsa \"Saat\" seçimini \"Yerel saat\" yapabilirsiniz.")
     K = models.Kayit
     farklar, karsiligi_olan = [], 0
     for r in ornek:
@@ -10526,6 +10532,7 @@ def _gecmis_gecisleri_aktar(db: Session, kamera: dict, bas: datetime, bit: datet
     sonuc["saat_yorumu"] = aciklama
     if fark is None:
         sonuc["hata"] = aciklama  # saat bilinmeden aktarım yapılmaz: geçişler yanlış saatle eklenirdi
+        sonuc["ham"] = getattr(_dahua_saat_farki, "son_ham", None) or []
         return sonuc
     s = dahua_kayit.kayitlari_getir(kamera.get("rtsp_url", ""), bas, bit, ayar.get("http_port"), ayar.get("olaylar"),
                                     kayma=fark)

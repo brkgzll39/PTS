@@ -8875,6 +8875,12 @@ def test_kamera_saati_dogrulanamazsa_aktarim_yapilmaz(client, yetkili_header, da
     govde = {"baslangic": (simdi - timedelta(hours=3)).isoformat(), "bitis": simdi.isoformat(), "aktar": True}
     r = client.post("/kameralar/kesinti-kam/dahua-gecmis", json=govde, headers=yetkili_header).json()
     assert r["basarili"] is False and "doğrulanamadı" in r["hata"] and "sistemde hiç yok" in r["hata"] and r["aktarilan"] == 0
+    # Kamerada çok az kayıt varsa bunu söyler
+    monkeypatch.setattr("backend.dahua_kayit.kayitlari_getir", lambda *a, **k: {
+        "basarili": True, "yontem": "recordFinder", "ham": [{"yontem": "recordFinder", "http": 200, "ornek": "found=1"}],
+        "hata": None, "kayitlar": [{"plaka": "34ZZZ50", "zaman": simdi - timedelta(hours=1), "dosya": None}]})
+    r = client.post("/kameralar/kesinti-kam/dahua-gecmis", json={**govde, "aktar": False}, headers=yetkili_header).json()
+    assert "yalnızca 1 geçerli plaka" in r["hata"] and r["ham"][0]["ornek"] == "found=1"
     # Elle seçilirse kullanılır
     r = client.post("/kameralar/kesinti-kam/dahua-gecmis", json={**govde, "aktar": False, "saat": "yerel"},
                     headers=yetkili_header).json()
