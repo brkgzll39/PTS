@@ -9046,3 +9046,28 @@ def test_gunluk_ozet_pdf_eposta_eki_ve_webhooka_yol_gitmez(monkeypatch):
     monkeypatch.setattr(pts_main, "_webhook_gonder_sync", lambda h, m, veri: webhook.update(veri) or (True, None))
     pts_main._bildirim_gonder_sync("webhook", "https://x", "POST", yakalanan)
     assert "pdf_yolu" not in webhook and webhook["olay"] == "Günlük Özet"
+
+
+def test_bildirim_art_arda_gonderilemezse_alarm(client, yetkili_header, monkeypatch):
+    """Sahada (2026-10-31): Telegram bot anahtarı geçersiz olmuş, iki hafta bildirim gitmemiş, fark edilmemişti."""
+    monkeypatch.setattr(pts_main, "_bildirim_gonder_sync", lambda *a: (False, "Telegram bot anahtarı geçersiz (Unauthorized)"))
+    monkeypatch.setattr(pts_main, "_bildirim_hata_sayaci", {})
+    for _ in range(2):
+        pts_main._bildirim_gonder_izle(990, "Nöbetçi Telegram", "telegram", "123", "POST", {"olay": "x"})
+    alarmlar = lambda: [a for a in client.get("/alarmlar?alarm_tipi=bildirim_hatasi&limit=50", headers=yetkili_header).json()
+                        if "Nöbetçi Telegram" in a["mesaj"]]
+    assert alarmlar() == []
+    for _ in range(3):
+        pts_main._bildirim_gonder_izle(990, "Nöbetçi Telegram", "telegram", "123", "POST", {"olay": "x"})
+    assert len(alarmlar()) == 1 and "Unauthorized" in alarmlar()[0]["mesaj"]  # günde bir kez
+    monkeypatch.setattr(pts_main, "_bildirim_gonder_sync", lambda *a: (True, None))
+    pts_main._bildirim_gonder_izle(990, "Nöbetçi Telegram", "telegram", "123", "POST", {"olay": "x"})
+    assert 990 not in pts_main._bildirim_hata_sayaci
+
+
+def test_telegram_401_aciklamasi():
+    import io
+    import urllib.error
+    from backend import telegram_bildirim
+    hata = urllib.error.HTTPError("u", 401, "Unauthorized", {}, io.BytesIO(b'{"ok":false,"description":"Unauthorized"}'))
+    assert "BotFather" in telegram_bildirim._http_hatasi_aciklamasi(hata)

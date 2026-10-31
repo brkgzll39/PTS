@@ -6098,8 +6098,48 @@ def _bildirim_tetikle(db: Session, tetikleyici: str, veri: dict) -> None:
         return
     for a in ayarlar:
         threading.Thread(
-            target=_bildirim_gonder_sync, args=(a.tip, a.hedef, a.http_metot, veri), daemon=True,
+            target=_bildirim_gonder_izle, args=(a.id, a.ad, a.tip, a.hedef, a.http_metot, veri), daemon=True,
         ).start()
+
+
+# BİLDİRİM GÖNDERİLEMEZSE ALARM (2026-10-31, sahada: Telegram bot anahtarı geçersiz
+# olmuş, iki hafta hiç bildirim gitmemiş ve kimse fark etmemişti). Bir bildirim ayarı
+# arka arkaya _BILDIRIM_HATA_ESIK kez gönderilemezse panelde "bildirim_hatasi" alarmı
+# açılır; aynı ayar için günde en fazla bir kez. Bu alarm bildirimle gönderilmez
+# (kanal zaten çalışmıyor; döngüye de girmesin).
+_BILDIRIM_HATA_ESIK = 3
+_bildirim_hata_sayaci: dict = {}
+_bildirim_hata_kilit = threading.Lock()
+
+
+def _bildirim_gonder_izle(ayar_id: int, ad: str, tip: str, hedef: str, http_metot: str, veri: dict) -> None:
+    try:
+        basarili, hata = _bildirim_gonder_sync(tip, hedef, http_metot, veri)
+    except Exception as exc:
+        basarili, hata = False, str(exc)
+    with _bildirim_hata_kilit:
+        if basarili:
+            _bildirim_hata_sayaci.pop(ayar_id, None)
+            return
+        sayi = _bildirim_hata_sayaci.get(ayar_id, 0) + 1
+        _bildirim_hata_sayaci[ayar_id] = sayi
+    if sayi < _BILDIRIM_HATA_ESIK:
+        return
+    db = SessionLocal()
+    try:
+        A = models.Alarm
+        etiket = f"BİLDİRİM GÖNDERİLEMİYOR: '{ad}'"
+        if db.query(A.id).filter(A.alarm_tipi == "bildirim_hatasi", A.mesaj.like(f"{etiket}%"),
+                                 A.tarih_saat >= datetime.now() - timedelta(days=1)).first():
+            return
+        db.add(A(plaka_no="-", alarm_tipi="bildirim_hatasi",
+                 mesaj=f"{etiket} ({tip}) art arda {sayi} kez başarısız: {hata or 'bilinmeyen hata'}"[:255]))
+        db.commit()
+        logger.error("Bildirim ayarı '%s' art arda %d kez gönderilemedi: %s", ad, sayi, hata)
+    except Exception:
+        logger.exception("Bildirim hatası alarmı yazılamadı")
+    finally:
+        db.close()
 
 
 # ================================================================

@@ -627,6 +627,7 @@ function alarmTipiEtiketi(tip) {
     resmi_arac: "Resmi araç (görevsiz / mesai dışı / geç dönüş)",
     sunucu_kesintisi: "Sunucu kapalı kaldı",
     sessiz_kamera: "Sessiz kamera (plaka okumuyor)",
+    bildirim_hatasi: "Bildirim gönderilemiyor",
     kamera_arizasi: "Kamera arızası / bağlantı sorunu",
     // 2026-09-25 (sistem taraması): bu iki alarm tipi backend'de üretiliyor
     // ama burada etiketi yoktu -- panelde ham "bariyer_hatasi" metni görünüyordu.

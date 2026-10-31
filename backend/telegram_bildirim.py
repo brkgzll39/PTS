@@ -145,9 +145,20 @@ def _http_hatasi_aciklamasi(exc: urllib.error.HTTPError) -> str:
     (beklenmeyen bir gövde biçimi) HTTPError'ın kendi metnine düşülür."""
     try:
         govde = json.loads(exc.read().decode("utf-8", errors="replace"))
-        return govde.get("description") or str(exc)
+        aciklama = govde.get("description") or str(exc)
     except Exception:
-        return str(exc)
+        aciklama = str(exc)
+    if exc.code == 401 or "Unauthorized" in aciklama:
+        # 2026-10-31 (sahada iki hafta fark edilmedi): Telegram bot anahtarını kabul etmiyor.
+        return ("Telegram bot anahtarı geçersiz (Unauthorized): anahtar BotFather'da yenilenmiş/iptal edilmiş ya da "
+                "internette açığa çıktığı için Telegram tarafından iptal edilmiş olabilir. BotFather'dan yeni anahtar alıp "
+                ".env dosyasındaki PTS_TELEGRAM_BOT_TOKEN satırına yazın ve PTS'i yeniden başlatın.")
+    if "chat not found" in aciklama:
+        return (f"{aciklama}: sohbet numarası (chat_id) yanlış ya da kişi/grup bota hiç yazmamış "
+                "(bota önce /start gönderilmeli).")
+    if "bot was blocked" in aciklama:
+        return f"{aciklama}: kişi botu engellemiş; Telegram'da engeli kaldırıp /start göndermeli."
+    return aciklama
 
 
 # ------------------------------------------------------------------
