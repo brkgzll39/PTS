@@ -8989,6 +8989,13 @@ def test_telegram_komut_cozme():
     assert komut_coz("alarmlar") == ("alarmlar", None)
     assert komut_coz("34 abc 123") == ("plaka", "34ABC123")
     assert komut_coz("merhaba nasılsın") == ("bilinmiyor", "merhaba nasılsın")
+    # Sahada (2026-10-31): doğal cümle
+    assert komut_coz("Plaka 34 MRU 811 içeride mi") == ("plaka", "34MRU811")
+    assert komut_coz("34mru811 nerede?") == ("plaka", "34MRU811")
+    assert komut_coz("MRU81 diye bir araç var mı") == ("plaka", "MRU81")
+    assert komut_coz("içeride kaç araç var") == ("iceride", None)
+    assert komut_coz("bugünün özetini atar mısın") == ("ozet", None)
+    assert komut_coz("Son alarmlar neler") == ("alarmlar", None)
 
 
 def test_telegram_sorgu_yalniz_kayitli_sohbete_cevap_verir(client, operator_header):
