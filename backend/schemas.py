@@ -958,3 +958,5 @@ class DahuaGecmisIstek(BaseModel):
     baslangic: datetime
     bitis: datetime
     aktar: bool = False
+    # Kameranın kayıt saatini nasıl yazdığı; "otomatik" sistemdeki geçişlerle karşılaştırıp bulur.
+    saat: Literal["otomatik", "yerel", "utc"] = "otomatik"

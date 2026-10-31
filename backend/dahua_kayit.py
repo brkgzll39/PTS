@@ -76,16 +76,32 @@ def _alan(kayit: dict, sonlar: tuple) -> Optional[str]:
     return None
 
 
-def zaman_coz(deger: Optional[str]) -> Optional[datetime]:
-    """Unix saniyesi (UTC) ya da 'YYYY-MM-DD HH:MM:SS' (kameranın yerel saati)."""
+_EPOK = datetime(1970, 1, 1)
+
+
+def yerel_saat_farki(an: Optional[datetime] = None) -> timedelta:
+    """Sunucunun UTC'ye göre saat farkı (Türkiye: +3 sa)."""
+    an = an or datetime.now()
+    t = an.timestamp()
+    return datetime.fromtimestamp(t) - datetime.utcfromtimestamp(t)
+
+
+def zaman_coz(deger: Optional[str], kayma: Optional[timedelta] = None) -> Optional[datetime]:
+    """Unix saniyesi ya da 'YYYY-MM-DD HH:MM:SS' (kameranın yerel saati).
+
+    Unix saniyesine eklenen `kayma`: None -> gerçek UTC kabul edilir (sunucunun saat
+    farkı eklenir); timedelta(0) -> kamera YEREL saati saniyeye çevirmiş (SAHADA
+    GÖRÜLDÜ 2026-10-31, TPAO Nizamiye: kayıtlar 3 saat ileri görünüyordu). Hangisinin
+    doğru olduğu main.py::_dahua_saat_kaymasi ile kameradan kameraya bulunur."""
     if not deger:
         return None
     deger = deger.strip().strip('"')
     if re.fullmatch(r"\d{9,11}", deger):
         try:
-            return datetime.fromtimestamp(int(deger))
-        except (OverflowError, OSError, ValueError):
+            naif = _EPOK + timedelta(seconds=int(deger))
+        except (OverflowError, ValueError):
             return None
+        return naif + (yerel_saat_farki(naif) if kayma is None else kayma)
     for bicim in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%dT%H:%M:%S", "%Y/%m/%d %H:%M:%S"):
         try:
             return datetime.strptime(deger[:19], bicim)
@@ -94,14 +110,14 @@ def zaman_coz(deger: Optional[str]) -> Optional[datetime]:
     return None
 
 
-def kayit_ayikla(kayit: dict) -> Optional[dict]:
+def kayit_ayikla(kayit: dict, kayma: Optional[timedelta] = None) -> Optional[dict]:
     plaka = _alan(kayit, _PLAKA_ALANLARI)
     if not plaka:
         return None
     plaka = re.sub(r"[^A-Za-z0-9 ]", "", plaka).strip().upper()
     if plaka.replace(" ", "") in _PLAKASIZ_DEGERLER or len(plaka.replace(" ", "")) < 4:
         return None
-    zaman = zaman_coz(_alan(kayit, _ZAMAN_ALANLARI))
+    zaman = zaman_coz(_alan(kayit, _ZAMAN_ALANLARI), kayma)
     if zaman is None:
         return None
     return {"plaka": plaka, "zaman": zaman, "dosya": _alan(kayit, _DOSYA_ALANLARI)}
@@ -121,7 +137,7 @@ def _tekillestir(kayitlar: list) -> list:
 
 
 class _Baglanti:
-    def __init__(self, rtsp_url: str, http_port: Optional[int]):
+    def __init__(self, rtsp_url: str, http_port: Optional[int], kayma: Optional[timedelta] = None):
         import requests
         from requests.auth import HTTPDigestAuth
 
@@ -129,6 +145,7 @@ class _Baglanti:
         host = f"[{b['host']}]" if ":" in b["host"] else b["host"]
         self.kok = f"http://{host}" + (f":{b['port']}" if b["port"] != 80 else "")
         self.adres = f"{b['host']}:{b['port']}"
+        self.kayma = kayma  # unix saniyelerinin yorumu (bkz. zaman_coz)
         self.oturum = requests.Session()
         self.oturum.auth = HTTPDigestAuth(b["kullanici"], b["parola"])
 
@@ -162,9 +179,9 @@ def _rf_get(bag: "_Baglanti", eylem: str, parametreler: dict):
     return bag.getir("/cgi-bin/recordFinder.cgi?" + sorgu)
 
 
-def _rf_satirlari(metin: str) -> list:
+def _rf_satirlari(metin: str, kayma: Optional[timedelta] = None) -> list:
     """Her kayıt için (zaman, ayıklanmış kayıt ya da None) -- plakasız kayıtların zamanı da arama için gerekir."""
-    return [(zaman_coz(_alan(k, _ZAMAN_ALANLARI)), kayit_ayikla(k)) for k in kayitlari_grupla(metin)]
+    return [(zaman_coz(_alan(k, _ZAMAN_ALANLARI), kayma), kayit_ayikla(k, kayma)) for k in kayitlari_grupla(metin)]
 
 
 def _rf_ozet(satirlar: list) -> str:
@@ -182,7 +199,7 @@ def _record_finder_suzgecli(bag: "_Baglanti", bas: datetime, bit: datetime, ham:
     pay = timedelta(hours=1)
     for etiket, parametreler in _rf_varyantlari(bas, bit):
         y = _rf_get(bag, "find", {**parametreler, "count": _SAYFA_UST})
-        satirlar = _rf_satirlari(y.text) if y.status_code == 200 else []
+        satirlar = _rf_satirlari(y.text, bag.kayma) if y.status_code == 200 else []
         ham.append({"yontem": f"recordFinder · {etiket}", "http": y.status_code,
                     "ornek": (_rf_ozet(satirlar) + "\n" if y.status_code == 200 else "") + y.text[:600]})
         if y.status_code != 200 or "Error" in y.text[:50]:
@@ -198,7 +215,7 @@ def _record_finder_suzgecli(bag: "_Baglanti", bas: datetime, bit: datetime, ham:
         offset = len(satirlar)
         while len(satirlar) >= _SAYFA_UST and offset < EN_FAZLA_KAYIT:  # aralıkta 1024'ten fazla kayıt
             y = _rf_get(bag, "doSeekFind", {**parametreler, "offset": offset, "count": _SAYFA_UST})
-            satirlar = _rf_satirlari(y.text) if y.status_code == 200 else []
+            satirlar = _rf_satirlari(y.text, bag.kayma) if y.status_code == 200 else []
             kayitlar += [a for _, a in satirlar if a]
             offset += len(satirlar)
         return kayitlar
@@ -209,7 +226,7 @@ def _seek(bag: "_Baglanti", offset: int, adet: int) -> Optional[list]:
     y = _rf_get(bag, "doSeekFind", {"offset": offset, "count": adet})
     if y.status_code != 200 or "Error" in y.text[:50]:
         return None
-    return _rf_satirlari(y.text)
+    return _rf_satirlari(y.text, bag.kayma)
 
 
 def _record_finder_arama(bag: "_Baglanti", bas: datetime, bit: datetime, ham: list) -> Optional[list]:
@@ -293,13 +310,13 @@ def _media_file_find(bag: _Baglanti, bas: datetime, bit: datetime, olay: str, ha
 
 
 def kayitlari_getir(rtsp_url: str, bas: datetime, bit: datetime, http_port: Optional[int] = None,
-                    olaylar: Optional[str] = None) -> dict:
+                    olaylar: Optional[str] = None, kayma: Optional[timedelta] = None) -> dict:
     """Kameranın `bas`–`bit` arasındaki plaka kayıtları. Hiçbir şey kaydetmez.
 
     Dönüş: {"basarili", "yontem", "kayitlar": [{plaka, zaman, dosya}], "ham": [...], "hata", "adres"}"""
     sonuc = {"basarili": False, "yontem": None, "kayitlar": [], "ham": [], "hata": None, "adres": None}
     try:
-        bag = _Baglanti(rtsp_url, http_port)
+        bag = _Baglanti(rtsp_url, http_port, kayma)
     except ValueError as exc:
         sonuc["hata"] = str(exc)
         return sonuc

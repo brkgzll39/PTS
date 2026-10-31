@@ -3810,7 +3810,8 @@ function _dahuaGecmisVarsayilan() {
 
 async function dahuaGecmis(aktar) {
   const el = document.getElementById("dahuaGecmisSonuc");
-  const govde = { baslangic: document.getElementById("dahuaGecmisBas").value, bitis: document.getElementById("dahuaGecmisBit").value, aktar };
+  const govde = { baslangic: document.getElementById("dahuaGecmisBas").value, bitis: document.getElementById("dahuaGecmisBit").value, aktar,
+    saat: document.getElementById("dahuaGecmisSaat").value };
   if (aktar && !(await onayAl("Kameranın bu aralıktaki, sistemde olmayan geçişleri gerçek saatleriyle eklenecek. Bariyer açılmaz; kara listedeki araçlar için alarm üretilir.",
     { baslik: "Geçişler aktarılsın mı?", onayMetni: "Aktar", guvenli: true }))) return;
   el.innerHTML = '<span class="spinner-border spinner-border-sm"></span> Kamera sorgulanıyor…';
@@ -3819,13 +3820,16 @@ async function dahuaGecmis(aktar) {
       method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(govde),
     });
     const ham = (r.ham || []).map(h => `<div class="text-muted">${escapeHtml(h.yontem)} · HTTP ${h.http ?? "—"}</div><pre class="bg-light p-2 mb-1" style="white-space:pre-wrap">${escapeHtml(h.ornek || "")}</pre>`).join("");
-    const liste = (r.onizleme || []).map(o => `<tr class="${o.zaten_var ? "text-muted" : ""}"><td class="fw-bold">${escapeHtml(o.plaka_no)}</td>
-      <td>${escapeHtml(tarihFormatla(o.zaman))}</td><td>${o.zaten_var ? "sistemde var" : '<span class="text-success">aktarılacak</span>'}${o.fotograf ? ' · <i class="bi bi-image"></i>' : ""}</td></tr>`).join("");
+    const liste = (r.onizleme || []).map(o => `<tr class="${o.zaten_var || o.eksik_okuma ? "text-muted" : ""}"><td class="fw-bold">${escapeHtml(o.plaka_no)}</td>
+      <td>${escapeHtml(tarihFormatla(o.zaman))}</td><td>${o.eksik_okuma ? '<span class="text-warning-emphasis">eksik okuma, aktarılmaz</span>'
+        : o.zaten_var ? "sistemde var" : '<span class="text-success">aktarılacak</span>'}${o.fotograf ? ' · <i class="bi bi-image"></i>' : ""}</td></tr>`).join("");
+    const saat = r.saat_yorumu ? `<div class="text-muted">Kamera kayıt saati: ${escapeHtml(r.saat_yorumu)}</div>` : "";
+    const eksik = r.eksik_okuma ? ` ${r.eksik_okuma} tanesi plaka biçimine uymayan eksik okuma (aktarılmaz).` : "";
     el.innerHTML = r.basarili ? `
       <div class="alert ${aktar ? "alert-success" : "alert-info"} py-2 mb-2">
         Kamerada <b>${r.bulunan}</b> geçiş bulundu (${escapeHtml(r.yontem || "")}).
-        ${aktar ? `<b>${r.aktarilan}</b> geçiş eklendi${r.kara_liste ? `, <b>${r.kara_liste}</b> kara liste alarmı` : ""}; ${r.zaten_vardi} tanesi zaten sistemdeydi.`
-               : `<b>${r.aktarilan}</b> tanesi sistemde yok ve aktarılabilir; ${r.zaten_vardi} tanesi zaten var.`}</div>
+        ${aktar ? `<b>${r.aktarilan}</b> geçiş eklendi${r.kara_liste ? `, <b>${r.kara_liste}</b> kara liste alarmı` : ""}; ${r.zaten_vardi} tanesi zaten sistemdeydi.${eksik}`
+               : `<b>${r.aktarilan}</b> tanesi sistemde yok ve aktarılabilir; ${r.zaten_vardi} tanesi zaten var.${eksik}`}${saat}</div>
       ${liste ? `<div class="table-responsive" style="max-height:260px"><table class="table table-sm mb-2"><tbody>${liste}</tbody></table></div>` : ""}
       ${ham ? `<details><summary>Kameranın ham yanıtı (teşhis)</summary>${ham}</details>` : ""}`
       : `<div class="alert alert-danger py-2 mb-2">${escapeHtml(r.hata || "Kamera kayıtları alınamadı")}</div>${ham ? `<details open><summary>Kameranın ham yanıtı (teşhis)</summary>${ham}</details>` : ""}`;

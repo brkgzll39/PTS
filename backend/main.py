@@ -3990,7 +3990,10 @@ def kamera_dahua_guncelle(kamera_id: str, veri: schemas.KameraDahuaGuncelle, db:
                 rtsp_adresinden_baglanti(kamera.get("rtsp_url", ""), veri.http_port)
         except ValueError as exc:
             raise HTTPException(400, str(exc))
+        onceki = kamera.get("dahua_anpr") or {}
         kamera["dahua_anpr"] = {"aktif": veri.aktif, "olaylar": olaylar, "http_port": veri.http_port}
+        if onceki.get("saat_yorumu") and onceki.get("http_port") == veri.http_port:
+            kamera["dahua_anpr"]["saat_yorumu"] = onceki["saat_yorumu"]
         _kameralari_yaz(kameralar)
     _denetim_kaydet(
         db, kullanici.kullanici_adi, "kamera_dahua_anpr",
@@ -10413,15 +10416,83 @@ def _dahua_kayitli_kameralar() -> list:
     return [k for k in _kameralari_oku() if (k.get("dahua_anpr") or {}).get("aktif") and k.get("rtsp_url")]
 
 
+# Türk plakası: il kodu + (1 harf 4-5 rakam | 2 harf 3-4 rakam | 3 harf 2-3 rakam). Kameranın
+# yarım okumaları ("72AB", "EAJ910", "394208") aktarılmaz (2026-10-31, sahadaki önizlemede görüldü).
+_TR_PLAKA = re.compile(r"^(0[1-9]|[1-7]\d|8[01])([A-Z]\d{4,5}|[A-Z]{2}\d{3,4}|[A-Z]{3}\d{2,3})$")
+_SAAT_YORUMLARI = ("yerel", "utc")
+
+
+def _gecerli_tr_plaka(plaka: str) -> bool:
+    return bool(_TR_PLAKA.match(_plaka_normalize(plaka)))
+
+
+def _sistemde_var_mi(db: Session, plaka: str, zaman: datetime) -> bool:
+    K = models.Kayit
+    return db.query(K.id).filter(_plaka_normalize_sql(K.plaka_no) == _plaka_normalize(plaka),
+                                 K.tarih_saat >= zaman - _AKTARIM_ESLESME,
+                                 K.tarih_saat <= zaman + _AKTARIM_ESLESME).first() is not None
+
+
+def _saat_kaymasi(yorum: str) -> timedelta:
+    from backend import dahua_kayit
+    return timedelta(0) if yorum == "yerel" else dahua_kayit.yerel_saat_farki()
+
+
+def _dahua_saat_yorumu(db: Session, kamera: dict, secim: str = "otomatik") -> tuple:
+    """Kameranın kayıt zamanlarını (unix saniyesi) nasıl yazdığı: "yerel" (yerel saat
+    saniyeye çevrilmiş) ya da "utc". SAHADA (2026-10-31) bir Dahua kamerası "yerel"
+    yazıyordu ve UTC sanıldığı için geçişler 3 saat ileri görünüp sistemdekilerle
+    eşleşmemişti. Otomatikte kameranın son 24 saatlik kayıtları iki yorumla da okunur,
+    PTS'in o saatlerde zaten kaydettiği geçişlerle hangisi eşleşiyorsa o seçilir ve
+    kameranın ayarına yazılır. Dönüş: (yorum ya da None, açıklama)."""
+    if secim in _SAAT_YORUMLARI:
+        return secim, f"{'kameranın yerel saati' if secim == 'yerel' else 'UTC'} (elle seçildi)"
+    ayar = kamera.get("dahua_anpr") or {}
+    if ayar.get("saat_yorumu") in _SAAT_YORUMLARI:
+        return ayar["saat_yorumu"], f"{'kameranın yerel saati' if ayar['saat_yorumu'] == 'yerel' else 'UTC'} (daha önce doğrulandı)"
+    from backend import dahua_kayit
+    if dahua_kayit.yerel_saat_farki() == timedelta(0):
+        return "yerel", "sunucu UTC saatinde; yorum fark etmez"
+    simdi = datetime.now()
+    sayilar = {}
+    for yorum in _SAAT_YORUMLARI:
+        s = dahua_kayit.kayitlari_getir(kamera.get("rtsp_url", ""), simdi - timedelta(hours=24), simdi,
+                                        ayar.get("http_port"), ayar.get("olaylar"), kayma=_saat_kaymasi(yorum))
+        if not s["basarili"]:
+            return None, s["hata"] or "Kamera kayıtları okunamadı"
+        ornek = [r for r in s["kayitlar"] if _gecerli_tr_plaka(r["plaka"])][-300:]
+        sayilar[yorum] = sum(1 for r in ornek if _sistemde_var_mi(db, r["plaka"], r["zaman"]))
+    en, diger = sorted(_SAAT_YORUMLARI, key=lambda y: -sayilar[y])
+    if sayilar[en] < 3 or sayilar[en] < 3 * sayilar[diger]:
+        return None, (f"Kamera saati doğrulanamadı: son 24 saatte sistemle eşleşen geçiş yerel saatle {sayilar['yerel']}, "
+                      f"UTC ile {sayilar['utc']}. Kamera saatini kontrol edin ya da saat yorumunu elle seçin.")
+    with _kamera_dosya_kilit:
+        kameralar = _kameralari_oku()
+        k = next((x for x in kameralar if x["id"] == kamera.get("id")), None)
+        if k is not None and isinstance(k.get("dahua_anpr"), dict):
+            k["dahua_anpr"]["saat_yorumu"] = en
+            _kameralari_yaz(kameralar)
+    logger.info("[%s] Kamera kayıt saati yorumu: %s (eşleşen: %s)", kamera.get("ad"), en, sayilar)
+    return en, (f"{'kameranın yerel saati' if en == 'yerel' else 'UTC'} (otomatik bulundu: son 24 saatte "
+                f"{sayilar[en]} geçiş sistemle eşleşti, diğer yorumla {sayilar[diger]})")
+
+
 def _gecmis_gecisleri_aktar(db: Session, kamera: dict, bas: datetime, bit: datetime,
-                            yalniz_onizle: bool = False) -> dict:
+                            yalniz_onizle: bool = False, saat_secimi: str = "otomatik") -> dict:
     """Kameranın hafızasındaki `bas`–`bit` geçişlerini alır; sistemde olmayanları ekler."""
     from backend import dahua_kayit
 
     ayar = kamera.get("dahua_anpr") or {}
-    s = dahua_kayit.kayitlari_getir(kamera.get("rtsp_url", ""), bas, bit, ayar.get("http_port"), ayar.get("olaylar"))
-    sonuc = {"kamera": kamera.get("ad"), "basarili": s["basarili"], "yontem": s["yontem"], "hata": s["hata"],
-             "bulunan": len(s["kayitlar"]), "aktarilan": 0, "zaten_vardi": 0, "kara_liste": 0, "ham": s["ham"]}
+    sonuc = {"kamera": kamera.get("ad"), "basarili": False, "yontem": None, "hata": None, "bulunan": 0,
+             "aktarilan": 0, "zaten_vardi": 0, "kara_liste": 0, "eksik_okuma": 0, "ham": [], "saat_yorumu": None}
+    yorum, aciklama = _dahua_saat_yorumu(db, kamera, saat_secimi)
+    sonuc["saat_yorumu"] = aciklama
+    if yorum is None:
+        sonuc["hata"] = aciklama  # saat bilinmeden aktarım yapılmaz: geçişler yanlış saatle eklenirdi
+        return sonuc
+    s = dahua_kayit.kayitlari_getir(kamera.get("rtsp_url", ""), bas, bit, ayar.get("http_port"), ayar.get("olaylar"),
+                                    kayma=_saat_kaymasi(yorum))
+    sonuc.update(basarili=s["basarili"], yontem=s["yontem"], hata=s["hata"], bulunan=len(s["kayitlar"]), ham=s["ham"])
     if not s["basarili"]:
         return sonuc
     yon = kamera.get("yon") if kamera.get("yon") in ("giris", "cikis") else "giris"
@@ -10432,14 +10503,16 @@ def _gecmis_gecisleri_aktar(db: Session, kamera: dict, bas: datetime, bit: datet
         plaka, zaman = r["plaka"], r["zaman"]
         if zaman > datetime.now() + timedelta(minutes=1):
             continue
-        var = (db.query(K.id).filter(_plaka_normalize_sql(K.plaka_no) == _plaka_normalize(plaka),
-                                     K.tarih_saat >= zaman - _AKTARIM_ESLESME, K.tarih_saat <= zaman + _AKTARIM_ESLESME)
-               .first())
+        gecerli = _gecerli_tr_plaka(plaka)
+        var = gecerli and _sistemde_var_mi(db, plaka, zaman)
         if yalniz_onizle:
-            if len(onizleme) < 300:
-                onizleme.append({"plaka_no": plaka, "zaman": zaman.isoformat(), "zaten_var": var is not None,
-                                 "fotograf": bool(r.get("dosya"))})
-            sonuc["zaten_vardi" if var else "aktarilan"] += 1
+            if len(onizleme) < 500:
+                onizleme.append({"plaka_no": plaka, "zaman": zaman.isoformat(), "zaten_var": var,
+                                 "eksik_okuma": not gecerli, "fotograf": bool(r.get("dosya"))})
+            sonuc["eksik_okuma" if not gecerli else "zaten_vardi" if var else "aktarilan"] += 1
+            continue
+        if not gecerli:
+            sonuc["eksik_okuma"] += 1
             continue
         if var:
             sonuc["zaten_vardi"] += 1
@@ -10615,7 +10688,7 @@ async def kamera_dahua_gecmis(kamera_id: str, istek: schemas.DahuaGecmisIstek, d
         raise HTTPException(400, "Aralık en fazla 7 gün olmalı ve bitiş başlangıçtan sonra olmalı")
     kamera = {**kamera, "dahua_anpr": {**(kamera.get("dahua_anpr") or {}), "aktif": True}}
     sonuc = await asyncio.get_event_loop().run_in_executor(
-        None, lambda: _gecmis_gecisleri_aktar(db, kamera, bas, bit, yalniz_onizle=not istek.aktar))
+        None, lambda: _gecmis_gecisleri_aktar(db, kamera, bas, bit, yalniz_onizle=not istek.aktar, saat_secimi=istek.saat))
     if istek.aktar:
         _denetim_kaydet(db, kullanici.kullanici_adi, "kamera_gecmis_aktar",
                         f"{kamera.get('ad')} {bas:%d.%m.%Y %H:%M}-{bit:%d.%m.%Y %H:%M}: {sonuc['aktarilan']} geçiş aktarıldı")

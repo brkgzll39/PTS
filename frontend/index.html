@@ -794,10 +794,13 @@
         kapalı kalınan süre kendiliğinden alınır; burada istediğiniz aralığı elle önizleyip aktarabilirsiniz. Sistemde zaten
         olan geçişler atlanır; aktarılanlar bariyer açmaz.</p>
       <div class="row g-2 align-items-end mb-2">
-        <div class="col-sm-4"><label class="form-label small mb-1" for="dahuaGecmisBas">Başlangıç</label>
+        <div class="col-sm-3"><label class="form-label small mb-1" for="dahuaGecmisBas">Başlangıç</label>
           <input type="datetime-local" class="form-control form-control-sm" id="dahuaGecmisBas"></div>
-        <div class="col-sm-4"><label class="form-label small mb-1" for="dahuaGecmisBit">Bitiş</label>
+        <div class="col-sm-3"><label class="form-label small mb-1" for="dahuaGecmisBit">Bitiş</label>
           <input type="datetime-local" class="form-control form-control-sm" id="dahuaGecmisBit"></div>
+        <div class="col-sm-2"><label class="form-label small mb-1" for="dahuaGecmisSaat" title="Kameranın kayıt saatini nasıl yazdığı">Saat</label>
+          <select class="form-select form-select-sm" id="dahuaGecmisSaat">
+            <option value="otomatik">Otomatik</option><option value="yerel">Yerel saat</option><option value="utc">UTC</option></select></div>
         <div class="col-sm-4 d-flex gap-2">
           <button type="button" class="btn btn-sm btn-outline-primary flex-fill" onclick="dahuaGecmis(false)"><i class="bi bi-search"></i> Önizle</button>
           <button type="button" class="btn btn-sm btn-primary flex-fill" id="dahuaGecmisAktarBtn" onclick="dahuaGecmis(true)" disabled><i class="bi bi-download"></i> Aktar</button>
