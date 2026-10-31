@@ -3473,6 +3473,7 @@ function resmiAracModalAc(id) {
   document.getElementById("raAciklama").value = a.aciklama || "";
   document.getElementById("raAktif").checked = a.aktif;
   document.getElementById("resmiAracModalBaslik").textContent = id ? "Resmi aracı düzenle" : "Resmi araç ekle";
+  document.getElementById("raKaldir").classList.toggle("d-none", !id);
   bootstrap.Modal.getOrCreateInstance(document.getElementById("resmiAracModal")).show();
 }
 
@@ -3495,6 +3496,21 @@ document.getElementById("resmiAracForm")?.addEventListener("submit", async (e) =
     toastGoster("Kaydedilemedi: " + err.message, "hata");
   }
 });
+
+async function resmiAracKaldir() {
+  const id = document.getElementById("raId").value;
+  const plaka = document.getElementById("raPlaka").value;
+  if (!id || !(await onayAl(`${plaka} resmi araç listesinden kaldırılacak. Kişiler'deki kaydı ve geçiş kayıtları etkilenmez.`,
+    { baslik: "Listeden kaldırılsın mı?", onayMetni: "Kaldır" }))) return;
+  try {
+    await apiCagir(`/resmi-araclar/${id}`, { method: "DELETE" });
+    bootstrap.Modal.getInstance(document.getElementById("resmiAracModal"))?.hide();
+    toastGoster(`${plaka} listeden kaldırıldı`, "basari");
+    resmiAraclariYukle();
+  } catch (err) {
+    toastGoster(err.message, "hata");
+  }
+}
 
 async function gorevEmirleriniYukle() {
   const tablo = document.getElementById("gorevEmriTablo");

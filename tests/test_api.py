@@ -9078,3 +9078,16 @@ def test_telegram_401_aciklamasi():
     from backend import telegram_bildirim
     hata = urllib.error.HTTPError("u", 401, "Unauthorized", {}, io.BytesIO(b'{"ok":false,"description":"Unauthorized"}'))
     assert "BotFather" in telegram_bildirim._http_hatasi_aciklamasi(hata)
+
+
+def test_resmi_arac_listeden_kaldirma(client, operator_header, izleyici_header, resmi_modul):
+    a = _resmi_arac(client, operator_header, "06 RSM 41")
+    assert client.delete(f"/resmi-araclar/{a['id']}", headers=izleyici_header).status_code == 403
+    assert client.delete(f"/resmi-araclar/{a['id']}", headers=operator_header).status_code == 200
+    assert not any(x["id"] == a["id"] for x in client.get("/resmi-araclar", headers=operator_header).json())
+    # Görev geçmişi olan araç silinmez
+    b = _resmi_arac(client, operator_header, "06 RSM 42")
+    simdi = datetime.now()
+    assert _gorev(client, operator_header, b["id"], simdi, simdi + timedelta(hours=1)).status_code == 200
+    r = client.delete(f"/resmi-araclar/{b['id']}", headers=operator_header)
+    assert r.status_code == 409 and "pasif" in r.json()["detail"]

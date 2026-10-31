@@ -10243,6 +10243,27 @@ def resmi_arac_toplu_ekle(istek: schemas.ResmiAracToplu, db: Session = Depends(g
     return {"eklenen": eklenen, "atlanan": len(istek.araclar) - eklenen}
 
 
+@app.delete("/resmi-araclar/{arac_id}")
+def resmi_arac_kaldir(arac_id: int, db: Session = Depends(get_db),
+                      kullanici: models.Kullanici = Depends(_personel_girisi_gerekli)):
+    """Listeden kaldırır (2026-10-31, yanlış eklenen araçlar için). Görev emri geçmişi olan araç
+    silinmez (ay sonu raporundaki geçmişi kaybolurdu): pasif yapılması istenir."""
+    _resmi_kontrol()
+    _rol_dogrula(kullanici, ROL_YONETICI, ROL_OPERATOR)
+    a = db.query(models.ResmiArac).filter(models.ResmiArac.id == arac_id).first()
+    if not a:
+        raise HTTPException(404, "Resmi araç bulunamadı")
+    gorev = db.query(func.count(models.GorevEmri.id)).filter(models.GorevEmri.resmi_arac_id == a.id).scalar() or 0
+    if gorev:
+        raise HTTPException(409, f"{a.plaka_no} için {gorev} görev emri kaydı var; geçmişi korumak için silinemez. "
+                                 "Takipten çıkarmak için düzenleyip \"Takipte\" işaretini kaldırın (pasif).")
+    plaka, ad = a.plaka_no, a.ad
+    db.delete(a)
+    db.commit()
+    _denetim_kaydet(db, kullanici.kullanici_adi, "resmi_arac_kaldir", f"#{arac_id} {plaka} {ad}")
+    return {"ok": True}
+
+
 @app.put("/resmi-araclar/{arac_id}")
 def resmi_arac_guncelle(arac_id: int, istek: schemas.ResmiAracOlustur, db: Session = Depends(get_db),
                         kullanici: models.Kullanici = Depends(_personel_girisi_gerekli)):
