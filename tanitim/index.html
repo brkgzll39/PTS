@@ -1,10 +1,11 @@
 <!DOCTYPE html><html lang="tr"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"><style>:root{padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}body{margin:0}img{max-width:100%}[hidden]{display:none!important}</style>
-<title>VARDA</title>
+<title>OSTIVA</title>
 <meta name="claude:viewport-fit-sides" content="cover">
-<meta name="description" content="VARDA: kamu, enerji ve sanayi tesisleri için kapıdan geçen hiçbir aracı kaçırmayan nizamiye ve plaka tanıma sistemi.">
+<meta name="description" content="OSTIVA: kamu, enerji ve sanayi tesisleri için kapıdan geçen hiçbir aracı kaçırmayan nizamiye ve plaka tanıma sistemi.">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@112,600;112,800;125,800&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@500;600&display=swap">
+</head><body>
 <style>
 /* Düzen: gece nöbeti — koyu lacivert kapı bandı, bariyer sarısı tek vurgu; içerik açık zeminde dar sütun + iki/üç sütunlu ızgaralar */
 :root {
@@ -118,8 +119,8 @@ th, td { text-align: left; padding: 14px 18px; border-bottom: 1px solid var(--ci
 tr:last-child td { border-bottom: 0; }
 th { font: 600 .74rem/1 var(--f-mono); letter-spacing: .1em; text-transform: uppercase; color: var(--soluk); }
 td.klasik { color: var(--soluk); }
-td.varda { font-weight: 600; }
-td.varda::before { content: "✓ "; color: var(--iyi); }
+td.bizim { font-weight: 600; }
+td.bizim::before { content: "✓ "; color: var(--iyi); }
 
 .kimler { display: grid; grid-template-columns: repeat(3, 1fr); gap: 28px; }
 .kimler div { display: grid; gap: 8px; align-content: start; min-width: 0; }
@@ -166,7 +167,7 @@ footer .ic { display: flex; justify-content: space-between; gap: 16px; flex-wrap
 
 <header class="ust">
   <div class="ic">
-    <a class="logo" href="#ust" aria-label="VARDA ana sayfa"><span class="logo-isaret" aria-hidden="true"></span>VARDA</a>
+    <a class="logo" href="#ust" aria-label="OSTIVA ana sayfa"><span class="logo-isaret" aria-hidden="true"></span>OSTIVA</a>
     <nav class="menu" aria-label="Sayfa içi">
       <a href="#farklar">Farklar</a><a href="#ozellikler">Özellikler</a><a href="#kimler">Kimler için</a><a href="#baslangic">Nasıl başlarız</a><a href="#sss">Sorular</a>
     </nav>
@@ -181,12 +182,12 @@ footer .ic { display: flex; justify-content: space-between; gap: 16px; flex-wrap
         <span class="etiket">Nizamiye ve plaka tanıma sistemi</span>
         <h1>Kapıdan geçen her araç kayıtlı. <em>Kaçan geçiş yok.</em></h1>
         <p class="alt">Kamu, enerji ve sanayi tesisleri için: plaka tanıma, personel ve ziyaretçi ayrımı, resmi araç görevleri,
-          alarmlar ve günlük yönetici raporu tek sistemde. Kamera bir plakayı kaçırırsa ya da sunucu kapanırsa VARDA o geçişi sonradan bulup ekler.</p>
+          alarmlar ve günlük yönetici raporu tek sistemde. Kamera bir plakayı kaçırırsa ya da sunucu kapanırsa OSTIVA o geçişi sonradan bulup ekler.</p>
         <div class="dugmeler">
           <a class="dugme ana" href="#iletisim">30 günlük pilot isteyin</a>
           <a class="dugme ikincil" href="#farklar">Farkı görün</a>
         </div>
-        <p class="ad-notu">Adını nöbetçinin <b>"Varda!"</b> seslenişinden alır: kapıya yaklaşan her şeye dikkat.</p>
+        <p class="ad-notu">Adını Latincede giriş kapısı anlamına gelen <b>ostium</b> kelimesinden alır.</p>
       </div>
 
       <figure class="ekran" aria-label="Görevli ekranından örnek görünüm">
@@ -202,7 +203,7 @@ footer .ic { display: flex; justify-content: space-between; gap: 16px; flex-wrap
           <li class="alarm"><span>08:06</span><span class="p">06 BKT 77</span><span>Klon plaka şüphesi: 4 dk önce Lojman kapısından girdi</span></li>
           <li><span>07:58</span><span class="p">72 AB 3091</span><span>Alt işveren · Personel servisi</span></li>
         </ul>
-        <div class="mutabakat"><span>Dünkü gece mutabakatı</span><span>kamera 612 · VARDA 612 · <b>eksik 0</b></span></div>
+        <div class="mutabakat"><span>Dünkü gece mutabakatı</span><span>kamera 612 · OSTIVA 612 · <b>eksik 0</b></span></div>
       </figure>
     </div>
   </section>
@@ -210,17 +211,17 @@ footer .ic { display: flex; justify-content: space-between; gap: 16px; flex-wrap
   <section class="bolum" id="farklar">
     <div class="ic">
       <div class="bolum-bas">
-        <span class="etiket">Neden VARDA</span>
-        <h2>Klasik plaka tanıma yazılımı plakayı okur. VARDA kapıyı yönetir.</h2>
+        <span class="etiket">Neden OSTIVA</span>
+        <h2>Klasik plaka tanıma yazılımı plakayı okur. OSTIVA kapıyı yönetir.</h2>
         <p>Sahada en sık karşılaşılan sorun, kimsenin fark etmediği eksik kayıtlardır: okunmayan plaka, kapalı kalan sunucu,
-          haftalarca bozuk kalan kamera. VARDA bu üç sorunu kendiliğinden yakalar.</p>
+          haftalarca bozuk kalan kamera. OSTIVA bu üç sorunu kendiliğinden yakalar.</p>
       </div>
       <div class="uc">
         <div class="fark">
           <h3>Geçiş kaçırmaz</h3>
           <p>Sistemin kendi yapay zekâ okuması ve kameranın kendi plaka okuması birlikte çalışır. Her gece kameranın kaydıyla karşılaştırma yapılır,
             kaçan geçiş gerçek saatiyle eklenir.</p>
-          <span class="rakam">kamera 620 · VARDA 610 → 10 geçiş eklendi</span>
+          <span class="rakam">kamera 620 · OSTIVA 610 → 10 geçiş eklendi</span>
         </div>
         <div class="fark">
           <h3>Sunucu kapansa da kayıp yok</h3>
@@ -271,18 +272,18 @@ footer .ic { display: flex; justify-content: space-between; gap: 16px; flex-wrap
     <div class="ic">
       <div class="bolum-bas">
         <span class="etiket">Karşılaştırma</span>
-        <h2>Klasik plaka tanıma yazılımı ile VARDA</h2>
+        <h2>Klasik plaka tanıma yazılımı ile OSTIVA</h2>
       </div>
       <div class="tablo-kap">
         <table>
-          <thead><tr><th>Durum</th><th>Klasik yazılım</th><th>VARDA</th></tr></thead>
+          <thead><tr><th>Durum</th><th>Klasik yazılım</th><th>OSTIVA</th></tr></thead>
           <tbody>
-            <tr><td>Kamera bir plakayı okumadı</td><td class="klasik">Fark edilmez</td><td class="varda">Gece mutabakatıyla bulunur ve eklenir</td></tr>
-            <tr><td>Sunucu bir saat kapalı kaldı</td><td class="klasik">O saatin kaydı yok</td><td class="varda">Açılışta kameradan geri alınır</td></tr>
-            <tr><td>Kamera plaka okumayı bıraktı</td><td class="klasik">Şikâyet gelince anlaşılır</td><td class="varda">Sessiz kamera uyarısı ve merkezi izleme</td></tr>
-            <tr><td>Resmi araç görevsiz çıktı</td><td class="klasik">Ayrı defter ya da yazılım</td><td class="varda">Anında görev penceresi ve rapor</td></tr>
-            <tr><td>Aynı plaka iki kapıda</td><td class="klasik">Uyarı yok</td><td class="varda">Klon plaka alarmı</td></tr>
-            <tr><td>Eski kayıtlar</td><td class="klasik">Süresiz birikir</td><td class="varda">KVKK süresine göre otomatik silinir</td></tr>
+            <tr><td>Kamera bir plakayı okumadı</td><td class="klasik">Fark edilmez</td><td class="bizim">Gece mutabakatıyla bulunur ve eklenir</td></tr>
+            <tr><td>Sunucu bir saat kapalı kaldı</td><td class="klasik">O saatin kaydı yok</td><td class="bizim">Açılışta kameradan geri alınır</td></tr>
+            <tr><td>Kamera plaka okumayı bıraktı</td><td class="klasik">Şikâyet gelince anlaşılır</td><td class="bizim">Sessiz kamera uyarısı ve merkezi izleme</td></tr>
+            <tr><td>Resmi araç görevsiz çıktı</td><td class="klasik">Ayrı defter ya da yazılım</td><td class="bizim">Anında görev penceresi ve rapor</td></tr>
+            <tr><td>Aynı plaka iki kapıda</td><td class="klasik">Uyarı yok</td><td class="bizim">Klon plaka alarmı</td></tr>
+            <tr><td>Eski kayıtlar</td><td class="klasik">Süresiz birikir</td><td class="bizim">KVKK süresine göre otomatik silinir</td></tr>
           </tbody>
         </table>
       </div>
@@ -325,7 +326,7 @@ footer .ic { display: flex; justify-content: space-between; gap: 16px; flex-wrap
         <details><summary>Mevcut kameralarımızla çalışır mı?</summary>
           <p>Evet. IP kameraların görüntüsünü kendi yapay zekâmızla okuruz; Dahua ANPR kameralarda kameranın kendi plaka okumasını da kullanırız. Keşifte hangi kameranın uygun olduğunu söyleriz.</p></details>
         <details><summary>Verilerimiz dışarı çıkar mı?</summary>
-          <p>Hayır. VARDA kurumunuzun sunucusunda çalışır, internetsiz de kurulur. Bakım izlemesi açılırsa yalnız sağlık bilgisi (kamera çalışıyor mu, disk, yedek) gelir; plaka, kişi ya da fotoğraf gelmez.</p></details>
+          <p>Hayır. OSTIVA kurumunuzun sunucusunda çalışır, internetsiz de kurulur. Bakım izlemesi açılırsa yalnız sağlık bilgisi (kamera çalışıyor mu, disk, yedek) gelir; plaka, kişi ya da fotoğraf gelmez.</p></details>
         <details><summary>Kamu kurumu olarak nasıl satın alabiliriz?</summary>
           <p>Tutara göre doğrudan temin ya da ihale ile. Teknik şartname hazırlığında yardımcı oluruz.</p></details>
         <details><summary>Bariyer ve LED panel gerekir mi?</summary>
@@ -345,14 +346,14 @@ footer .ic { display: flex; justify-content: space-between; gap: 16px; flex-wrap
       </div>
       <div class="kanallar">
         <div class="kanal"><div><span>Telefon</span><b id="telefon">[0 5XX XXX XX XX]</b></div><button class="kopyala" data-hedef="telefon" type="button">Kopyala</button></div>
-        <div class="kanal"><div><span>E-posta</span><b id="eposta">[iletisim@varda.com.tr]</b></div><button class="kopyala" data-hedef="eposta" type="button">Kopyala</button></div>
+        <div class="kanal"><div><span>E-posta</span><b id="eposta">[iletisim@ostiva.com]</b></div><button class="kopyala" data-hedef="eposta" type="button">Kopyala</button></div>
       </div>
     </div>
   </section>
 </main>
 
 <footer>
-  <div class="ic"><span>VARDA · Nizamiye ve plaka tanıma sistemi</span><span>[Firma ünvanı] · [Şehir]</span></div>
+  <div class="ic"><span>OSTIVA · Nizamiye ve plaka tanıma sistemi</span><span>[Firma ünvanı] · [Şehir]</span></div>
 </footer>
 
 <script>
