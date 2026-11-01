@@ -8,7 +8,7 @@ Sorun çıkınca (ve düzelince) Telegram ya da e-postayla haber verir.
 
 **Kişisel veri gelmez.** Özette plaka, kişi adı, fotoğraf, geçiş kaydı yoktur;
 yalnız sayılar ve durumlar vardır. Müşteri PTS'inde *Sistem → Merkezi İzleme →
-"Gönderilen veriyi göster"* ile gidenin tamamını görebilir. Merkez yine de
+"Gönderilen veri"* ile gidenin tamamını görebilir. Merkez yine de
 bilinen kişisel veri alanlarını kaydetmeden siler.
 
 Bağlantıyı hep müşterideki PTS başlatır (dışarı giden HTTPS). Müşterinin

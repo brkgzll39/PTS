@@ -737,3 +737,9 @@ a.side-link { text-decoration: none; } a.side-link:hover { color: #fff; }
 .ayar-bilgi:hover, .ayar-bilgi[aria-expanded="true"] { color: var(--bs-primary, #0d6efd); }
 .ayar-yardim { font-size: .78rem; color: #5b6576; background: #f4f6fa; border-radius: 6px; padding: 6px 9px; margin: 0 0 6px; }
 #otomatikYedekDurumu details summary { cursor: pointer; }
+/* Açılır kart (2026-11-01): seyrek kullanılan teknik araçlar varsayılan kapalı */
+details.kart-acilir > summary { list-style: none; cursor: pointer; }
+details.kart-acilir > summary::-webkit-details-marker { display: none; }
+details.kart-acilir:not([open]) > summary { border-bottom: 0; border-radius: var(--bs-card-inner-border-radius, .5rem); }
+details.kart-acilir .acilir-ok { transition: transform .15s; }
+details.kart-acilir[open] .acilir-ok { transform: rotate(180deg); }

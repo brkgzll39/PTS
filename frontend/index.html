@@ -2745,9 +2745,12 @@
               <span><i class="bi bi-broadcast me-1"></i>Merkezi İzleme</span>
               <span id="merkezRozet" class="badge text-bg-secondary">Kapalı</span></div>
             <div class="card-body">
-              <p class="small text-muted mb-2">Sistemin sağlık durumu (kameralar çalışıyor mu, disk, yedek, lisans) birkaç dakikada bir
-                bakım firmasının izleme merkezine gönderilir; sorun çıkınca firma haberdar olur.
-                <b>Plaka, kişi, fotoğraf ya da geçiş kaydı gönderilmez.</b></p>
+              <div class="d-flex align-items-start gap-1 small text-muted mb-2">
+                <span class="flex-grow-1">Sağlık durumu bakım firmasına gönderilir. Plaka ve kişi bilgisi gönderilmez.</span>
+                <button type="button" class="ayar-bilgi" aria-label="Açıklama" aria-expanded="false" onclick="const y=document.getElementById('merkezYardim');y.hidden=!y.hidden;this.setAttribute('aria-expanded',!y.hidden)"><i class="bi bi-info-circle"></i></button></div>
+              <div class="ayar-yardim" id="merkezYardim" hidden>Kameraların çalışıp çalışmadığı, günlük okuma sayısı, disk doluluğu,
+                son yedeğin yaşı, lisansın kalan günü ve alarm sayıları birkaç dakikada bir firmanın izleme merkezine gider; sorun çıkınca
+                firma siz aramadan haberdar olur. Plaka, kişi, fotoğraf ya da geçiş kaydı gönderilmez; "Gönderilen veri" ile tamamını görebilirsiniz.</div>
               <form id="merkezForm" class="small">
                 <div class="form-check form-switch mb-2"><input class="form-check-input" type="checkbox" id="merkezAktif">
                   <label class="form-check-label" for="merkezAktif">Gönderim açık</label></div>
@@ -2755,12 +2758,12 @@
                 <input type="url" class="form-control form-control-sm mb-2" id="merkezUrl" placeholder="https://izleme.firma.com.tr">
                 <label class="form-label mb-1" for="merkezAnahtar">Kurulum anahtarı</label>
                 <input type="password" class="form-control form-control-sm mb-2" id="merkezAnahtar" autocomplete="off">
-                <label class="form-label mb-1" for="merkezAralik">Gönderim aralığı</label>
-                <select class="form-select form-select-sm mb-2" id="merkezAralik">
-                  <option value="120">2 dakika</option><option value="300">5 dakika</option><option value="600">10 dakika</option><option value="900">15 dakika</option></select>
-                <div class="d-flex gap-2 flex-wrap">
+                <div class="d-flex gap-2 align-items-center flex-wrap">
+                  <label class="visually-hidden" for="merkezAralik">Gönderim aralığı</label>
+                  <select class="form-select form-select-sm w-auto" id="merkezAralik" title="Gönderim aralığı">
+                    <option value="120">2 dk'da bir</option><option value="300">5 dk'da bir</option><option value="600">10 dk'da bir</option><option value="900">15 dk'da bir</option></select>
                   <button type="submit" class="btn btn-sm btn-primary">Kaydet ve gönder</button>
-                  <button type="button" class="btn btn-sm btn-outline-secondary" onclick="merkezOzetGoster()">Gönderilen veriyi göster</button>
+                  <button type="button" class="btn btn-sm btn-link px-1" onclick="merkezOzetGoster()">Gönderilen veri</button>
                 </div>
               </form>
               <div id="merkezDurum" class="small mt-2"></div>
@@ -2782,29 +2785,31 @@
               </div>
             </div>
           </div>
-          <div class="card mt-3">
-            <div class="card-header"><i class="bi bi-bullseye me-1"></i>Toplu Doğruluk Testi</div>
+          <!-- 2026-11-01: seyrek kullanılan teknik araç; varsayılan kapalı, açıklama ⓘ ile. -->
+          <details class="card mt-3 kart-acilir">
+            <summary class="card-header d-flex align-items-center"><i class="bi bi-bullseye me-1"></i>Toplu Doğruluk Testi
+              <span class="small text-muted ms-auto">teknik</span><i class="bi bi-chevron-down ms-2 acilir-ok"></i></summary>
             <div class="card-body">
-              <p class="small text-muted">
-                Dahua NVR'dan dışa aktarılmış, adı <code>ONEK_PLAKA.jpg</code>
-                biçiminde olan gerçek fotoğrafların bulunduğu bir klasör verin
-                — farklı eşik/model/kontrast ayarlarını, CANLI SİSTEME HİÇBİR
-                KAYIT ATMADAN, gerçek doğruluk oranı olarak karşılaştırır.
-              </p>
+              <div class="d-flex align-items-start gap-1 small text-muted mb-2">
+                <span class="flex-grow-1">Örnek fotoğraflarla okuma doğruluğunu ölçer; canlı sisteme kayıt atmaz.</span>
+                <button type="button" class="ayar-bilgi" aria-label="Açıklama" aria-expanded="false" onclick="const y=document.getElementById('dogrulukYardim');y.hidden=!y.hidden;this.setAttribute('aria-expanded',!y.hidden)"><i class="bi bi-info-circle"></i></button></div>
+              <div class="ayar-yardim" id="dogrulukYardim" hidden>Dahua NVR'dan dışa aktarılmış, adı <code>ONEK_PLAKA.jpg</code> biçiminde
+                fotoğrafların bulunduğu klasörü verin. Farklı güven eşiği, model ve kontrast ayarlarının gerçek doğruluk oranını,
+                canlı sistemi değiştirmeden karşılaştırabilirsiniz.</div>
               <form id="dogrulukTestiForm" data-rol-min="operatör" onsubmit="dogrulukTestiCalistir(event)">
                 <div class="mb-2">
-                  <label for="dogrulukTestiKlasor" class="form-label small mb-1">Fotoğraf klasörü (sunucudaki tam yol)</label>
+                  <label for="dogrulukTestiKlasor" class="form-label small mb-1">Fotoğraf klasörü (sunucuda)</label>
                   <input type="text" class="form-control form-control-sm" id="dogrulukTestiKlasor" placeholder="C:\pts-test-fotograflari" required>
                 </div>
                 <div class="row g-2 mb-2">
                   <div class="col-6">
-                    <label for="dogrulukTestiEsik" class="form-label small mb-1">Min. güven (boş = mevcut ayar)</label>
-                    <input type="number" class="form-control form-control-sm" id="dogrulukTestiEsik" step="0.05" min="0" max="1" placeholder="0.4">
+                    <label for="dogrulukTestiEsik" class="form-label small mb-1">Güven eşiği</label>
+                    <input type="number" class="form-control form-control-sm" id="dogrulukTestiEsik" step="0.05" min="0" max="1" placeholder="mevcut ayar">
                   </div>
                   <div class="col-6 d-flex align-items-end">
                     <div class="form-check">
                       <input class="form-check-input" type="checkbox" id="dogrulukTestiKontrast">
-                      <label class="form-check-label small" for="dogrulukTestiKontrast">Kontrast iyileştirme (CLAHE)</label>
+                      <label class="form-check-label small" for="dogrulukTestiKontrast">Kontrast iyileştirme</label>
                     </div>
                   </div>
                 </div>
@@ -2826,7 +2831,7 @@
               <div id="dogrulukTestiSonuc" class="mt-3"></div>
               <div id="dogrulukTestiKarsilastirma" class="mt-3"></div>
             </div>
-          </div>
+          </details>
         </div>
         <div class="col-lg-8">
           <div class="card">
