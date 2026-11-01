@@ -1,4 +1,12 @@
-# Caddy otomatik Let's Encrypt sertifikası alır. Alan adının A kaydı VPS'i göstermeli.
+# Caddy otomatik Let's Encrypt sertifikası alır. Alan adlarının A kaydı VPS'i göstermeli.
+
+# Merkezi izleme panosu
 izleme.firmaniz.com.tr {
     reverse_proxy 127.0.0.1:8100
+}
+
+# Tanıtım sitesi (depodaki tanitim/ klasörünü /opt/pts-merkez/tanitim'e kopyalayın)
+firmaniz.com.tr, www.firmaniz.com.tr {
+    root * /opt/pts-merkez/tanitim
+    file_server
 }

@@ -1,0 +1,369 @@
+<!DOCTYPE html><html lang="tr"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"><style>:root{padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}body{margin:0}img{max-width:100%}[hidden]{display:none!important}</style>
+<title>VARDA</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<meta name="description" content="VARDA: kamu, enerji ve sanayi tesisleri için kapıdan geçen hiçbir aracı kaçırmayan nizamiye ve plaka tanıma sistemi.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@112,600;112,800;125,800&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@500;600&display=swap">
+<style>
+/* Düzen: gece nöbeti — koyu lacivert kapı bandı, bariyer sarısı tek vurgu; içerik açık zeminde dar sütun + iki/üç sütunlu ızgaralar */
+:root {
+  --zemin: #f3f4f1;
+  --yuzey: #ffffff;
+  --murekkep: #141a26;
+  --soluk: #586172;
+  --cizgi: #dcdfe3;
+  --gece: #101827;
+  --gece-yazi: #e8ebf1;
+  --gece-soluk: #9aa4b8;
+  --sari: #f2b705;
+  --sari-koyu: #7a5a00;
+  --tr-mavi: #1c3f94;
+  --iyi: #1f7a45;
+  --kirmizi: #b3261e;
+  --f-baslik: "Archivo", "Arial Narrow", Arial, sans-serif;
+  --f-govde: "IBM Plex Sans", "Segoe UI", system-ui, sans-serif;
+  --f-mono: "IBM Plex Mono", ui-monospace, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --zemin: #0d121c; --yuzey: #151c2a; --murekkep: #e8ebf1; --soluk: #9aa4b8; --cizgi: #263044;
+    --gece: #070b13; --sari-koyu: #f2b705; --iyi: #6fd39a; --kirmizi: #ff8a80; color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --zemin: #0d121c; --yuzey: #151c2a; --murekkep: #e8ebf1; --soluk: #9aa4b8; --cizgi: #263044;
+  --gece: #070b13; --sari-koyu: #f2b705; --iyi: #6fd39a; --kirmizi: #ff8a80; color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body { background: var(--zemin); color: var(--murekkep); font: 16px/1.6 var(--f-govde); }
+a { color: inherit; }
+.ic { max-width: 1120px; margin: 0 auto; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); }
+h1, h2, h3 { font-family: var(--f-baslik); font-stretch: 112%; text-wrap: balance; margin: 0; line-height: 1.12; }
+h2 { font-size: clamp(1.6rem, 3.4vw, 2.3rem); font-weight: 800; }
+h3 { font-size: 1.08rem; font-weight: 600; }
+p { margin: 0; }
+.etiket { font: 600 .74rem/1 var(--f-mono); letter-spacing: .14em; text-transform: uppercase; color: var(--sari-koyu); }
+.bant .etiket { color: var(--sari); }
+:focus-visible { outline: 3px solid var(--sari); outline-offset: 2px; }
+
+/* üst çubuk + giriş bandı (gece) */
+body::before { content: ""; position: fixed; inset: 0 0 auto; height: env(safe-area-inset-top, 0px); z-index: 10; background: var(--gece); }
+.ust { position: sticky; top: env(safe-area-inset-top, 0px); z-index: 5; background: var(--gece); border-bottom: 1px solid #ffffff14; }
+.ust .ic { display: flex; align-items: center; gap: 24px; padding-block: 14px; }
+.logo { display: flex; align-items: center; gap: 10px; text-decoration: none; color: var(--gece-yazi); font: 800 1.35rem/1 var(--f-baslik); font-stretch: 125%; letter-spacing: .06em; }
+.logo-isaret { width: 34px; height: 12px; border-radius: 2px; background: repeating-linear-gradient(-45deg, var(--sari) 0 7px, var(--gece) 7px 13px); border: 1.5px solid var(--sari); }
+.menu { display: flex; gap: 22px; margin-left: auto; font-size: .92rem; }
+.menu a { color: var(--gece-soluk); text-decoration: none; }
+.menu a:hover { color: var(--gece-yazi); }
+.dugme { display: inline-flex; align-items: center; gap: 8px; font: 600 .95rem/1 var(--f-govde); padding: 12px 18px; border-radius: 6px; text-decoration: none; border: 1.5px solid transparent; cursor: pointer; }
+.dugme.ana { background: var(--sari); color: #141a26; }
+.dugme.ana:hover { background: #ffc81f; }
+.dugme.ikincil { border-color: #ffffff40; color: var(--gece-yazi); }
+.dugme.ikincil:hover { border-color: var(--gece-yazi); }
+.ust .dugme { padding: 9px 14px; font-size: .88rem; }
+
+.bant { background: var(--gece); color: var(--gece-yazi); }
+.giris .ic { display: grid; grid-template-columns: 1.05fr .95fr; gap: 56px; align-items: center; padding-block: 72px 84px; }
+.giris h1 { font-size: clamp(2.2rem, 5.2vw, 3.7rem); font-weight: 800; margin: 18px 0 20px; }
+.giris h1 em { font-style: normal; color: var(--sari); }
+.giris .alt { color: var(--gece-soluk); font-size: 1.1rem; max-width: 34em; }
+.giris .dugmeler { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 30px; }
+.ad-notu { margin-top: 30px; font-size: .86rem; color: var(--gece-soluk); border-left: 2px solid var(--sari); padding-left: 12px; max-width: 32em; }
+.ad-notu b { color: var(--gece-yazi); font-family: var(--f-mono); }
+
+/* kapı ekranı örneği */
+.ekran { background: #0b111d; border: 1px solid #ffffff1c; border-radius: 12px; overflow: hidden; box-shadow: 0 30px 60px -30px #000c; min-width: 0; }
+.ekran-ust { display: flex; justify-content: space-between; align-items: center; padding: 12px 16px; border-bottom: 1px solid #ffffff14; font: 500 .78rem/1 var(--f-mono); color: var(--gece-soluk); }
+.canli { display: inline-flex; align-items: center; gap: 6px; color: #7ee2a8; }
+.canli::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: #3ccf7c; animation: nabiz 1.6s infinite; }
+@keyframes nabiz { 50% { opacity: .3; } }
+.arac { display: flex; gap: 16px; align-items: center; padding: 18px 16px; border-bottom: 1px solid #ffffff14; flex-wrap: wrap; }
+.plaka { display: inline-flex; align-items: stretch; background: #fff; color: #111; border: 2px solid #111; border-radius: 5px; overflow: hidden; font: 600 1.45rem/1 var(--f-mono); letter-spacing: .04em; }
+.plaka .tr { background: var(--tr-mavi); color: #fff; font-size: .62rem; display: flex; align-items: flex-end; padding: 4px 5px; letter-spacing: 0; }
+.plaka .no { padding: 8px 12px; white-space: nowrap; }
+.arac-bilgi { min-width: 0; }
+.arac-bilgi b { display: block; font-size: 1.02rem; }
+.arac-bilgi span { color: var(--gece-soluk); font-size: .86rem; }
+.rozet { font: 600 .72rem/1 var(--f-mono); padding: 6px 8px; border-radius: 4px; letter-spacing: .06em; }
+.r-personel { background: #1f7a4533; color: #7ee2a8; }
+.r-ziyaretci { background: #f2b70526; color: var(--sari); }
+.r-alarm { background: #b3261e40; color: #ff9b93; }
+.kayitlar { list-style: none; margin: 0; padding: 6px 0; font: 500 .82rem/1.4 var(--f-mono); }
+.kayitlar li { display: grid; grid-template-columns: 52px 118px 1fr; gap: 10px; padding: 7px 16px; color: var(--gece-soluk); align-items: center; }
+.kayitlar li .p { color: var(--gece-yazi); }
+.kayitlar li.alarm { background: #b3261e1f; color: #ffb4ad; }
+.mutabakat { display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap; padding: 12px 16px; border-top: 1px solid #ffffff14; font: 500 .78rem/1.3 var(--f-mono); color: var(--gece-soluk); }
+.mutabakat b { color: #7ee2a8; }
+
+/* bölümler */
+section.bolum { padding-block: 84px; }
+section.bolum + section.bolum { border-top: 1px solid var(--cizgi); }
+.bolum-bas { display: grid; gap: 12px; max-width: 46em; margin-bottom: 40px; }
+.bolum-bas p { color: var(--soluk); font-size: 1.05rem; }
+
+.uc { display: grid; grid-template-columns: repeat(3, 1fr); gap: 28px; }
+.fark { border-top: 3px solid var(--murekkep); padding-top: 18px; display: grid; gap: 10px; align-content: start; min-width: 0; }
+.fark p { color: var(--soluk); }
+.fark .rakam { font: 600 .82rem/1.4 var(--f-mono); color: var(--iyi); background: color-mix(in srgb, var(--iyi) 10%, transparent); border-radius: 4px; padding: 8px 10px; }
+
+.ozellikler { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1px; background: var(--cizgi); border: 1px solid var(--cizgi); border-radius: 10px; overflow: hidden; }
+.ozellik { background: var(--yuzey); padding: 24px; display: grid; gap: 8px; align-content: start; min-width: 0; }
+.ozellik .etiket { color: var(--soluk); letter-spacing: .1em; }
+.ozellik p { color: var(--soluk); font-size: .95rem; }
+
+.tablo-kap { overflow-x: auto; border: 1px solid var(--cizgi); border-radius: 10px; background: var(--yuzey); }
+table { width: 100%; border-collapse: collapse; min-width: 620px; font-size: .95rem; }
+th, td { text-align: left; padding: 14px 18px; border-bottom: 1px solid var(--cizgi); vertical-align: top; }
+tr:last-child td { border-bottom: 0; }
+th { font: 600 .74rem/1 var(--f-mono); letter-spacing: .1em; text-transform: uppercase; color: var(--soluk); }
+td.klasik { color: var(--soluk); }
+td.varda { font-weight: 600; }
+td.varda::before { content: "✓ "; color: var(--iyi); }
+
+.kimler { display: grid; grid-template-columns: repeat(3, 1fr); gap: 28px; }
+.kimler div { display: grid; gap: 8px; align-content: start; min-width: 0; }
+.kimler p { color: var(--soluk); }
+
+.adimlar { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(4, 1fr); gap: 24px; counter-reset: adim; }
+.adimlar li { counter-increment: adim; display: grid; gap: 8px; align-content: start; min-width: 0; }
+.adimlar li::before { content: "0" counter(adim); font: 600 .9rem/1 var(--f-mono); color: var(--sari-koyu); border-bottom: 2px solid var(--sari); padding-bottom: 10px; }
+.adimlar p { color: var(--soluk); font-size: .95rem; }
+
+.sss { display: grid; gap: 10px; max-width: 52em; }
+.sss details { background: var(--yuzey); border: 1px solid var(--cizgi); border-radius: 8px; padding: 16px 20px; }
+.sss summary { cursor: pointer; font-weight: 600; }
+.sss details p { color: var(--soluk); margin-top: 10px; }
+
+.iletisim .ic { display: grid; grid-template-columns: 1.1fr .9fr; gap: 48px; align-items: center; padding-block: 76px; }
+.iletisim h2 { color: var(--gece-yazi); margin: 14px 0 16px; }
+.iletisim .alt { color: var(--gece-soluk); }
+.kanallar { display: grid; gap: 12px; }
+.kanal { display: flex; align-items: center; justify-content: space-between; gap: 12px; border: 1px solid #ffffff24; border-radius: 8px; padding: 14px 16px; min-width: 0; }
+.kanal span { color: var(--gece-soluk); font-size: .82rem; display: block; }
+.kanal b { font: 600 1.02rem/1.3 var(--f-mono); color: var(--gece-yazi); word-break: break-all; }
+.kopyala { background: none; border: 1px solid #ffffff30; color: var(--gece-yazi); border-radius: 5px; padding: 6px 10px; font: 500 .8rem var(--f-govde); cursor: pointer; flex: none; }
+.kopyala:hover { border-color: var(--sari); }
+footer { background: var(--gece); color: var(--gece-soluk); font-size: .85rem; border-top: 1px solid #ffffff14; }
+footer .ic { display: flex; justify-content: space-between; gap: 16px; flex-wrap: wrap; padding-block: 22px; }
+
+@media (max-width: 900px) {
+  .giris .ic, .iletisim .ic { grid-template-columns: 1fr; gap: 40px; }
+  .uc, .kimler, .ozellikler { grid-template-columns: 1fr 1fr; }
+  .adimlar { grid-template-columns: 1fr 1fr; }
+  .menu { display: none; }
+  .ust .dugme { margin-left: auto; }
+}
+@media (max-width: 600px) {
+  .uc, .kimler, .ozellikler, .adimlar { grid-template-columns: 1fr; }
+  section.bolum { padding-block: 60px; }
+  .giris .ic { padding-block: 48px 60px; }
+  .kayitlar li { grid-template-columns: 46px 1fr; }
+  .kayitlar li span:last-child { grid-column: 2; }
+}
+@media (prefers-reduced-motion: reduce) { .canli::before { animation: none; } }
+</style>
+
+<header class="ust">
+  <div class="ic">
+    <a class="logo" href="#ust" aria-label="VARDA ana sayfa"><span class="logo-isaret" aria-hidden="true"></span>VARDA</a>
+    <nav class="menu" aria-label="Sayfa içi">
+      <a href="#farklar">Farklar</a><a href="#ozellikler">Özellikler</a><a href="#kimler">Kimler için</a><a href="#baslangic">Nasıl başlarız</a><a href="#sss">Sorular</a>
+    </nav>
+    <a class="dugme ana" href="#iletisim">Pilot isteyin</a>
+  </div>
+</header>
+
+<main id="ust">
+  <section class="bant giris">
+    <div class="ic">
+      <div>
+        <span class="etiket">Nizamiye ve plaka tanıma sistemi</span>
+        <h1>Kapıdan geçen her araç kayıtlı. <em>Kaçan geçiş yok.</em></h1>
+        <p class="alt">Kamu, enerji ve sanayi tesisleri için: plaka tanıma, personel ve ziyaretçi ayrımı, resmi araç görevleri,
+          alarmlar ve günlük yönetici raporu tek sistemde. Kamera bir plakayı kaçırırsa ya da sunucu kapanırsa VARDA o geçişi sonradan bulup ekler.</p>
+        <div class="dugmeler">
+          <a class="dugme ana" href="#iletisim">30 günlük pilot isteyin</a>
+          <a class="dugme ikincil" href="#farklar">Farkı görün</a>
+        </div>
+        <p class="ad-notu">Adını nöbetçinin <b>"Varda!"</b> seslenişinden alır: kapıya yaklaşan her şeye dikkat.</p>
+      </div>
+
+      <figure class="ekran" aria-label="Görevli ekranından örnek görünüm">
+        <div class="ekran-ust"><span>ANA NİZAMİYE · GİRİŞ</span><span class="canli">canlı</span></div>
+        <div class="arac">
+          <span class="plaka"><span class="tr">TR</span><span class="no">72 AEK 418</span></span>
+          <div class="arac-bilgi"><b>Personel · Saha Mühendisliği</b><span>Beyaz Fiat Doblo · bariyer açıldı</span></div>
+          <span class="rozet r-personel">PERSONEL</span>
+        </div>
+        <ul class="kayitlar">
+          <li><span>08:14</span><span class="p">34 MRU 811</span><span>Resmi araç · görev: Saha ziyareti</span></li>
+          <li><span>08:11</span><span class="p">21 ACY 205</span><span><span class="rozet r-ziyaretci">ZİYARETÇİ</span> onaylı · Kalite birimi</span></li>
+          <li class="alarm"><span>08:06</span><span class="p">06 BKT 77</span><span>Klon plaka şüphesi: 4 dk önce Lojman kapısından girdi</span></li>
+          <li><span>07:58</span><span class="p">72 AB 3091</span><span>Alt işveren · Personel servisi</span></li>
+        </ul>
+        <div class="mutabakat"><span>Dünkü gece mutabakatı</span><span>kamera 612 · VARDA 612 · <b>eksik 0</b></span></div>
+      </figure>
+    </div>
+  </section>
+
+  <section class="bolum" id="farklar">
+    <div class="ic">
+      <div class="bolum-bas">
+        <span class="etiket">Neden VARDA</span>
+        <h2>Klasik plaka tanıma yazılımı plakayı okur. VARDA kapıyı yönetir.</h2>
+        <p>Sahada en sık karşılaşılan sorun, kimsenin fark etmediği eksik kayıtlardır: okunmayan plaka, kapalı kalan sunucu,
+          haftalarca bozuk kalan kamera. VARDA bu üç sorunu kendiliğinden yakalar.</p>
+      </div>
+      <div class="uc">
+        <div class="fark">
+          <h3>Geçiş kaçırmaz</h3>
+          <p>Sistemin kendi yapay zekâ okuması ve kameranın kendi plaka okuması birlikte çalışır. Her gece kameranın kaydıyla karşılaştırma yapılır,
+            kaçan geçiş gerçek saatiyle eklenir.</p>
+          <span class="rakam">kamera 620 · VARDA 610 → 10 geçiş eklendi</span>
+        </div>
+        <div class="fark">
+          <h3>Sunucu kapansa da kayıp yok</h3>
+          <p>Elektrik kesildiğinde ya da sunucu kapatıldığında kamera kaydetmeye devam eder. Sistem açılınca aradaki geçişleri kameradan alır;
+            kara listedeki bir araç geçtiyse alarm verir.</p>
+          <span class="rakam">02:10–03:12 kapalı · 37 geçiş kameradan alındı</span>
+        </div>
+        <div class="fark">
+          <h3>Arızayı siz fark etmeden</h3>
+          <p>Plaka okumayan kamera, dolan disk, alınamayan yedek ve gitmeyen bildirim için uyarı verir. Bakım ekibi tüm kurulumları
+            merkezden izler; plaka ve kişi bilgisi merkeze gönderilmez.</p>
+          <span class="rakam">Giriş kamerası 60 dk'dır plaka okumuyor</span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="bolum" id="ozellikler">
+    <div class="ic">
+      <div class="bolum-bas">
+        <span class="etiket">Özellikler</span>
+        <h2>Görevlinin, güvenlik amirinin ve yöneticinin işi tek ekranda</h2>
+      </div>
+      <div class="ozellikler">
+        <div class="ozellik"><span class="etiket">Görevli</span><h3>Kapı Modu</h3>
+          <p>Gelen aracın fotoğrafı, kime ait olduğu, notu ve alarmı sade bir ekranda. Telefonda da çalışır; yeni alarmda sesli uyarı.</p></div>
+        <div class="ozellik"><span class="etiket">Güvenlik</span><h3>Akıllı alarmlar</h3>
+          <p>Klon plaka, kara liste, şüpheli araç, içeride fazla kalan ziyaretçi. Plakanın kayıtlı aracıyla görülen renk ve marka tutmazsa uyarı.</p></div>
+        <div class="ozellik"><span class="etiket">İdari işler</span><h3>Resmi araç görevleri</h3>
+          <p>Görev emri, görevsiz çıkış ve geç dönüş takibi. Görevsiz çıkan araçta görev penceresi kendiliğinden açılır.</p></div>
+        <div class="ozellik"><span class="etiket">Kurum</span><h3>Kişi ve araç yönetimi</h3>
+          <p>Personel, VIP, alt işveren ve ziyaretçi ayrımı; çok araçlı kişi kartı, beklenen ziyaretçi ön kaydı, vardiya çizelgesi, nöbet defteri.</p></div>
+        <div class="ozellik"><span class="etiket">Yönetici</span><h3>Her sabah rapor</h3>
+          <p>Dünün girişleri, ziyaretçileri, alarmları ve kamera başarı oranı PDF olarak e-postaya ya da Telegram'a gelir.</p></div>
+        <div class="ozellik"><span class="etiket">Her yerden</span><h3>Telegram'dan soru</h3>
+          <p>"34 ABC 123 içeride mi?" yazın, cevap gelsin. Fotoğraflı anlık bildirimler ve mobil uygulama.</p></div>
+        <div class="ozellik"><span class="etiket">Saha</span><h3>LED ve bariyer</h3>
+          <p>Kapıdaki LED panele PERSONEL ya da ZİYARETÇİ yazar, tanımlı araçta bariyeri açar. Mevcut Dahua ANPR kameralarla çalışır.</p></div>
+        <div class="ozellik"><span class="etiket">KVKK</span><h3>Kişisel veri kurallı</h3>
+          <p>Süresi dolan geçişlerin kişisel verisi otomatik silinir. Veriler kurumun kendi sunucusunda kalır.</p></div>
+        <div class="ozellik"><span class="etiket">Hesap güvenliği</span><h3>Yetki ve denetim</h3>
+          <p>Rol ve ekran bazlı yetki, yöneticilere iki adımlı doğrulama, oturum yönetimi ve her ayar değişikliği için denetim kaydı.</p></div>
+      </div>
+    </div>
+  </section>
+
+  <section class="bolum">
+    <div class="ic">
+      <div class="bolum-bas">
+        <span class="etiket">Karşılaştırma</span>
+        <h2>Klasik plaka tanıma yazılımı ile VARDA</h2>
+      </div>
+      <div class="tablo-kap">
+        <table>
+          <thead><tr><th>Durum</th><th>Klasik yazılım</th><th>VARDA</th></tr></thead>
+          <tbody>
+            <tr><td>Kamera bir plakayı okumadı</td><td class="klasik">Fark edilmez</td><td class="varda">Gece mutabakatıyla bulunur ve eklenir</td></tr>
+            <tr><td>Sunucu bir saat kapalı kaldı</td><td class="klasik">O saatin kaydı yok</td><td class="varda">Açılışta kameradan geri alınır</td></tr>
+            <tr><td>Kamera plaka okumayı bıraktı</td><td class="klasik">Şikâyet gelince anlaşılır</td><td class="varda">Sessiz kamera uyarısı ve merkezi izleme</td></tr>
+            <tr><td>Resmi araç görevsiz çıktı</td><td class="klasik">Ayrı defter ya da yazılım</td><td class="varda">Anında görev penceresi ve rapor</td></tr>
+            <tr><td>Aynı plaka iki kapıda</td><td class="klasik">Uyarı yok</td><td class="varda">Klon plaka alarmı</td></tr>
+            <tr><td>Eski kayıtlar</td><td class="klasik">Süresiz birikir</td><td class="varda">KVKK süresine göre otomatik silinir</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <section class="bolum" id="kimler">
+    <div class="ic">
+      <div class="bolum-bas">
+        <span class="etiket">Kimler için</span>
+        <h2>Personeli, ziyaretçisi ve resmi aracı olan her tesis</h2>
+      </div>
+      <div class="kimler">
+        <div><h3>Kamu ve enerji</h3><p>Bölge müdürlükleri, saha tesisleri, lojmanlar, santraller. Personel, resmi araç ve ziyaretçi aynı kapıdan geçer.</p></div>
+        <div><h3>Sanayi ve lojistik</h3><p>Fabrika nizamiyeleri ve depolar. Tedarikçi ve servis araçları, alt işveren personeli, vardiya değişimleri.</p></div>
+        <div><h3>Hastane, üniversite, kampüs</h3><p>Çok kapılı alanlar. Abone araçlar için otomatik bariyer, ziyaretçi kaydı, kapı bazında rapor.</p></div>
+      </div>
+    </div>
+  </section>
+
+  <section class="bolum" id="baslangic">
+    <div class="ic">
+      <div class="bolum-bas">
+        <span class="etiket">Nasıl başlarız</span>
+        <h2>Önce bir kapıda deneyin, sonra karar verin</h2>
+      </div>
+      <ol class="adimlar">
+        <li><h3>Keşif</h3><p>Kapılarınızı, kameralarınızı ve bariyerlerinizi yerinde inceleriz. Ücretsizdir.</p></li>
+        <li><h3>30 günlük pilot</h3><p>Bir nizamiyede kurarız. Ay sonunda mevcut düzende kaç geçişin kaçtığını raporla görürsünüz.</p></li>
+        <li><h3>Kurulum ve eğitim</h3><p>Tüm kapılara yayarız; görevliler ve yöneticiler için yerinde eğitim veririz.</p></li>
+        <li><h3>Bakım ve izleme</h3><p>Yıllık bakım sözleşmesiyle güncellemeler ve uzaktan destek. Sorun çıkınca biz ararız.</p></li>
+      </ol>
+    </div>
+  </section>
+
+  <section class="bolum" id="sss">
+    <div class="ic">
+      <div class="bolum-bas"><span class="etiket">Sık sorulanlar</span><h2>Sorular</h2></div>
+      <div class="sss">
+        <details><summary>Mevcut kameralarımızla çalışır mı?</summary>
+          <p>Evet. IP kameraların görüntüsünü kendi yapay zekâmızla okuruz; Dahua ANPR kameralarda kameranın kendi plaka okumasını da kullanırız. Keşifte hangi kameranın uygun olduğunu söyleriz.</p></details>
+        <details><summary>Verilerimiz dışarı çıkar mı?</summary>
+          <p>Hayır. VARDA kurumunuzun sunucusunda çalışır, internetsiz de kurulur. Bakım izlemesi açılırsa yalnız sağlık bilgisi (kamera çalışıyor mu, disk, yedek) gelir; plaka, kişi ya da fotoğraf gelmez.</p></details>
+        <details><summary>Kamu kurumu olarak nasıl satın alabiliriz?</summary>
+          <p>Tutara göre doğrudan temin ya da ihale ile. Teknik şartname hazırlığında yardımcı oluruz.</p></details>
+        <details><summary>Bariyer ve LED panel gerekir mi?</summary>
+          <p>Zorunlu değil. Varsa mevcut bariyerinize ve LED panelinize bağlarız; yoksa iş ortaklarımızla anahtar teslim kurarız.</p></details>
+        <details><summary>Kaç kapı ve kamera destekler?</summary>
+          <p>Tek nizamiyeden çok kapılı kampüslere kadar. Lisans kamera sayısına göre verilir; kapı bazında rapor ve yetki ayrımı vardır.</p></details>
+      </div>
+    </div>
+  </section>
+
+  <section class="bant iletisim" id="iletisim">
+    <div class="ic">
+      <div>
+        <span class="etiket">Pilot ve demo</span>
+        <h2>Bir nizamiyenizde 30 gün deneyelim</h2>
+        <p class="alt">15 dakikalık bir görüşmede ihtiyacınızı dinleyip canlı demo gösteririz. Pilotta kurulumu biz yaparız.</p>
+      </div>
+      <div class="kanallar">
+        <div class="kanal"><div><span>Telefon</span><b id="telefon">[0 5XX XXX XX XX]</b></div><button class="kopyala" data-hedef="telefon" type="button">Kopyala</button></div>
+        <div class="kanal"><div><span>E-posta</span><b id="eposta">[iletisim@varda.com.tr]</b></div><button class="kopyala" data-hedef="eposta" type="button">Kopyala</button></div>
+      </div>
+    </div>
+  </section>
+</main>
+
+<footer>
+  <div class="ic"><span>VARDA · Nizamiye ve plaka tanıma sistemi</span><span>[Firma ünvanı] · [Şehir]</span></div>
+</footer>
+
+<script>
+document.querySelectorAll(".kopyala").forEach(function (d) {
+  d.addEventListener("click", function () {
+    var el = document.getElementById(d.dataset.hedef), metin = el.textContent;
+    var tamam = function () { d.textContent = "Kopyalandı"; setTimeout(function () { d.textContent = "Kopyala"; }, 1600); };
+    var sec = function () { var r = document.createRange(); r.selectNodeContents(el); var s = getSelection(); s.removeAllRanges(); s.addRange(r); };
+    try { navigator.clipboard.writeText(metin).then(tamam, sec); } catch (e) { sec(); }
+  });
+});
+</script>
+
+</body></html>
