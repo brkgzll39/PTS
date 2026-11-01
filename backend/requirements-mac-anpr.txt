@@ -1,0 +1,4 @@
+# İsteğe bağlı: canlı kamera ve plaka okuma (Mac'te CPU / Apple Silicon üzerinde çalışır).
+fast-alpr[onnx]
+opencv-python-headless
+requests

@@ -1,0 +1,12 @@
+# PTS — macOS (Apple Silicon ve Intel) bağımlılıkları (2026-11-01).
+# requirements.txt ile aynı, yalnız pyodbc yok: Mac'te SQL Server sürücüsü
+# (unixODBC) kurulu olmadığı için içe aktarılamıyor; Mac kurulumu SQLite kullanır.
+fastapi==0.115.0
+uvicorn[standard]==0.30.6
+sqlalchemy==2.0.35
+pydantic==2.9.2
+python-multipart==0.0.9
+openpyxl==3.1.5
+reportlab==4.2.5
+Pillow==11.0.0
+truststore>=0.8

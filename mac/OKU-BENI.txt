@@ -1,0 +1,26 @@
+PTS — Mac kurulumu
+==================
+
+1) Bu klasörü istediğiniz yere taşıyın (ör. Belgeler). Klasörün yolunda sorun
+   çıkmasın diye adını değiştirmeyin.
+
+2) "1-Kurulum.command" dosyasına SAĞ tıklayın → "Aç" → açılan uyarıda tekrar "Aç".
+   (İnternetten indirilen betikleri Mac ilk seferde çift tıklamayla açtırmaz.
+   Sağ tık → Aç yalnız ilk sefer gerekir.)
+   Kurulum Python 3.12'yi ve paketleri bu klasörün içine kurar, birkaç dakika sürer.
+   İnternet bağlantısı gerekir.
+
+   Sağ tık → Aç da işe yaramazsa: Terminal'i açın, şunu yazıp Enter'a basın
+   (klasör yolunu kendi yolunuzla değiştirin):
+       cd ~/Documents/PTS-Mac && bash 1-Kurulum.command
+
+3) "2-Demo.command": örnek kurum ve örnek geçişlerle tanıtım. Tarayıcı kendiliğinden
+   açılır. Giriş: demo / Demo12345 (yönetici), kapi / Kapi12345 (Kapı Modu).
+   Demo verileri ~/PTS-Demo klasöründe durur.
+
+4) "3-PTS.command": gerçek kullanım (http://127.0.0.1:8000). İlk açılışta yönetici
+   hesabı oluşturulur. Kamera eklemek için lisans gerekir; lisans bu Mac'in cihaz
+   koduna göre üretilir (Lisans ekranında görünür).
+
+Kapatmak: betiğin açtığı Terminal penceresinde Ctrl+C.
+Mac'te veritabanı SQLite'tır (SQL Server kullanılmaz).
