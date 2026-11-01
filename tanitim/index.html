@@ -163,6 +163,11 @@ footer .ic { display: flex; justify-content: space-between; gap: 16px; flex-wrap
   .kayitlar li span:last-child { grid-column: 2; }
 }
 @media (prefers-reduced-motion: reduce) { .canli::before { animation: none; } }
+.dil { color: var(--gece-soluk); text-decoration: none; font: 600 .82rem/1 var(--f-mono); letter-spacing: .08em; border: 1px solid #ffffff30; border-radius: 4px; padding: 7px 8px; }
+.dil:hover { color: var(--gece-yazi); border-color: var(--gece-yazi); }
+@media (max-width: 900px) { .dil { margin-left: auto; } .ust .dil + .dugme { margin-left: 0; } }
+.ust .dugme { white-space: nowrap; }
+@media (max-width: 600px) { .ust .ic { gap: 12px; } }
 </style>
 
 <header class="ust">
@@ -171,6 +176,7 @@ footer .ic { display: flex; justify-content: space-between; gap: 16px; flex-wrap
     <nav class="menu" aria-label="Sayfa içi">
       <a href="#farklar">Farklar</a><a href="#ozellikler">Özellikler</a><a href="#kimler">Kimler için</a><a href="#baslangic">Nasıl başlarız</a><a href="#sss">Sorular</a>
     </nav>
+    <a class="dil" href="en/" lang="en" hreflang="en" aria-label="English">EN</a>
     <a class="dugme ana" href="#iletisim">Pilot isteyin</a>
   </div>
 </header>

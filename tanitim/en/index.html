@@ -1,0 +1,377 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"><style>:root{padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}body{margin:0}img{max-width:100%}[hidden]{display:none!important}</style>
+<title>OSTIVA</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<meta name="description" content="OSTIVA: the gate and licence plate recognition system for public, energy and industrial sites that never misses a vehicle.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@112,600;112,800;125,800&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@500;600&display=swap">
+</head><body>
+<style>
+/* Düzen: gece nöbeti — koyu lacivert kapı bandı, bariyer sarısı tek vurgu; içerik açık zeminde dar sütun + iki/üç sütunlu ızgaralar */
+:root {
+  --zemin: #f3f4f1;
+  --yuzey: #ffffff;
+  --murekkep: #141a26;
+  --soluk: #586172;
+  --cizgi: #dcdfe3;
+  --gece: #101827;
+  --gece-yazi: #e8ebf1;
+  --gece-soluk: #9aa4b8;
+  --sari: #f2b705;
+  --sari-koyu: #7a5a00;
+  --tr-mavi: #1c3f94;
+  --iyi: #1f7a45;
+  --kirmizi: #b3261e;
+  --f-baslik: "Archivo", "Arial Narrow", Arial, sans-serif;
+  --f-govde: "IBM Plex Sans", "Segoe UI", system-ui, sans-serif;
+  --f-mono: "IBM Plex Mono", ui-monospace, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --zemin: #0d121c; --yuzey: #151c2a; --murekkep: #e8ebf1; --soluk: #9aa4b8; --cizgi: #263044;
+    --gece: #070b13; --sari-koyu: #f2b705; --iyi: #6fd39a; --kirmizi: #ff8a80; color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --zemin: #0d121c; --yuzey: #151c2a; --murekkep: #e8ebf1; --soluk: #9aa4b8; --cizgi: #263044;
+  --gece: #070b13; --sari-koyu: #f2b705; --iyi: #6fd39a; --kirmizi: #ff8a80; color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body { background: var(--zemin); color: var(--murekkep); font: 16px/1.6 var(--f-govde); }
+a { color: inherit; }
+.ic { max-width: 1120px; margin: 0 auto; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); }
+h1, h2, h3 { font-family: var(--f-baslik); font-stretch: 112%; text-wrap: balance; margin: 0; line-height: 1.12; }
+h2 { font-size: clamp(1.6rem, 3.4vw, 2.3rem); font-weight: 800; }
+h3 { font-size: 1.08rem; font-weight: 600; }
+p { margin: 0; }
+.etiket { font: 600 .74rem/1 var(--f-mono); letter-spacing: .14em; text-transform: uppercase; color: var(--sari-koyu); }
+.bant .etiket { color: var(--sari); }
+:focus-visible { outline: 3px solid var(--sari); outline-offset: 2px; }
+
+/* üst çubuk + giriş bandı (gece) */
+body::before { content: ""; position: fixed; inset: 0 0 auto; height: env(safe-area-inset-top, 0px); z-index: 10; background: var(--gece); }
+.ust { position: sticky; top: env(safe-area-inset-top, 0px); z-index: 5; background: var(--gece); border-bottom: 1px solid #ffffff14; }
+.ust .ic { display: flex; align-items: center; gap: 24px; padding-block: 14px; }
+.logo { display: flex; align-items: center; gap: 10px; text-decoration: none; color: var(--gece-yazi); font: 800 1.35rem/1 var(--f-baslik); font-stretch: 125%; letter-spacing: .06em; }
+.logo-isaret { width: 34px; height: 12px; border-radius: 2px; background: repeating-linear-gradient(-45deg, var(--sari) 0 7px, var(--gece) 7px 13px); border: 1.5px solid var(--sari); }
+.menu { display: flex; gap: 22px; margin-left: auto; font-size: .92rem; }
+.menu a { color: var(--gece-soluk); text-decoration: none; }
+.menu a:hover { color: var(--gece-yazi); }
+.dugme { display: inline-flex; align-items: center; gap: 8px; font: 600 .95rem/1 var(--f-govde); padding: 12px 18px; border-radius: 6px; text-decoration: none; border: 1.5px solid transparent; cursor: pointer; }
+.dugme.ana { background: var(--sari); color: #141a26; }
+.dugme.ana:hover { background: #ffc81f; }
+.dugme.ikincil { border-color: #ffffff40; color: var(--gece-yazi); }
+.dugme.ikincil:hover { border-color: var(--gece-yazi); }
+.ust .dugme { padding: 9px 14px; font-size: .88rem; }
+
+.bant { background: var(--gece); color: var(--gece-yazi); }
+.giris .ic { display: grid; grid-template-columns: 1.05fr .95fr; gap: 56px; align-items: center; padding-block: 72px 84px; }
+.giris h1 { font-size: clamp(2.2rem, 5.2vw, 3.7rem); font-weight: 800; margin: 18px 0 20px; }
+.giris h1 em { font-style: normal; color: var(--sari); }
+.giris .alt { color: var(--gece-soluk); font-size: 1.1rem; max-width: 34em; }
+.giris .dugmeler { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 30px; }
+.ad-notu { margin-top: 30px; font-size: .86rem; color: var(--gece-soluk); border-left: 2px solid var(--sari); padding-left: 12px; max-width: 32em; }
+.ad-notu b { color: var(--gece-yazi); font-family: var(--f-mono); }
+
+/* kapı ekranı örneği */
+.ekran { background: #0b111d; border: 1px solid #ffffff1c; border-radius: 12px; overflow: hidden; box-shadow: 0 30px 60px -30px #000c; min-width: 0; }
+.ekran-ust { display: flex; justify-content: space-between; align-items: center; padding: 12px 16px; border-bottom: 1px solid #ffffff14; font: 500 .78rem/1 var(--f-mono); color: var(--gece-soluk); }
+.canli { display: inline-flex; align-items: center; gap: 6px; color: #7ee2a8; }
+.canli::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: #3ccf7c; animation: nabiz 1.6s infinite; }
+@keyframes nabiz { 50% { opacity: .3; } }
+.arac { display: flex; gap: 16px; align-items: center; padding: 18px 16px; border-bottom: 1px solid #ffffff14; flex-wrap: wrap; }
+.plaka { display: inline-flex; align-items: stretch; background: #fff; color: #111; border: 2px solid #111; border-radius: 5px; overflow: hidden; font: 600 1.45rem/1 var(--f-mono); letter-spacing: .04em; }
+.plaka .tr { background: var(--tr-mavi); color: #fff; font-size: .62rem; display: flex; align-items: flex-end; padding: 4px 5px; letter-spacing: 0; }
+.plaka .no { padding: 8px 12px; white-space: nowrap; }
+.arac-bilgi { min-width: 0; }
+.arac-bilgi b { display: block; font-size: 1.02rem; }
+.arac-bilgi span { color: var(--gece-soluk); font-size: .86rem; }
+.rozet { font: 600 .72rem/1 var(--f-mono); padding: 6px 8px; border-radius: 4px; letter-spacing: .06em; }
+.r-personel { background: #1f7a4533; color: #7ee2a8; }
+.r-ziyaretci { background: #f2b70526; color: var(--sari); }
+.r-alarm { background: #b3261e40; color: #ff9b93; }
+.kayitlar { list-style: none; margin: 0; padding: 6px 0; font: 500 .82rem/1.4 var(--f-mono); }
+.kayitlar li { display: grid; grid-template-columns: 52px 118px 1fr; gap: 10px; padding: 7px 16px; color: var(--gece-soluk); align-items: center; }
+.kayitlar li .p { color: var(--gece-yazi); }
+.kayitlar li.alarm { background: #b3261e1f; color: #ffb4ad; }
+.mutabakat { display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap; padding: 12px 16px; border-top: 1px solid #ffffff14; font: 500 .78rem/1.3 var(--f-mono); color: var(--gece-soluk); }
+.mutabakat b { color: #7ee2a8; }
+
+/* bölümler */
+section.bolum { padding-block: 84px; }
+section.bolum + section.bolum { border-top: 1px solid var(--cizgi); }
+.bolum-bas { display: grid; gap: 12px; max-width: 46em; margin-bottom: 40px; }
+.bolum-bas p { color: var(--soluk); font-size: 1.05rem; }
+
+.uc { display: grid; grid-template-columns: repeat(3, 1fr); gap: 28px; }
+.fark { border-top: 3px solid var(--murekkep); padding-top: 18px; display: grid; gap: 10px; align-content: start; min-width: 0; }
+.fark p { color: var(--soluk); }
+.fark .rakam { font: 600 .82rem/1.4 var(--f-mono); color: var(--iyi); background: color-mix(in srgb, var(--iyi) 10%, transparent); border-radius: 4px; padding: 8px 10px; }
+
+.ozellikler { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1px; background: var(--cizgi); border: 1px solid var(--cizgi); border-radius: 10px; overflow: hidden; }
+.ozellik { background: var(--yuzey); padding: 24px; display: grid; gap: 8px; align-content: start; min-width: 0; }
+.ozellik .etiket { color: var(--soluk); letter-spacing: .1em; }
+.ozellik p { color: var(--soluk); font-size: .95rem; }
+
+.tablo-kap { overflow-x: auto; border: 1px solid var(--cizgi); border-radius: 10px; background: var(--yuzey); }
+table { width: 100%; border-collapse: collapse; min-width: 620px; font-size: .95rem; }
+th, td { text-align: left; padding: 14px 18px; border-bottom: 1px solid var(--cizgi); vertical-align: top; }
+tr:last-child td { border-bottom: 0; }
+th { font: 600 .74rem/1 var(--f-mono); letter-spacing: .1em; text-transform: uppercase; color: var(--soluk); }
+td.klasik { color: var(--soluk); }
+td.bizim { font-weight: 600; }
+td.bizim::before { content: "✓ "; color: var(--iyi); }
+
+.kimler { display: grid; grid-template-columns: repeat(3, 1fr); gap: 28px; }
+.kimler div { display: grid; gap: 8px; align-content: start; min-width: 0; }
+.kimler p { color: var(--soluk); }
+
+.adimlar { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(4, 1fr); gap: 24px; counter-reset: adim; }
+.adimlar li { counter-increment: adim; display: grid; gap: 8px; align-content: start; min-width: 0; }
+.adimlar li::before { content: "0" counter(adim); font: 600 .9rem/1 var(--f-mono); color: var(--sari-koyu); border-bottom: 2px solid var(--sari); padding-bottom: 10px; }
+.adimlar p { color: var(--soluk); font-size: .95rem; }
+
+.sss { display: grid; gap: 10px; max-width: 52em; }
+.sss details { background: var(--yuzey); border: 1px solid var(--cizgi); border-radius: 8px; padding: 16px 20px; }
+.sss summary { cursor: pointer; font-weight: 600; }
+.sss details p { color: var(--soluk); margin-top: 10px; }
+
+.iletisim .ic { display: grid; grid-template-columns: 1.1fr .9fr; gap: 48px; align-items: center; padding-block: 76px; }
+.iletisim h2 { color: var(--gece-yazi); margin: 14px 0 16px; }
+.iletisim .alt { color: var(--gece-soluk); }
+.kanallar { display: grid; gap: 12px; }
+.kanal { display: flex; align-items: center; justify-content: space-between; gap: 12px; border: 1px solid #ffffff24; border-radius: 8px; padding: 14px 16px; min-width: 0; }
+.kanal span { color: var(--gece-soluk); font-size: .82rem; display: block; }
+.kanal b { font: 600 1.02rem/1.3 var(--f-mono); color: var(--gece-yazi); word-break: break-all; }
+.kopyala { background: none; border: 1px solid #ffffff30; color: var(--gece-yazi); border-radius: 5px; padding: 6px 10px; font: 500 .8rem var(--f-govde); cursor: pointer; flex: none; }
+.kopyala:hover { border-color: var(--sari); }
+footer { background: var(--gece); color: var(--gece-soluk); font-size: .85rem; border-top: 1px solid #ffffff14; }
+footer .ic { display: flex; justify-content: space-between; gap: 16px; flex-wrap: wrap; padding-block: 22px; }
+
+@media (max-width: 900px) {
+  .giris .ic, .iletisim .ic { grid-template-columns: 1fr; gap: 40px; }
+  .uc, .kimler, .ozellikler { grid-template-columns: 1fr 1fr; }
+  .adimlar { grid-template-columns: 1fr 1fr; }
+  .menu { display: none; }
+  .ust .dugme { margin-left: auto; }
+}
+@media (max-width: 600px) {
+  .uc, .kimler, .ozellikler, .adimlar { grid-template-columns: 1fr; }
+  section.bolum { padding-block: 60px; }
+  .giris .ic { padding-block: 48px 60px; }
+  .kayitlar li { grid-template-columns: 46px 1fr; }
+  .kayitlar li span:last-child { grid-column: 2; }
+}
+@media (prefers-reduced-motion: reduce) { .canli::before { animation: none; } }
+.dil { color: var(--gece-soluk); text-decoration: none; font: 600 .82rem/1 var(--f-mono); letter-spacing: .08em; border: 1px solid #ffffff30; border-radius: 4px; padding: 7px 8px; }
+.dil:hover { color: var(--gece-yazi); border-color: var(--gece-yazi); }
+@media (max-width: 900px) { .dil { margin-left: auto; } .ust .dil + .dugme { margin-left: 0; } }
+.ust .dugme { white-space: nowrap; }
+@media (max-width: 600px) { .ust .ic { gap: 12px; } }
+</style>
+
+<header class="ust">
+  <div class="ic">
+    <a class="logo" href="#ust" aria-label="OSTIVA home"><span class="logo-isaret" aria-hidden="true"></span>OSTIVA</a>
+    <nav class="menu" aria-label="On this page">
+      <a href="#farklar">Why OSTIVA</a><a href="#ozellikler">Features</a><a href="#kimler">Who it's for</a><a href="#baslangic">Getting started</a><a href="#sss">FAQ</a>
+    </nav>
+    <a class="dil" href="../" lang="tr" hreflang="tr" aria-label="Türkçe">TR</a>
+    <a class="dugme ana" href="#iletisim">Request a pilot</a>
+  </div>
+</header>
+
+<main id="ust">
+  <section class="bant giris">
+    <div class="ic">
+      <div>
+        <span class="etiket">Gate and licence plate recognition system</span>
+        <h1>Every vehicle through the gate is recorded. <em>None are missed.</em></h1>
+        <p class="alt">For public institutions, energy and industrial sites: plate recognition, staff and visitor separation, official vehicle
+          assignments, alarms and a daily management report in one system. If a camera misses a plate or the server goes down,
+          OSTIVA finds that passage later and adds it.</p>
+        <div class="dugmeler">
+          <a class="dugme ana" href="#iletisim">Request a 30-day pilot</a>
+          <a class="dugme ikincil" href="#farklar">See the difference</a>
+        </div>
+        <p class="ad-notu">Named after the Latin <b>ostium</b>: the entrance, the gate.</p>
+      </div>
+
+      <figure class="ekran" aria-label="Example of the gate officer's screen">
+        <div class="ekran-ust"><span>MAIN GATE · ENTRY</span><span class="canli">live</span></div>
+        <div class="arac">
+          <span class="plaka"><span class="tr">TR</span><span class="no">72 AEK 418</span></span>
+          <div class="arac-bilgi"><b>Staff · Field Engineering</b><span>White Fiat Doblo · barrier opened</span></div>
+          <span class="rozet r-personel">STAFF</span>
+        </div>
+        <ul class="kayitlar">
+          <li><span>08:14</span><span class="p">34 MRU 811</span><span>Official vehicle · assignment: site visit</span></li>
+          <li><span>08:11</span><span class="p">21 ACY 205</span><span><span class="rozet r-ziyaretci">VISITOR</span> approved · Quality dept.</span></li>
+          <li class="alarm"><span>08:06</span><span class="p">06 BKT 77</span><span>Cloned plate suspected: entered the housing gate 4 min ago</span></li>
+          <li><span>07:58</span><span class="p">72 AB 3091</span><span>Contractor · staff shuttle</span></li>
+        </ul>
+        <div class="mutabakat"><span>Last night's reconciliation</span><span>camera 612 · OSTIVA 612 · <b>missing 0</b></span></div>
+      </figure>
+    </div>
+  </section>
+
+  <section class="bolum" id="farklar">
+    <div class="ic">
+      <div class="bolum-bas">
+        <span class="etiket">Why OSTIVA</span>
+        <h2>Ordinary plate recognition software reads plates. OSTIVA runs the gate.</h2>
+        <p>The most common problem on site is the missing record nobody notices: an unread plate, a server that was off,
+          a camera that stayed broken for weeks. OSTIVA catches all three on its own.</p>
+      </div>
+      <div class="uc">
+        <div class="fark">
+          <h3>No missed passages</h3>
+          <p>OSTIVA's own AI recognition and the camera's built-in plate recognition work together. Every night the records are compared
+            with the camera's own log, and any missed passage is added with its real time.</p>
+          <span class="rakam">camera 620 · OSTIVA 610 → 10 passages added</span>
+        </div>
+        <div class="fark">
+          <h3>Nothing lost when the server is down</h3>
+          <p>During a power cut or shutdown the camera keeps recording. When the system comes back it pulls the passages it missed from the camera,
+            and raises an alarm if a blacklisted vehicle went through.</p>
+          <span class="rakam">02:10–03:12 offline · 37 passages recovered</span>
+        </div>
+        <div class="fark">
+          <h3>Faults found before you notice</h3>
+          <p>Alerts for a camera that stopped reading plates, a filling disk, a failed backup or undelivered notifications. Our support team monitors
+            every installation centrally; no plate or personal data is sent to us.</p>
+          <span class="rakam">Entry camera has read no plates for 60 min</span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="bolum" id="ozellikler">
+    <div class="ic">
+      <div class="bolum-bas">
+        <span class="etiket">Features</span>
+        <h2>The gate officer, the security chief and the manager on one screen</h2>
+      </div>
+      <div class="ozellikler">
+        <div class="ozellik"><span class="etiket">Gate officer</span><h3>Gate Mode</h3>
+          <p>Photo of the arriving vehicle, who it belongs to, notes and alarms on one simple screen. Works on a phone too, with an audible alert for new alarms.</p></div>
+        <div class="ozellik"><span class="etiket">Security</span><h3>Smart alarms</h3>
+          <p>Cloned plates, blacklist, suspicious vehicles, visitors staying too long. An alert when the colour and make seen don't match the vehicle registered to the plate.</p></div>
+        <div class="ozellik"><span class="etiket">Administration</span><h3>Official vehicle assignments</h3>
+          <p>Assignment orders, exits without an assignment, late returns. A vehicle leaving without an assignment opens the assignment window automatically.</p></div>
+        <div class="ozellik"><span class="etiket">Organisation</span><h3>People and vehicles</h3>
+          <p>Staff, VIP, contractor and visitor types; person cards with several vehicles, expected visitor pre-registration, shift rota, gate logbook.</p></div>
+        <div class="ozellik"><span class="etiket">Management</span><h3>Report every morning</h3>
+          <p>Yesterday's entries, visitors, alarms and camera success rate arrive as a PDF by e-mail or Telegram.</p></div>
+        <div class="ozellik"><span class="etiket">Anywhere</span><h3>Ask over Telegram</h3>
+          <p>Type "is 34 ABC 123 inside?" and get the answer. Instant notifications with photos, and a mobile app.</p></div>
+        <div class="ozellik"><span class="etiket">On site</span><h3>LED signs and barriers</h3>
+          <p>Shows STAFF or VISITOR on the gate's LED sign and opens the barrier for authorised vehicles. Works with existing Dahua ANPR cameras.</p></div>
+        <div class="ozellik"><span class="etiket">Data protection</span><h3>Retention rules built in</h3>
+          <p>Personal data of passages older than the retention period is deleted automatically. All data stays on the organisation's own server.</p></div>
+        <div class="ozellik"><span class="etiket">Account security</span><h3>Permissions and audit</h3>
+          <p>Role- and screen-based permissions, two-factor sign-in for administrators, session management and an audit log of every settings change.</p></div>
+      </div>
+    </div>
+  </section>
+
+  <section class="bolum">
+    <div class="ic">
+      <div class="bolum-bas">
+        <span class="etiket">Comparison</span>
+        <h2>Ordinary plate recognition software and OSTIVA</h2>
+      </div>
+      <div class="tablo-kap">
+        <table>
+          <thead><tr><th>Situation</th><th>Ordinary software</th><th>OSTIVA</th></tr></thead>
+          <tbody>
+            <tr><td>The camera missed a plate</td><td class="klasik">Nobody notices</td><td class="bizim">Found and added by nightly reconciliation</td></tr>
+            <tr><td>The server was off for an hour</td><td class="klasik">No record of that hour</td><td class="bizim">Recovered from the camera on restart</td></tr>
+            <tr><td>A camera stopped reading plates</td><td class="klasik">Noticed after a complaint</td><td class="bizim">Silent camera alert and central monitoring</td></tr>
+            <tr><td>An official vehicle left without an assignment</td><td class="klasik">Separate logbook or software</td><td class="bizim">Immediate assignment window and report</td></tr>
+            <tr><td>The same plate at two gates</td><td class="klasik">No alert</td><td class="bizim">Cloned plate alarm</td></tr>
+            <tr><td>Old records</td><td class="klasik">Pile up indefinitely</td><td class="bizim">Deleted automatically after the retention period</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <section class="bolum" id="kimler">
+    <div class="ic">
+      <div class="bolum-bas">
+        <span class="etiket">Who it's for</span>
+        <h2>Any site with staff, visitors and official vehicles</h2>
+      </div>
+      <div class="kimler">
+        <div><h3>Public sector and energy</h3><p>Regional offices, field facilities, staff housing, power plants. Staff, official vehicles and visitors share the same gate.</p></div>
+        <div><h3>Industry and logistics</h3><p>Factory gates and warehouses. Supplier and service vehicles, contractor staff, shift changes.</p></div>
+        <div><h3>Hospitals, universities, campuses</h3><p>Sites with many gates. Automatic barriers for subscribers, visitor registration, per-gate reports.</p></div>
+      </div>
+    </div>
+  </section>
+
+  <section class="bolum" id="baslangic">
+    <div class="ic">
+      <div class="bolum-bas">
+        <span class="etiket">Getting started</span>
+        <h2>Try it at one gate first, then decide</h2>
+      </div>
+      <ol class="adimlar">
+        <li><h3>Site survey</h3><p>We inspect your gates, cameras and barriers on site, free of charge.</p></li>
+        <li><h3>30-day pilot</h3><p>We install at one gate. At the end of the month a report shows how many passages your current setup misses.</p></li>
+        <li><h3>Rollout and training</h3><p>We extend to every gate and train gate officers and managers on site.</p></li>
+        <li><h3>Maintenance and monitoring</h3><p>An annual maintenance contract covers updates and remote support. When something breaks, we call you.</p></li>
+      </ol>
+    </div>
+  </section>
+
+  <section class="bolum" id="sss">
+    <div class="ic">
+      <div class="bolum-bas"><span class="etiket">FAQ</span><h2>Questions</h2></div>
+      <div class="sss">
+        <details><summary>Does it work with our existing cameras?</summary>
+          <p>Yes. We read IP camera video with our own AI, and on Dahua ANPR cameras we also use the camera's built-in plate recognition. The site survey tells you which cameras are suitable.</p></details>
+        <details><summary>Does our data leave the site?</summary>
+          <p>No. OSTIVA runs on your own server and can be installed without internet access. If maintenance monitoring is enabled, only health data (are the cameras working, disk, backups) is sent; never plates, people or photos.</p></details>
+        <details><summary>Which licence plates does it read?</summary>
+          <p>It is in production with Turkish plates today. For other countries' plate formats we adapt and test the recognition during the pilot.</p></details>
+        <details><summary>Do we need barriers and LED signs?</summary>
+          <p>No. If you have them we connect your existing barrier and LED sign; if not, our partners can supply them turnkey.</p></details>
+        <details><summary>How many gates and cameras does it support?</summary>
+          <p>From a single gate to multi-gate campuses. Licences are per camera, with per-gate reports and permissions.</p></details>
+      </div>
+    </div>
+  </section>
+
+  <section class="bant iletisim" id="iletisim">
+    <div class="ic">
+      <div>
+        <span class="etiket">Pilot and demo</span>
+        <h2>Let's run a 30-day pilot at one of your gates</h2>
+        <p class="alt">In a 15-minute call we listen to your needs and show a live demo. For the pilot, we do the installation.</p>
+      </div>
+      <div class="kanallar">
+        <div class="kanal"><div><span>Phone</span><b id="telefon">[+90 5XX XXX XX XX]</b></div><button class="kopyala" data-hedef="telefon" type="button">Copy</button></div>
+        <div class="kanal"><div><span>E-mail</span><b id="eposta">[contact@ostiva.com]</b></div><button class="kopyala" data-hedef="eposta" type="button">Copy</button></div>
+      </div>
+    </div>
+  </section>
+</main>
+
+<footer>
+  <div class="ic"><span>OSTIVA · Gate and licence plate recognition system</span><span>[Company name] · [City], Türkiye</span></div>
+</footer>
+
+<script>
+document.querySelectorAll(".kopyala").forEach(function (d) {
+  d.addEventListener("click", function () {
+    var el = document.getElementById(d.dataset.hedef), metin = el.textContent;
+    var tamam = function () { d.textContent = "Copied"; setTimeout(function () { d.textContent = "Copy"; }, 1600); };
+    var sec = function () { var r = document.createRange(); r.selectNodeContents(el); var s = getSelection(); s.removeAllRanges(); s.addRange(r); };
+    try { navigator.clipboard.writeText(metin).then(tamam, sec); } catch (e) { sec(); }
+  });
+});
+</script>
+
+</body></html>
