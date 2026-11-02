@@ -212,8 +212,76 @@ document.querySelectorAll("[data-target]").forEach(link => link.addEventListener
 document.getElementById("anaSekme")?.addEventListener("shown.bs.tab", (e) => {
   const hedef = e.target.dataset.bsTarget;
   document.querySelectorAll(".side-link[data-target]").forEach(link => link.classList.toggle("active", link.dataset.target === hedef));
-  if (document.querySelector(`#yonetimGrubu .side-link[data-target="${hedef}"]`)) yonetimGrubuAyarla(true);
+  // Yönetim paneli (2026-11-02): açık sayfa bir yönetim ekranıysa panel görünümü, günlük
+  // ekransa güvenlik görünümü; Destek sayfaları görünümü değiştirmez.
+  if (document.querySelector(`#yonetimGrubu .side-link[data-target="${hedef}"]`)) _yonetimGorunumu(true);
+  else if (document.querySelector(`.side-link.gunluk-oge[data-target="${hedef}"]`)) { _yonetimGorunumu(false); _sonGunlukSekme = hedef; }
+  if (hedef === "#yonetim-sekme") yonetimGenelBakisYukle();
   sayfaBasligiGuncelle(hedef);
+});
+
+let _sonGunlukSekme = "#kontrol-sekme";
+function _yonetimGorunumu(acik) {
+  document.body.classList.toggle("yonetim-modu", acik);
+  const d = document.getElementById("yonetimGecisDugme");
+  if (d) d.innerHTML = acik ? '<i class="bi bi-shield-check"></i> <span>Güvenlik ekranı</span>' : '<i class="bi bi-gear"></i> <span>Yönetim Paneli</span>';
+}
+function yonetimModu() {
+  sekmeAc(document.body.classList.contains("yonetim-modu") ? _sonGunlukSekme : "#yonetim-sekme");
+}
+
+// Yönetim Genel Bakış: her kutu bir parçanın durumu; durum rengi iyi / uyarı / sorun.
+async function yonetimGenelBakisYukle() {
+  const izgara = document.getElementById("ygIzgara");
+  if (!izgara) return;
+  const al = yol => apiCagir(yol).catch(() => null);
+  const [saglik, lisans, merkez, bildirim, kullanicilar, denetim] = await Promise.all([
+    al("/saglik"), al("/lisans"), al("/merkez-izleme"), al("/bildirim/ayarlar"), al("/kullanicilar"), al("/denetim-kayitlari?limit=6")]);
+  const kutu = (hedef, ikon, baslik, deger, alt, durum) => `<button type="button" class="yg-kutu ${durum}" data-yg-hedef="${hedef}">
+      <span class="yg-ikon"><i class="bi ${ikon}"></i></span><span class="yg-metin"><small>${baslik}</small><b>${deger}</b><span>${alt}</span></span>
+      <i class="bi bi-chevron-right yg-ok"></i></button>`;
+  const k = [];
+  if (saglik) {
+    const kam = saglik.kameralar || {};
+    if (!kam.aktif) k.push(kutu("#kamera-sekme", "bi-camera-video", "Kameralar", "Yok", "açık kamera tanımlı değil", "uyari"));
+    else k.push(kutu("#kamera-sekme", "bi-camera-video", "Kameralar", `${kam.calisan} / ${kam.aktif}`,
+      kam.calisan < kam.aktif ? `${kam.aktif - kam.calisan} kamera görüntü vermiyor` : "hepsi çalışıyor",
+      kam.calisan < kam.aktif ? "sorun" : "iyi"));
+    const disk = saglik.disk_yuzde;
+    k.push(kutu("#sistem-sekme", "bi-hdd", "Disk", disk == null ? "-" : `%${Math.round(disk)}`, "en dolu disk",
+      disk >= 90 ? "sorun" : disk >= 80 ? "uyari" : "iyi"));
+    const y = saglik.son_yedek_saat;
+    k.push(kutu("#sistem-sekme", "bi-archive", "Son yedek", y == null ? "yok" : y < 1 ? "1 saatten yeni" : y < 48 ? `${Math.round(y)} saat önce` : `${Math.round(y / 24)} gün önce`,
+      "otomatik yedek", y == null ? "uyari" : y > 72 ? "sorun" : y > 36 ? "uyari" : "iyi"));
+    if (saglik.sertifika_kalan_gun != null) k.push(kutu("#sistem-sekme", "bi-shield-lock", "HTTPS sertifikası", `${saglik.sertifika_kalan_gun} gün`, "kalan süre",
+      saglik.sertifika_kalan_gun <= 14 ? "uyari" : "iyi"));
+  }
+  if (lisans) k.push(kutu("#lisans-sekme", "bi-key", "Lisans", !lisans.aktif ? "Pasif" : lisans.kalan_gun != null ? `${lisans.kalan_gun} gün` : "Aktif",
+    lisans.aktif ? `${lisans.kamera_limiti || "-"} kamera hakkı` : "kamera eklemek için lisans gerekli",
+    !lisans.aktif ? "sorun" : lisans.kalan_gun != null && lisans.kalan_gun <= 30 ? "uyari" : "iyi"));
+  if (bildirim) {
+    const aktif = bildirim.filter(b => b.aktif !== false).length;
+    k.push(kutu("#bildirim-sekme", "bi-bell", "Bildirimler", `${aktif} kanal`, aktif ? "Telegram / e-posta / webhook" : "hiç bildirim tanımlı değil", aktif ? "iyi" : "uyari"));
+  }
+  if (merkez) k.push(kutu("#sistem-sekme", "bi-broadcast", "Merkezi izleme", !merkez.aktif ? "Kapalı" : merkez.son_hata ? "Gönderilemiyor" : "Bağlı",
+    merkez.aktif && merkez.son_basarili ? `son gönderim ${new Date(merkez.son_basarili).toLocaleTimeString("tr-TR", { hour: "2-digit", minute: "2-digit" })}` : "bakım firmasına sağlık bilgisi",
+    !merkez.aktif ? "notr" : merkez.son_hata ? "sorun" : "iyi"));
+  if (kullanicilar) k.push(kutu("#kullanicilar-sekme", "bi-people", "Kullanıcılar", `${kullanicilar.filter(u => u.aktif).length} hesap`,
+    `${kullanicilar.filter(u => u.rol === "yonetici" && u.aktif).length} yönetici`, "notr"));
+  izgara.innerHTML = k.join("");
+  const uyarilar = (saglik?.uyarilar || []);
+  document.getElementById("ygUyarilar").innerHTML = uyarilar.length
+    ? `<div class="yg-uyari"><i class="bi bi-exclamation-triangle-fill"></i><div><b>Dikkat:</b> ${uyarilar.map(escapeHtml).join(" · ")}</div></div>`
+    : '<div class="yg-uyari iyi"><i class="bi bi-check-circle-fill"></i><div>Sistem sağlıklı: veritabanı, kameralar, disk ve yedek sorunsuz.</div></div>';
+  const ad = { kullanici_olustur: "Kullanıcı eklendi", kullanici_sil: "Kullanıcı silindi", sistem_ayarlari: "Sistem ayarları değişti", lisans_aktivasyon: "Lisans girildi",
+    kamera_sil: "Kamera silindi", merkez_izleme_ayar: "Merkezi izleme ayarı" };
+  document.getElementById("ygDenetim").innerHTML = (denetim || []).map(d => `<li><span class="yg-zaman">${escapeHtml(tarihFormatla(d.zaman))}</span>
+      <span><b>${escapeHtml(ad[d.eylem] || d.eylem.replace(/_/g, " "))}</b> · ${escapeHtml(d.kullanici_adi)}<small>${escapeHtml((d.aciklama || "").slice(0, 120))}</small></span></li>`).join("")
+    || '<li class="text-muted small p-3">Henüz kayıt yok.</li>';
+}
+document.getElementById("ygIzgara")?.addEventListener("click", e => {
+  const kutu = e.target.closest("[data-yg-hedef]");
+  if (kutu) sekmeAc(kutu.dataset.ygHedef);
 });
 
 // Sayfa başlığı (2026-11-02): üstteki sekme çubuğu yerine her ekranın adı ve ne işe yaradığı.
@@ -227,16 +295,17 @@ const SAYFA_BASLIKLARI = {
   "#kisiler-sekme": ["Kişiler ve Araçlar", "Personel, abone, alt işveren ve araçları"],
   "#karaliste-sekme": ["Kara Liste", "Girişi engellenen ya da izlenen araçlar"],
   "#resmi-sekme": ["Resmi Araçlar", "Kurum araçları ve görev emirleri"],
-  "#kamera-sekme": ["Kameralar", "Kamera bağlantıları, okuma kalitesi ve gece mutabakatı", "Yönetim"],
-  "#bariyer-sekme": ["Bariyerler", "Bariyer bağlantıları ve kapı kutuları", "Yönetim"],
-  "#bildirim-sekme": ["Bildirimler", "Telegram, e-posta ve webhook bildirimleri", "Yönetim"],
-  "#lisans-sekme": ["Lisans", "Lisans durumu ve açık modüller", "Yönetim"],
-  "#led-sekme": ["LED Paneller", "Kapıdaki LED panellerin bağlantısı ve yazıları", "Yönetim"],
-  "#site-sekme": ["Site ve Erişim Noktaları", "Siteler, nizamiyeler ve kameraların bağlı olduğu noktalar", "Yönetim"],
-  "#kullanicilar-sekme": ["Kullanıcılar", "Hesaplar, roller ve ekran yetkileri", "Yönetim"],
-  "#sistem-sekme": ["Sistem", "Sistem durumu, ayarlar, yedek ve uygulama kayıtları", "Yönetim"],
-  "#denetim-sekme": ["Denetim Kayıtları", "Kim, ne zaman, neyi değiştirdi", "Yönetim"],
-  "#test-sekme": ["Elle Kayıt", "Deneme amaçlı ya da kameranın göremediği bir geçişi elle girin", "Yönetim"],
+  "#yonetim-sekme": ["Genel Bakış", "Sistemin her parçasının durumu; bir kutuya basınca ilgili ayar açılır", "Yönetim Paneli"],
+  "#kamera-sekme": ["Kameralar", "Kamera bağlantıları, okuma kalitesi ve gece mutabakatı", "Yönetim Paneli"],
+  "#bariyer-sekme": ["Bariyerler", "Bariyer bağlantıları ve kapı kutuları", "Yönetim Paneli"],
+  "#bildirim-sekme": ["Bildirimler", "Telegram, e-posta ve webhook bildirimleri", "Yönetim Paneli"],
+  "#lisans-sekme": ["Lisans", "Lisans durumu ve açık modüller", "Yönetim Paneli"],
+  "#led-sekme": ["LED Paneller", "Kapıdaki LED panellerin bağlantısı ve yazıları", "Yönetim Paneli"],
+  "#site-sekme": ["Site ve Erişim Noktaları", "Siteler, nizamiyeler ve kameraların bağlı olduğu noktalar", "Yönetim Paneli"],
+  "#kullanicilar-sekme": ["Kullanıcılar", "Hesaplar, roller ve ekran yetkileri", "Yönetim Paneli"],
+  "#sistem-sekme": ["Sistem", "Sistem durumu, ayarlar, yedek ve uygulama kayıtları", "Yönetim Paneli"],
+  "#denetim-sekme": ["Denetim Kayıtları", "Kim, ne zaman, neyi değiştirdi", "Yönetim Paneli"],
+  "#test-sekme": ["Elle Kayıt", "Deneme amaçlı ya da kameranın göremediği bir geçişi elle girin", "Yönetim Paneli"],
   "#iletisim-sekme": ["İletişim ve Arıza Bildirimi", "Destek ekibine ulaşın"],
 };
 // Sayfanın kendi düğmeleri (ör. Ziyaretçi Girişi, Yenile) başlığın sağına taşınır; sayfadan
@@ -5075,6 +5144,12 @@ function ziyaretciAlanGoster() {
   _altIsverenGorevListesi(tip);
 }
 
+document.getElementById("kisilerTablo")?.addEventListener("click", e => {
+  if (e.target.closest("button, a, input, label")) return;
+  const satir = e.target.closest("tr[data-kisi-id]");
+  if (satir) kisiDuzenleAc(Number(satir.dataset.kisiId));
+});
+
 function kisiTipFiltrele(tip, btn) {
   aktifTipFiltre = tip;
   document.querySelectorAll(".tip-filtre").forEach(b => b.classList.remove("active"));
@@ -5246,9 +5321,39 @@ async function gecmisKayitlariYenidenBagla() {
   }
 }
 
+// Kişiler sekme sayıları (2026-11-02)
+async function kisiSayilariYukle() {
+  try {
+    const d = await apiCagir("/kisi-sayilari");
+    document.querySelectorAll(".kisi-sekmeler .ks-sayi").forEach(el => {
+      const n = el.dataset.sayi === "toplam" ? d.toplam : (d.tipler[el.dataset.sayi] || 0);
+      el.textContent = n;
+      el.closest("button").classList.toggle("ks-bos", !n && el.dataset.sayi !== "toplam");
+    });
+    const uyari = document.getElementById("kisiBitecekUyari");
+    if (uyari) {
+      uyari.innerHTML = `<i class="bi bi-hourglass-split"></i> ${d.bitecek} kişinin izni bitiyor`;
+      uyari.classList.toggle("d-none", !d.bitecek);
+    }
+  } catch (e) { /* sayılar olmadan da liste çalışır */ }
+}
+
+function _gecenSureKisa(iso) {
+  if (!iso) return "";
+  const gun = Math.floor((Date.now() - new Date(iso)) / 86400000);
+  if (gun <= 0) return "bugün " + new Date(iso).toLocaleTimeString("tr-TR", { hour: "2-digit", minute: "2-digit" });
+  if (gun === 1) return "dün";
+  if (gun < 30) return `${gun} gün önce`;
+  return new Date(iso).toLocaleDateString("tr-TR");
+}
+
 async function kisileriYukle() {
+  kisiSayilariYukle();
   const params = new URLSearchParams();
   if (aktifTipFiltre) params.set("tip", aktifTipFiltre);
+  const durumFiltre = document.getElementById("kisiDurumFiltre")?.value || "";
+  if (durumFiltre === "aktif" || durumFiltre === "bitecek") params.set("aktif", "true");
+  if (durumFiltre === "pasif") params.set("aktif", "false");
   const aramaMetni = _kisiAramaMetni();
   if (aramaMetni) params.set("arama", aramaMetni);
   const istekNo = ++_kisiListeIstekNo;
@@ -5261,6 +5366,10 @@ async function kisileriYukle() {
     return;
   }
   if (istekNo !== _kisiListeIstekNo) return;
+  if (durumFiltre === "bitecek") {
+    const sinir = Date.now() + 7 * 86400000;
+    kisiler = kisiler.filter(k => k.bitis_tarihi && new Date(k.bitis_tarihi) >= Date.now() && new Date(k.bitis_tarihi) <= sinir);
+  }
   const tbody = document.getElementById("kisilerTablo");
   // 2026-09-22 kullanıcı isteği: "aracın sisteme kayıtlara ilk giriş tarihi
   // eklensin. son güncel geçiş tarihi ve saati eklensin. Not ekleyen
@@ -5295,29 +5404,35 @@ async function kisileriYukle() {
     const ekRozeti = ekSayisi > 0
       ? ` <button type="button" class="badge ek-plaka-rozeti border-0" onclick="kisiDuzenleAc(${k.id})" title="${ekSayisi} ek araç daha var -- görmek için tıklayın">+${ekSayisi}</button>`
       : "";
+    // Satır (2026-11-02): kişi + birim/telefon tek hücrede, son geçiş göreli; izin süresi durumda.
+    const altBilgi = [k.daire_departman, k.telefon].filter(Boolean).map(escapeHtml).join(" · ");
+    let durum = k.aktif ? '<span class="kisi-durum aktif">Aktif</span>' : '<span class="kisi-durum pasif">Pasif</span>';
+    if (k.aktif && k.bitis_tarihi) {
+      const kalan = Math.ceil((new Date(k.bitis_tarihi) - Date.now()) / 86400000);
+      durum = kalan < 0 ? '<span class="kisi-durum bitti">İzni bitti</span>'
+        : `<span class="kisi-durum${kalan <= 7 ? " bitiyor" : " aktif"}" title="İzin bitişi ${new Date(k.bitis_tarihi).toLocaleDateString("tr-TR")}">${kalan <= 7 ? `${kalan} gün kaldı` : "Aktif"}</span>`;
+    }
+    if (k.totp_aktif) durum += ' <span class="badge bg-dark" title="İki adımlı doğrulama açık"><i class="bi bi-shield-lock-fill"></i> 2FA</span>';
     return `
-    <tr data-kisi-id="${k.id}"${secili ? ' class="table-active"' : ""}>
+    <tr data-kisi-id="${k.id}" class="kisi-satir${secili ? " table-active" : ""}">
       ${operatorMu ? `<td class="kisi-sec-hucre"><input type="checkbox" class="form-check-input kisi-sec" ${secili ? "checked" : ""} onchange="kisiSecimDegistir(${k.id}, this.checked)" aria-label="${escapeHtml(k.ad_soyad)} kişisini seç"></td>` : ""}
-      <td><button type="button" class="kisi-ad-link" onclick="kisiDuzenleAc(${k.id})" title="Kişi Kartını aç (tüm araçlar, bilgiler)">${escapeHtml(k.ad_soyad)}</button></td>
+      <td class="kisi-hucre"><button type="button" class="kisi-ad-link" onclick="kisiDuzenleAc(${k.id})" title="Kişi Kartını aç (tüm araçlar, bilgiler)">${escapeHtml(k.ad_soyad)}</button>${altBilgi ? `<span class="kisi-alt">${altBilgi}</span>` : ""}</td>
       <td class="fw-bold kisi-plaka-hucre"><button class="plate-link${plakaKirmizi ? " plate-link-yetkisiz" : ""}" data-plaka-analiz="${escapeHtml(k.plaka_no)}" title="${plakaKirmizi ? "Son geçişi YETKİSİZ olarak işaretlendi -- " : ""}Geçiş geçmişini ve görsellerini gör">${escapeHtml(k.plaka_no)}</button>${ekRozeti}</td>
       <td>${tipRozeti(k.tip)}</td>
-      <td>${escapeHtml(k.telefon) || "-"}</td>
-      <td>${escapeHtml(k.daire_departman) || "-"}</td>
-      <td>${k.aktif ? '<span class="badge bg-success">Aktif</span>' : '<span class="badge bg-secondary">Pasif</span>'}${k.totp_aktif ? ' <span class="badge bg-dark" title="İki adımlı doğrulama açık"><i class="bi bi-shield-lock-fill"></i> 2FA</span>' : ""}</td>
-      <td class="small">${k.ilk_gecis ? tarihFormatla(k.ilk_gecis) : '<span class="text-muted">-</span>'}</td>
-      <td class="small">${k.son_gecis ? tarihFormatla(k.son_gecis) : '<span class="text-muted">-</span>'}</td>
-      <td class="small">${sonNot}</td>
-      <td>
+      <td>${durum}</td>
+      <td class="kisi-son" title="${k.ilk_gecis ? `İlk geçiş: ${tarihFormatla(k.ilk_gecis)}` : ""}${k.son_gecis ? ` · Son geçiş: ${tarihFormatla(k.son_gecis)}` : ""}">${k.son_gecis ? _gecenSureKisa(k.son_gecis) : '<span class="text-muted">hiç</span>'}</td>
+      <td class="kisi-not">${sonNot}</td>
+      <td class="kt-islem">
         ${rolYeterli("operatör") ? `
-        <button class="btn btn-sm btn-outline-primary" onclick="kisiDuzenleAc(${k.id})" title="Düzenle"><i class="bi bi-pencil"></i></button>
-        <button class="btn btn-sm btn-outline-secondary" onclick="kisiDurumDegistir(${k.id}, ${!k.aktif})" title="Aktif/Pasif Yap"><i class="bi bi-toggle2-on"></i></button>
-        <button class="btn btn-sm btn-outline-warning" onclick="kisiGecmisKayitlariGuncelle(${k.id})" title="Bu kişinin plakasına ait, kaydedilmeden ÖNCEKİ eski 'yetkisiz' geçişleri yeniden değerlendirir"><i class="bi bi-clock-history"></i></button>
-        <button class="btn btn-sm btn-outline-danger" onclick="kisiSil(${k.id})" title="Sil"><i class="bi bi-trash"></i></button>
-        ` : '<span class="text-muted small">-</span>'}
+        <button class="btn-ikon" onclick="kisiDuzenleAc(${k.id})" title="Kişi kartı / düzenle" aria-label="Düzenle"><i class="bi bi-pencil"></i></button>
+        <button class="btn-ikon" onclick="kisiDurumDegistir(${k.id}, ${!k.aktif})" title="${k.aktif ? "Pasif yap" : "Aktif yap"}" aria-label="Aktif/Pasif"><i class="bi ${k.aktif ? "bi-toggle2-on" : "bi-toggle2-off"}"></i></button>
+        <button class="btn-ikon" onclick="kisiGecmisKayitlariGuncelle(${k.id})" title="Bu kişinin plakasına ait, kaydedilmeden ÖNCEKİ eski 'yetkisiz' geçişleri yeniden değerlendirir" aria-label="Eski geçişleri yeniden değerlendir"><i class="bi bi-clock-history"></i></button>
+        <button class="btn-ikon tehlike" onclick="kisiSil(${k.id})" title="Sil" aria-label="Sil"><i class="bi bi-trash"></i></button>
+        ` : ""}
       </td>
     </tr>
   `;
-  }).join("") || `<tr><td colspan="11" class="text-center text-muted py-3">${aramaMetni ? `"${escapeHtml(aramaMetni)}" için kişi bulunamadı` : "Kişi bulunamadı"}</td></tr>`;
+  }).join("") || `<tr><td colspan="8" class="text-center text-muted py-5"><i class="bi bi-people d-block fs-3 mb-2"></i>${aramaMetni ? `"${escapeHtml(aramaMetni)}" için kişi bulunamadı` : "Bu süzgece uyan kişi yok"}</td></tr>`;
   _kisiTopluCubuguGuncelle();
 }
 
@@ -5488,6 +5603,35 @@ async function kisiDuzenleAc(id) {
   if (ilkSekme && window.bootstrap) bootstrap.Tab.getOrCreateInstance(ilkSekme).show();
   bootstrap.Modal.getOrCreateInstance(document.getElementById("kisiDuzenleModal")).show();
 }
+
+async function kartGecisleriYukle() {
+  const tbody = document.getElementById("kartGecisTablo");
+  if (!tbody || !_kartKisi) return;
+  tbody.innerHTML = '<tr><td colspan="4" class="text-muted small p-3">Yükleniyor…</td></tr>';
+  const plakalar = [_kartKisi.plaka_no, ...(_kartKisi.ek_plakalar || []).map(p => p.plaka_no)].filter(Boolean);
+  try {
+    const listeler = await Promise.all(plakalar.slice(0, 6).map(p => apiCagir(`/kayitlar?plaka=${encodeURIComponent(p)}&limit=15`)));
+    const kayitlar = listeler.flat().sort((a, b) => new Date(b.tarih_saat) - new Date(a.tarih_saat)).slice(0, 15);
+    _kayitCacheBirlestir(kayitlar);
+    tbody.innerHTML = kayitlar.map(k => `<tr role="button" tabindex="0" data-kart-kayit="${k.id}">
+        <td class="text-nowrap">${escapeHtml(tarihFormatla(k.tarih_saat))}</td>
+        <td class="fw-semibold text-nowrap">${escapeHtml(k.plaka_no)}</td>
+        <td class="small">${escapeHtml(k.kamera_id || "-")} · ${k.yon === "giris" ? "Giriş" : "Çıkış"}</td>
+        <td>${durumRozeti(k.yetki_durumu, k.kisi_tip_anlik, k.kisi_departman)}</td></tr>`).join("")
+      || '<tr><td colspan="4" class="text-muted small p-3">Bu kişinin araçları için geçiş kaydı yok.</td></tr>';
+  } catch (e) {
+    tbody.innerHTML = `<tr><td colspan="4" class="text-danger small p-3">${escapeHtml(e.message)}</td></tr>`;
+  }
+}
+document.getElementById("kartGecisSekme")?.addEventListener("shown.bs.tab", kartGecisleriYukle);
+document.getElementById("kartGecisTablo")?.addEventListener("click", e => {
+  const satir = e.target.closest("tr[data-kart-kayit]");
+  if (!satir) return;
+  // İki pencere üst üste açılmasın: önce kişi kartı kapanır, sonra geçiş ayrıntısı açılır.
+  const kart = document.getElementById("kisiDuzenleModal");
+  kart.addEventListener("hidden.bs.modal", () => olayDetayAc(Number(satir.dataset.kartKayit)), { once: true });
+  bootstrap.Modal.getInstance(kart)?.hide();
+});
 
 function _kartAraclariCiz() {
   const tbody = document.getElementById("kartAracTablosu");

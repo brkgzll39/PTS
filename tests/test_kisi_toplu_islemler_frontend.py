@@ -31,8 +31,8 @@ def test_toplu_islem_cubugu_ve_secim_kutulari_var():
 
 def test_tablo_basligi_sutun_sayisi_satirlarla_uyumlu():
     basliklar = _SOUP.select("#kisilerTablo")[0].find_parent("table").select("thead th")
-    assert len(basliklar) == 11  # seçim + 9 veri sütunu + işlem
-    assert 'colspan="11"' in _JS
+    assert len(basliklar) == 8  # seçim + 6 veri sütunu + işlem (2026-11-02 sade tablo)
+    assert 'colspan="8"' in _JS
 
 
 def test_ice_aktarma_modu_secimi_ve_istege_eklenir():

@@ -917,3 +917,75 @@ button.sidebar-section-label:hover { color: #aeb9cc; }
 .table tbody td:last-child:has(.btn-sm) { white-space: nowrap; }
 #kisiOneriKart.oneri-yok { display: none; }
 .table-responsive { position: relative; }   /* içindeki visually-hidden başlıklar sayfayı yana taşırmasın */
+
+/* Kişiler (2026-11-02) */
+.kisi-arac-cubugu { background: #fff; padding: 0; border-bottom: 1px solid #eceff4; display: block; }
+.kisi-sekmeler { display: flex; gap: .25rem; padding: .5rem .75rem 0; border-bottom: 1px solid #eceff4; overflow-x: auto; }
+.kisi-sekmeler .tip-filtre { border: 0; background: none; padding: .55rem .8rem .6rem; font-size: .88rem; font-weight: 500; color: #5d6c7b; border-bottom: 2px solid transparent; white-space: nowrap; }
+.kisi-sekmeler .tip-filtre:hover { color: #1B2431; }
+.kisi-sekmeler .tip-filtre.active { color: #121c2e; border-bottom-color: #2F6FED; font-weight: 600; }
+.kisi-sekmeler .tip-filtre.ks-bos { color: #a8b2c0; }
+.ks-sayi { display: inline-block; min-width: 1.4em; padding: 0 .4em; margin-left: .25rem; border-radius: 999px; background: #eef2f7; color: #4a5a72; font-size: .74rem; font-weight: 600; text-align: center; }
+.tip-filtre.active .ks-sayi { background: #2F6FED; color: #fff; }
+.kisi-arac-satir { display: flex; flex-wrap: wrap; gap: .5rem; align-items: center; padding: .75rem; }
+.kisi-arac-satir .ka-ara { flex: 1 1 260px; }
+.kisi-aktar-menu { min-width: 300px; }
+.kisi-aktar-ice { display: flex; flex-wrap: wrap; gap: .4rem; padding: .25rem 1rem .5rem; }
+.kisi-aktar-ice select { flex: 1 1 100%; }
+.kisi-tablo .kisi-satir { cursor: pointer; }
+.kisi-tablo td { padding-top: .55rem; padding-bottom: .55rem; }
+.kisi-hucre .kisi-ad-link { font-weight: 600; color: #121c2e; }
+.kisi-alt { display: block; font-size: .76rem; color: #7a8699; }
+.kisi-son { white-space: nowrap; font-size: .84rem; color: #4a5a72; }
+.kisi-not { font-size: .8rem; color: #6b778a; max-width: 240px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.kisi-durum { display: inline-block; font-size: .74rem; font-weight: 600; padding: .15rem .55rem; border-radius: 999px; white-space: nowrap; }
+.kisi-durum.aktif { background: #e7f6ee; color: #1e7a45; }
+.kisi-durum.pasif { background: #eef1f5; color: #6b778a; }
+.kisi-durum.bitiyor { background: #fff3dc; color: #a35600; }
+.kisi-durum.bitti { background: #fdecec; color: #b3261e; }
+
+/* =====================================================================
+   YÖNETİM PANELİ (2026-11-02): günlük ekranda yönetim menüsü görünmez; üst
+   çubuktaki "Yönetim Paneli" ile ayrı bir görünüme geçilir. Panelde menü
+   yalnız yönetim ekranlarıdır ve farklı renktedir (nerede olduğunuz belli olsun).
+   ===================================================================== */
+.yonetim-panel-baslik { display: none; color: #f2c14e; font-size: .7rem; font-weight: 700; letter-spacing: .12em; padding: .9rem .75rem .5rem; }
+body:not(.yonetim-modu) .side-grup-baslik, body:not(.yonetim-modu) #yonetimGrubu { display: none !important; }
+body.yonetim-modu .gunluk-oge { display: none !important; }
+body.yonetim-modu .yonetim-panel-baslik { display: flex; gap: .45rem; align-items: center; }
+body.yonetim-modu .side-grup-baslik { display: none !important; }
+body.yonetim-modu #yonetimGrubu { display: block; }
+body.yonetim-modu #yonetimGrubu .side-link { font-size: .84rem; padding-top: .55rem; padding-bottom: .55rem; }
+body.yonetim-modu .pts-sidebar, body.yonetim-modu .navbar-pts { background: #1b1f27; border-color: #2a303b; }
+body.yonetim-modu .side-link:hover { background: #262c37; }
+body.yonetim-modu .side-link.active { background: #2e3442; }
+body.yonetim-modu .side-link.active::before { background: #f2c14e; }
+body.yonetim-modu .side-link.active i { color: #f2c14e; }
+body.yonetim-modu .sayfa-yol { color: #a26b00; }
+body.yonetim-modu .yonetim-gecis { border-color: #f2c14e; color: #f2c14e; }
+@media (max-width: 768px) { body.yonetim-modu .yonetim-panel-baslik { font-size: 0; justify-content: center; } body.yonetim-modu .yonetim-panel-baslik i { font-size: 1rem; } }
+
+/* Genel Bakış */
+.yg-uyari { display: flex; gap: .75rem; align-items: flex-start; padding: .8rem 1rem; border-radius: 10px; background: #fff4e0; color: #7a4a00; border: 1px solid #f3dcb0; font-size: .9rem; }
+.yg-uyari.iyi { background: #e9f6ef; color: #1e6b40; border-color: #c4e6d2; }
+.yg-uyari > i { font-size: 1.1rem; margin-top: .05rem; }
+.yg-izgara { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: .75rem; }
+.yg-kutu { display: flex; align-items: center; gap: .85rem; background: #fff; border: 1px solid #e1e5ec; border-radius: 10px; padding: .9rem 1rem; text-align: left; min-width: 0; }
+.yg-kutu:hover { border-color: #b9c6db; box-shadow: 0 2px 8px rgba(16,27,46,.06); }
+.yg-ikon { flex: none; width: 40px; height: 40px; border-radius: 10px; display: grid; place-items: center; font-size: 1.15rem; background: #eef2f7; color: #4a5a72; }
+.yg-kutu.iyi .yg-ikon { background: #e7f6ee; color: #1e8a52; }
+.yg-kutu.uyari .yg-ikon { background: #fff3dc; color: #b45f00; }
+.yg-kutu.sorun .yg-ikon { background: #fdecec; color: #c0392b; }
+.yg-metin { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.yg-metin small { font-size: .74rem; font-weight: 600; text-transform: uppercase; letter-spacing: .03em; color: #7a8699; }
+.yg-metin b { font-size: 1.15rem; color: #121c2e; font-weight: 650; }
+.yg-kutu.sorun .yg-metin b { color: #c0392b; }
+.yg-metin span { font-size: .78rem; color: #6b778a; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.yg-ok { color: #b3bdcb; }
+.yg-liste { list-style: none; margin: 0; padding: 0; }
+.yg-liste li { display: flex; gap: 1rem; padding: .65rem 1rem; border-bottom: 1px solid #eef1f5; font-size: .86rem; }
+.yg-liste li:last-child { border-bottom: 0; }
+.yg-zaman { flex: none; width: 128px; color: #7a8699; font-size: .78rem; font-variant-numeric: tabular-nums; }
+.yg-liste small { display: block; color: #6b778a; font-size: .76rem; }
+.yg-kisayol { display: grid; grid-template-columns: 1fr 1fr; gap: .5rem; }
+.yg-kisayol .btn { text-align: left; font-size: .86rem; }

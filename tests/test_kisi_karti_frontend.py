@@ -36,7 +36,7 @@ def test_kisi_karti_sekmeleri_form_icindeki_button_olarak_kilitlenmez():
     # disable eder; sekme başlıkları <a> olmalı ki izleyici de gezebilsin.
     modal = _SOUP.find(id="kisiDuzenleModal")
     sekmeler = modal.select(".kart-sekmeler .nav-link")
-    assert len(sekmeler) == 2 and all(s.name == "a" for s in sekmeler)
+    assert len(sekmeler) == 3 and all(s.name == "a" for s in sekmeler)  # 2026-11-02: + Son Geçişler
 
 
 def test_yeni_kisi_formunda_ek_arac_alani_var():

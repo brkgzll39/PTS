@@ -4620,6 +4620,22 @@ def _arama_normalize(metin: Optional[str]) -> str:
     return (metin or "").translate(_ARAMA_HARF_HARITASI).lower().replace(" ", "")
 
 
+@app.get("/kisi-sayilari")
+def kisi_sayilari(db: Session = Depends(get_db), _: models.Kullanici = Depends(_personel_girisi_gerekli)):
+    """Kişiler ekranının sekme sayıları (2026-11-02): aktif kişiler tipe göre, pasifler ve izni
+    7 gün içinde bitecekler. Yol /kisiler/... değil: /kisiler/{kisi_id} ile çakışmasın."""
+    K = models.Kisi
+    tipler = dict(db.query(K.tip, func.count(K.id)).filter(K.aktif == True).group_by(K.tip).all())  # noqa: E712
+    simdi = datetime.now()
+    return {
+        "toplam": sum(tipler.values()),
+        "tipler": {t: int(n) for t, n in tipler.items()},
+        "pasif": db.query(func.count(K.id)).filter(K.aktif == False).scalar() or 0,  # noqa: E712
+        "bitecek": db.query(func.count(K.id)).filter(K.aktif == True, K.bitis_tarihi != None,  # noqa: E712,E711
+                                                     K.bitis_tarihi >= simdi, K.bitis_tarihi <= simdi + timedelta(days=7)).scalar() or 0,
+    }
+
+
 @app.get("/kisiler", response_model=List[schemas.KisiCevap])
 def kisileri_listele(
     tip: Optional[str] = None,

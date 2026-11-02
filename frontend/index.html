@@ -409,6 +409,7 @@
             <ul class="nav nav-tabs kart-sekmeler" role="tablist">
               <li class="nav-item" role="presentation"><a class="nav-link active" href="#kartAraclarPane" data-bs-toggle="tab" data-bs-target="#kartAraclarPane" role="tab"><i class="bi bi-car-front me-1"></i>Araç Listesi <span class="badge bg-primary ms-1" id="kartAracSayisi">0</span></a></li>
               <li class="nav-item" role="presentation"><a class="nav-link" href="#kartKisitPane" data-bs-toggle="tab" data-bs-target="#kartKisitPane" role="tab"><i class="bi bi-clock me-1"></i>Saat / Gün Kısıtlaması</a></li>
+              <li class="nav-item" role="presentation"><a class="nav-link" href="#kartGecisPane" data-bs-toggle="tab" data-bs-target="#kartGecisPane" role="tab" id="kartGecisSekme"><i class="bi bi-clock-history me-1"></i>Son Geçişler</a></li>
             </ul>
             <div class="tab-content border border-top-0 rounded-bottom p-3">
               <div class="tab-pane fade show active" id="kartAraclarPane" role="tabpanel">
@@ -428,6 +429,13 @@
                   <div id="duzenleEkPlakaSonuc" class="small mt-1"></div>
                 </div>
                 <p class="small text-muted mt-2 mb-0">Pasif yapılan araç artık <strong>yetkili sayılmaz</strong> (kişi aktif olsa bile). "Ana yap" ile seçilen araç ana plaka olur, mevcut ana plaka listeye düşer. Araç değişiklikleri anında kaydedilir; kişi bilgileri için alttaki <em>Kaydet</em> düğmesini kullanın.</p>
+              </div>
+              <!-- Son geçişler (2026-11-02): kişinin tüm araçlarının son 15 geçişi; satıra basınca ayrıntı. -->
+              <div class="tab-pane fade" id="kartGecisPane" role="tabpanel">
+                <div class="table-responsive"><table class="table table-sm table-hover align-middle mb-0 kart-gecis-tablo">
+                  <thead><tr><th>Zaman</th><th>Plaka</th><th>Nokta</th><th>Durum</th></tr></thead>
+                  <tbody id="kartGecisTablo"><tr><td colspan="4" class="text-muted small p-3">Yükleniyor…</td></tr></tbody>
+                </table></div>
               </div>
               <div class="tab-pane fade" id="kartKisitPane" role="tabpanel">
                 <p class="small text-muted">Boş bırakılırsa kişi her saat ve her gün giriş yapabilir (tüm araçları için geçerlidir).</p>
@@ -844,6 +852,7 @@
   <span class="badge bg-info text-dark me-2 d-none" id="cizelgeVardiyaRozet" title="Vardiya çizelgesine göre şu an nöbette olan vardiya"></span>
   <span class="text-white-50 small d-none d-md-inline me-3"><span id="oturumKullanici"></span> <span id="saatGosterge"></span></span>
   <button id="farkliKullaniciButonu" class="btn btn-sm btn-outline-light d-none" onclick="farkliKullaniciylaGiris()" title="Bu bilgisayarda başka bir hesapla (kullanıcı adı ve parolayla) giriş yap"><i class="bi bi-person-gear"></i> Farklı kullanıcı</button>
+  <button class="btn btn-sm btn-outline-light me-2 yonetim-gecis" id="yonetimGecisDugme" onclick="yonetimModu()" data-rol-min="yonetici" data-rol-davranis="gizle" title="Sistem ayarları ve durum"><i class="bi bi-gear"></i> <span>Yönetim Paneli</span></button>
   <button class="btn btn-sm btn-outline-light me-2" onclick="gorunumDegistir('kapi')" title="Görevliler için sade ekran"><i class="bi bi-door-open"></i> Kapı Modu</button>
   <button id="cikisButonu" class="btn btn-sm btn-outline-light" onclick="oturumKapat()" title="Çıkış yap"><i class="bi bi-box-arrow-right"></i> Çıkış</button>
 </nav>
@@ -1094,8 +1103,9 @@
 
 <div class="app-layout">
   <aside class="pts-sidebar">
-    <div class="sidebar-section-label">ÇALIŞMA ALANI</div>
-    <button class="side-link active" data-target="#canli-sekme"><i class="bi bi-display"></i>Canlı İzleme</button>
+    <div class="sidebar-section-label gunluk-oge">ÇALIŞMA ALANI</div>
+    <div class="yonetim-panel-baslik" data-rol-min="yonetici" data-rol-davranis="gizle"><i class="bi bi-gear-wide-connected"></i> YÖNETİM PANELİ</div>
+    <button class="side-link gunluk-oge active" data-target="#canli-sekme"><i class="bi bi-display"></i>Canlı İzleme</button>
     <!-- 2026-09-23 kullanıcı isteği: "Panel ekranında sadece Son geçişleri
          görmek istiyorum bir de son geçişler sınırlı olmasın sayfa geçişleri
          de olmasını istiyorum" -- eski tek "Anasayfa" (#panel-sekme) sekmesi
@@ -1103,19 +1113,20 @@
          yeni "Kontrol Merkezi" (#kontrol-sekme) sekmesine taşındı, #panel-sekme
          artık YALNIZCA sınırsız/sayfalanabilir Son Geçişler listesini
          gösteriyor (bkz. app.js::sonGecislerYukle). -->
-    <button class="side-link" data-target="#kontrol-sekme"><i class="bi bi-house-door"></i>Kontrol Merkezi</button>
-    <button class="side-link" data-target="#panel-sekme"><i class="bi bi-clock-history"></i>Son Geçişler</button>
-    <button class="side-link" data-target="#iceride-sekme"><i class="bi bi-car-front"></i>İçerideki Araçlar</button>
-    <button class="side-link" data-target="#nobet-sekme"><i class="bi bi-journal-text"></i>Nöbet Defteri <span class="badge bg-danger ms-1 d-none nobet-rozet"></span></button>
-    <button class="side-link" data-target="#kayitlar-sekme"><i class="bi bi-list-ul"></i>Geçiş Kayıtları</button>
-    <button class="side-link" data-target="#kisiler-sekme"><i class="bi bi-people"></i>Kişiler ve Araçlar</button>
-    <button class="side-link" data-target="#karaliste-sekme"><i class="bi bi-slash-circle"></i>Kara Liste</button>
-    <button class="side-link d-none resmi-modul" data-target="#resmi-sekme"><i class="bi bi-briefcase"></i>Resmi Araçlar</button>
+    <button class="side-link gunluk-oge" data-target="#kontrol-sekme"><i class="bi bi-house-door"></i>Kontrol Merkezi</button>
+    <button class="side-link gunluk-oge" data-target="#panel-sekme"><i class="bi bi-clock-history"></i>Son Geçişler</button>
+    <button class="side-link gunluk-oge" data-target="#iceride-sekme"><i class="bi bi-car-front"></i>İçerideki Araçlar</button>
+    <button class="side-link gunluk-oge" data-target="#nobet-sekme"><i class="bi bi-journal-text"></i>Nöbet Defteri <span class="badge bg-danger ms-1 d-none nobet-rozet"></span></button>
+    <button class="side-link gunluk-oge" data-target="#kayitlar-sekme"><i class="bi bi-list-ul"></i>Geçiş Kayıtları</button>
+    <button class="side-link gunluk-oge" data-target="#kisiler-sekme"><i class="bi bi-people"></i>Kişiler ve Araçlar</button>
+    <button class="side-link gunluk-oge" data-target="#karaliste-sekme"><i class="bi bi-slash-circle"></i>Kara Liste</button>
+    <button class="side-link gunluk-oge d-none resmi-modul" data-target="#resmi-sekme"><i class="bi bi-briefcase"></i>Resmi Araçlar</button>
     <!-- 2026-11-02: YÖNETİM katlanabilir; seyrek açılan ayar ekranları menüyü uzatmasın
          (bkz. app.js::yonetimGrubuAyarla). İçindeki sayfa açıkken kendiliğinden açılır. -->
     <button type="button" class="sidebar-section-label side-grup-baslik" data-rol-min="yonetici" data-rol-davranis="gizle"
             aria-expanded="false" aria-controls="yonetimGrubu" onclick="yonetimGrubuAyarla()">YÖNETİM<i class="bi bi-chevron-down side-grup-ok" aria-hidden="true"></i></button>
     <div class="side-grup" id="yonetimGrubu" data-rol-min="yonetici" data-rol-davranis="gizle">
+    <button class="side-link" data-target="#yonetim-sekme" data-rol-min="yonetici" data-rol-davranis="gizle"><i class="bi bi-speedometer"></i>Genel Bakış</button>
     <button class="side-link" data-target="#kamera-sekme" data-rol-min="yonetici" data-rol-davranis="gizle"><i class="bi bi-camera-video"></i>Kameralar</button>
     <button class="side-link" data-target="#bariyer-sekme" data-rol-min="yonetici" data-rol-davranis="gizle"><i class="bi bi-door-open"></i>Bariyer Kontrolü</button>
     <button class="side-link" data-target="#bildirim-sekme" data-rol-min="yonetici" data-rol-davranis="gizle"><i class="bi bi-bell"></i>Bildirimler</button>
@@ -1156,6 +1167,7 @@
     <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#kisiler-sekme" type="button"><i class="bi bi-people-fill me-1"></i>Kişiler</button></li>
     <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#karaliste-sekme" type="button"><i class="bi bi-slash-circle me-1"></i>Kara Liste</button></li>
     <li class="nav-item d-none resmi-modul"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#resmi-sekme" type="button"><i class="bi bi-briefcase me-1"></i>Resmi Araçlar</button></li>
+    <li class="nav-item" data-rol-min="yonetici" data-rol-davranis="gizle"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#yonetim-sekme" type="button"><i class="bi bi-speedometer me-1"></i>Genel Bakış</button></li>
     <li class="nav-item" data-rol-min="yonetici" data-rol-davranis="gizle"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#kamera-sekme" type="button"><i class="bi bi-camera-video me-1"></i>Kameralar</button></li>
     <li class="nav-item" data-rol-min="yonetici" data-rol-davranis="gizle"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#bariyer-sekme" type="button"><i class="bi bi-door-open me-1"></i>Bariyer</button></li>
     <li class="nav-item" data-rol-min="yonetici" data-rol-davranis="gizle"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#site-sekme" type="button"><i class="bi bi-diagram-3 me-1"></i>Site/Nokta</button></li>
@@ -1178,6 +1190,32 @@
     <div class="sayfa-durum"><div class="sayfa-eylem" id="sayfaEylem"></div><span id="lisansMiniDurum" class="license-pill"><i class="bi bi-shield-check"></i> Lisans kontrol ediliyor</span></div>
   </header>
   <div class="tab-content pt-3">
+
+    <!-- ================= YÖNETİM GENEL BAKIŞ (2026-11-02) =================
+         Yönetim panelinin açılış sayfası: sistemin her parçasının durumu tek ekranda;
+         her kutu ilgili ayar ekranını açar (bkz. app.js::yonetimGenelBakisYukle). -->
+    <div class="tab-pane fade" id="yonetim-sekme">
+      <div id="ygUyarilar" class="yg-uyarilar mb-3"></div>
+      <div class="yg-izgara" id="ygIzgara"></div>
+      <div class="row g-3 mt-1">
+        <div class="col-xl-7">
+          <div class="card h-100"><div class="card-header d-flex align-items-center"><span><i class="bi bi-journal-check me-1"></i>Son yönetim işlemleri</span>
+            <button class="btn btn-sm btn-link ms-auto text-decoration-none" data-target="#denetim-sekme">Tümü</button></div>
+            <div class="card-body p-0"><ul class="yg-liste" id="ygDenetim"><li class="text-muted small p-3">Yükleniyor…</li></ul></div></div>
+        </div>
+        <div class="col-xl-5">
+          <div class="card h-100"><div class="card-header"><i class="bi bi-lightning-charge me-1"></i>Sık yapılanlar</div>
+            <div class="card-body yg-kisayol">
+              <button class="btn btn-outline-secondary" data-target="#kullanicilar-sekme"><i class="bi bi-person-plus"></i> Kullanıcı ekle</button>
+              <button class="btn btn-outline-secondary" data-target="#kamera-sekme"><i class="bi bi-camera-video"></i> Kamera ekle</button>
+              <button class="btn btn-outline-secondary" data-target="#bildirim-sekme"><i class="bi bi-bell"></i> Bildirim ayarla</button>
+              <button class="btn btn-outline-secondary" data-target="#sistem-sekme"><i class="bi bi-hdd"></i> Yedek ve ayarlar</button>
+              <button class="btn btn-outline-secondary" data-target="#lisans-sekme"><i class="bi bi-key"></i> Lisans</button>
+              <button class="btn btn-outline-secondary" onclick="window.open('/kilavuz#yonetim','_blank')"><i class="bi bi-book"></i> Yönetim kılavuzu</button>
+            </div></div>
+        </div>
+      </div>
+    </div>
 
     <!-- ================= CANLI İZLEME ================= -->
     <div class="tab-pane fade show active" id="canli-sekme">
@@ -1773,31 +1811,52 @@
             <!-- 2026-10-05 kullanıcı isteği: Kişiler ekranına arama kutusu eklendi
                  (boş alanlardan birine) ve "Şablon İndir" + "Excel İçe Aktar"
                  yan yana tek bir grup olarak sağa alındı. -->
-            <div class="card-header d-flex align-items-center flex-wrap gap-2 kisi-arac-cubugu">
-              <div class="btn-group" role="group">
-                <button class="btn btn-sm btn-outline-secondary tip-filtre active" data-tip="" onclick="kisiTipFiltrele('', this)">Tümü</button>
-                <button class="btn btn-sm btn-outline-secondary tip-filtre" data-tip="abone" onclick="kisiTipFiltrele('abone', this)">Abone</button>
-                <button class="btn btn-sm btn-outline-secondary tip-filtre" data-tip="personel" onclick="kisiTipFiltrele('personel', this)">Personel</button>
-                <button class="btn btn-sm btn-outline-secondary tip-filtre" data-tip="ziyaretci" onclick="kisiTipFiltrele('ziyaretci', this)">Ziyaretçi</button>
-                <button class="btn btn-sm btn-outline-secondary tip-filtre" data-tip="vip" onclick="kisiTipFiltrele('vip', this)">VIP</button>
-                <button class="btn btn-sm btn-outline-secondary tip-filtre" data-tip="alt_isveren" onclick="kisiTipFiltrele('alt_isveren', this)">Alt İşveren</button>
+            <!-- KİŞİLER ARAÇ ÇUBUĞU (2026-11-02): sayılı tip sekmeleri, arama, durum süzgeci ve tek
+                 "İçe / dışa aktar" menüsü (Excel, şablon, içe aktarma modu, geçmişi yeniden bağla). -->
+            <div class="card-header kisi-arac-cubugu">
+              <div class="kisi-sekmeler" role="group" aria-label="Kişi tipi">
+                <button class="tip-filtre active" data-tip="" onclick="kisiTipFiltrele('', this)">Tümü <span class="ks-sayi" data-sayi="toplam"></span></button>
+                <button class="tip-filtre" data-tip="personel" onclick="kisiTipFiltrele('personel', this)">Personel <span class="ks-sayi" data-sayi="personel"></span></button>
+                <button class="tip-filtre" data-tip="ziyaretci" onclick="kisiTipFiltrele('ziyaretci', this)">Ziyaretçi <span class="ks-sayi" data-sayi="ziyaretci"></span></button>
+                <button class="tip-filtre" data-tip="alt_isveren" onclick="kisiTipFiltrele('alt_isveren', this)">Alt İşveren <span class="ks-sayi" data-sayi="alt_isveren"></span></button>
+                <button class="tip-filtre" data-tip="vip" onclick="kisiTipFiltrele('vip', this)">VIP <span class="ks-sayi" data-sayi="vip"></span></button>
+                <button class="tip-filtre" data-tip="abone" onclick="kisiTipFiltrele('abone', this)">Abone <span class="ks-sayi" data-sayi="abone"></span></button>
               </div>
-              <div class="input-group input-group-sm kisi-arama-grubu">
-                <span class="input-group-text"><i class="bi bi-search"></i></span>
-                <input type="search" class="form-control" id="kisiArama" placeholder="Ad, plaka, telefon ara…" title="Ad soyad, plaka (ek araçlar dahil), telefon, daire/departman" autocomplete="off" aria-label="Kişi ara">
-              </div>
-              <button class="btn btn-sm btn-success" onclick="kisilerExcelIndir()"><i class="bi bi-file-earmark-excel"></i> Excel İndir</button>
-              <button class="btn btn-sm btn-outline-secondary" onclick="gecmisKayitlariYenidenBagla()" title="Kişileri silip yeniden yüklediyseniz: plakası eşleşen ESKİ geçiş kayıtlarını (etiketlerini değiştirmeden) kişilere yeniden bağlar. Önce kaç kaydın etkileneceği gösterilir." data-rol-min="yonetici" data-rol-davranis="gizle"><i class="bi bi-link-45deg"></i> Geçmişi Yeniden Bağla</button>
-              <div class="d-flex gap-2 ms-auto">
-                <select class="form-select form-select-sm w-auto" id="topluImportMod" title="Excel'deki plaka sistemde ZATEN kayıtlıysa ne yapılsın?" aria-label="Mevcut plakalar için içe aktarma modu" data-rol-min="operatör" data-rol-davranis="gizle">
-                  <option value="atla">Mevcut plakaları atla</option>
-                  <option value="guncelle">Mevcut kişileri güncelle</option>
+              <div class="kisi-arac-satir">
+                <div class="ka-ara kisi-arama-grubu">
+                  <i class="bi bi-search" aria-hidden="true"></i>
+                  <input type="search" class="form-control" id="kisiArama" placeholder="Ad, plaka, telefon, birim ara…" title="Ad soyad, plaka (ek araçlar dahil), telefon, daire/departman" autocomplete="off" aria-label="Kişi ara">
+                </div>
+                <select class="form-select w-auto" id="kisiDurumFiltre" aria-label="Durum" onchange="kisileriYukle()">
+                  <option value="">Aktif ve pasif</option>
+                  <option value="aktif">Yalnız aktif</option>
+                  <option value="pasif">Yalnız pasif</option>
+                  <option value="bitecek">İzni 7 gün içinde bitecek</option>
                 </select>
-                <button class="btn btn-sm btn-outline-secondary" onclick="kisiIceAktarmaSablonuIndir()" title="Toplu içe aktarma için doldurulacak boş Excel şablonunu indir" data-rol-min="operatör" data-rol-davranis="gizle"><i class="bi bi-file-earmark-arrow-down"></i> Şablon İndir</button>
-                <label class="btn btn-sm btn-outline-primary mb-0" title="Excel'den toplu kişi içe aktar (sütunlar için önce 'Şablon İndir'i kullanın)" data-rol-min="operatör" data-rol-davranis="gizle">
-                  <i class="bi bi-upload"></i> Excel İçe Aktar
-                  <input type="file" id="topluImportDosya" accept=".xlsx,.xls" class="d-none" onchange="topluImport(this)">
-                </label>
+                <button type="button" class="btn btn-outline-warning d-none" id="kisiBitecekUyari" onclick="document.getElementById('kisiDurumFiltre').value='bitecek'; kisileriYukle()"></button>
+                <div class="dropdown ms-auto">
+                  <button type="button" class="btn btn-outline-secondary dropdown-toggle" data-bs-toggle="dropdown" data-bs-auto-close="outside" aria-expanded="false"><i class="bi bi-arrow-down-up"></i> İçe / dışa aktar</button>
+                  <div class="dropdown-menu dropdown-menu-end kisi-aktar-menu">
+                    <button type="button" class="dropdown-item" onclick="kisilerExcelIndir()"><i class="bi bi-file-earmark-excel me-2"></i>Listeyi Excel'e aktar</button>
+                    <div data-rol-min="operatör" data-rol-davranis="gizle">
+                      <div class="dropdown-divider"></div>
+                      <h6 class="dropdown-header">Excel'den toplu ekleme</h6>
+                      <div class="kisi-aktar-ice">
+                        <select class="form-select form-select-sm" id="topluImportMod" title="Excel'deki plaka sistemde ZATEN kayıtlıysa ne yapılsın?" aria-label="Mevcut plakalar için içe aktarma modu">
+                          <option value="atla">Sistemde olan plakaları atla</option>
+                          <option value="guncelle">Sistemde olan kişileri güncelle</option>
+                        </select>
+                        <button type="button" class="btn btn-sm btn-outline-secondary" onclick="kisiIceAktarmaSablonuIndir()" title="Toplu içe aktarma için doldurulacak boş Excel şablonunu indir"><i class="bi bi-file-earmark-arrow-down"></i> Şablon</button>
+                        <label class="btn btn-sm btn-primary mb-0" title="Excel'den toplu kişi içe aktar (sütunlar için önce şablonu kullanın)">
+                          <i class="bi bi-upload"></i> Excel seç
+                          <input type="file" id="topluImportDosya" accept=".xlsx,.xls" class="d-none" onchange="topluImport(this)">
+                        </label>
+                      </div>
+                    </div>
+                    <div class="dropdown-divider" data-rol-min="yonetici" data-rol-davranis="gizle"></div>
+                    <button type="button" class="dropdown-item" data-rol-min="yonetici" data-rol-davranis="gizle" onclick="gecmisKayitlariYenidenBagla()" title="Kişileri silip yeniden yüklediyseniz: plakası eşleşen eski geçiş kayıtlarını kişilere yeniden bağlar"><i class="bi bi-link-45deg me-2"></i>Geçmiş kayıtları kişilere yeniden bağla</button>
+                  </div>
+                </div>
               </div>
             </div>
             <div id="kisiTopluCubuk" class="d-none kisi-toplu-cubuk border-bottom px-3 py-2" role="region" aria-label="Seçili kişiler için toplu işlemler">
@@ -1819,9 +1878,9 @@
             </div>
             <div class="card-body p-0">
               <div class="table-responsive">
-                <table class="table table-hover mb-0 align-middle">
+                <table class="table table-hover mb-0 align-middle kisi-tablo">
                   <thead class="table-light">
-                    <tr><th id="kisiSecimBasligi" class="kisi-sec-hucre"><input type="checkbox" class="form-check-input" id="kisiTumunuSec" onchange="kisiTumunuSecDegistir(this.checked)" title="Listelenen herkesi seç / bırak" aria-label="Listelenen tüm kişileri seç"></th><th>Ad Soyad</th><th>Plaka</th><th>Tip</th><th>Telefon</th><th>Daire/Departman</th><th>Durum</th><th>İlk Geçiş</th><th>Son Geçiş</th><th>Son Not</th><th></th></tr>
+                    <tr><th id="kisiSecimBasligi" class="kisi-sec-hucre"><input type="checkbox" class="form-check-input" id="kisiTumunuSec" onchange="kisiTumunuSecDegistir(this.checked)" title="Listelenen herkesi seç / bırak" aria-label="Listelenen tüm kişileri seç"></th><th>Kişi</th><th>Araç</th><th>Tip</th><th>Durum</th><th>Son geçiş</th><th>Son not</th><th><span class="visually-hidden">İşlemler</span></th></tr>
                   </thead>
                   <tbody id="kisilerTablo"></tbody>
                 </table>

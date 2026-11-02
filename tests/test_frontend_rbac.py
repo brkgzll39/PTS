@@ -59,6 +59,8 @@ _OPERATOR_GORMEMELI = {
     # taşıdığı için (bkz. main.py::denetim_kayitlarini_listele) yalnızca
     # yönetici görebilir.
     "#denetim-sekme",
+    # 2026-11-02: Yönetim Paneli'nin açılış sayfası (Genel Bakış).
+    "#yonetim-sekme",
 }
 # "#test-sekme" kenar çubuğunda (sidebar) HİÇ bulunmuyor -- yalnızca ikinci/eski
 # sekme çubuğunda (#anaSekme) bir <li> olarak var (bkz. index.html civarı 347.

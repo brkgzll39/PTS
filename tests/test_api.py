@@ -9252,3 +9252,15 @@ def test_istatistik_bugun_sayilari(client, admin_header):
     assert sonra["bugun_giris"] == once["bugun_giris"] + 1
     assert sonra["bugun_cikis"] == once["bugun_cikis"] + 1
     assert sonra["bugun_ziyaretci"] == once["bugun_ziyaretci"] + 1
+
+
+def test_kisi_sayilari(client, admin_header, operator_header):
+    """2026-11-02: Kişiler ekranındaki sekme sayıları."""
+    once = client.get("/kisi-sayilari", headers=operator_header).json()
+    r = client.post("/kisiler", json={"ad_soyad": "Sayı Ziyaretçi", "plaka_no": "34 SAY 01", "tip": "ziyaretci",
+                                      "bitis_tarihi": (datetime.now() + timedelta(days=3)).isoformat()}, headers=admin_header)
+    assert r.status_code == 200, r.text
+    sonra = client.get("/kisi-sayilari", headers=operator_header).json()
+    assert sonra["toplam"] == once["toplam"] + 1
+    assert sonra["tipler"].get("ziyaretci", 0) == once["tipler"].get("ziyaretci", 0) + 1
+    assert sonra["bitecek"] == once["bitecek"] + 1
