@@ -9094,51 +9094,38 @@ def test_resmi_arac_listeden_kaldirma(client, operator_header, izleyici_header, 
     assert r.status_code == 409 and "pasif" in r.json()["detail"]
 
 
-# ---------------- Araç özellikleri ve plaka-araç uyuşmazlığı, fotoğraflı bildirim (2026-10-31) ----------------
+# ---------------- Araç rengi, fotoğraflı bildirim (2026-10-31; marka/tip 2026-11-02 kaldırıldı) ----------------
 
-def _arac_gecmisi(plaka, renk="Beyaz", marka="Ford", tip="Pikap", adet=4):
-    for i in range(adet):
-        _kayit_ekle_db(plaka, "giris", once=timedelta(days=i + 1), arac_renk=renk, arac_marka=marka, arac_tip=tip)
-
-
-def _uyusmazlik_alarmlari(client, header, plaka):
-    return [a for a in client.get("/alarmlar?alarm_tipi=arac_uyusmazligi&limit=100", headers=header).json() if a["plaka_no"] == plaka]
-
-
-def test_arac_ozelligi_kayittan_once_gelirse_kayda_yazilir_ve_uyusmazlik_alarmi(client, operator_header, monkeypatch):
-    _arac_gecmisi("34 UYS 01")
+def test_arac_rengi_kayittan_once_gelirse_kayda_yazilir_marka_yazilmaz(client, operator_header, monkeypatch):
     monkeypatch.setattr(pts_main, "_arac_ozellik_onbellek", {})
-    pts_main._arac_ozelligi_geldi("Uyuşmazlık Kam", "34UYS01", {"renk": "Kırmızı", "marka": "Hyundai", "tip": "SUV"})
-    k = _manuel_gecis(client, operator_header, "34 UYS 01", "Uyuşmazlık Kam", "giris")
-    assert (k["arac_renk"], k["arac_marka"], k["arac_tip"]) == ("Kırmızı", "Hyundai", "SUV")
-    alarm = _uyusmazlik_alarmlari(client, operator_header, "34 UYS 01")
-    assert len(alarm) == 1 and "normalde Beyaz Ford Pikap, şimdi Kırmızı Hyundai SUV" in alarm[0]["mesaj"]
-    # Aynı plaka için 6 saat içinde ikinci alarm yok
-    _manuel_gecis(client, operator_header, "34 UYS 01", "Uyuşmazlık Kam 2", "giris")
-    assert len(_uyusmazlik_alarmlari(client, operator_header, "34 UYS 01")) == 1
+    pts_main._arac_ozelligi_geldi("Renk Kam", "34UYS01", {"renk": "Kırmızı", "marka": "Hyundai", "tip": "SUV"})
+    k = _manuel_gecis(client, operator_header, "34 UYS 01", "Renk Kam", "giris")
+    assert k["arac_renk"] == "Kırmızı"
+    assert "arac_marka" not in k and "arac_tip" not in k
+    assert client.get("/alarmlar?alarm_tipi=arac_uyusmazligi&limit=100", headers=operator_header).json() == []
 
 
-def test_arac_ozelligi_kayittan_sonra_gelirse_kayit_guncellenir(client, operator_header, monkeypatch):
-    _arac_gecmisi("34 UYS 02")
+def test_arac_rengi_kayittan_sonra_gelirse_kayit_guncellenir(client, operator_header, monkeypatch):
     monkeypatch.setattr(pts_main, "_arac_ozellik_onbellek", {})
-    k = _manuel_gecis(client, operator_header, "34 UYS 02", "Uyuşmazlık Kam", "giris")
-    assert k["arac_marka"] is None
-    pts_main._arac_ozelligi_geldi("Uyuşmazlık Kam", "34UYS02", {"renk": "Siyah", "marka": "Renault", "tip": "Otomobil"})
+    k = _manuel_gecis(client, operator_header, "34 UYS 02", "Renk Kam", "giris")
+    assert k["arac_renk"] is None
+    pts_main._arac_ozelligi_geldi("Renk Kam", "34UYS02", {"renk": "Siyah", "marka": "Renault"})
     guncel = next(x for x in client.get("/kayitlar?plaka=34 UYS 02", headers=operator_header).json() if x["id"] == k["id"])
-    assert guncel["arac_marka"] == "Renault"
-    assert len(_uyusmazlik_alarmlari(client, operator_header, "34 UYS 02")) == 1
+    assert guncel["arac_renk"] == "Siyah"
 
 
-def test_yalniz_renk_farki_ya_da_az_gecmis_alarm_vermez(client, operator_header, monkeypatch):
-    monkeypatch.setattr(pts_main, "_arac_ozellik_onbellek", {})
-    _arac_gecmisi("34 UYS 03")
-    pts_main._arac_ozelligi_geldi("K", "34UYS03", {"renk": "Gri", "marka": "Ford", "tip": "Pikap"})  # gece IR: renk farklı
-    _manuel_gecis(client, operator_header, "34 UYS 03", "K", "giris")
-    _arac_gecmisi("34 UYS 04", adet=2)  # öğrenmek için yetersiz geçmiş
-    pts_main._arac_ozelligi_geldi("K", "34UYS04", {"renk": "Kırmızı", "marka": "Hyundai", "tip": "SUV"})
-    _manuel_gecis(client, operator_header, "34 UYS 04", "K", "giris")
-    assert _uyusmazlik_alarmlari(client, operator_header, "34 UYS 03") == []
-    assert _uyusmazlik_alarmlari(client, operator_header, "34 UYS 04") == []
+def test_eski_marka_tip_acilista_silinir():
+    import asyncio
+    from backend.database import SessionLocal
+    k = _kayit_ekle_db("34 UYS 06", "giris", arac_renk="Beyaz", arac_marka="Honda", arac_tip="SUV")
+    asyncio.run(pts_main._bozuk_arac_ozelliklerini_temizle())
+    db = SessionLocal()
+    try:
+        from backend import models as _models
+        kayit = db.get(_models.Kayit, k)
+        assert (kayit.arac_renk, kayit.arac_marka, kayit.arac_tip) == ("Beyaz", None, None)
+    finally:
+        db.close()
 
 
 def test_alarm_bildirimleri_fotografli_olagan_gecis_metin(tmp_path, monkeypatch):
@@ -9155,16 +9142,17 @@ def test_alarm_bildirimleri_fotografli_olagan_gecis_metin(tmp_path, monkeypatch)
     assert cagri == {"metin": True}
     eklenen = {}
     monkeypatch.setattr(eposta, "eposta_gonder_sync", lambda a, k, m, ek_yolu=None: eklenen.update(ek=ek_yolu) or (True, None))
-    pts_main._bildirim_gonder_sync("email", "a@b.co", "POST", {"alarm_tipi": "arac_uyusmazligi", "goruntu_yolu": str(foto)})
+    pts_main._bildirim_gonder_sync("email", "a@b.co", "POST", {"alarm_tipi": "klon_plaka", "goruntu_yolu": str(foto)})
     assert eklenen["ek"] == str(foto)
 
 
-def test_telegram_plaka_cevabinda_arac(client):
+def test_telegram_plaka_cevabinda_arac_rengi(client):
     from backend.database import SessionLocal
-    _arac_gecmisi("34 UYS 05", adet=1)
+    _kayit_ekle_db("34 UYS 05", "giris", once=timedelta(days=1), arac_renk="Beyaz")
     db = SessionLocal()
     try:
-        assert "Araç: Beyaz Ford Pikap" in pts_main._telegram_plaka_cevabi(db, "34UYS05")
+        cevap = pts_main._telegram_plaka_cevabi(db, "34UYS05")
+        assert "Araç rengi: Beyaz" in cevap and "Ford" not in cevap
     finally:
         db.close()
 

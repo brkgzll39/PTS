@@ -5635,20 +5635,17 @@ def _beklenen_ziyaretci_notu(b: models.BeklenenZiyaretci) -> str:
     return " · ".join(parcalar)[:500]
 
 
-# ARAÇ ÖZELLİKLERİ VE PLAKA-ARAÇ UYUŞMAZLIĞI (2026-10-31, kullanıcı isteği). Dahua
-# kameraları plakanın yanında aracın rengini, markasını ve tipini de bildirir (bkz.
-# dahua_olay.arac_ozellikleri). Kameranın olayı PTS kaydından önce ya da sonra
-# gelebildiği için iki yoldan bağlanır: kayıt oluşurken son 150 sn'de gelen özellik
-# alınır (_arac_ozelligi_bul), ya da özellik kayıttan sonra gelirse az önceki kayıt
-# güncellenir (_arac_ozelligi_geldi). Aynı plakanın geçmişteki geçişlerinden aracın
-# "bilinen" markası/rengi çıkarılır; plaka bambaşka bir araçta okunursa (sahte / başka
-# araçtan sökülmüş plaka) alarm verilir. Yanlış alarm olmasın diye: en az 3 geçişte
-# aynı marka (%70+) gerekir ve marka farkına ek olarak renk ya da tip de tutmamalıdır
-# (gece IR'de renk, bazen marka tek başına yanlış okunabilir).
+# ARAÇ RENGİ (2026-10-31; 2026-11-02 sadeleşti). Dahua kameraları plakanın yanında
+# aracın rengini de bildirir (bkz. dahua_olay.arac_ozellikleri). Kameranın olayı PTS
+# kaydından önce ya da sonra gelebildiği için iki yoldan bağlanır: kayıt oluşurken son
+# 150 sn'de gelen renk alınır (_arac_ozelligi_bul), ya da renk kayıttan sonra gelirse az
+# önceki kayıt güncellenir (_arac_ozelligi_geldi).
+# 2026-11-02 (kullanıcı isteği): kameranın marka/model tahmini sahada çok yanlış çıktığı
+# için (ör. Fiat'a "Honda") marka ve tip artık kaydedilmez, gösterilmez; bunlara dayanan
+# "plaka-araç uyuşmazlığı" alarmı da kaldırıldı. Eski kayıtlardaki marka/tip açılışta silinir.
 _ARAC_OZELLIK_SURE = timedelta(seconds=150)
 _arac_ozellik_onbellek: dict = {}
 _arac_ozellik_kilit = threading.Lock()
-_UYUSMAZLIK_TEKRAR = timedelta(hours=6)
 
 
 def _arac_ozelligi_bul(plaka: str) -> dict:
@@ -5660,77 +5657,14 @@ def _arac_ozelligi_bul(plaka: str) -> dict:
 
 
 def _arac_ozelligini_ata(kayit: models.Kayit, ozellik: dict) -> bool:
-    if not ozellik:
+    if not ozellik or not ozellik.get("renk"):
         return False
-    kayit.arac_renk = ozellik.get("renk") or kayit.arac_renk
-    kayit.arac_marka = ozellik.get("marka") or kayit.arac_marka
-    kayit.arac_tip = ozellik.get("tip") or kayit.arac_tip
+    kayit.arac_renk = ozellik["renk"]
     return True
 
 
-def _arac_metni(renk: Optional[str], marka: Optional[str], tip: Optional[str]) -> str:
-    return " ".join(x for x in (renk, marka, tip) if x) or "-"
-
-
-def _arac_bilinen_ozellik(db: Session, plaka: str, haric_id: Optional[int] = None) -> Optional[dict]:
-    """Plakanın son geçişlerinden öğrenilen araç: {"marka", "renk", "tip", "adet"} ya da None."""
-    from collections import Counter
-    K = models.Kayit
-    sorgu = db.query(K.arac_renk, K.arac_marka, K.arac_tip).filter(
-        _plaka_normalize_sql(K.plaka_no) == _plaka_normalize(plaka), K.arac_marka != None,  # noqa: E711
-        K.tarih_saat >= datetime.now() - timedelta(days=120))
-    if haric_id:
-        sorgu = sorgu.filter(K.id != haric_id)
-    satirlar = sorgu.order_by(desc(K.tarih_saat)).limit(30).all()
-    if len(satirlar) < 3:
-        return None
-
-    def baskin(degerler):
-        degerler = [d for d in degerler if d]
-        if not degerler:
-            return None
-        deger, adet = Counter(d.lower() for d in degerler).most_common(1)[0]
-        return next(d for d in degerler if d.lower() == deger) if adet >= 3 and adet / len(degerler) >= 0.7 else None
-
-    marka = baskin([m for _, m, _ in satirlar])
-    if not marka:
-        return None
-    return {"marka": marka, "renk": baskin([r for r, _, _ in satirlar]), "tip": baskin([t for _, _, t in satirlar]),
-            "adet": len(satirlar)}
-
-
-def _arac_uyusmazligi_mesaji(db: Session, kayit: models.Kayit) -> Optional[str]:
-    if not kayit.arac_marka:
-        return None
-    bilinen = _arac_bilinen_ozellik(db, kayit.plaka_no, haric_id=kayit.id)
-    if not bilinen or kayit.arac_marka.lower() == bilinen["marka"].lower():
-        return None
-    farkli = lambda a, b: bool(a and b and a.lower() != b.lower())  # noqa: E731
-    if not (farkli(kayit.arac_renk, bilinen["renk"]) or farkli(kayit.arac_tip, bilinen["tip"])):
-        return None
-    A = models.Alarm
-    if db.query(A.id).filter(A.alarm_tipi == "arac_uyusmazligi", A.plaka_no == kayit.plaka_no,
-                             A.tarih_saat >= datetime.now() - _UYUSMAZLIK_TEKRAR).first():
-        return None
-    return (f"PLAKA-ARAÇ UYUŞMAZLIĞI: {kayit.plaka_no} normalde {_arac_metni(bilinen['renk'], bilinen['marka'], bilinen['tip'])}, "
-            f"şimdi {_arac_metni(kayit.arac_renk, kayit.arac_marka, kayit.arac_tip)} ({kayit.kamera_id} "
-            f"{kayit.tarih_saat:%H:%M}). Sahte ya da başka araçtan alınmış plaka olabilir; aracı kontrol edin.")
-
-
-def _arac_uyusmazligi_isle(db: Session, kayit: models.Kayit) -> Optional[str]:
-    mesaj = _arac_uyusmazligi_mesaji(db, kayit)
-    if mesaj:
-        db.add(models.Alarm(kayit_id=kayit.id, plaka_no=kayit.plaka_no, alarm_tipi="arac_uyusmazligi", mesaj=mesaj[:255]))
-        db.commit()
-        logger.warning(mesaj)
-        _bildirim_tetikle(db, "arac_uyusmazligi", {"olay": "arac_uyusmazligi", "alarm_tipi": "arac_uyusmazligi",
-                                                    "plaka_no": kayit.plaka_no, "mesaj": mesaj,
-                                                    "goruntu_yolu": kayit.goruntu_yolu})
-    return mesaj
-
-
 def _arac_ozelligi_geldi(kamera_ad: str, plaka: str, ozellik: dict) -> None:
-    """Dahua dinleyicisinden (ayrı iş parçacığı): özelliği saklar; kayıt zaten oluştuysa ona yazar."""
+    """Dahua dinleyicisinden (ayrı iş parçacığı): rengi saklar; kayıt zaten oluştuysa ona yazar."""
     simdi = datetime.now()
     anahtar = _plaka_normalize(plaka)
     with _arac_ozellik_kilit:
@@ -5741,14 +5675,13 @@ def _arac_ozelligi_geldi(kamera_ad: str, plaka: str, ozellik: dict) -> None:
     try:
         K = models.Kayit
         kayit = (db.query(K).filter(_plaka_normalize_sql(K.plaka_no) == anahtar, K.tarih_saat >= simdi - _ARAC_OZELLIK_SURE,
-                                    K.arac_marka == None, K.arac_renk == None)  # noqa: E711
+                                    K.arac_renk == None)  # noqa: E711
                  .order_by(desc(K.tarih_saat)).first())
         if kayit is not None and _arac_ozelligini_ata(kayit, ozellik):
             db.commit()
-            _arac_uyusmazligi_isle(db, kayit)
     except Exception:
         db.rollback()
-        logger.exception("[%s] Araç özelliği kayda yazılamadı", kamera_ad)
+        logger.exception("[%s] Araç rengi kayda yazılamadı", kamera_ad)
     finally:
         db.close()
 
@@ -6000,10 +5933,6 @@ def _kayit_olustur_ve_bildir(db: Session, plaka_no: str, kamera_id: str, yon: st
         except Exception as exc:
             logger.error("Şüpheli araç kontrolü hatası: %s", exc)
 
-    try:
-        _arac_uyusmazligi_isle(db, kayit)
-    except Exception as exc:
-        logger.error("Plaka-araç uyuşmazlığı kontrolü hatası: %s", exc)
 
     try:
         klon_mesaj = _klon_plaka_suphesi(db, kayit)
@@ -6171,7 +6100,7 @@ def _webhook_gonder_sync(url: str, metot: str, veri: dict) -> "tuple[bool, Optio
 
 
 _BILDIRIM_TIPLERI = ("webhook", "telegram", "push", "email")
-_FOTOLU_ALARMLAR = {"kara_liste", "klon_plaka", "resmi_arac", "arac_uyusmazligi", "supheli_arac"}
+_FOTOLU_ALARMLAR = {"kara_liste", "klon_plaka", "resmi_arac", "supheli_arac"}
 _FOTOLU_GECISLER = {"kara_liste", "yetkisiz", "suresi_dolmus"}
 
 
@@ -10845,8 +10774,7 @@ def _gecmis_gecisleri_aktar(db: Session, kamera: dict, bas: datetime, bit: datet
         kayit = K(plaka_no=plaka, kamera_id=kamera_ad, yon=yon, tarih_saat=zaman, goruntu_yolu=goruntu_yolu,
                   yetki_durumu=yetki, kisi_id=kisi_id, kisi_tip_anlik=kisi_tip, harici_katkili=True,
                   sonradan_aktarildi=True, misafir_adi=beklenen.misafir_adi if beklenen else None,
-                  arac_renk=(r.get("ozellik") or {}).get("renk"), arac_marka=(r.get("ozellik") or {}).get("marka"),
-                  arac_tip=(r.get("ozellik") or {}).get("tip"),
+                  arac_renk=(r.get("ozellik") or {}).get("renk"),
                   not_metni=(_beklenen_ziyaretci_notu(beklenen) if beklenen
                              else (_kisinin_otomatik_notu(db, kisi_id) if kisi_id else None)))
         db.add(kayit)
@@ -10950,12 +10878,14 @@ async def _nabiz_dongu() -> None:
 @app.on_event("startup")
 async def _bozuk_arac_ozelliklerini_temizle():
     """2026-10-31 düzeltmesinden önce boş değerli alandan sonraki satır araç tipi sanılıp
-    yazılmıştı ("Events[0].Object.Center[0]=762"); bu değerler silinir (tekrarlanabilir)."""
+    yazılmıştı ("Events[0].Object.Center[0]=762"); bu değerler silinir (tekrarlanabilir).
+    2026-11-02: marka/tip artık kullanılmıyor; eski kayıtlardaki yanlış tahminler de silinir."""
     db = SessionLocal()
     try:
         K = models.Kayit
-        for alan in (K.arac_renk, K.arac_marka, K.arac_tip):
-            db.query(K).filter(alan.like("%=%")).update({alan: None}, synchronize_session=False)
+        db.query(K).filter(K.arac_renk.like("%=%")).update({K.arac_renk: None}, synchronize_session=False)
+        db.query(K).filter(or_(K.arac_marka != None, K.arac_tip != None)).update(  # noqa: E711
+            {K.arac_marka: None, K.arac_tip: None}, synchronize_session=False)
         db.commit()
     except Exception:
         db.rollback()
@@ -11302,9 +11232,9 @@ def _telegram_plaka_cevabi(db: Session, aranan: str) -> str:
     kisi = db.get(models.Kisi, kisi_id) if kisi_id else None
     if kisi:
         satirlar.append(f"Kişi: {kisi.ad_soyad} ({kisi.tip}{', ' + kisi.daire_departman if kisi.daire_departman else ''})")
-    arac = next((k for k in son if k.arac_marka or k.arac_renk), None)
+    arac = next((k for k in son if k.arac_renk), None)
     if arac is not None:
-        satirlar.append(f"Araç: {_arac_metni(arac.arac_renk, arac.arac_marka, arac.arac_tip)} (kameranın okuması)")
+        satirlar.append(f"Araç rengi: {arac.arac_renk} (kameranın okuması)")
     elif yetki != "kara_liste":
         satirlar.append("Tanımlı değil (ziyaretçi)")
     ilk = son[0]
