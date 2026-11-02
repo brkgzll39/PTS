@@ -1108,10 +1108,14 @@
     <button class="side-link" data-target="#iceride-sekme"><i class="bi bi-car-front"></i>İçerideki Araçlar</button>
     <button class="side-link" data-target="#nobet-sekme"><i class="bi bi-journal-text"></i>Nöbet Defteri <span class="badge bg-danger ms-1 d-none nobet-rozet"></span></button>
     <button class="side-link" data-target="#kayitlar-sekme"><i class="bi bi-list-ul"></i>Geçiş Kayıtları</button>
-    <button class="side-link" data-target="#kisiler-sekme"><i class="bi bi-people"></i>Aboneler ve Kişiler</button>
+    <button class="side-link" data-target="#kisiler-sekme"><i class="bi bi-people"></i>Kişiler ve Araçlar</button>
     <button class="side-link" data-target="#karaliste-sekme"><i class="bi bi-slash-circle"></i>Kara Liste</button>
     <button class="side-link d-none resmi-modul" data-target="#resmi-sekme"><i class="bi bi-briefcase"></i>Resmi Araçlar</button>
-    <div class="sidebar-section-label" data-rol-min="yonetici" data-rol-davranis="gizle">YÖNETİM</div>
+    <!-- 2026-11-02: YÖNETİM katlanabilir; seyrek açılan ayar ekranları menüyü uzatmasın
+         (bkz. app.js::yonetimGrubuAyarla). İçindeki sayfa açıkken kendiliğinden açılır. -->
+    <button type="button" class="sidebar-section-label side-grup-baslik" data-rol-min="yonetici" data-rol-davranis="gizle"
+            aria-expanded="false" aria-controls="yonetimGrubu" onclick="yonetimGrubuAyarla()">YÖNETİM<i class="bi bi-chevron-down side-grup-ok" aria-hidden="true"></i></button>
+    <div class="side-grup" id="yonetimGrubu" data-rol-min="yonetici" data-rol-davranis="gizle">
     <button class="side-link" data-target="#kamera-sekme" data-rol-min="yonetici" data-rol-davranis="gizle"><i class="bi bi-camera-video"></i>Kameralar</button>
     <button class="side-link" data-target="#bariyer-sekme" data-rol-min="yonetici" data-rol-davranis="gizle"><i class="bi bi-door-open"></i>Bariyer Kontrolü</button>
     <button class="side-link" data-target="#bildirim-sekme" data-rol-min="yonetici" data-rol-davranis="gizle"><i class="bi bi-bell"></i>Bildirimler</button>
@@ -1122,6 +1126,7 @@
     <button class="side-link" data-target="#sistem-sekme" data-rol-min="yonetici" data-rol-davranis="gizle"><i class="bi bi-terminal"></i>Sistem / Log</button>
     <button class="side-link" data-target="#denetim-sekme" data-rol-min="yonetici" data-rol-davranis="gizle"><i class="bi bi-journal-check"></i>Denetim Kayıtları</button>
     <button class="side-link" data-target="#test-sekme" data-rol-min="yonetici" data-rol-davranis="gizle"><i class="bi bi-plus-circle"></i>Elle Kayıt (Test)</button>
+    </div>
     <div class="sidebar-section-label">DESTEK</div>
     <!-- 2026-09-22 kullanıcı isteği: "Bu yazılımı kullanan kişi ve
          kuruluşların arıza yaşaması durumunda Sistem Yöneticisiyle
@@ -1164,14 +1169,18 @@
     <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#iletisim-sekme" type="button"><i class="bi bi-headset me-1"></i>İletişim</button></li>
   </ul>
 
+  <!-- SAYFA BAŞLIĞI (2026-11-02): her ekranda aynı yerde ad, kısa açıklama ve (Yönetim
+       ekranlarında) üst bölüm; bkz. app.js::sayfaBasligiGuncelle. -->
+  <header class="sayfa-baslik" id="sayfaBaslik">
+    <div class="sayfa-yol" id="sayfaYol" hidden></div>
+    <h1 id="sayfaAdi">Canlı İzleme</h1>
+    <p id="sayfaAciklama">Kamera görüntüleri ve son geçişler</p>
+    <div class="sayfa-durum"><div class="sayfa-eylem" id="sayfaEylem"></div><span id="lisansMiniDurum" class="license-pill"><i class="bi bi-shield-check"></i> Lisans kontrol ediliyor</span></div>
+  </header>
   <div class="tab-content pt-3">
 
     <!-- ================= CANLI İZLEME ================= -->
     <div class="tab-pane fade show active" id="canli-sekme">
-      <div class="live-toolbar d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3">
-        <div><span class="live-dot"></span><strong>Canlı İzleme</strong><span class="text-muted ms-2 small">Kamera bağlantıları ve son geçişler</span></div>
-        <div class="d-flex align-items-center gap-3 small"><span id="lisansMiniDurum" class="license-pill"><i class="bi bi-shield-check"></i> Lisans kontrol ediliyor</span><span class="text-muted"><i class="bi bi-wifi"></i> Sistem çevrimiçi</span></div>
-      </div>
       <div class="row g-3">
         <div class="col-xl-8">
           <div class="camera-wall" id="kameraDuvari">
@@ -1193,7 +1202,7 @@
          içeriğini taşır, sınırsız/sayfalanabilir geçiş listesi ise ayrı
          #panel-sekme'ye (sidebar'da "Son Geçişler") taşındı. -->
     <div class="tab-pane fade" id="kontrol-sekme">
-      <div class="dashboard-heading"><div><span class="eyebrow">GENEL BAKIŞ</span><h1>Kontrol Merkezi</h1><p>Plaka hareketleri ve sistem durumunu tek ekrandan yönetin.</p></div><div class="d-flex gap-2"><button class="btn btn-success" onclick="ziyaretciBilgileriAc()" data-rol-min="operatör" data-rol-davranis="gizle"><i class="bi bi-person-plus-fill"></i> Ziyaretçi Girişi</button><button class="btn btn-outline-secondary" onclick="panelYenile()"><i class="bi bi-arrow-clockwise"></i> Yenile</button></div></div>
+      <div class="dashboard-heading"><div class="d-flex gap-2"><button class="btn btn-success" onclick="ziyaretciBilgileriAc()" data-rol-min="operatör" data-rol-davranis="gizle"><i class="bi bi-person-plus-fill"></i> Ziyaretçi Girişi</button><button class="btn btn-outline-secondary" onclick="panelYenile()"><i class="bi bi-arrow-clockwise"></i> Yenile</button></div></div>
 
       <!-- Vardiya durum şeridi (2026-09-21, "benzersiz ana sayfa" isteği): yalnızca
            rol="güvenlik" girişinde ve gerçekten bir VardiyaOturumu varsa görünür
@@ -1203,61 +1212,42 @@
            sorusunun cevabını girişte hemen, aramadan görünür kılmak. -->
       <div id="vardiyaHeroSeridi" class="shift-banner d-none mb-3"></div>
 
-      <div class="section-label">NİZAMİYE DURUMU</div>
-      <!-- Kamera listesinden OTOMATIK türetilir (kamera "ad" alanına göre gruplanır,
-           bkz. app.js::nizamiyeSemasiniYukle) -- yeni bir kamera eklendiğinde/silindiğinde
-           elle güncelleme gerekmez. "id" değil "ad" kullanılması bilinçli: bu, sistemin
-           geri kalanındaki (Vardiya Grupları, Kamera Erişimi) aynı "ad bazlı nokta kimliği"
-           kuralıyla tutarlıdır. -->
-      <div id="nizamiyeSemasi" class="gate-scheme mb-4"><div class="empty-state">Kameralar yükleniyor…</div></div>
+      <!-- KONTROL MERKEZİ (2026-11-02, güvenlik amiri için): önce bugünün sayıları, sonra
+           dikkat gerektirenler ve kapıların durumu; genel toplamlar tek satırda. -->
+      <div class="section-label">BUGÜN</div>
+      <div class="km-bugun mb-4">
+        <div class="km-sayi"><span>Giriş</span><b id="kmGiris">-</b></div>
+        <div class="km-sayi"><span>Çıkış</span><b id="kmCikis">-</b></div>
+        <button type="button" class="km-sayi km-tik" data-gate-hedef="#iceride-sekme" title="İçerideki araçları aç">
+          <span>Şu an içeride <i class="bi bi-arrow-up-right"></i></span><b id="istIceride">-</b><small id="kmIcerideZiyaretci"></small></button>
+        <div class="km-sayi"><span>Ziyaretçi girişi</span><b id="kmZiyaretci">-</b></div>
+        <div class="km-sayi"><span>Kara liste geçişi</span><b id="kmKaraListe">-</b></div>
+      </div>
 
-      <!-- 2026-11-02: "Hızlı Erişim" renkli kutuları kaldırıldı; sol menüyü tekrarlıyordu. -->
-
-      <div class="section-label">GENEL İSTATİSTİKLER</div>
-      <div class="row g-3 mb-3">
-        <div class="col-6 col-md-3">
-          <div class="card stat-card"><div class="card-body">
-            <div class="text-muted small">Toplam Kayıt</div>
-            <div class="fs-2 fw-bold" id="istToplam">-</div>
-          </div></div>
+      <div class="row g-3 mb-4">
+        <div class="col-xl-8">
+          <div class="card h-100">
+            <div class="card-header d-flex align-items-center gap-2">
+              <span><i class="bi bi-flag me-1"></i>Dikkat gerektirenler</span>
+              <span class="badge rounded-pill bg-danger d-none" id="kmDikkatSayi"></span>
+              <button type="button" class="btn btn-sm btn-link ms-auto text-decoration-none" onclick="panelYenile()"><i class="bi bi-arrow-clockwise"></i> Yenile</button>
+            </div>
+            <div class="card-body p-0"><ul class="km-dikkat" id="kmDikkatListe"><li class="km-bos">Yükleniyor…</li></ul></div>
+          </div>
         </div>
-        <div class="col-6 col-md-3">
-          <div class="card stat-card"><div class="card-body">
-            <div class="text-muted small">Bugünkü Geçiş</div>
-            <div class="fs-2 fw-bold" id="istBugun">-</div>
-          </div></div>
-        </div>
-        <div class="col-6 col-md-3">
-          <div class="card stat-card border-danger"><div class="card-body">
-            <div class="text-muted small">Yetkisiz Giriş</div>
-            <div class="fs-2 fw-bold text-danger" id="istYetkisiz">-</div>
-          </div></div>
-        </div>
-        <div class="col-6 col-md-3">
-          <div class="card stat-card border-dark"><div class="card-body">
-            <div class="text-muted small">Kara Liste Geçiş</div>
-            <div class="fs-2 fw-bold text-dark" id="istKaraListe">-</div>
-          </div></div>
-        </div>
-        <div class="col-6 col-md-3">
-          <div class="card stat-card border-success" role="button" tabindex="0" data-gate-hedef="#iceride-sekme" title="İçerideki araçların listesini aç"><div class="card-body">
-            <div class="text-muted small">Şu An İçeride <i class="bi bi-box-arrow-up-right"></i></div>
-            <div class="fs-2 fw-bold text-success" id="istIceride">-</div>
-          </div></div>
-        </div>
-        <div class="col-6 col-md-3">
-          <div class="card stat-card"><div class="card-body">
-            <div class="text-muted small">Aktif Kişi</div>
-            <div class="fs-2 fw-bold" id="istKisi">-</div>
-          </div></div>
-        </div>
-        <div class="col-6 col-md-3">
-          <div class="card stat-card"><div class="card-body">
-            <div class="text-muted small">Kara Listede</div>
-            <div class="fs-2 fw-bold" id="istKaraListeSayisi">-</div>
-          </div></div>
+        <div class="col-xl-4">
+          <div class="card h-100">
+            <div class="card-header"><i class="bi bi-signpost-split me-1"></i>Kapılar</div>
+            <div class="card-body"><div id="nizamiyeSemasi" class="gate-scheme km-kapilar"><div class="empty-state">Kameralar yükleniyor…</div></div></div>
+          </div>
         </div>
       </div>
+
+      <p class="km-genel small text-muted mb-3">
+        Toplam <b id="istToplam">-</b> geçiş kaydı · bugün <b id="istBugun">-</b> geçiş ·
+        <b id="istKisi">-</b> kayıtlı kişi · <b id="istKaraListeSayisi">-</b> araç kara listede ·
+        tüm zamanlarda <b id="istYetkisiz">-</b> tanımsız giriş, <b id="istKaraListe">-</b> kara liste geçişi
+      </p>
 
       <div class="row g-3 mb-3">
         <div class="col-lg-8">
@@ -1353,7 +1343,7 @@
          bkz. app.js) korunuyor, kart genelinde ayrı bir onclick eklenip bu
          davranışla çakışmasın diye. -->
     <div class="tab-pane fade" id="panel-sekme">
-      <div class="dashboard-heading"><div><span class="eyebrow">GEÇİŞ AKIŞI</span><h1>Son Geçişler</h1><p>Tüm araç giriş/çıkışlarını, en yeniden en eskiye doğru sayfalayarak inceleyin.</p></div><div class="d-flex gap-2"><button class="btn btn-success" onclick="ziyaretciBilgileriAc()" data-rol-min="operatör" data-rol-davranis="gizle"><i class="bi bi-person-plus-fill"></i> Ziyaretçi Girişi</button><button class="btn btn-outline-secondary" onclick="sonGecislerYukle()"><i class="bi bi-arrow-clockwise"></i> Yenile</button></div></div>
+      <div class="dashboard-heading"><div class="d-flex gap-2"><button class="btn btn-success" onclick="ziyaretciBilgileriAc()" data-rol-min="operatör" data-rol-davranis="gizle"><i class="bi bi-person-plus-fill"></i> Ziyaretçi Girişi</button><button class="btn btn-outline-secondary" onclick="sonGecislerYukle()"><i class="bi bi-arrow-clockwise"></i> Yenile</button></div></div>
 
       <div class="card">
         <div class="card-header d-flex justify-content-between align-items-center">
@@ -1553,14 +1543,36 @@
           <div id="guvenlikVardiyaDurumu" class="small mt-1"></div>
         </div>
       </div>
-      <div class="card mb-3">
+      <!-- KAYIT ARAMA (2026-11-02): tek satır arama + hızlı dönem; diğer süzgeçler "Süzgeçler"de.
+           Alan kimlikleri değişmedi (filtreParametreleri, sekmeden çıkınca sıfırlama). -->
+      <div class="card mb-3 kayit-arama">
         <div class="card-body">
-          <div class="row g-2 align-items-end">
-            <div class="col-md-2">
-              <label class="form-label small" for="filtrePlaka">Plaka Ara</label>
-              <input type="text" class="form-control" id="filtrePlaka" placeholder="örn. 34 ABC">
+          <div class="ka-satir">
+            <div class="ka-ara">
+              <i class="bi bi-search" aria-hidden="true"></i>
+              <label class="visually-hidden" for="filtrePlaka">Plaka ara</label>
+              <input type="search" class="form-control" id="filtrePlaka" placeholder="Plaka ara (ör. 34 ABC)" autocomplete="off">
             </div>
-            <div class="col-md-3">
+            <div class="btn-group ka-donem" role="group" aria-label="Dönem">
+              <button type="button" class="btn btn-outline-secondary" data-donem="bugun">Bugün</button>
+              <button type="button" class="btn btn-outline-secondary" data-donem="dun">Dün</button>
+              <button type="button" class="btn btn-outline-secondary" data-donem="7">7 gün</button>
+              <button type="button" class="btn btn-outline-secondary" data-donem="30">30 gün</button>
+            </div>
+            <button type="button" class="btn btn-outline-secondary" id="kaSuzgecDugme" data-bs-toggle="collapse" data-bs-target="#kaSuzgecler"
+                    aria-expanded="false" aria-controls="kaSuzgecler"><i class="bi bi-sliders"></i> Süzgeçler <span class="badge rounded-pill d-none" id="kaSuzgecSayi"></span></button>
+            <button type="button" class="btn btn-primary" onclick="kayitlariYukle()">Ara</button>
+            <div class="dropdown ka-disa">
+              <button type="button" class="btn btn-outline-secondary dropdown-toggle" data-bs-toggle="dropdown" aria-expanded="false"><i class="bi bi-download"></i> Dışa aktar</button>
+              <ul class="dropdown-menu dropdown-menu-end">
+                <li><button type="button" class="dropdown-item" onclick="disaAktar('excel')"><i class="bi bi-file-earmark-excel me-2"></i>Excel (.xlsx)</button></li>
+                <li><button type="button" class="dropdown-item" onclick="disaAktar('pdf')"><i class="bi bi-file-earmark-pdf me-2"></i>PDF raporu</button></li>
+              </ul>
+            </div>
+          </div>
+          <div class="collapse" id="kaSuzgecler">
+            <div class="row g-2 pt-3">
+            <div class="col-sm-6 col-xl-3">
               <label class="form-label small" for="filtreBaslangic">Başlangıç Tarihi/Saati</label>
               <div class="d-flex gap-1">
                 <input type="date" class="form-control" id="filtreBaslangic">
@@ -1570,14 +1582,14 @@
                 <input type="time" class="form-control" id="filtreBaslangicSaat" style="max-width: 6.5rem;" title="Saat (opsiyonel) — boş bırakılırsa günün başından itibaren">
               </div>
             </div>
-            <div class="col-md-3">
+            <div class="col-sm-6 col-xl-3">
               <label class="form-label small" for="filtreBitis">Bitiş Tarihi/Saati</label>
               <div class="d-flex gap-1">
                 <input type="date" class="form-control" id="filtreBitis">
                 <input type="time" class="form-control" id="filtreBitisSaat" style="max-width: 6.5rem;" title="Saat (opsiyonel) — boş bırakılırsa günün sonuna kadar">
               </div>
             </div>
-            <div class="col-md-2">
+            <div class="col-sm-6 col-xl-3">
               <label class="form-label small" for="filtreDurum">Yetki Durumu</label>
               <select class="form-select" id="filtreDurum">
                 <option value="">Tümü</option>
@@ -1593,7 +1605,7 @@
                  main.py::kayitlari_listele, _vardiya_adi_filtresi_uygula. Bu, yukarıdaki
                  "yalnızca KENDİ vardiyanı gör" görünürlük kısıtlamasından BAĞIMSIZ, HERKESİN
                  kullanabileceği bir filtredir. -->
-            <div class="col-md-2">
+            <div class="col-sm-6 col-xl-3">
               <label class="form-label small" for="filtreVardiyaAdi">Vardiya</label>
               <select class="form-select" id="filtreVardiyaAdi">
                 <option value="">Tümü</option>
@@ -1605,7 +1617,7 @@
             </div>
             <!-- 2026-10-14: Lojman / Nizamiye seçimi -- liste, PDF ve Excel'e uygulanır
                  (bkz. main.py::_nizamiye_filtresi_uygula). Seçenekler kameralardan doldurulur. -->
-            <div class="col-md-2">
+            <div class="col-sm-6 col-xl-3">
               <label class="form-label small" for="filtreNizamiye">Nizamiye</label>
               <select class="form-select" id="filtreNizamiye" title="Yalnızca seçilen nizamiyenin kayıtları (rapora da uygulanır)">
                 <option value="">Tümü</option>
@@ -1613,7 +1625,7 @@
             </div>
             <!-- 2026-09-25: yanlış okunmuş olma ihtimali en yüksek otomatik kayıtları
                  gözden geçirmek için (bkz. main.py::_dogrulama_filtresi_uygula). -->
-            <div class="col-md-2">
+            <div class="col-sm-6 col-xl-3">
               <label class="form-label small" for="filtreDogrulama">Doğrulama</label>
               <select class="form-select" id="filtreDogrulama" title="Yanlış okunmuş olabilecek otomatik kayıtları göster">
                 <option value="">Tümü</option>
@@ -1624,22 +1636,19 @@
                 <option value="kamera_farkli">Kameranın okuması farklı (kontrol gerekli)</option>
               </select>
             </div>
-            <div class="col-md-2 d-flex gap-2">
-              <button class="btn btn-primary flex-fill" onclick="kayitlariYukle()"><i class="bi bi-search"></i> Filtrele</button>
+            </div>
+            <div class="d-flex justify-content-end gap-2 pt-2">
+              <button type="button" class="btn btn-sm btn-link text-decoration-none" onclick="kayitSuzgecleriniTemizle()">Süzgeçleri temizle</button>
             </div>
           </div>
-          <div class="mt-2 d-flex gap-2 flex-wrap align-items-center">
-            <button class="btn btn-success btn-sm" onclick="disaAktar('excel')"><i class="bi bi-file-earmark-excel"></i> Excel</button>
-            <button class="btn btn-danger btn-sm" onclick="disaAktar('pdf')"><i class="bi bi-file-earmark-pdf"></i> PDF</button>
-            <span class="ms-auto small text-muted" id="kayitlarSayac">-</span>
-          </div>
+          <div class="ka-alt"><span class="small text-muted" id="kayitlarSayac">-</span><span class="small text-muted d-none d-md-inline">Ayrıntı için satıra tıklayın</span></div>
         </div>
       </div>
 
       <div class="card">
         <div class="card-body p-0">
           <div class="table-responsive">
-            <table class="table table-hover mb-0 align-middle">
+            <table class="table table-hover mb-0 align-middle kayit-tablo" id="kayitTablosu">
               <thead class="table-light">
                 <!-- 2026-09-23 kullanıcı isteği: "bu doğrulama sutununa
                      yönetici dışında kimsenin görmesine gerek yok" -- bu
@@ -1653,7 +1662,7 @@
                      çiziliyor, bu yüzden CSS ile gizlemek yerine üretim
                      anında atlanması tercih edildi -- aksi halde her
                      yenilemede yeniden gizlenmesi gerekirdi). -->
-                <tr><th>Görsel</th><th>ID</th><th>Plaka</th><th>Tarih/Saat</th><th>Kamera</th><th>Yön</th><th>Durum</th><th>Kişi/Tip</th><th>İsim</th><th title="Arvento entegrasyonundan otomatik gelen, o an aracı kullanan personel bilgisi">Sürücü</th><th>Vardiya</th><th title="Bu okuma kaç farklı karede tekrarlanıp doğrulandı" data-rol-min="yonetici" data-rol-davranis="gizle">Doğrulama</th><th></th></tr>
+                <tr><th class="kt-gorsel"><span class="visually-hidden">Görsel</span></th><th>Plaka</th><th>Zaman</th><th>Nokta</th><th>Kişi</th><th>Durum</th><th class="kt-surucu" title="Arvento entegrasyonundan otomatik gelen, o an aracı kullanan personel bilgisi">Sürücü</th><th class="kt-vardiya">Vardiya</th><th title="Bu okuma kaç farklı karede tekrarlanıp doğrulandı" data-rol-min="yonetici" data-rol-davranis="gizle">Doğrulama</th><th><span class="visually-hidden">İşlemler</span></th></tr>
               </thead>
               <tbody id="kayitlarTablo"></tbody>
             </table>
@@ -1664,11 +1673,12 @@
     </div>
 
     <!-- ================= KİŞİLER ================= -->
-    <div class="tab-pane fade" id="kisiler-sekme">
+    <div class="tab-pane fade ekle-kapali" id="kisiler-sekme">
+      <div class="dashboard-heading"><div class="d-flex gap-2"><button class="btn btn-primary" onclick="eklePaneliAc('#kisiler-sekme')" data-rol-min="operatör" data-rol-davranis="gizle"><i class="bi bi-plus-lg"></i> Yeni kişi</button></div></div>
       <div class="row g-3">
-        <div class="col-lg-4">
+        <div class="col-lg-4 ekle-kolon">
           <div class="card">
-            <div class="card-header"><i class="bi bi-person-plus-fill me-1"></i>Yeni Kişi Ekle</div>
+            <div class="card-header d-flex align-items-center"><i class="bi bi-person-plus-fill me-1"></i>Yeni Kişi Ekle<button type="button" class="btn-close ms-auto" aria-label="Kapat" onclick="eklePaneliKapat('#kisiler-sekme')"></button></div>
             <div class="card-body">
               <form id="kisiForm" data-rol-min="operatör">
                 <div class="mb-2">
@@ -1743,8 +1753,11 @@
               </form>
             </div>
           </div>
-          <!-- SIK GELEN TANIMSIZ ARAÇLAR (2026-10-31): bkz. main.py::kisi_onerileri -->
-          <div class="card mt-3" data-rol-min="operatör" data-rol-davranis="gizle">
+        </div>
+
+        <div class="col-lg-8 liste-kolon">
+            <!-- SIK GELEN TANIMSIZ ARAÇLAR (2026-10-31): bkz. main.py::kisi_onerileri -->
+          <div class="card mb-3" id="kisiOneriKart" data-rol-min="operatör" data-rol-davranis="gizle">
             <div class="card-header d-flex justify-content-between align-items-center">
               <span><i class="bi bi-lightbulb me-1"></i>Sık Gelen Tanımsız Araçlar</span>
               <button class="btn btn-sm btn-outline-secondary" onclick="kisiOnerileriYukle()" title="Yenile" aria-label="Yenile"><i class="bi bi-arrow-clockwise"></i></button>
@@ -1752,13 +1765,10 @@
             <div class="card-body p-0">
               <div class="small text-muted px-3 pt-2">Son 30 günde en az 5 farklı gün gelen ama tanımlı olmayan araçlar. Tanımlarsanız
                 görevli her gelişte not yazıp onaylamak zorunda kalmaz.</div>
-              <div class="table-responsive" style="max-height:360px"><table class="table table-sm mb-0 align-middle">
+              <div class="table-responsive" style="max-height:260px"><table class="table table-sm mb-0 align-middle">
                 <tbody id="kisiOneriTablo"><tr><td class="text-muted small p-3">Yükleniyor…</td></tr></tbody></table></div>
             </div>
           </div>
-        </div>
-
-        <div class="col-lg-8">
           <div class="card">
             <!-- 2026-10-05 kullanıcı isteği: Kişiler ekranına arama kutusu eklendi
                  (boş alanlardan birine) ve "Şablon İndir" + "Excel İçe Aktar"
@@ -2141,11 +2151,12 @@
     </div>
 
     <!-- ================= KARA LİSTE ================= -->
-    <div class="tab-pane fade" id="karaliste-sekme">
+    <div class="tab-pane fade ekle-kapali" id="karaliste-sekme">
+      <div class="dashboard-heading"><div class="d-flex gap-2"><button class="btn btn-primary" onclick="eklePaneliAc('#karaliste-sekme')" data-rol-min="operatör" data-rol-davranis="gizle"><i class="bi bi-plus-lg"></i> Kara listeye ekle</button></div></div>
       <div class="row g-3">
-        <div class="col-lg-4">
+        <div class="col-lg-4 ekle-kolon">
           <div class="card">
-            <div class="card-header"><i class="bi bi-slash-circle-fill me-1"></i>Kara Listeye Ekle</div>
+            <div class="card-header d-flex align-items-center"><i class="bi bi-slash-circle-fill me-1"></i>Kara Listeye Ekle<button type="button" class="btn-close ms-auto" aria-label="Kapat" onclick="eklePaneliKapat('#karaliste-sekme')"></button></div>
             <div class="card-body">
               <form id="karaListeForm" data-rol-min="operatör">
                 <div class="mb-2"><label class="form-label small" for="karaPlaka">Plaka No</label>
@@ -2158,7 +2169,7 @@
             </div>
           </div>
         </div>
-        <div class="col-lg-8">
+        <div class="col-lg-8 liste-kolon">
           <div class="card">
             <div class="card-header d-flex justify-content-between"><span><i class="bi bi-list-ul me-1"></i>Engellenen Araçlar</span>
               <button class="btn btn-sm btn-outline-secondary" onclick="karaListesiYukle()" title="Yenile" aria-label="Yenile"><i class="bi bi-arrow-clockwise"></i></button></div>

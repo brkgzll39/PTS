@@ -168,7 +168,12 @@
         <p>Kameraların canlı görüntüsü ve son geçişler. Görüntüsünü görebileceğiniz kameralar yöneticinin verdiği yetkiye bağlıdır.</p>
 
         <h3 id="kontrol-merkezi">Kontrol Merkezi <span class="rol rol-herkes">Herkes</span></h3>
+        <p>Güvenlik amirinin günlük ekranı. Üstte <b>Bugün</b>: giriş, çıkış, şu an içeride (kaçı ziyaretçi), ziyaretçi girişi ve kara liste geçişi.</p>
         <ul>
+          <li><b>Dikkat gerektirenler</b>: okunmamış uyarılar (kara liste, klon plaka, resmi araç, sessiz kamera, sunucu kesintisi…),
+            uzun süredir içeride olan ziyaretçiler ve onaylanmadan giren araçlar tek listede. Satıra basınca ilgili kayıt ya da ekran açılır;
+            <span class="dugme"><i class="bi bi-check2"></i></span> uyarıyı okundu yapar. Liste boşsa her şey yolundadır.</li>
+          <li><b>Kapılar</b>: her nizamiyenin kameralarının o anki durumu.</li>
           <li><b>Günlük Geçiş Grafiği</b>, <b>Yetki Dağılımı</b>, <b>Saatlik Yoğunluk</b>: son 7/14/30 günün özeti.</li>
           <li><b>En Sık Yetkisiz/Engellenen Plakalar</b>: tekrar tekrar gelen tanımsız araçlar.</li>
           <li><b>Kaçırılan Geçişler</b>: kameranın büyük olasılıkla okuyamadığı geçişler. Örneğin arka arkaya iki giriş görülen
@@ -202,22 +207,24 @@
         <p>Vardiya devrinde içeride kalan ziyaretçilerin listesi; devralan görevli kimin içeride olduğunu buradan görür.</p>
 
         <h3 id="gecis-kayitlari">Geçiş Kayıtları <span class="rol rol-herkes">Herkes</span></h3>
-        <p>Tüm geçişlerde arama. Süzgeçler:</p>
+        <p>Tüm geçişlerde arama. Plakayı yazıp Enter'a basın; <span class="dugme">Bugün</span> <span class="dugme">Dün</span>
+          <span class="dugme">7 gün</span> <span class="dugme">30 gün</span> düğmeleri tarih aralığını tek tıkla seçer.
+          <span class="dugme"><i class="bi bi-sliders"></i> Süzgeçler</span> altındakiler (yanındaki sayı kaç süzgecin seçili olduğunu gösterir):</p>
         <ul>
-          <li><b>Plaka</b>, <b>başlangıç / bitiş tarihi-saati</b>, <b>nizamiye</b>, <b>vardiya</b> (A/B/C/D).</li>
+          <li><b>Başlangıç / bitiş tarihi-saati</b>, <b>nizamiye</b>, <b>vardiya</b> (A/B/C/D).</li>
           <li><b>Yetki durumu</b>: Personel, Ziyaretçi, Süresi Dolmuş, Ziyaretçi (Onaylı), Kara Liste.</li>
           <li><b>Doğrulama</b>: riskli okumalar. Tek karede okunan, farklı okunan, kayıtlı plakaya göre düzeltilen ve
             kameranın kendi okumasıyla uyuşmayan kayıtlar burada toplanır. Bunları ara ara kontrol edin.</li>
         </ul>
-        <p>Sonucu <span class="dugme">Excel</span> ya da <span class="dugme">PDF</span> olarak indirin. Bir kayda basınca detayı açılır;
+        <p>Sonucu <span class="dugme"><i class="bi bi-download"></i> Dışa aktar</span> menüsünden Excel ya da PDF olarak indirin. Bir satıra basınca detayı açılır;
           yetkiniz varsa plaka, yön, durum ve not düzeltilebilir. Her düzeltme kimin yaptığıyla birlikte kayda geçer.</p>
         <div class="ipucu">Güvenlik hesaplarında liste kendi vardiya pencerenize göre daraltılmış olabilir; tüm vardiyalar için
           "Vardiya" süzgecini kullanın.</div>
 
-        <h3 id="kisiler">Aboneler ve Kişiler <span class="rol rol-gorevli">Görevli</span></h3>
+        <h3 id="kisiler">Kişiler ve Araçlar <span class="rol rol-gorevli">Görevli</span></h3>
         <p>Araçları tanımlı kişiler. Tipler: <b>Abone</b>, <b>Personel</b>, <b>Ziyaretçi</b> (süreli izinli), <b>VIP</b>, <b>Alt İşveren</b>.</p>
         <ol class="adim">
-          <li><b>Yeni Kişi Ekle</b> kartında ad soyad, plaka, tip, telefon ve departmanı girin.</li>
+          <li>Sağ üstteki <span class="dugme"><i class="bi bi-plus-lg"></i> Yeni kişi</span> düğmesiyle açılan formda ad soyad, plaka, tip, telefon ve departmanı girin.</li>
           <li>İsterseniz <b>otomatik not</b> yazın (ör. "Servis", "Kargo teslimatı"): bu kişinin aracı geçtiğinde not kendiliğinden dolar.</li>
           <li>Ziyaretçi gibi süreli izinlerde bitiş tarihini girin; süresi dolunca araç "Süresi Dolmuş" görünür.</li>
         </ol>
@@ -235,7 +242,7 @@
           artık her gelişte ziyaretçi sayılmaz. Tanımlanmayacak araçlar için <span class="dugme">Gösterme</span>.</p>
 
         <h3 id="kara-liste">Kara Liste <span class="rol rol-gorevli">Görevli</span></h3>
-        <p>Girişi yasaklı plakalar. <b>Kara Listeye Ekle</b> kartına plakayı ve sebebi yazın. Bu araç geçtiğinde kırmızı alarm verilir ve
+        <p>Girişi yasaklı plakalar. Sağ üstteki <span class="dugme"><i class="bi bi-plus-lg"></i> Kara listeye ekle</span> düğmesiyle açılan forma plakayı ve sebebi yazın. Bu araç geçtiğinde kırmızı alarm verilir ve
           bildirim gönderilir. Listeden çıkarmak için satırdaki <span class="dugme"><i class="bi bi-check-circle"></i></span> (Listeden çıkar) düğmesini kullanın;
           ekleme ve çıkarma denetim kaydına geçer.</p>
 
@@ -297,6 +304,7 @@
       <!--ROL:yonetici-->
       <section id="yonetim">
         <h2>5. Yönetim ekranları <span class="rol rol-yonetici">Yönetici</span></h2>
+        <p class="ozet">Sol menüdeki <b>YÖNETİM</b> başlığına basınca açılır; içindeki bir ekrandayken kendiliğinden açık kalır.</p>
 
         <h3 id="kameralar">Kameralar</h3>
         <p><b>Kamera Ekle</b>: ad (ör. "Nizamiye Giriş"), RTSP adresi ve yön (giriş/çıkış). <b>Tanımlı Kameralar</b> listesinde bağlantı durumu,

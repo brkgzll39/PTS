@@ -200,3 +200,20 @@ def test_kayitlar_dogrulama_sutun_basligi_yoneticiyle_sinirli():
     th = _corba().select_one("#kayitlar-sekme thead th[title*='Bu okuma kaç farklı karede']")
     assert th is not None, "Kayıtlar tablosunda 'Doğrulama' sütun başlığı bulunamadı"
     assert _yonetici_ile_sinirli_mi(th), "'Doğrulama' sütun başlığı operatörden gizlenmemiş"
+
+
+def test_her_ekranin_sayfa_basligi_tanimli():
+    """2026-11-02: sayfa başlığı şeridi app.js::SAYFA_BASLIKLARI'ndan doldurulur."""
+    import re
+    from pathlib import Path
+    js = (Path(__file__).resolve().parent.parent / "frontend" / "app.js").read_text(encoding="utf-8")
+    blok = js[js.index("const SAYFA_BASLIKLARI = {"):]
+    blok = blok[:blok.index("};")]
+    tanimli = set(re.findall(r'"(#[a-z]+-sekme)"', blok))
+    hedefler = {b["data-bs-target"] for b in _corba().select("#anaSekme [data-bs-target]")}
+    assert hedefler - tanimli == set()
+
+
+def test_yonetim_grubu_operatorden_gizli():
+    grup = _corba().select_one("aside.pts-sidebar #yonetimGrubu")
+    assert grup is not None and _yonetici_ile_sinirli_mi(grup)

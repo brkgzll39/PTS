@@ -9239,3 +9239,16 @@ def test_merkez_izleme_uctan_uca(client, admin_header, tmp_path, monkeypatch):
     client.put("/merkez-izleme", json={"aktif": False, "url": "https://merkez.test"}, headers=admin_header)
     r = client.post("/merkez-izleme/gonder", headers=admin_header)
     assert r.status_code == 400 and "kapalı" in r.json()["detail"]
+
+
+def test_istatistik_bugun_sayilari(client, admin_header):
+    """2026-11-02: Kontrol Merkezi "Bugün" şeridi."""
+    once = client.get("/kayitlar/istatistik", headers=admin_header).json()
+    for alan in ("bugun_giris", "bugun_cikis", "bugun_ziyaretci", "bugun_kara_liste"):
+        assert alan in once
+    _kayit_ekle_db("34 BGN 01", "giris", yetki="yetkisiz", once=timedelta(minutes=1))
+    _kayit_ekle_db("34 BGN 01", "cikis", yetki="yetkisiz", once=timedelta(seconds=30))
+    sonra = client.get("/kayitlar/istatistik", headers=admin_header).json()
+    assert sonra["bugun_giris"] == once["bugun_giris"] + 1
+    assert sonra["bugun_cikis"] == once["bugun_cikis"] + 1
+    assert sonra["bugun_ziyaretci"] == once["bugun_ziyaretci"] + 1

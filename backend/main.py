@@ -7299,7 +7299,15 @@ def istatistikler(db: Session = Depends(get_db), kullanici: models.Kullanici = D
     ).count()
     toplam_kisi = db.query(models.Kisi).filter(models.Kisi.aktif == True).count()  # noqa: E712
     kara_liste_sayisi = db.query(models.KaraListesi).filter(models.KaraListesi.aktif == True).count()  # noqa: E712
+    # Kontrol Merkezi "Bugün" şeridi (2026-11-02): güvenlik amirinin günü tek bakışta.
+    K = models.Kayit
+    bugun_sorgu = lambda *k: _guvenlik_kayit_filtresi_uygula(  # noqa: E731
+        db.query(func.count(K.id)).filter(K.tarih_saat >= bugun, *k), kullanici, db).scalar() or 0
     return {
+        "bugun_giris": bugun_sorgu(K.yon == "giris"),
+        "bugun_cikis": bugun_sorgu(K.yon != "giris"),
+        "bugun_ziyaretci": bugun_sorgu(K.yon == "giris", K.yetki_durumu.in_(("yetkisiz", "ziyaretci_onayli"))),
+        "bugun_kara_liste": bugun_sorgu(K.yetki_durumu == "kara_liste"),
         "toplam_kayit": toplam,
         "bugunku_kayit": bugunku,
         "yetkisiz_giris_denemesi": yetkisiz,

@@ -188,6 +188,7 @@ function ekranKisitlamasiUygula() {
     let el = baslik.nextElementSibling, gorunur = false;
     while (el && !el.classList.contains("sidebar-section-label")) {
       if (el.classList.contains("side-link") && !el.classList.contains("ekran-gizli")) gorunur = true;
+      if (el.classList.contains("side-grup") && el.querySelector(".side-link:not(.ekran-gizli)")) gorunur = true;
       el = el.nextElementSibling;
     }
     baslik.classList.toggle("ekran-gizli", !gorunur);
@@ -211,7 +212,71 @@ document.querySelectorAll("[data-target]").forEach(link => link.addEventListener
 document.getElementById("anaSekme")?.addEventListener("shown.bs.tab", (e) => {
   const hedef = e.target.dataset.bsTarget;
   document.querySelectorAll(".side-link[data-target]").forEach(link => link.classList.toggle("active", link.dataset.target === hedef));
+  if (document.querySelector(`#yonetimGrubu .side-link[data-target="${hedef}"]`)) yonetimGrubuAyarla(true);
+  sayfaBasligiGuncelle(hedef);
 });
+
+// Sayfa başlığı (2026-11-02): üstteki sekme çubuğu yerine her ekranın adı ve ne işe yaradığı.
+const SAYFA_BASLIKLARI = {
+  "#canli-sekme": ["Canlı İzleme", "Kamera görüntüleri ve son geçişler"],
+  "#kontrol-sekme": ["Kontrol Merkezi", "Bugünün özeti ve dikkat gerektirenler"],
+  "#panel-sekme": ["Son Geçişler", "Tüm giriş ve çıkışlar, en yeniden eskiye"],
+  "#iceride-sekme": ["İçerideki Araçlar", "Şu an tesiste bulunan araçlar"],
+  "#nobet-sekme": ["Nöbet Defteri", "Vardiya devir notları ve beklenen ziyaretçiler"],
+  "#kayitlar-sekme": ["Geçiş Kayıtları", "Geçmiş geçişleri arayın, süzün ve dışa aktarın"],
+  "#kisiler-sekme": ["Kişiler ve Araçlar", "Personel, abone, alt işveren ve araçları"],
+  "#karaliste-sekme": ["Kara Liste", "Girişi engellenen ya da izlenen araçlar"],
+  "#resmi-sekme": ["Resmi Araçlar", "Kurum araçları ve görev emirleri"],
+  "#kamera-sekme": ["Kameralar", "Kamera bağlantıları, okuma kalitesi ve gece mutabakatı", "Yönetim"],
+  "#bariyer-sekme": ["Bariyerler", "Bariyer bağlantıları ve kapı kutuları", "Yönetim"],
+  "#bildirim-sekme": ["Bildirimler", "Telegram, e-posta ve webhook bildirimleri", "Yönetim"],
+  "#lisans-sekme": ["Lisans", "Lisans durumu ve açık modüller", "Yönetim"],
+  "#led-sekme": ["LED Paneller", "Kapıdaki LED panellerin bağlantısı ve yazıları", "Yönetim"],
+  "#site-sekme": ["Site ve Erişim Noktaları", "Siteler, nizamiyeler ve kameraların bağlı olduğu noktalar", "Yönetim"],
+  "#kullanicilar-sekme": ["Kullanıcılar", "Hesaplar, roller ve ekran yetkileri", "Yönetim"],
+  "#sistem-sekme": ["Sistem", "Sistem durumu, ayarlar, yedek ve uygulama kayıtları", "Yönetim"],
+  "#denetim-sekme": ["Denetim Kayıtları", "Kim, ne zaman, neyi değiştirdi", "Yönetim"],
+  "#test-sekme": ["Elle Kayıt", "Deneme amaçlı ya da kameranın göremediği bir geçişi elle girin", "Yönetim"],
+  "#iletisim-sekme": ["İletişim ve Arıza Bildirimi", "Destek ekibine ulaşın"],
+};
+// Sayfanın kendi düğmeleri (ör. Ziyaretçi Girişi, Yenile) başlığın sağına taşınır; sayfadan
+// çıkınca yerine döner (düğmeler ve olayları aynı kalır, kopyalanmaz).
+let _eylemKaynak = null, _eylemDugum = null;
+function _sayfaEylemleriniTasi(hedef) {
+  const yuva = document.getElementById("sayfaEylem");
+  if (!yuva) return;
+  if (_eylemDugum && _eylemKaynak) _eylemKaynak.appendChild(_eylemDugum);
+  _eylemDugum = _eylemKaynak = null;
+  const kaynak = document.querySelector(`${hedef} > .dashboard-heading`);
+  const dugum = kaynak?.firstElementChild;
+  if (dugum) { yuva.appendChild(dugum); _eylemKaynak = kaynak; _eylemDugum = dugum; }
+}
+function sayfaBasligiGuncelle(hedef) {
+  _sayfaEylemleriniTasi(hedef);
+  const b = SAYFA_BASLIKLARI[hedef];
+  if (!b) return;
+  document.getElementById("sayfaAdi").textContent = b[0];
+  document.getElementById("sayfaAciklama").textContent = b[1];
+  const yol = document.getElementById("sayfaYol");
+  yol.textContent = b[2] || "";
+  yol.hidden = !b[2];
+  document.title = `${b[0]} · ${document.title.split(" · ").pop()}`;
+}
+
+// YÖNETİM grubu (2026-11-02): açık/kapalı durumu bu tarayıcıda hatırlanır.
+function yonetimGrubuAyarla(acik) {
+  const grup = document.getElementById("yonetimGrubu");
+  if (!grup) return;
+  if (acik === undefined) acik = !grup.classList.contains("acik");
+  grup.classList.toggle("acik", acik);
+  document.querySelector(".side-grup-baslik")?.setAttribute("aria-expanded", String(acik));
+  try { localStorage.setItem("pts_yonetim_acik", acik ? "1" : "0"); } catch (e) { /* tarayıcı izin vermiyor */ }
+}
+(function () {
+  let acik = false;
+  try { acik = localStorage.getItem("pts_yonetim_acik") === "1"; } catch (e) { /* yok */ }
+  yonetimGrubuAyarla(acik);
+})();
 
 // GÜVENLİK: plaka numarası gibi kullanıcı/kamera kaynaklı metinleri asla
 // `onclick="fonksiyon('${deger}')"` biçiminde bir HTML attribute'u içine JS
@@ -1307,6 +1372,57 @@ function _canliOlayHtml(k) {
     `</div>`;
 }
 
+// KONTROL MERKEZİ "Dikkat gerektirenler" (2026-11-02): okunmamış uyarılar, uzun kalan ve
+// onaylanmadan giren ziyaretçiler tek listede; her satır ilgili yere götürür.
+const _DIKKAT_IKON = { kara_liste: "bi-slash-circle", klon_plaka: "bi-copy", supheli_arac: "bi-exclamation-diamond",
+  resmi_arac: "bi-briefcase", sessiz_kamera: "bi-camera-video-off", kamera_arizasi: "bi-camera-video-off",
+  sunucu_kesintisi: "bi-power", bildirim_hatasi: "bi-bell-slash", bariyer_hatasi: "bi-door-closed",
+  disk_doluyor: "bi-hdd", disk_hatasi: "bi-hdd", yedek_bozuk: "bi-archive", sertifika_bitiyor: "bi-shield-exclamation" };
+function _gecenSure(iso) {
+  const dk = Math.max(0, Math.round((Date.now() - new Date(iso)) / 60000));
+  if (dk < 1) return "az önce";
+  if (dk < 60) return `${dk} dk önce`;
+  if (dk < 1440) return `${Math.round(dk / 60)} sa önce`;
+  return new Date(iso).toLocaleDateString("tr-TR");
+}
+async function kontrolDikkatYukle(iceride) {
+  const liste = document.getElementById("kmDikkatListe");
+  if (!liste) return;
+  if (iceride === undefined) iceride = await apiCagir("/araclar/iceridedurum").catch(() => null);
+  let alarmlar = [];
+  try { alarmlar = await apiCagir("/alarmlar?sadece_acik=true&limit=8&haric_tip=yetkisiz_arac&haric_tip=suresi_dolmus"); }
+  catch (e) { liste.innerHTML = `<li class="km-bos text-danger">${escapeHtml(e.message)}</li>`; return; }
+  const satirlar = [];
+  if (iceride?.uyarili_sayisi) satirlar.push(`<li><button type="button" class="km-satir uyari" data-km-sekme="#iceride-sekme">
+      <i class="bi bi-hourglass-split"></i><span><b>${iceride.uyarili_sayisi} ziyaretçi uzun süredir içeride</b>
+      <small>${iceride.uyari_saat} saatten uzun kalanlar · listeyi açın</small></span></button></li>`);
+  if (iceride?.onaysiz?.length) satirlar.push(`<li><button type="button" class="km-satir uyari" data-km-sekme="#iceride-sekme">
+      <i class="bi bi-person-exclamation"></i><span><b>${iceride.onaysiz.length} araç onaylanmadan girdi</b>
+      <small>Son 24 saat · kimin misafiri olduğunu işleyin</small></span></button></li>`);
+  alarmlar.forEach(a => satirlar.push(`<li><button type="button" class="km-satir ${["kara_liste", "klon_plaka"].includes(a.alarm_tipi) ? "kritik" : ""}"
+      ${a.kayit_id ? `data-km-kayit="${a.kayit_id}"` : ""}>
+      <i class="bi ${_DIKKAT_IKON[a.alarm_tipi] || "bi-exclamation-triangle"}"></i>
+      <span><b>${escapeHtml(alarmTipiEtiketi(a.alarm_tipi))}${a.plaka_no && a.plaka_no !== "-" ? ` · ${escapeHtml(a.plaka_no)}` : ""}</b>
+      <small>${escapeHtml((a.mesaj || "").slice(0, 140))}</small></span>
+      <time>${_gecenSure(a.tarih_saat)}</time></button>
+      ${rolYeterli("operatör") ? `<button type="button" class="km-okundu" data-km-okundu="${a.id}" title="Okundu" aria-label="Okundu işaretle"><i class="bi bi-check2"></i></button>` : ""}</li>`));
+  liste.innerHTML = satirlar.join("") || '<li class="km-bos"><i class="bi bi-check2-circle"></i> Dikkat gerektiren bir şey yok.</li>';
+  const sayi = document.getElementById("kmDikkatSayi");
+  if (sayi) { sayi.textContent = satirlar.length; sayi.classList.toggle("d-none", !satirlar.length); }
+}
+document.getElementById("kmDikkatListe")?.addEventListener("click", async (e) => {
+  const okundu = e.target.closest("[data-km-okundu]");
+  if (okundu) {
+    try { await apiCagir(`/alarmlar/${okundu.dataset.kmOkundu}/okundu`, { method: "PATCH" }); } catch (err) { toastGoster(err.message, "hata"); }
+    kontrolDikkatYukle();
+    return;
+  }
+  const satir = e.target.closest(".km-satir");
+  if (!satir) return;
+  if (satir.dataset.kmKayit) olayDetayAc(Number(satir.dataset.kmKayit));
+  else if (satir.dataset.kmSekme) sekmeAc(satir.dataset.kmSekme);
+});
+
 async function panelYenile() {
   try {
     nizamiyeSemasiniYukle();
@@ -1321,10 +1437,17 @@ async function panelYenile() {
     if (elKLS) elKLS.textContent = ist.kara_liste_kayit_sayisi ?? 0;
 
     // Araç içeride sayısı
+    const yaz = (id, deger) => { const el = document.getElementById(id); if (el) el.textContent = deger ?? 0; };
+    yaz("kmGiris", ist.bugun_giris); yaz("kmCikis", ist.bugun_cikis);
+    yaz("kmZiyaretci", ist.bugun_ziyaretci); yaz("kmKaraListe", ist.bugun_kara_liste);
+    document.getElementById("kmKaraListe")?.classList.toggle("text-danger", (ist.bugun_kara_liste || 0) > 0);
     apiCagir("/araclar/iceridedurum").then(d => {
       const el = document.getElementById("istIceride");
       if (el) el.textContent = d.iceride_sayisi;
-    }).catch(() => {});
+      const z = document.getElementById("kmIcerideZiyaretci");
+      if (z) z.textContent = d.ziyaretci_sayisi ? `${d.ziyaretci_sayisi} ziyaretçi` : "";
+      kontrolDikkatYukle(d);
+    }).catch(() => kontrolDikkatYukle(null));
 
     const kayitlar = await apiCagir("/kayitlar?limit=10");
     const canliOlaylar = document.getElementById("canliOlaylar");
@@ -2810,6 +2933,7 @@ function _tarihSaatDegeriOlustur(tarihId, saatId) {
     const doluAlanVarMi = metinAlanIdleri.some(id => document.getElementById(id)?.value);
     if (!doluAlanVarMi) return;
     metinAlanIdleri.forEach(id => { const el = document.getElementById(id); if (el) el.value = ""; });
+    kayitSuzgecDurumuGuncelle();
     kayitlariYukle();
   });
 })();
@@ -3887,6 +4011,20 @@ async function kisiOnerileriYukle() {
       <td class="text-end text-nowrap"><button class="btn btn-sm btn-primary" onclick="kisiOnerisiTanimla(${i})">Tanımla</button>
         <button class="btn btn-sm btn-outline-secondary" onclick="kisiOnerisiYoksay(${i})" title="Bu aracı önerme">Gösterme</button></td></tr>`).join("")
     : '<tr><td class="text-muted small p-3">Şu an öneri yok.</td></tr>';
+  document.getElementById("kisiOneriKart")?.classList.toggle("oneri-yok", !_kisiOnerileri.length);
+}
+
+// Ekleme paneli (2026-11-02): Kişiler ve Kara Liste'de form varsayılan kapalı, liste tam genişlikte.
+function eklePaneliAc(sekme) {
+  const pane = document.querySelector(sekme);
+  if (!pane) return;
+  pane.classList.remove("ekle-kapali");
+  const ilk = pane.querySelector(".ekle-kolon input:not([type=hidden]), .ekle-kolon select");
+  pane.querySelector(".ekle-kolon")?.scrollIntoView({ behavior: "smooth", block: "start" });
+  setTimeout(() => ilk?.focus(), 300);
+}
+function eklePaneliKapat(sekme) {
+  document.querySelector(sekme)?.classList.add("ekle-kapali");
 }
 
 function kisiOnerisiTanimla(i) {
@@ -3896,7 +4034,7 @@ function kisiOnerisiTanimla(i) {
   document.getElementById("kisiAdSoyad").value = o.misafir_adi || o.en_sik_not || "";
   const not = document.getElementById("kisiOtomatikNot");
   if (not && !not.value && o.en_sik_not) not.value = o.en_sik_not.slice(0, 100);
-  document.getElementById("kisiForm").scrollIntoView({ behavior: "smooth", block: "start" });
+  eklePaneliAc("#kisiler-sekme");
   setTimeout(() => document.getElementById("kisiAdSoyad").focus(), 400);
   toastGoster(`${o.plaka_no}: kişi tipini seçip adı kontrol edin, sonra Kaydet.`, "bilgi");
 }
@@ -4491,27 +4629,38 @@ async function kayitlariYukle(sifirla = true) {
     const el = document.getElementById("kayitlarSayac");
     if (el) el.textContent = `${sayfaBilgisi.toplam} kayıt · Sayfa ${sayfa + 1}/${sayfaBilgisi.sayfa_sayisi}`;
     const tbody = document.getElementById("kayitlarTablo");
-    tbody.innerHTML = kayitlar.map(k => `
-      <tr>
-        <td>${k.goruntu_yolu ? `<img class="thumb" data-goruntu-yolu="${escapeHtml(k.goruntu_yolu)}" role="button" tabindex="0" alt="Geçiş görseli, büyütmek için tıklayın veya Enter'a basın">` : '<span class="text-muted small">-</span>'}</td>
-        <td>${k.id}</td>
-        <td class="fw-bold"><button class="plate-link" data-plaka-analiz="${escapeHtml(k.plaka_no)}">${escapeHtml(k.plaka_no)}</button></td>
-        <td>${tarihFormatla(k.tarih_saat)}</td>
-        <td>${escapeHtml(k.kamera_id)}</td>
-        <td>${k.yon === "giris" ? "Giriş" : "Çıkış"}</td>
+    // Sade tablo (2026-11-02): kayıt no, yinelenen kişi/tip rozeti çıkarıldı; zaman tek hücrede;
+    // sayfadaki hiçbir satırda değeri olmayan Sürücü/Vardiya sütunları gizlenir; satıra
+    // tıklayınca ayrıntı açılır.
+    const tablo = document.getElementById("kayitTablosu");
+    tablo?.classList.toggle("kt-surucu-yok", !kayitlar.some(k => k.surucu_adi));
+    tablo?.classList.toggle("kt-vardiya-yok", !kayitlar.some(k => k.vardiya_adi));
+    const yonetici = rolYeterli("yonetici"), operator = rolYeterli("operatör");
+    tbody.innerHTML = kayitlar.map(k => {
+      const z = new Date(k.tarih_saat);
+      const saat = z.toLocaleTimeString("tr-TR", { hour: "2-digit", minute: "2-digit" });
+      const gun = z.toLocaleDateString("tr-TR", { day: "2-digit", month: "2-digit", year: "numeric" });
+      const yon = k.yon === "giris"
+        ? '<span class="kt-yon giris"><i class="bi bi-box-arrow-in-right"></i> Giriş</span>'
+        : '<span class="kt-yon cikis"><i class="bi bi-box-arrow-right"></i> Çıkış</span>';
+      return `
+      <tr class="kt-satir" data-kayit-id="${k.id}" tabindex="0">
+        <td class="kt-gorsel">${k.goruntu_yolu ? `<img class="thumb" data-goruntu-yolu="${escapeHtml(k.goruntu_yolu)}" role="button" tabindex="0" alt="Geçiş görseli, büyütmek için tıklayın veya Enter'a basın">` : '<span class="kt-gorsel-yok"><i class="bi bi-image"></i></span>'}</td>
+        <td><button class="plate-link kt-plaka" data-plaka-analiz="${escapeHtml(k.plaka_no)}" title="Bu plakanın tüm geçişleri">${escapeHtml(k.plaka_no)}</button></td>
+        <td class="kt-zaman"><b>${saat}</b><span>${gun}</span></td>
+        <td class="kt-nokta"><span>${escapeHtml(k.kamera_id || "-")}</span>${yon}</td>
+        <td class="kt-kisi">${kayitIsimGoster(k)}${k.arac_renk ? `<span class="kt-renk">${escapeHtml(k.arac_renk)}</span>` : ""}</td>
         <td>${durumRozeti(k.yetki_durumu, k.kisi_tip_anlik, k.kisi_departman)}</td>
-        <td>${tipRozeti(k.kisi_tip_anlik)}</td>
-        <td class="small">${kayitIsimGoster(k)}</td>
-        <td class="small">${k.surucu_adi ? escapeHtml(k.surucu_adi) : '<span class="text-muted">-</span>'}</td>
-        <td>${k.vardiya_adi ? `<span class="badge bg-info text-dark">${escapeHtml(k.vardiya_adi)}</span>` : '<span class="text-muted small">-</span>'}</td>
-        ${rolYeterli("yonetici") ? `<td>${dogrulamaRozeti(k.dogrulama_kare_sayisi, k.farkli_okuma_sayisi, k.kamera_okumasi, k.sonradan_aktarildi)}</td>` : ""}
-        <td class="text-nowrap">
-          <button class="btn btn-sm btn-outline-danger" onclick="kayitPdfIndir(${k.id})" title="PDF indir" aria-label="PDF indir"><i class="bi bi-file-earmark-pdf"></i></button>
-          ${rolYeterli("operatör") ? `<button class="btn btn-sm btn-outline-primary ms-1" onclick="kayitDuzenleAc(${k.id})" title="Kaydı düzenle" aria-label="Kaydı düzenle"><i class="bi bi-pencil"></i></button>` : ""}
-          ${rolYeterli("yonetici") ? `<button class="btn btn-sm btn-outline-secondary ms-1" onclick="kayitSil(${k.id})" title="Kaydı sil" aria-label="Kaydı sil"><i class="bi bi-trash"></i></button>` : ""}
+        <td class="kt-surucu small">${k.surucu_adi ? escapeHtml(k.surucu_adi) : '<span class="text-muted">-</span>'}</td>
+        <td class="kt-vardiya">${k.vardiya_adi ? `<span class="badge bg-info text-dark">${escapeHtml(k.vardiya_adi)}</span>` : '<span class="text-muted small">-</span>'}</td>
+        ${yonetici ? `<td>${dogrulamaRozeti(k.dogrulama_kare_sayisi, k.farkli_okuma_sayisi, k.kamera_okumasi, k.sonradan_aktarildi)}</td>` : ""}
+        <td class="kt-islem">
+          ${operator ? `<button class="btn-ikon" onclick="kayitDuzenleAc(${k.id})" title="Kaydı düzenle" aria-label="Kaydı düzenle"><i class="bi bi-pencil"></i></button>` : ""}
+          <button class="btn-ikon" onclick="kayitPdfIndir(${k.id})" title="PDF indir" aria-label="PDF indir"><i class="bi bi-file-earmark-pdf"></i></button>
+          ${yonetici ? `<button class="btn-ikon tehlike" onclick="kayitSil(${k.id})" title="Kaydı sil" aria-label="Kaydı sil"><i class="bi bi-trash"></i></button>` : ""}
         </td>
-      </tr>
-    `).join("") || `<tr><td colspan="13" class="text-center text-muted py-3">Kayıt bulunamadı</td></tr>`;
+      </tr>`;
+    }).join("") || `<tr><td colspan="10" class="text-center text-muted py-5"><i class="bi bi-search d-block fs-3 mb-2"></i>Bu süzgeçlere uyan kayıt yok</td></tr>`;
     korumaliGorselleriYukle(tbody);
 
     // Sayfalama kontrolleri
@@ -4532,6 +4681,59 @@ async function kayitlariYukle(sifirla = true) {
     toastGoster("Kayıtlar yüklenemedi: " + e.message, "hata");
   }
 }
+
+// Kayıt arama yardımcıları (2026-11-02)
+function _tarihGirdisi(d) {
+  const p = n => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+}
+function kayitDonemSec(donem) {
+  const bugun = new Date();
+  let bas = null, bit = null;
+  if (donem === "bugun") { bas = bit = bugun; }
+  else if (donem === "dun") { bas = bit = new Date(bugun.getFullYear(), bugun.getMonth(), bugun.getDate() - 1); }
+  else if (donem === "7" || donem === "30") { bas = new Date(bugun.getFullYear(), bugun.getMonth(), bugun.getDate() - Number(donem) + 1); bit = bugun; }
+  document.getElementById("filtreBaslangic").value = bas ? _tarihGirdisi(bas) : "";
+  document.getElementById("filtreBitis").value = bit ? _tarihGirdisi(bit) : "";
+  document.getElementById("filtreBaslangicSaat").value = "";
+  document.getElementById("filtreBitisSaat").value = "";
+  kayitSuzgecDurumuGuncelle();
+  kayitlariYukle();
+}
+function kayitSuzgecDurumuGuncelle() {
+  const bas = document.getElementById("filtreBaslangic")?.value, bit = document.getElementById("filtreBitis")?.value;
+  const saatsiz = !document.getElementById("filtreBaslangicSaat")?.value && !document.getElementById("filtreBitisSaat")?.value;
+  const bugun = new Date(), g = n => _tarihGirdisi(new Date(bugun.getFullYear(), bugun.getMonth(), bugun.getDate() - n));
+  const donemler = { bugun: [g(0), g(0)], dun: [g(1), g(1)], 7: [g(6), g(0)], 30: [g(29), g(0)] };
+  let secili = null;
+  for (const [ad, [b, t]] of Object.entries(donemler)) if (saatsiz && bas === b && bit === t) secili = ad;
+  document.querySelectorAll(".ka-donem [data-donem]").forEach(d => d.classList.toggle("active", d.dataset.donem === secili));
+  // Süzgeçler'deki dolu alan sayısı (dönem düğmesiyle seçilen tarih sayılmaz)
+  const alanlar = ["filtreDurum", "filtreVardiyaAdi", "filtreNizamiye", "filtreDogrulama", "filtreBaslangicSaat", "filtreBitisSaat"];
+  let sayi = alanlar.filter(id => document.getElementById(id)?.value).length;
+  if (!secili && (bas || bit)) sayi += 1;
+  const rozet = document.getElementById("kaSuzgecSayi");
+  if (rozet) { rozet.textContent = sayi; rozet.classList.toggle("d-none", !sayi); }
+}
+function kayitSuzgecleriniTemizle() {
+  ["filtreBaslangic", "filtreBaslangicSaat", "filtreBitis", "filtreBitisSaat", "filtreDurum", "filtreVardiyaAdi", "filtreNizamiye", "filtreDogrulama"]
+    .forEach(id => { const el = document.getElementById(id); if (el) el.value = ""; });
+  kayitSuzgecDurumuGuncelle();
+  kayitlariYukle();
+}
+document.querySelectorAll(".ka-donem [data-donem]").forEach(d => d.addEventListener("click", () =>
+  kayitDonemSec(d.classList.contains("active") ? null : d.dataset.donem)));
+document.getElementById("kaSuzgecler")?.addEventListener("change", kayitSuzgecDurumuGuncelle);
+document.getElementById("filtrePlaka")?.addEventListener("keydown", e => { if (e.key === "Enter") { e.preventDefault(); kayitlariYukle(); } });
+document.getElementById("kayitlarTablo")?.addEventListener("click", e => {
+  if (e.target.closest("button, a, img, input")) return;
+  const satir = e.target.closest("tr[data-kayit-id]");
+  if (satir) olayDetayAc(Number(satir.dataset.kayitId));
+});
+document.getElementById("kayitlarTablo")?.addEventListener("keydown", e => {
+  if (e.key !== "Enter" || e.target.tagName !== "TR") return;
+  olayDetayAc(Number(e.target.dataset.kayitId));
+});
 
 function sayfaDegistir(delta) {
   _kayitlarSayfa = Math.max(0, _kayitlarSayfa + delta);
@@ -6230,6 +6432,7 @@ function karaListeyeEkleModal(plaka) {
   bootstrap.Modal.getInstance(document.getElementById("plakaAnalizModal"))?.hide();
   document.getElementById("karaPlaka").value = plaka;
   sekmeAc("#karaliste-sekme");
+  eklePaneliAc("#karaliste-sekme");
 }
 
 // ================================================================
