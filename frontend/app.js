@@ -206,6 +206,12 @@ function sekmeAc(target) {
 }
 
 document.querySelectorAll("[data-target]").forEach(link => link.addEventListener("click", () => sekmeAc(link.dataset.target)));
+// 2026-11-02: üstteki sekme çubuğu gizlendi; sekme hangi yoldan açılırsa açılsın
+// (kart tıklaması, bildirim, ekran kısıtlaması) sol menüde doğru satır seçili kalsın.
+document.getElementById("anaSekme")?.addEventListener("shown.bs.tab", (e) => {
+  const hedef = e.target.dataset.bsTarget;
+  document.querySelectorAll(".side-link[data-target]").forEach(link => link.classList.toggle("active", link.dataset.target === hedef));
+});
 
 // GÜVENLİK: plaka numarası gibi kullanıcı/kamera kaynaklı metinleri asla
 // `onclick="fonksiyon('${deger}')"` biçiminde bir HTML attribute'u içine JS
@@ -1734,7 +1740,7 @@ async function olayDetayAc(id) {
   // Düzenle"/Ziyaretçi Girişi'nde girilebilir) gösteriliyor.
   document.getElementById("olayModalKisi").textContent = detay?.ad_soyad || kayit.misafir_adi || "Tanımsız araç";
   document.getElementById("olayModalDaire").textContent = detay?.daire_departman || "-";
-  const aracMetni = [kayit.arac_renk, kayit.arac_marka, kayit.arac_tip].filter(Boolean).join(" ");
+  const aracMetni = kayit.arac_renk || "";
   document.getElementById("olayModalAracAlani").classList.toggle("d-none", !aracMetni);
   document.getElementById("olayModalArac").textContent = aracMetni || "-";
   document.getElementById("olayModalAracTipi").textContent = detay ? (detay.tip === "ziyaretci" ? "Ziyaretçi" : detay.tip === "vip" ? "Bölge Müdürü" : detay.tip === "alt_isveren" ? "Alt İşveren" : "Tanımlı") : (kayit.misafir_adi ? "Misafir" : "Tanımsız araç");
@@ -4051,8 +4057,6 @@ async function klonUyarilariYukle() {
   // SUNUCU KESİNTİSİ (2026-10-30): sunucu kapalı kaldıysa görevli bilsin.
   _kapiAlarmAlani("kapiKesintiAlani", "sunucu_kesintisi", '<i class="bi bi-power"></i> Sunucu kapalı kaldı',
     "Bu sürede geçişler canlı kaydedilemedi; kameranın hafızasından alınabilenler sisteme eklenir. Kimin kapattığını amirinize bildirin.");
-  _kapiAlarmAlani("kapiUyusmazlikAlani", "arac_uyusmazligi", '<i class="bi bi-exclamation-octagon-fill"></i> Plaka bu araca ait olmayabilir',
-    "Bu plaka daha önce farklı renk/markada bir araçta görüldü. Aracı durdurup ruhsatı kontrol edin.");
   _kapiAlarmAlani("kapiSessizAlani", "sessiz_kamera", '<i class="bi bi-camera-video-off"></i> Kamera plaka okumuyor',
     "Görüntü geliyor ama kamera bir süredir plaka okumuyor. Geçen araçları elle kontrol edin ve teknik birime haber verin.");
   // RESMİ ARAÇ (2026-10-30): görev emirsiz çıkış, mesai dışı hareket, geç dönüş.

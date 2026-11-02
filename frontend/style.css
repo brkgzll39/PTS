@@ -743,3 +743,70 @@ details.kart-acilir > summary::-webkit-details-marker { display: none; }
 details.kart-acilir:not([open]) > summary { border-bottom: 0; border-radius: var(--bs-card-inner-border-radius, .5rem); }
 details.kart-acilir .acilir-ok { transition: transform .15s; }
 details.kart-acilir[open] .acilir-ok { transform: rotate(180deg); }
+
+/* =====================================================================
+   PROFESYONEL GÖRÜNÜM (2026-11-02, kullanıcı isteği: "gelişmiş modu sadeleştir,
+   daha profesyonel olsun"). Tek gezinme: sol menü (üstteki 20 sekmelik çubuk
+   gizli). Üst çubuk ve menü aynı koyu lacivert; kartlar tek kenarlık dilinde,
+   renk yalnız anlam taşıdığı yerde (sayı, durum rozeti).
+   ===================================================================== */
+#anaSekme { display: none !important; }
+.tab-content.pt-3 { padding-top: 0 !important; }
+
+.navbar-pts { background: #101b2e; box-shadow: none; border-bottom: 1px solid #1f2d45; min-height: 58px; gap: .5rem; }
+.navbar-pts > .navbar-brand { margin-right: auto; }
+.navbar-logo-rozeti { padding: .18rem .5rem; border-radius: 6px; }
+.navbar-logo-rozeti img { height: 34px; }
+.navbar-pts .btn-outline-light { border-color: #33435f; color: #d4dbe7; font-size: .8rem; padding: .32rem .7rem; }
+.navbar-pts .btn-outline-light:hover { background: #22324e; border-color: #4a5c7c; color: #fff; }
+#oturumKullanici { color: #d4dbe7; font-weight: 500; }
+#saatGosterge { color: #8c9ab2; font-variant-numeric: tabular-nums; }
+
+.pts-sidebar { background: #101b2e; border-right-color: #1f2d45; width: 232px; flex-basis: 232px; }
+.sidebar-section-label { color: #66758f; font-size: .62rem; letter-spacing: .12em; padding: 1.1rem .75rem .4rem; }
+.side-link { color: #aeb9cc; font-size: .84rem; padding: .55rem .75rem; border-radius: 6px; position: relative; }
+.side-link i { color: #6f7e98; }
+.side-link:hover { background: #1a2740; color: #fff; }
+.side-link.active { background: #1d3157; color: #fff; font-weight: 500; }
+.side-link.active::before { content: ""; position: absolute; left: -.75rem; top: 8px; bottom: 8px; width: 3px; border-radius: 0 3px 3px 0; background: #5b8cff; }
+.side-link.active i { color: #8fb0ff; }
+
+.app-main { padding-top: 1.25rem; }
+.card { border-radius: 10px; border-color: #e1e5ec; box-shadow: 0 1px 2px rgba(16, 27, 46, .04); }
+.card-header { background: #fff; border-bottom-color: #eceff4; font-weight: 600; font-size: .9rem; padding: .8rem 1rem; }
+.live-toolbar, .camera-controls { border-radius: 10px; border-color: #e1e5ec; }
+.dashboard-heading h1 { font-size: 1.35rem; }
+
+/* İstatistik kartları: kalın siyah/kırmızı/yeşil sol kenarlık yerine tek dil */
+.stat-card, .stat-card.border-danger, .stat-card.border-dark, .stat-card.border-success { border: 1px solid #e1e5ec !important; border-left: 1px solid #e1e5ec !important; }
+.stat-card .card-body { padding: 1rem 1.1rem; }
+.stat-card .text-muted.small { font-size: .74rem; letter-spacing: .02em; text-transform: uppercase; font-weight: 600; color: #7a8699 !important; }
+.stat-card .fs-2 { font-size: 1.7rem !important; font-variant-numeric: tabular-nums; }
+.stat-card.border-danger .fs-2 { color: #c0392b; }
+.stat-card.border-success .fs-2 { color: #1e8a52; }
+.stat-card[role="button"]:hover { border-color: #b9c6db !important; }
+
+.gate-card { border-radius: 8px; border-color: #e1e5ec; }
+.section-label { color: #7a8699; margin-top: .4rem; }
+
+/* Tablolar: daha sakin başlık, plaka ve tarih tek satırda */
+.table > thead th { font-size: .74rem; text-transform: uppercase; letter-spacing: .04em; color: #6b778a; font-weight: 600; background: #f7f9fb; border-bottom-width: 1px; white-space: nowrap; }
+.table > tbody td { vertical-align: middle; }
+#kayitlarTablo td:nth-child(3), #kayitlarTablo td:nth-child(4) { white-space: nowrap; }
+#kayitlarTablo td:nth-child(2) { color: #8a95a6; font-size: .8rem; }
+.btn { border-radius: 6px; }
+.form-control, .form-select { border-radius: 6px; border-color: #d6dce5; }
+.form-label { color: #4a5568; font-weight: 500; }
+
+#kayitlarTablo td { font-size: .86rem; padding-top: .45rem; padding-bottom: .45rem; }
+#kayitlarTablo .thumb { width: 76px; height: 52px; }
+
+@media (max-width: 768px) {
+  .pts-sidebar { width: 62px; flex-basis: 62px; }
+  .sidebar-section-label, .side-link { font-size: 0; }
+  .side-link { justify-content: center; padding: .75rem .3rem; }
+  .side-link i { font-size: 1.05rem; width: auto; }
+  .side-link .badge { display: none; }
+  .side-link.active::before { left: -.4rem; }
+  .navbar-logo-rozeti img { height: 28px; }
+}

@@ -168,23 +168,23 @@ def test_navtabs_tum_hedefler_kategorize_edilmis():
 # bu testler de o taşınmayı takip ediyor.
 # ------------------------------------------------------------------
 
-def test_anasayfa_hizli_erisim_kutulari_yonetime_gidenler_gizli():
+def test_kontrol_merkezinde_hizli_erisim_kutulari_yok():
+    """2026-11-02: renkli "Hızlı Erişim" kutuları sol menüyü tekrarladığı için kaldırıldı."""
     panel = _corba().select_one("#kontrol-sekme")
     assert panel is not None
-    yonetime_giden = {"#kamera-sekme", "#lisans-sekme"}
-    for hedef in yonetime_giden:
-        kutu = panel.select_one(f'.quick-tile[data-target="{hedef}"]')
-        assert kutu is not None, f"Kontrol Merkezi hızlı erişim kutularında {hedef} bulunamadı"
-        assert _yonetici_ile_sinirli_mi(kutu), f"Kontrol Merkezi hızlı erişim kutusu {hedef} operatörden gizlenmemiş"
+    assert panel.select(".quick-tile") == []
 
 
-def test_anasayfa_hizli_erisim_kutulari_calisma_alani_olanlar_acik():
-    panel = _corba().select_one("#kontrol-sekme")
-    calisma_alani = {"#canli-sekme", "#kayitlar-sekme", "#kisiler-sekme"}
-    for hedef in calisma_alani:
-        kutu = panel.select_one(f'.quick-tile[data-target="{hedef}"]')
-        assert kutu is not None, f"Kontrol Merkezi hızlı erişim kutularında {hedef} bulunamadı"
-        assert not _yonetici_ile_sinirli_mi(kutu), f"Kontrol Merkezi hızlı erişim kutusu {hedef} operatöre GEREKSİZ yere gizlenmiş"
+def test_her_ekranin_sol_menude_karsiligi_var_ve_yetkisi_ayni():
+    """2026-11-02: üstteki sekme çubuğu gizlendi; gezinme yalnız sol menüden. Her sekmenin
+    menüde bir bağlantısı olmalı ve yönetici sınırlaması sekmeyle aynı olmalı."""
+    corba = _corba()
+    for sekme in corba.select("#anaSekme [data-bs-target]"):
+        hedef = sekme["data-bs-target"]
+        baglanti = corba.select_one(f'.pts-sidebar .side-link[data-target="{hedef}"]')
+        assert baglanti is not None, f"{hedef} sol menüde yok; üst çubuk gizli olduğu için açılamaz"
+        assert _yonetici_ile_sinirli_mi(baglanti) == _yonetici_ile_sinirli_mi(sekme.find_parent("li")), \
+            f"{hedef}: sol menü ve sekme yetkisi farklı"
 
 
 # ------------------------------------------------------------------

@@ -293,7 +293,7 @@
 <div class="modal fade" id="olayDetayModal" tabindex="-1" aria-hidden="true">
   <div class="modal-dialog modal-xl modal-dialog-centered"><div class="modal-content event-detail-modal">
     <div class="modal-header" id="olayModalBaslik"><h5 class="modal-title" id="olayModalTur">TANIMLI ARAÇ</h5><button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Kapat"></button></div>
-    <div class="modal-body"><div class="row g-3"><div class="col-lg-8"><div class="event-image-wrap"><img id="olayModalGorsel" class="zoomable-img" role="button" tabindex="0" alt="Araç geçiş görseli, büyütmek için tıklayın veya Enter'a basın"><div id="olayModalGorselYok" class="empty-state">Bu kayıt için görsel bulunmuyor</div></div><div class="detail-table mt-3"><div><b>TARİH</b><span id="olayModalTarih">-</span></div><div><b>SAAT</b><span id="olayModalSaat">-</span></div><div><b>SİTE</b><span id="olayModalSite">-</span></div><div><b>NOKTA</b><span id="olayModalNokta">-</span></div><div><b>YÖN</b><span id="olayModalYon">-</span></div></div></div><div class="col-lg-4"><div class="plate-display" id="olayModalPlaka">-</div><div class="vehicle-facts"><div><b>ARAÇ TİPİ</b><span id="olayModalAracTipi">-</span></div><div id="olayModalAracAlani" class="d-none"><b>ARAÇ (KAMERA)</b><span id="olayModalArac">-</span></div></div><div class="vehicle-facts person-facts"><div><b>İSİM</b><span id="olayModalKisi">-</span></div><div><b>DAİRE / BLOK</b><span id="olayModalDaire">-</span></div><div><b>NOT <button type="button" class="btn btn-sm btn-link p-0 align-baseline" id="olayModalNotDuzenleBtn" data-rol-min="operatör" data-rol-davranis="gizle" title="Notu düzenle"><i class="bi bi-pencil-square"></i></button></b><span id="olayModalNot">-</span></div></div>
+    <div class="modal-body"><div class="row g-3"><div class="col-lg-8"><div class="event-image-wrap"><img id="olayModalGorsel" class="zoomable-img" role="button" tabindex="0" alt="Araç geçiş görseli, büyütmek için tıklayın veya Enter'a basın"><div id="olayModalGorselYok" class="empty-state">Bu kayıt için görsel bulunmuyor</div></div><div class="detail-table mt-3"><div><b>TARİH</b><span id="olayModalTarih">-</span></div><div><b>SAAT</b><span id="olayModalSaat">-</span></div><div><b>SİTE</b><span id="olayModalSite">-</span></div><div><b>NOKTA</b><span id="olayModalNokta">-</span></div><div><b>YÖN</b><span id="olayModalYon">-</span></div></div></div><div class="col-lg-4"><div class="plate-display" id="olayModalPlaka">-</div><div class="vehicle-facts"><div><b>ARAÇ TİPİ</b><span id="olayModalAracTipi">-</span></div><div id="olayModalAracAlani" class="d-none"><b>ARAÇ RENGİ</b><span id="olayModalArac">-</span></div></div><div class="vehicle-facts person-facts"><div><b>İSİM</b><span id="olayModalKisi">-</span></div><div><b>DAİRE / BLOK</b><span id="olayModalDaire">-</span></div><div><b>NOT <button type="button" class="btn btn-sm btn-link p-0 align-baseline" id="olayModalNotDuzenleBtn" data-rol-min="operatör" data-rol-davranis="gizle" title="Notu düzenle"><i class="bi bi-pencil-square"></i></button></b><span id="olayModalNot">-</span></div></div>
       <!-- Ziyaretçi Girişi: tanımsız/yetkisiz bir tespiti tek adımda bir kişiye/daireye
            bağlayıp yetki_durumu="ziyaretci_onayli" yapan hızlı onay bölümü
            (bkz. app.js::_ziyaretciGirisiKutusunuAyarla, main.py::kayit_duzenle).
@@ -982,7 +982,6 @@
       <div class="okunamayan-alan okunamayan-kapi d-none" id="kapiResmiAlani" data-klon></div>
       <div class="okunamayan-alan okunamayan-kapi d-none" id="kapiKesintiAlani" data-klon></div>
       <div class="okunamayan-alan okunamayan-kapi d-none" id="kapiSessizAlani" data-klon></div>
-      <div class="okunamayan-alan okunamayan-kapi d-none" id="kapiUyusmazlikAlani" data-klon></div>
       <div class="okunamayan-alan okunamayan-kapi d-none"></div>
       <div class="kapi-izgara">
         <div class="kapi-kart kapi-son" id="kapiSonKart"></div>
@@ -1115,13 +1114,14 @@
     <div class="sidebar-section-label" data-rol-min="yonetici" data-rol-davranis="gizle">YÖNETİM</div>
     <button class="side-link" data-target="#kamera-sekme" data-rol-min="yonetici" data-rol-davranis="gizle"><i class="bi bi-camera-video"></i>Kameralar</button>
     <button class="side-link" data-target="#bariyer-sekme" data-rol-min="yonetici" data-rol-davranis="gizle"><i class="bi bi-door-open"></i>Bariyer Kontrolü</button>
-    <button class="side-link" data-target="#bildirim-sekme" data-rol-min="yonetici" data-rol-davranis="gizle"><i class="bi bi-bell"></i>Bildirimler (Webhook/Telegram)</button>
+    <button class="side-link" data-target="#bildirim-sekme" data-rol-min="yonetici" data-rol-davranis="gizle"><i class="bi bi-bell"></i>Bildirimler</button>
     <button class="side-link" data-target="#lisans-sekme" data-rol-min="yonetici" data-rol-davranis="gizle"><i class="bi bi-key"></i>Lisans Yönetimi</button>
     <button class="side-link" data-target="#led-sekme" data-rol-min="yonetici" data-rol-davranis="gizle"><i class="bi bi-broadcast-pin"></i>LED Paneller</button>
     <button class="side-link" data-target="#site-sekme" data-rol-min="yonetici" data-rol-davranis="gizle"><i class="bi bi-diagram-3"></i>Site / Erişim Noktası</button>
     <button class="side-link" data-target="#kullanicilar-sekme" data-rol-min="yonetici" data-rol-davranis="gizle"><i class="bi bi-person-gear"></i>Kullanıcılar</button>
     <button class="side-link" data-target="#sistem-sekme" data-rol-min="yonetici" data-rol-davranis="gizle"><i class="bi bi-terminal"></i>Sistem / Log</button>
     <button class="side-link" data-target="#denetim-sekme" data-rol-min="yonetici" data-rol-davranis="gizle"><i class="bi bi-journal-check"></i>Denetim Kayıtları</button>
+    <button class="side-link" data-target="#test-sekme" data-rol-min="yonetici" data-rol-davranis="gizle"><i class="bi bi-plus-circle"></i>Elle Kayıt (Test)</button>
     <div class="sidebar-section-label">DESTEK</div>
     <!-- 2026-09-22 kullanıcı isteği: "Bu yazılımı kullanan kişi ve
          kuruluşların arıza yaşaması durumunda Sistem Yöneticisiyle
@@ -1140,6 +1140,7 @@
     <span class="nk-pencere"><span class="nk-metin"></span></span>
     <button type="button" class="nk-kapat" onclick="nobetKayanGizle(event)" title="Yeni not gelene kadar gizle" aria-label="Gizle"><i class="bi bi-x-lg"></i></button>
   </div>
+  <!-- 2026-11-02: üstteki sekme çubuğu gizli (gezinme sol menüden); Bootstrap sekme mantığı için yerinde duruyor. -->
   <ul class="nav nav-tabs" id="anaSekme" role="tablist">
     <li class="nav-item"><button class="nav-link active" data-bs-toggle="tab" data-bs-target="#canli-sekme" type="button"><i class="bi bi-grid-3x3-gap-fill me-1"></i>Canlı</button></li>
     <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#kontrol-sekme" type="button"><i class="bi bi-speedometer2 me-1"></i>Kontrol Merkezi</button></li>
@@ -1210,8 +1211,7 @@
            kuralıyla tutarlıdır. -->
       <div id="nizamiyeSemasi" class="gate-scheme mb-4"><div class="empty-state">Kameralar yükleniyor…</div></div>
 
-      <div class="section-label">HIZLI ERİŞİM</div>
-      <div class="quick-grid mb-4"><button class="quick-tile blue" data-target="#canli-sekme"><i class="bi bi-display"></i><strong>Canlı İzleme</strong><span>Kamera duvarı</span></button><button class="quick-tile green" data-target="#kayitlar-sekme"><i class="bi bi-arrow-left-right"></i><strong>Geçiş Kayıtları</strong><span>Hareket geçmişi</span></button><button class="quick-tile amber" data-target="#kisiler-sekme"><i class="bi bi-person-badge"></i><strong>Kişiler</strong><span>Yetkili plakalar</span></button><button class="quick-tile slate" data-target="#kamera-sekme" data-rol-min="yonetici" data-rol-davranis="gizle"><i class="bi bi-camera-video"></i><strong>Kamera Yönetimi</strong><span>RTSP bağlantıları</span></button><button class="quick-tile red" data-target="#lisans-sekme" data-rol-min="yonetici" data-rol-davranis="gizle"><i class="bi bi-shield-lock"></i><strong>Lisans</strong><span>Durum ve limitler</span></button></div>
+      <!-- 2026-11-02: "Hızlı Erişim" renkli kutuları kaldırıldı; sol menüyü tekrarlıyordu. -->
 
       <div class="section-label">GENEL İSTATİSTİKLER</div>
       <div class="row g-3 mb-3">
@@ -2600,7 +2600,6 @@
                     <option value="resmi_arac">Sadece resmi araç uyarıları</option>
                     <option value="sunucu_kesintisi">Sadece sunucu kesintileri</option>
                     <option value="sessiz_kamera">Sadece sessiz kamera (plaka okumayan kamera)</option>
-                    <option value="arac_uyusmazligi">Sadece plaka-araç uyuşmazlığı (sahte plaka şüphesi)</option>
                     <option value="bariyer_hatasi">Sadece bariyer açma hatası</option>
                     <option value="kamera_arizasi">Sadece kamera arızası</option>
                     <option value="disk_hatasi">Sadece disk/görsel yazma hatası</option>
