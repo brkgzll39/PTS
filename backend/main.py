@@ -310,6 +310,9 @@ _VARSAYILAN_AYARLAR = {
     # ait açık "yetkisiz araç"/"süresi dolmuş" alarmları otomatik okundu
     # işaretlenir -- bkz. _gecis_alarmlarini_otomatik_okundu_isaretle.
     "alarm_otomatik_okundu": True,
+    # 2026-11-03: Telegram/e-posta bildirimlerinde fotoğraf yalnız alarmlarda (False) ya da
+    # tanımlı araçların olağan geçişleri dahil her geçişte (True).
+    "bildirim_her_geciste_foto": False,
     "goruntu_saklama_gun": 30,   # görüntü saklama süresi (gün)
     # KVKK (2026-10-23): bu kadar günden eski geçişlerin kişisel verisi silinir
     # (bkz. _kayitlari_anonimlestir). 0 = kapalı; süreyi kurum belirler.
@@ -6187,8 +6190,10 @@ def _bildirim_gonder_sync(tip: str, hedef: str, http_metot: str, veri: dict) -> 
         veri = {k: v for k, v in veri.items() if k != "pdf_yolu"}  # sunucu dosya yolu dışarı gitmesin
     # Alarm fotoğrafı (2026-10-31): kara liste / yetkisiz / klon / resmi araç / uyuşmazlık
     # bildirimleri Telegram'a fotoğraflı, e-postaya resim ekli gider; olağan geçişler metin.
-    foto = veri.get("goruntu_yolu") if (veri.get("alarm_tipi") in _FOTOLU_ALARMLAR
-                                         or veri.get("yetki_durumu") in _FOTOLU_GECISLER) else None
+    # 2026-11-03: "her geçişte fotoğraf" ayarı açıksa tanımlı araçların geçişleri de fotoğraflı.
+    fotolu = (veri.get("alarm_tipi") in _FOTOLU_ALARMLAR or veri.get("yetki_durumu") in _FOTOLU_GECISLER
+              or (veri.get("yetki_durumu") and _sistem_ayarlari_oku().get("bildirim_her_geciste_foto")))
+    foto = veri.get("goruntu_yolu") if fotolu else None
     foto = foto if foto and os.path.isfile(foto) else None
     if tip == "webhook":
         return _webhook_gonder_sync(hedef, http_metot, veri)
@@ -9714,6 +9719,7 @@ _AYAR_DOGRULAYICILAR = {
     "resmi_mesai_gunleri": lambda v: _ayar_gunler_dogrula(v),
     "resmi_gorev_tolerans_dk": lambda v: _ayar_int_dogrula(v, 0, 240),
     "alarm_otomatik_okundu": _ayar_bool_dogrula,
+    "bildirim_her_geciste_foto": _ayar_bool_dogrula,
     "goruntu_saklama_gun": lambda v: _ayar_int_dogrula(v, 0, None),
     "kayit_anonimlestirme_gun": lambda v: _anonimlestirme_gunu_dogrula(v),
     "tekrar_gecikme_sn": lambda v: _ayar_int_dogrula(v, 0, 3600),

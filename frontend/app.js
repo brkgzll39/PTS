@@ -7952,6 +7952,9 @@ async function sistemAyarlariYukle() {
       alarm_otomatik_okundu: { grup: "tekrar", label: "Araç yeniden geçince eski alarmları okundu say",
         yardim: "Yetkisiz/süresi dolmuş alarmları için geçerlidir; kara liste ve şüpheli araç alarmları okunmadan kalır.",
         acik: ayarlar.alarm_otomatik_okundu !== false },
+      bildirim_her_geciste_foto: { grup: "tekrar", label: "Bildirimlerde her geçişe fotoğraf ekle",
+        yardim: "Kapalıyken Telegram ve e-postaya fotoğraf yalnız alarmlarda (kara liste, tanımsız araç, klon plaka…) gider. Açıkken tanımlı araçların olağan geçişleri de fotoğraflı gider; çok geçişli kapılarda mesaj sayısı ve veri kullanımı artar.",
+        acik: !!ayarlar.bildirim_her_geciste_foto },
       bilinen_plaka_duzeltme_aktif: { grup: "okuma", label: "Kayıtlı plakaya göre tek harf düzeltmesi",
         yardim: "Okunan plaka kayıtlı bir plakadan yalnız bir karakter farklıysa kayıtlı plakaya düzeltilir.",
         acik: !!ayarlar.bilinen_plaka_duzeltme_aktif },
@@ -8001,6 +8004,7 @@ async function sistemAyarlariYukle() {
       satirlar.forEach(s => { guncel[s.key] = Number(document.getElementById(`ayar_${s.key}`).value); });
       guncel.bilinen_plaka_duzeltme_aktif = document.getElementById("ayar_bilinen_plaka_duzeltme_aktif").checked;
       guncel.alarm_otomatik_okundu = document.getElementById("ayar_alarm_otomatik_okundu").checked;
+      guncel.bildirim_her_geciste_foto = document.getElementById("ayar_bildirim_her_geciste_foto").checked;
       guncel.otomatik_yedek_aktif = document.getElementById("ayar_otomatik_yedek_aktif").checked;
       guncel.otomatik_yedek_klasoru = document.getElementById("ayar_otomatik_yedek_klasoru").value;
       guncel.mssql_yedek_klasoru = document.getElementById("ayar_mssql_yedek_klasoru").value;

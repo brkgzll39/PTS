@@ -9279,3 +9279,21 @@ def test_genel_arama(client, admin_header, operator_header):
     assert client.get("/ara?q=deneme kişi", headers=operator_header).json()["kisiler"]
     assert [x["plaka_no"] for x in client.get("/ara?q=34ARK", headers=operator_header).json()["kara_liste"]] == ["34 ARK 01"]
     assert client.get("/ara?q=a", headers=operator_header).json()["kisiler"] == []
+
+
+def test_her_geciste_foto_ayari(tmp_path, monkeypatch):
+    """2026-11-03: ayar açıkken tanımlı araç geçişi de Telegram'a fotoğraflı gider."""
+    foto = tmp_path / "arac.jpg"
+    foto.write_bytes(b"\xff\xd8" + b"x" * 2000)
+    from backend import telegram_bildirim
+    cagri = {}
+    monkeypatch.setattr(telegram_bildirim, "fotografli_gonder_sync", lambda c, v, f: cagri.update(foto=f) or (True, None))
+    monkeypatch.setattr(telegram_bildirim, "telegram_gonder_sync", lambda c, v: cagri.update(metin=True) or (True, None))
+    ayarlar = dict(pts_main._sistem_ayarlari_oku())
+    monkeypatch.setattr(pts_main, "_sistem_ayarlari_oku", lambda: {**ayarlar, "bildirim_her_geciste_foto": True})
+    pts_main._bildirim_gonder_sync("telegram", "1", "POST", {"yetki_durumu": "yetkili", "goruntu_yolu": str(foto)})
+    assert cagri == {"foto": str(foto)}
+    cagri.clear()
+    monkeypatch.setattr(pts_main, "_sistem_ayarlari_oku", lambda: {**ayarlar, "bildirim_her_geciste_foto": False})
+    pts_main._bildirim_gonder_sync("telegram", "1", "POST", {"yetki_durumu": "yetkili", "goruntu_yolu": str(foto)})
+    assert cagri == {"metin": True}
