@@ -290,6 +290,19 @@
     </form>
   </div>
 </div>
+<div class="modal fade" id="genelAramaModal" tabindex="-1" aria-label="Genel arama" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-scrollable genel-arama-dialog">
+    <div class="modal-content">
+      <div class="ga-ust">
+        <i class="bi bi-search"></i>
+        <input type="search" id="genelAramaGirdi" class="form-control" placeholder="Plaka (ör. 34 ABC 123) ya da isim…" autocomplete="off" aria-label="Plaka ya da isim">
+        <kbd>Esc</kbd>
+      </div>
+      <div class="ga-sonuc" id="genelAramaSonuc"><div class="ga-ipucu">Plakanın bir kısmını ya da kişinin adını yazın. <b>Enter</b> plakanın tüm geçmişini açar.</div></div>
+    </div>
+  </div>
+</div>
+
 <div class="modal fade" id="olayDetayModal" tabindex="-1" aria-hidden="true">
   <div class="modal-dialog modal-xl modal-dialog-centered"><div class="modal-content event-detail-modal">
     <div class="modal-header" id="olayModalBaslik"><h5 class="modal-title" id="olayModalTur">TANIMLI ARAÇ</h5><button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Kapat"></button></div>
@@ -850,6 +863,9 @@
        style.css::.navbar-logo-rozeti). -->
   <span class="navbar-brand mb-0 h1 navbar-logo-rozeti"><img src="/static/img/tpao-logo.png" alt="Türkiye Petrolleri Anonim Ortaklığı" data-marka-logo></span>
   <span class="badge bg-info text-dark me-2 d-none" id="cizelgeVardiyaRozet" title="Vardiya çizelgesine göre şu an nöbette olan vardiya"></span>
+  <!-- GENEL ARAMA (2026-11-03): plaka ya da isim; Ctrl+K ya da "/" ile açılır (bkz. app.js::genelAramaAc). -->
+  <button type="button" class="genel-arama-tetik" onclick="genelAramaAc()" title="Plaka ya da isim ara (Ctrl+K)">
+    <i class="bi bi-search"></i><span class="gat-metin">Plaka ya da isim ara…</span><kbd>Ctrl K</kbd></button>
   <span class="text-white-50 small d-none d-md-inline me-3"><span id="oturumKullanici"></span> <span id="saatGosterge"></span></span>
   <button id="farkliKullaniciButonu" class="btn btn-sm btn-outline-light d-none" onclick="farkliKullaniciylaGiris()" title="Bu bilgisayarda başka bir hesapla (kullanıcı adı ve parolayla) giriş yap"><i class="bi bi-person-gear"></i> Farklı kullanıcı</button>
   <button class="btn btn-sm btn-outline-light me-2 yonetim-gecis" id="yonetimGecisDugme" onclick="yonetimModu()" data-rol-min="yonetici" data-rol-davranis="gizle" title="Sistem ayarları ve durum"><i class="bi bi-gear"></i> <span>Yönetim Paneli</span></button>
@@ -2053,10 +2069,11 @@
     </div>
 
     <!-- ================= KAMERALAR ================= -->
-    <div class="tab-pane fade" id="kamera-sekme">
+    <div class="tab-pane fade ekle-kapali" id="kamera-sekme">
+      <div class="dashboard-heading"><div class="d-flex gap-2"><button class="btn btn-primary" onclick="eklePaneliAc('#kamera-sekme')" data-rol-min="operatör" data-rol-davranis="gizle"><i class="bi bi-plus-lg"></i> Kamera ekle</button></div></div>
       <div class="row g-3">
-        <div class="col-lg-5"><div class="card"><div class="card-header"><i class="bi bi-camera-video-fill me-1"></i>Kamera Ekle</div><div class="card-body"><form id="kameraForm" data-rol-min="operatör"><div class="mb-3"><label class="form-label small" for="kameraAd">Kamera adı</label><input class="form-control" id="kameraAd" placeholder="Nizamiye Giriş" required></div><div class="mb-3"><label class="form-label small" for="kameraRtsp">RTSP adresi</label><input class="form-control" id="kameraRtsp" placeholder="rtsp://kullanici:sifre@192.168.1.20:554/..." required></div><div class="mb-3"><label class="form-label small" for="kameraYon">Yön</label><select class="form-select" id="kameraYon"><option value="giris">Giriş</option><option value="cikis">Çıkış</option></select></div><button class="btn btn-primary" type="submit"><i class="bi bi-plus-circle"></i> Kamerayı Kaydet</button></form><div id="kameraSonuc" class="small mt-3"></div></div></div></div>
-        <div class="col-lg-7"><div class="card"><div class="card-header d-flex justify-content-between"><span><i class="bi bi-list-ul me-1"></i>Tanımlı Kameralar</span><div class="d-flex gap-2 align-items-center"><span id="kameraSayac" class="small text-muted">-</span><button class="btn btn-sm btn-outline-info" onclick="tumKameralarSaglikKontrol()" title="Tüm kameraları ping'le"><i class="bi bi-activity"></i> Sağlık</button></div></div><div class="card-body p-0"><div class="table-responsive"><table class="table table-hover mb-0 align-middle"><thead class="table-light"><tr><th>Ad</th><th>Yön</th><th>RTSP adresi</th><th>Pipeline</th><th>TCP</th><th></th></tr></thead><tbody id="kameralarTablo"></tbody></table></div></div></div></div>
+        <div class="col-lg-5 ekle-kolon"><div class="card"><div class="card-header d-flex align-items-center"><i class="bi bi-camera-video-fill me-1"></i>Kamera Ekle<button type="button" class="btn-close ms-auto" aria-label="Kapat" onclick="eklePaneliKapat('#kamera-sekme')"></button></div><div class="card-body"><form id="kameraForm" data-rol-min="operatör"><div class="mb-3"><label class="form-label small" for="kameraAd">Kamera adı</label><input class="form-control" id="kameraAd" placeholder="Nizamiye Giriş" required></div><div class="mb-3"><label class="form-label small" for="kameraRtsp">RTSP adresi</label><input class="form-control" id="kameraRtsp" placeholder="rtsp://kullanici:sifre@192.168.1.20:554/..." required></div><div class="mb-3"><label class="form-label small" for="kameraYon">Yön</label><select class="form-select" id="kameraYon"><option value="giris">Giriş</option><option value="cikis">Çıkış</option></select></div><button class="btn btn-primary" type="submit"><i class="bi bi-plus-circle"></i> Kamerayı Kaydet</button></form><div id="kameraSonuc" class="small mt-3"></div></div></div></div>
+        <div class="col-lg-7 liste-kolon"><div class="card"><div class="card-header d-flex justify-content-between"><span><i class="bi bi-list-ul me-1"></i>Tanımlı Kameralar</span><div class="d-flex gap-2 align-items-center"><span id="kameraSayac" class="small text-muted">-</span><button class="btn btn-sm btn-outline-info" onclick="tumKameralarSaglikKontrol()" title="Tüm kameraları ping'le"><i class="bi bi-activity"></i> Sağlık</button></div></div><div class="card-body p-0"><div class="table-responsive"><table class="table table-hover mb-0 align-middle"><thead class="table-light"><tr><th>Ad</th><th>Yön</th><th>RTSP adresi</th><th>Pipeline</th><th>TCP</th><th></th></tr></thead><tbody id="kameralarTablo"></tbody></table></div></div></div></div>
         <!-- GECE MUTABAKATI + SESSİZ KAMERA (2026-10-31) -->
         <div class="col-12"><div class="card"><div class="card-header d-flex justify-content-between align-items-center flex-wrap gap-2">
           <span><i class="bi bi-arrow-left-right me-1"></i>Kamera Mutabakatı <span class="small text-muted">— PTS, kameranın kendi okuduğu geçişlerin ne kadarını yakaladı</span></span>
@@ -2344,11 +2361,12 @@
       </div>
     </div>
 
-    <div class="tab-pane fade" id="bariyer-sekme">
+    <div class="tab-pane fade ekle-kapali" id="bariyer-sekme">
+      <div class="dashboard-heading"><div class="d-flex gap-2"><button class="btn btn-primary" onclick="eklePaneliAc('#bariyer-sekme')" data-rol-min="operatör" data-rol-davranis="gizle"><i class="bi bi-plus-lg"></i> Bariyer ekle</button></div></div>
       <div class="row g-3">
-        <div class="col-lg-5">
+        <div class="col-lg-5 ekle-kolon">
           <div class="card">
-            <div class="card-header"><i class="bi bi-plus-circle me-1"></i>Yeni Bariyer Ekle</div>
+            <div class="card-header d-flex align-items-center"><i class="bi bi-plus-circle me-1"></i>Yeni Bariyer Ekle<button type="button" class="btn-close ms-auto" aria-label="Kapat" onclick="eklePaneliKapat('#bariyer-sekme')"></button></div>
             <div class="card-body">
               <form id="bariyerForm" data-rol-min="operatör">
                 <div class="mb-2"><label class="form-label small" for="bariyerAd">Ad</label>
@@ -2377,7 +2395,7 @@
             </div>
           </div>
         </div>
-        <div class="col-lg-7">
+        <div class="col-lg-7 liste-kolon">
           <div class="card">
             <div class="card-header"><i class="bi bi-door-open-fill me-1"></i>Tanımlı Bariyerler</div>
             <div class="card-body p-0">
@@ -2448,11 +2466,12 @@
     </div>
 
     <!-- ================= KULLANICI YÖNETİMİ ================= -->
-    <div class="tab-pane fade" id="kullanicilar-sekme">
+    <div class="tab-pane fade ekle-kapali" id="kullanicilar-sekme">
+      <div class="dashboard-heading"><div class="d-flex gap-2"><button class="btn btn-primary" onclick="eklePaneliAc('#kullanicilar-sekme')" data-rol-min="operatör" data-rol-davranis="gizle"><i class="bi bi-plus-lg"></i> Kullanıcı ekle</button></div></div>
       <div class="row g-3">
-        <div class="col-lg-4">
+        <div class="col-lg-4 ekle-kolon">
           <div class="card">
-            <div class="card-header"><i class="bi bi-person-plus-fill me-1"></i>Yeni Kullanıcı</div>
+            <div class="card-header d-flex align-items-center"><i class="bi bi-person-plus-fill me-1"></i>Yeni Kullanıcı<button type="button" class="btn-close ms-auto" aria-label="Kapat" onclick="eklePaneliKapat('#kullanicilar-sekme')"></button></div>
             <div class="card-body">
               <form id="kullaniciForm" data-rol-min="yonetici">
                 <div class="mb-2"><label class="form-label small" for="yeniKullanici">Kullanıcı Adı</label>
@@ -2538,11 +2557,10 @@
           </div>
           <!-- İki adımlı doğrulama (2026-10-23) -- bkz. app.js::ikiAdimKartiYukle, main.py /auth/iki-adim/*. -->
           <div class="card mt-3" data-rol-min="yonetici">
-            <div class="card-header"><i class="bi bi-shield-lock-fill me-1"></i>İki Adımlı Doğrulama (hesabınız)</div>
             <div class="card-body" id="ikiAdimKart"><div class="text-muted small">Yükleniyor...</div></div>
           </div>
         </div>
-        <div class="col-lg-8">
+        <div class="col-lg-8 liste-kolon">
           <div class="card">
             <div class="card-header d-flex justify-content-between">
               <span><i class="bi bi-people-fill me-1"></i>Sistem Kullanıcıları</span>
@@ -2555,6 +2573,7 @@
               </table>
             </div>
           </div>
+          <div class="mt-3"><div class="card-header"><i class="bi bi-shield-lock-fill me-1"></i>İki Adımlı Doğrulama (hesabınız)</div></div>
         </div>
       </div>
 
@@ -2636,11 +2655,12 @@
          (ama backend'de zaten var olan) şüpheli araç/bariyer hatası/disk
          hatası tetikleyicileri de eklendi -- bkz. main.py::_bildirim_tetikle,
          backend/telegram_bildirim.py. -->
-    <div class="tab-pane fade" id="bildirim-sekme">
+    <div class="tab-pane fade ekle-kapali" id="bildirim-sekme">
+      <div class="dashboard-heading"><div class="d-flex gap-2"><button class="btn btn-primary" onclick="eklePaneliAc('#bildirim-sekme')" data-rol-min="operatör" data-rol-davranis="gizle"><i class="bi bi-plus-lg"></i> Bildirim ekle</button></div></div>
       <div class="row g-3">
-        <div class="col-lg-5">
+        <div class="col-lg-5 ekle-kolon">
           <div class="card">
-            <div class="card-header"><i class="bi bi-bell-fill me-1"></i>Yeni Bildirim Ayarı</div>
+            <div class="card-header d-flex align-items-center"><i class="bi bi-bell-fill me-1"></i>Yeni Bildirim Ayarı<button type="button" class="btn-close ms-auto" aria-label="Kapat" onclick="eklePaneliKapat('#bildirim-sekme')"></button></div>
             <div class="card-body">
               <form id="bildirimForm" data-rol-min="yonetici">
                 <div class="mb-2"><label class="form-label small" for="bildirimAd">Ad</label>
@@ -2693,7 +2713,7 @@
             </div>
           </div>
         </div>
-        <div class="col-lg-7">
+        <div class="col-lg-7 liste-kolon">
           <div class="card">
             <div class="card-header d-flex justify-content-between">
               <span><i class="bi bi-list-ul me-1"></i>Tanımlı Bildirim Ayarları</span>
@@ -2739,6 +2759,30 @@
     <!-- ================= SİSTEM / LOG ================= -->
     <div class="tab-pane fade" id="sistem-sekme">
       <div class="row g-3">
+        <!-- "Güvenlik uyarıları" (2026-09-20): PTS_LICENSE_SECRET/PTS_KAMERA_ANAHTARI/
+             PTS_CORS_ORIGINS gibi ayarlar varsayılana sessizce düşerse önceden bu
+             yalnızca (kimsenin günlük okumadığı) loglar/pts.log'a bir kez yazılıyordu --
+             bkz. main.py::_guvenlik_uyarilarini_topla. Yalnızca yönetici görür (bu
+             ayarları değiştirebilecek TEK rol) ve hiçbir uyarı yoksa hiç gösterilmez. -->
+        <div class="col-12 d-none" id="guvenlikUyarilariAlani">
+          <div class="alert alert-warning d-flex align-items-start gap-2 mb-0" role="alert">
+            <i class="bi bi-shield-exclamation fs-4"></i>
+            <div>
+              <strong>Güvenlik uyarısı</strong>
+              <ul class="small mb-0 mt-1" id="guvenlikUyarilariListesi"></ul>
+            </div>
+          </div>
+        </div>
+        <!-- SİSTEM AYARLARI (2026-10-31, kullanıcı isteği "göz yormayacak, sade"): tam genişlik,
+             gruplu; açıklamalar ⓘ ile açılır (bkz. app.js::sistemAyarlariYukle). -->
+        <div class="col-12">
+          <div class="card">
+            <div class="card-header"><i class="bi bi-gear-fill me-1"></i>Sistem Ayarları</div>
+            <div class="card-body" id="sistemAyarlariPaneli">
+              <div class="text-center text-muted py-2"><div class="spinner-border spinner-border-sm"></div></div>
+            </div>
+          </div>
+        </div>
         <!-- VARDİYA ÇİZELGESİ (2026-10-12): Lojman A/B/C/D vardiyaları girişsiz,
              Bölge Müdürlüğü çizelgesine göre. Bkz. backend/vardiya_cizelgesi.py. -->
         <div class="col-12" data-rol-min="yonetici" data-rol-davranis="gizle">
@@ -2776,30 +2820,7 @@
             </div>
           </div>
         </div>
-        <!-- "Güvenlik uyarıları" (2026-09-20): PTS_LICENSE_SECRET/PTS_KAMERA_ANAHTARI/
-             PTS_CORS_ORIGINS gibi ayarlar varsayılana sessizce düşerse önceden bu
-             yalnızca (kimsenin günlük okumadığı) loglar/pts.log'a bir kez yazılıyordu --
-             bkz. main.py::_guvenlik_uyarilarini_topla. Yalnızca yönetici görür (bu
-             ayarları değiştirebilecek TEK rol) ve hiçbir uyarı yoksa hiç gösterilmez. -->
-        <div class="col-12 d-none" id="guvenlikUyarilariAlani">
-          <div class="alert alert-warning d-flex align-items-start gap-2 mb-0" role="alert">
-            <i class="bi bi-shield-exclamation fs-4"></i>
-            <div>
-              <strong>Güvenlik uyarısı</strong>
-              <ul class="small mb-0 mt-1" id="guvenlikUyarilariListesi"></ul>
-            </div>
-          </div>
-        </div>
-        <!-- SİSTEM AYARLARI (2026-10-31, kullanıcı isteği "göz yormayacak, sade"): tam genişlik,
-             gruplu; açıklamalar ⓘ ile açılır (bkz. app.js::sistemAyarlariYukle). -->
-        <div class="col-12">
-          <div class="card">
-            <div class="card-header"><i class="bi bi-gear-fill me-1"></i>Sistem Ayarları</div>
-            <div class="card-body" id="sistemAyarlariPaneli">
-              <div class="text-center text-muted py-2"><div class="spinner-border spinner-border-sm"></div></div>
-            </div>
-          </div>
-        </div>
+
         <div class="col-lg-4">
           <div class="card mb-3">
             <div class="card-header"><i class="bi bi-activity me-1"></i>Sistem Durumu</div>

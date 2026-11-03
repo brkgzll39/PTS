@@ -4620,6 +4620,48 @@ def _arama_normalize(metin: Optional[str]) -> str:
     return (metin or "").translate(_ARAMA_HARF_HARITASI).lower().replace(" ", "")
 
 
+@app.get("/ara")
+def genel_arama(q: str = Query("", max_length=40), db: Session = Depends(get_db),
+                kullanici: models.Kullanici = Depends(_personel_girisi_gerekli)):
+    """Üst çubuktaki genel arama (Ctrl+K, 2026-11-03): plaka ya da isim parçası için kişiler,
+    kara liste, son geçişler ve şu an içeride olup olmadığı tek cevapta."""
+    terim = _arama_normalize(q)
+    plaka_terim = _plaka_normalize(q)
+    if len(terim) < 2:
+        return {"kisiler": [], "kara_liste": [], "gecisler": [], "iceride": []}
+    kisiler = []
+    for k in (db.query(models.Kisi).options(selectinload(models.Kisi.ek_plakalar))
+              .order_by(desc(models.Kisi.aktif), models.Kisi.ad_soyad).all()):
+        plakalar = [k.plaka_no] + [p.plaka_no for p in (k.ek_plakalar or [])]
+        # Rakam içeren arama plakadır (telefon/departman eşleşmesi gürültü olur); yoksa isim ve birim.
+        if any(c.isdigit() for c in q):
+            eslesir = any(plaka_terim in _plaka_normalize(p) for p in plakalar)
+        else:
+            eslesir = any(terim in _arama_normalize(a) for a in [k.ad_soyad, k.daire_departman] + plakalar)
+        if eslesir:
+            kisiler.append({"id": k.id, "ad_soyad": k.ad_soyad, "plaka_no": k.plaka_no, "tip": k.tip, "aktif": bool(k.aktif),
+                            "daire_departman": k.daire_departman, "ek_plaka_sayisi": len(plakalar) - 1})
+            if len(kisiler) >= 6:
+                break
+    kara = []
+    gecisler = []
+    if len(plaka_terim) >= 2:
+        KL = models.KaraListesi
+        kara = [{"plaka_no": x.plaka_no, "sebep": x.sebep} for x in db.query(KL).filter(
+            KL.aktif == True, _plaka_normalize_sql(KL.plaka_no).contains(plaka_terim)).limit(5)]  # noqa: E712
+        K = models.Kayit
+        sorgu = _guvenlik_kayit_filtresi_uygula(
+            db.query(K).filter(_plaka_normalize_sql(K.plaka_no).contains(plaka_terim)), kullanici, db)
+        gecisler = [{"id": k.id, "plaka_no": k.plaka_no, "tarih_saat": k.tarih_saat.isoformat(), "kamera_id": k.kamera_id,
+                     "yon": k.yon, "yetki_durumu": k.yetki_durumu, "kisi_tip_anlik": k.kisi_tip_anlik}
+                    for k in sorgu.order_by(desc(K.tarih_saat)).limit(8)]
+    iceride = []
+    if len(plaka_terim) >= 2:
+        icerdekiler, _, _ = _iceride_durumu_hesapla(db, datetime.now())
+        iceride = sorted({k.plaka_no for k in icerdekiler if plaka_terim in _plaka_normalize(k.plaka_no)})
+    return {"kisiler": kisiler, "kara_liste": kara, "gecisler": gecisler, "iceride": iceride}
+
+
 @app.get("/kisi-sayilari")
 def kisi_sayilari(db: Session = Depends(get_db), _: models.Kullanici = Depends(_personel_girisi_gerekli)):
     """Kişiler ekranının sekme sayıları (2026-11-02): aktif kişiler tipe göre, pasifler ve izni

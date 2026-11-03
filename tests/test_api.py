@@ -9264,3 +9264,18 @@ def test_kisi_sayilari(client, admin_header, operator_header):
     assert sonra["toplam"] == once["toplam"] + 1
     assert sonra["tipler"].get("ziyaretci", 0) == once["tipler"].get("ziyaretci", 0) + 1
     assert sonra["bitecek"] == once["bitecek"] + 1
+
+
+def test_genel_arama(client, admin_header, operator_header):
+    """2026-11-03: üst çubuktaki genel arama (Ctrl+K)."""
+    r = client.post("/kisiler", json={"ad_soyad": "Arama Deneme Kişisi", "plaka_no": "34 ARA 77", "tip": "personel"}, headers=admin_header)
+    assert r.status_code == 200, r.text
+    _kayit_ekle_db("34 ARA 77", "giris", once=timedelta(minutes=2))
+    client.post("/kara-listesi", json={"plaka_no": "34 ARK 01", "sebep": "deneme"}, headers=admin_header)
+    d = client.get("/ara?q=ara 77", headers=operator_header).json()
+    assert any(k["plaka_no"] == "34 ARA 77" for k in d["kisiler"])
+    assert d["gecisler"] and d["gecisler"][0]["plaka_no"] == "34 ARA 77"
+    assert "34 ARA 77" in d["iceride"]
+    assert client.get("/ara?q=deneme kişi", headers=operator_header).json()["kisiler"]
+    assert [x["plaka_no"] for x in client.get("/ara?q=34ARK", headers=operator_header).json()["kara_liste"]] == ["34 ARK 01"]
+    assert client.get("/ara?q=a", headers=operator_header).json()["kisiler"] == []

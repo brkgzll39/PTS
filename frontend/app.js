@@ -8305,3 +8305,98 @@ async function topluImport(input) {
   }
 }
 
+
+
+// ================================================================
+// GENEL ARAMA (2026-11-03): üst çubuktan ya da Ctrl+K / "/" ile; plaka ya da isim
+// parçası yazınca kara liste, içeride mi, kişiler ve son geçişler tek pencerede.
+// Sunucu: main.py::genel_arama (GET /ara).
+// ================================================================
+let _gaZamanlayici = null, _gaIstekNo = 0, _gaSecili = -1;
+function genelAramaAc(on = "") {
+  if (!sessionStorage.getItem("pts_token") || mevcutRol === "sakin") return;
+  const modal = bootstrap.Modal.getOrCreateInstance(document.getElementById("genelAramaModal"));
+  const girdi = document.getElementById("genelAramaGirdi");
+  girdi.value = on;
+  modal.show();
+  if (on) _genelAramaYap();
+}
+// Odak, pencere tamamen açıldıktan sonra verilir (açılış animasyonu odağı pencereye alıyor).
+document.getElementById("genelAramaModal")?.addEventListener("shown.bs.modal", () => {
+  const girdi = document.getElementById("genelAramaGirdi");
+  girdi.focus(); girdi.select();
+});
+function _gaSatirlar() { return [...document.querySelectorAll("#genelAramaSonuc [data-ga]")]; }
+function _gaSec(i) {
+  const satirlar = _gaSatirlar();
+  if (!satirlar.length) { _gaSecili = -1; return; }
+  _gaSecili = (i + satirlar.length) % satirlar.length;
+  satirlar.forEach((s, j) => s.classList.toggle("secili", j === _gaSecili));
+  satirlar[_gaSecili].scrollIntoView({ block: "nearest" });
+}
+async function _genelAramaYap() {
+  const q = document.getElementById("genelAramaGirdi").value.trim();
+  const kutu = document.getElementById("genelAramaSonuc");
+  if (q.length < 2) {
+    kutu.innerHTML = '<div class="ga-ipucu">Plakanın bir kısmını ya da kişinin adını yazın. <b>Enter</b> plakanın tüm geçmişini açar.</div>';
+    _gaSecili = -1;
+    return;
+  }
+  const no = ++_gaIstekNo;
+  let d;
+  try { d = await apiCagir(`/ara?q=${encodeURIComponent(q)}`); } catch (e) { kutu.innerHTML = `<div class="ga-ipucu text-danger">${escapeHtml(e.message)}</div>`; return; }
+  if (no !== _gaIstekNo) return;
+  const icerde = new Set(d.iceride.map(p => p.replace(/\s/g, "")));
+  const icerdeMi = p => icerde.has((p || "").replace(/\s/g, ""));
+  const bolum = (baslik, html) => html ? `<div class="ga-bolum">${baslik}</div>${html}` : "";
+  let html = "";
+  html += bolum("Kara liste", d.kara_liste.map(k => `<button type="button" class="ga-satir kritik" data-ga="analiz" data-plaka="${escapeHtml(k.plaka_no)}">
+      <i class="bi bi-slash-circle"></i><span><b>${escapeHtml(k.plaka_no)}</b><small>${escapeHtml(k.sebep || "Kara listede")}</small></span>
+      <span class="ga-etiket kritik">KARA LİSTE</span></button>`).join(""));
+  html += bolum("Kişiler", d.kisiler.map(k => `<button type="button" class="ga-satir" data-ga="kisi" data-id="${k.id}">
+      <i class="bi bi-person"></i><span><b>${escapeHtml(k.ad_soyad)}</b><small>${escapeHtml(k.plaka_no)}${k.ek_plaka_sayisi ? ` +${k.ek_plaka_sayisi} araç` : ""}${k.daire_departman ? " · " + escapeHtml(k.daire_departman) : ""}</small></span>
+      ${icerdeMi(k.plaka_no) ? '<span class="ga-etiket iyi">İÇERİDE</span>' : ""}${!k.aktif ? '<span class="ga-etiket">PASİF</span>' : ""}${tipRozeti(k.tip)}</button>`).join(""));
+  html += bolum("Son geçişler", d.gecisler.map(k => `<button type="button" class="ga-satir" data-ga="gecis" data-id="${k.id}">
+      <i class="bi ${k.yon === "giris" ? "bi-box-arrow-in-right" : "bi-box-arrow-right"}"></i>
+      <span><b>${escapeHtml(k.plaka_no)}</b><small>${escapeHtml(tarihFormatla(k.tarih_saat))} · ${escapeHtml(k.kamera_id || "")} · ${k.yon === "giris" ? "Giriş" : "Çıkış"}</small></span>
+      ${durumRozeti(k.yetki_durumu, k.kisi_tip_anlik)}</button>`).join(""));
+  html += `<button type="button" class="ga-satir ga-tum" data-ga="analiz" data-plaka="${escapeHtml(q)}"><i class="bi bi-clock-history"></i>
+      <span><b>"${escapeHtml(q)}" plakasının tüm geçmişi</b><small>Görselleriyle birlikte · Enter</small></span></button>`;
+  if (!d.kara_liste.length && !d.kisiler.length && !d.gecisler.length) html = '<div class="ga-ipucu">Eşleşen kişi ya da geçiş yok.</div>' + html;
+  kutu.innerHTML = html;
+  _gaSecili = -1;
+}
+function _gaCalistir(satir) {
+  const modalEl = document.getElementById("genelAramaModal");
+  const tur = satir.dataset.ga, id = Number(satir.dataset.id), plaka = satir.dataset.plaka;
+  modalEl.addEventListener("hidden.bs.modal", () => {
+    if (tur === "kisi") kisiDuzenleAc(id);
+    else if (tur === "gecis") olayDetayAc(id);
+    else if (tur === "analiz") plakaAnalizAc(plaka);
+  }, { once: true });
+  bootstrap.Modal.getInstance(modalEl)?.hide();
+}
+document.getElementById("genelAramaGirdi")?.addEventListener("input", () => {
+  clearTimeout(_gaZamanlayici);
+  _gaZamanlayici = setTimeout(_genelAramaYap, 250);
+});
+document.getElementById("genelAramaGirdi")?.addEventListener("keydown", (e) => {
+  if (e.key === "ArrowDown") { e.preventDefault(); _gaSec(_gaSecili + 1); }
+  else if (e.key === "ArrowUp") { e.preventDefault(); _gaSec(_gaSecili - 1); }
+  else if (e.key === "Enter") {
+    e.preventDefault();
+    const satirlar = _gaSatirlar();
+    const q = e.target.value.trim();
+    if (_gaSecili >= 0 && satirlar[_gaSecili]) _gaCalistir(satirlar[_gaSecili]);
+    else if (q.length >= 2) _gaCalistir({ dataset: { ga: "analiz", plaka: q } });
+  }
+});
+document.getElementById("genelAramaSonuc")?.addEventListener("click", (e) => {
+  const satir = e.target.closest("[data-ga]");
+  if (satir) _gaCalistir(satir);
+});
+document.addEventListener("keydown", (e) => {
+  const yaziyor = ["INPUT", "TEXTAREA", "SELECT"].includes(document.activeElement?.tagName) || document.activeElement?.isContentEditable;
+  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k") { e.preventDefault(); genelAramaAc(); }
+  else if (e.key === "/" && !yaziyor && !document.querySelector(".modal.show")) { e.preventDefault(); genelAramaAc(); }
+});
