@@ -3387,6 +3387,7 @@ async function nobetNotuKapat(id) {
 
 async function nobetZiyaretcileriYukle() {
   const el = document.getElementById("nobetZiyaretciler");
+  if (!el) return;
   try {
     const veri = await apiCagir("/araclar/iceridedurum");
     const ziyaretciler = veri.araclar.filter(a => a.ziyaretci);
@@ -3428,7 +3429,8 @@ document.getElementById("nobetAra").addEventListener("input", () => {
   dugme.addEventListener("shown.bs.tab", () => {
     nobetKapilariniYukle();
     nobetNotlariYukle();
-    nobetZiyaretcileriYukle();
+    // 2026-11-03 (kullanıcı isteği): "İçeride kalan ziyaretçiler" kartı Nöbet Defteri'nden
+    // kaldırıldı; aynı liste İçerideki Araçlar ekranında ve Kontrol Merkezi'nde var.
   });
 })();
 
