@@ -768,6 +768,7 @@ function alarmTipiEtiketi(tip) {
     sunucu_kesintisi: "Sunucu kapalı kaldı",
     sessiz_kamera: "Sessiz kamera (plaka okumuyor)",
     kamera_ayari: "Kamera ayarı (saat / NTP / yön / kaçırma)",
+    anpr_motoru: "Plaka motoru ekran kartını kullanamıyor",
     bildirim_hatasi: "Bildirim gönderilemiyor",
     arac_uyusmazligi: "Plaka-araç uyuşmazlığı",
     kamera_arizasi: "Kamera arızası / bağlantı sorunu",
@@ -1447,7 +1448,7 @@ function _canliOlayHtml(k) {
 const _DIKKAT_IKON = { kara_liste: "bi-slash-circle", klon_plaka: "bi-copy", supheli_arac: "bi-exclamation-diamond",
   resmi_arac: "bi-briefcase", sessiz_kamera: "bi-camera-video-off", kamera_arizasi: "bi-camera-video-off",
   sunucu_kesintisi: "bi-power", bildirim_hatasi: "bi-bell-slash", bariyer_hatasi: "bi-door-closed",
-  disk_doluyor: "bi-hdd", disk_hatasi: "bi-hdd", yedek_bozuk: "bi-archive", sertifika_bitiyor: "bi-shield-exclamation", kamera_ayari: "bi-sliders" };
+  disk_doluyor: "bi-hdd", disk_hatasi: "bi-hdd", yedek_bozuk: "bi-archive", sertifika_bitiyor: "bi-shield-exclamation", kamera_ayari: "bi-sliders", anpr_motoru: "bi-gpu-card" };
 function _gecenSure(iso) {
   const dk = Math.max(0, Math.round((Date.now() - new Date(iso)) / 60000));
   if (dk < 1) return "az önce";
@@ -7501,6 +7502,11 @@ function _kameraDenetimCiz(v) {
   const tbody = document.getElementById("kameraDenetimTablo");
   if (!tbody) return;
   const zaman = document.getElementById("kameraDenetimZaman");
+  const motorUyari = document.getElementById("kameraDenetimMotor");
+  if (motorUyari) {
+    motorUyari.classList.toggle("d-none", !v.motor?.sorun);
+    motorUyari.innerHTML = v.motor?.sorun ? `<i class="bi bi-gpu-card me-1"></i>${escapeHtml(v.motor.sorun)}` : "";
+  }
   if (zaman) zaman.textContent = v.zaman ? `Son kontrol: ${new Date(v.zaman).toLocaleString("tr-TR", { dateStyle: "short", timeStyle: "short" })}` : "Henüz kontrol yapılmadı";
   const tire = '<span class="text-muted">—</span>';
   const iyi = (t) => `<span class="text-success"><i class="bi bi-check-circle me-1"></i>${t}</span>`;
@@ -7835,7 +7841,7 @@ async function bildirimAyarlariYukle() {
     const tetikleyiciEtiketleri = {
       hepsi: "Hepsi", yetkisiz: "Yetkisiz araç", kara_liste: "Kara liste",
       suresi_dolmus: "Süresi dolmuş", supheli_arac: "Şüpheli araç", klon_plaka: "Klon plaka şüphesi",
-      resmi_arac: "Resmi araç uyarısı", sunucu_kesintisi: "Sunucu kapalı kaldı", sessiz_kamera: "Sessiz kamera", kamera_ayari: "Kamera ayarı", arac_uyusmazligi: "Plaka-araç uyuşmazlığı", bariyer_hatasi: "Bariyer hatası", kamera_arizasi: "Kamera arızası",
+      resmi_arac: "Resmi araç uyarısı", sunucu_kesintisi: "Sunucu kapalı kaldı", sessiz_kamera: "Sessiz kamera", kamera_ayari: "Kamera ayarı", anpr_motoru: "Plaka motoru (ekran kartı)", arac_uyusmazligi: "Plaka-araç uyuşmazlığı", bariyer_hatasi: "Bariyer hatası", kamera_arizasi: "Kamera arızası",
       disk_hatasi: "Disk hatası", yedek_bozuk: "Otomatik yedek bozuk", yedek_hatasi: "Otomatik yedek alınamadı",
       disk_doluyor: "Disk doluluk erken uyarısı", sertifika_bitiyor: "HTTPS sertifikası bitiyor", gunluk_ozet: "Günlük özet (her sabah)",
     };

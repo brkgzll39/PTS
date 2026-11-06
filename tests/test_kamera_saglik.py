@@ -144,3 +144,50 @@ def test_kameraya_sor_yanitlari_ayristirir(monkeypatch):
     assert b == {"ulasildi": True, "saat_farki_sn": 40, "ntp_acik": False, "yonler": ["Obverse"], "hata": None}
     yanitlar["getCurrentTime"] = Yanit("", 401)
     assert "parola" in ks.kameraya_sor("rtsp://a:b@1.2.3.4/x")["hata"]
+
+
+@pytest.mark.parametrize("dml_kurulu, saglayicilar, cpu_zorla, sorun_var", [
+    (False, None, False, False),                                              # GPU paketi yok: CPU normal
+    (True, ["DmlExecutionProvider", "CPUExecutionProvider"], False, False),  # sağlıklı
+    (True, ["CPUExecutionProvider"], False, True),                           # 2026-11-06 sahadaki bozulma
+    (True, ["CPUExecutionProvider"], True, False),                           # bilerek CPU'ya zorlanmış
+])
+def test_anpr_motoru_ekran_kartini_kaybettiyse_sorun(monkeypatch, dml_kurulu, saglayicilar, cpu_zorla, sorun_var):
+    import sys
+    import types
+    from importlib import metadata
+    from backend import main
+
+    def surum(ad):
+        if ad == "onnxruntime-directml" and dml_kurulu:
+            return "1.24.4"
+        raise metadata.PackageNotFoundError(ad)
+
+    monkeypatch.setattr(metadata, "version", surum)
+    sahte = types.SimpleNamespace(get_available_providers=lambda: list(saglayicilar or []))
+    monkeypatch.setitem(sys.modules, "onnxruntime", sahte)
+    if cpu_zorla:
+        monkeypatch.setenv("PTS_ANPR_PROVIDERS", "cpu")
+    else:
+        monkeypatch.delenv("PTS_ANPR_PROVIDERS", raising=False)
+    durum = main._anpr_motor_durumu()
+    assert bool(durum["sorun"]) is sorun_var
+    if sorun_var:
+        assert "onnxruntime-directml==1.24.4" in durum["sorun"]
+
+
+def test_anpr_motoru_alarmi_gunde_bir_kez(monkeypatch):
+    from backend import main, models
+    from backend.database import SessionLocal
+    monkeypatch.setattr(main, "_anpr_motor_durumu", lambda: {"sorun": "Plaka motoru ekran kartını kullanamıyor (test)"})
+    gonderilen = []
+    monkeypatch.setattr(main, "_bildirim_tetikle", lambda db, t, v: gonderilen.append(t))
+    db = SessionLocal()
+    try:
+        db.query(models.Alarm).filter(models.Alarm.alarm_tipi == "anpr_motoru").delete()
+        db.commit()
+    finally:
+        db.close()
+    assert main._anpr_motor_kontrol_ve_alarm()
+    assert main._anpr_motor_kontrol_ve_alarm()
+    assert gonderilen == ["anpr_motoru"]

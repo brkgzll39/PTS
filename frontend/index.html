@@ -2106,6 +2106,7 @@
             <button class="btn btn-sm btn-outline-secondary" id="kameraDenetimBtn" data-rol-min="yonetici" onclick="kameraDenetimiCalistir()"><i class="bi bi-arrow-repeat me-1"></i>Şimdi kontrol et</button>
           </div>
         </div><div class="card-body p-0">
+          <div id="kameraDenetimMotor" class="alert alert-danger small rounded-0 mb-0 d-none" role="alert"></div>
           <div class="table-responsive"><table class="table table-sm mb-0 align-middle">
             <thead class="table-light"><tr>
               <th>Kamera</th><th>Saat</th><th>NTP</th><th>Okuma yönü</th><th title="Dünkü gece mutabakatı: kameranın okuyup PTS'in kaçırdığı geçişler">Dün kaçırılan</th><th>Sorun / öneri</th>
@@ -2706,6 +2707,7 @@
                     <option value="bariyer_hatasi">Sadece bariyer açma hatası</option>
                     <option value="kamera_arizasi">Sadece kamera arızası</option>
                     <option value="kamera_ayari">Sadece kamera ayar denetimi (saat / NTP / yön)</option>
+                    <option value="anpr_motoru">Sadece plaka motoru ekran kartını kaybetti</option>
                     <option value="disk_hatasi">Sadece disk/görsel yazma hatası</option>
                     <option value="disk_doluyor">Sadece disk doluluk erken uyarısı</option>
                     <option value="yedek_bozuk">Sadece otomatik yedek bozuk üretildi</option>

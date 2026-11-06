@@ -11042,6 +11042,7 @@ async def _gece_isleri_baslangic():
     asyncio.ensure_future(_mutabakat_dongu())
     asyncio.ensure_future(_kamera_denetimi_dongu())
     asyncio.ensure_future(_sessiz_kamera_dongu())
+    threading.Thread(target=_anpr_motor_kontrol_ve_alarm, name="anpr-motor-kontrol", daemon=True).start()
     threading.Thread(target=_telegram_sorgu_dongu, name="telegram-sorgu", daemon=True).start()
 
 
@@ -11225,6 +11226,56 @@ _son_kamera_denetim_gunu = None
 _kamera_denetim_kilit = threading.Lock()
 
 
+# PLAKA MOTORU DONANIMI (2026-11-06 saha: kütüphane kurulumu onnxruntime'ın CPU
+# paketini onnxruntime-directml'in üzerine yazdı; motor sessizce ekran kartından
+# işlemciye düştü, kare başına okuma 90 ms'den 300 ms'ye çıktı, canlı görüntü ve
+# okuma hızı yarıya indi). İki paket aynı "onnxruntime" klasörünü paylaşır;
+# directml kurulu olduğu halde DirectML sağlayıcısı yoksa bu bir kurulum bozulmasıdır.
+_DML_ONARIM_KOMUTU = (".venv\\Scripts\\python.exe -m pip uninstall -y onnxruntime onnxruntime-directml ; "
+                      ".venv\\Scripts\\python.exe -m pip install onnxruntime-directml=={surum}")
+
+
+def _anpr_motor_durumu() -> dict:
+    """{"directml_surumu", "saglayicilar", "sorun"} -- sorun yoksa "sorun": None."""
+    from importlib import metadata
+    durum = {"directml_surumu": None, "saglayicilar": None, "sorun": None}
+    try:
+        durum["directml_surumu"] = metadata.version("onnxruntime-directml")
+    except metadata.PackageNotFoundError:
+        return durum
+    try:
+        import onnxruntime
+        durum["saglayicilar"] = list(onnxruntime.get_available_providers())
+    except Exception as exc:  # kurulum tamamen bozuk
+        durum["sorun"] = f"Plaka motoru yüklenemiyor: {exc}"
+        return durum
+    cpu_zorlandi = os.environ.get("PTS_ANPR_PROVIDERS", "").strip().lower() in ("cpu", "cpu_only", "cpu-only")
+    if "DmlExecutionProvider" not in durum["saglayicilar"] and not cpu_zorlandi:
+        durum["sorun"] = ("Plaka motoru ekran kartını kullanamıyor (işlemciye düştü; okuma ~3 kat yavaş). "
+                          "onnxruntime-directml kurulu ama başka bir kurulum onu bozmuş. Onarım: "
+                          + _DML_ONARIM_KOMUTU.format(surum=durum["directml_surumu"]))
+    return durum
+
+
+def _anpr_motor_kontrol_ve_alarm() -> Optional[str]:
+    """Açılışta: motor ekran kartını kaybetmişse günde bir kez alarm + bildirim."""
+    durum = _anpr_motor_durumu()
+    if not durum["sorun"]:
+        return None
+    logger.error(durum["sorun"])
+    db = SessionLocal()
+    try:
+        A = models.Alarm
+        if db.query(A.id).filter(A.alarm_tipi == "anpr_motoru", A.tarih_saat >= datetime.now() - timedelta(days=1)).first():
+            return durum["sorun"]
+        db.add(A(plaka_no="SISTEM", alarm_tipi="anpr_motoru", mesaj=durum["sorun"][:255]))
+        db.commit()
+        _bildirim_tetikle(db, "anpr_motoru", {"olay": "anpr_motoru", "alarm_tipi": "anpr_motoru", "mesaj": durum["sorun"]})
+    finally:
+        db.close()
+    return durum["sorun"]
+
+
 def _kamera_denetimi_oku() -> dict:
     try:
         with open(_KAMERA_DENETIM_DOSYASI, encoding="utf-8") as f:
@@ -11299,7 +11350,8 @@ async def _kamera_denetimi_dongu() -> None:
 def _kamera_denetimi_cevap(kayit: dict, kullanici: models.Kullanici) -> dict:
     izinli = _kullanicinin_izinli_kameralari(kullanici)
     kameralar = [{"id": kid, **v} for kid, v in (kayit.get("kameralar") or {}).items() if izinli is None or kid in izinli]
-    return {"zaman": kayit.get("zaman"), "saat": _KAMERA_DENETIM_SAATI, "kameralar": kameralar}
+    return {"zaman": kayit.get("zaman"), "saat": _KAMERA_DENETIM_SAATI, "kameralar": kameralar,
+            "motor": _anpr_motor_durumu()}
 
 
 @app.get("/kamera-ayar-denetimi")
@@ -11593,7 +11645,7 @@ _ALARM_ADLARI = {
     "yetkisiz_arac": "Yetkisiz araç", "kara_liste": "Kara liste geçişi", "suresi_dolmus": "Süresi dolmuş",
     "supheli_arac": "Şüpheli araç", "klon_plaka": "Klon plaka şüphesi", "resmi_arac": "Resmi araç",
     "sunucu_kesintisi": "Sunucu kapalı kaldı", "sessiz_kamera": "Sessiz kamera", "kamera_arizasi": "Kamera arızası",
-    "kamera_ayari": "Kamera ayarı",
+    "kamera_ayari": "Kamera ayarı", "anpr_motoru": "Plaka motoru ekran kartını kullanamıyor",
     "bariyer_hatasi": "Bariyer hatası", "disk_hatasi": "Disk hatası",
 }
 
@@ -12272,7 +12324,7 @@ def _goruntu_temizle_calistir(gun: int, db: Session) -> tuple[int, "datetime"]:
 # yalnızca kişiyi belirleyen alanlar temizlenir. Geri alınamaz.
 KVKK_ANONIM_PLAKA = "ANONIM"
 _SISTEM_ALARM_TIPLERI = ("kamera_arizasi", "disk_hatasi", "disk_doluyor", "yedek_bozuk", "yedek_hatasi",
-                         "sertifika_bitiyor", "kamera_ayari")
+                         "sertifika_bitiyor", "kamera_ayari", "anpr_motoru")
 
 
 def _kayitlari_anonimlestir(gun: int, db: Session, parca: int = 1000) -> int:
