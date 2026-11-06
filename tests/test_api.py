@@ -9439,4 +9439,6 @@ def test_yalniz_pip_guncellemesi_yeniden_baslatmadan_uygulanir(client, yetkili_h
             break
         time.sleep(0.05)
     d = yg.json_oku("durum.json")
-    assert d["izleme_bitti"] and "gerekmedi" in d["izleme"] and "izlenecek" not in d["mesaj"]
+    assert d["izleme_bitti"] and "gerekmedi" in d["izleme"]
+    # 2026-11-06 saha hatası: başarılı pip güncellemesi "Başarısız" görünüyordu.
+    assert d["basarili"] is True and d["mesaj"] == "1 kütüphane güncellendi"

@@ -173,3 +173,15 @@ def test_pip_planin_basina_alinir_ve_yeniden_baslatma_gerektirmez():
     assert [(p["ad"], p["yeni"], p["yeniden_baslatma"]) for p in plan] == [("pip", "26.2", False), ("pillow", "12.1.1", True)]
     assert yg.yeniden_baslatma_gerekir(plan) is True
     assert yg.yeniden_baslatma_gerekir(plan[:1]) is False
+
+
+@pytest.mark.parametrize("kod, basarili", [("ok", True), ("yeniden_baslatmasiz", True), ("kurulum", False),
+                                           ("geri_donuldu", False), ("eski_de_yanit_yok", False)])
+def test_izleme_sonucu_basari_durumu(kod, basarili):
+    yg.json_yaz("durum.json", {"islem": "uygula", "basarili": True,
+                               "mesaj": "1 kütüphane güncellendi; PTS yeniden başlatılıp izlenecek"})
+    yg.main(["izleme-sonucu", kod, "180"])
+    d = yg.json_oku("durum.json")
+    assert d["basarili"] is basarili and d["izleme_bitti"] is True
+    if basarili:
+        assert d["mesaj"] == "1 kütüphane güncellendi"

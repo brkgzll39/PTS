@@ -352,6 +352,11 @@ _IZLEME_METINLERI = {
 }
 
 
+# 2026-11-06 saha hatası: "yeniden_baslatmasiz" başarı sayılmıyordu; pip başarıyla
+# güncellendiği halde ekranda "Başarısız" görünüyordu.
+_BASARILI_IZLEME_KODLARI = ("ok", "yeniden_baslatmasiz")
+
+
 def main(argv=None) -> int:
     komut = (argv or sys.argv[1:] or [""])[0]
     if komut == "uygula":
@@ -368,7 +373,7 @@ def main(argv=None) -> int:
         metin = _IZLEME_METINLERI.get(kod, kod)[:300].format(sn=sn)
         alanlar = {"izleme": metin, "izleme_bitti": True, "izleme_zamani": datetime.now().isoformat(timespec="seconds")}
         durum = json_oku("durum.json", {}) or {}
-        if kod == "ok":
+        if kod in _BASARILI_IZLEME_KODLARI:
             alanlar["mesaj"] = (durum.get("mesaj") or "").replace("; PTS yeniden başlatılıp izlenecek", "")
         else:
             alanlar["basarili"] = False
