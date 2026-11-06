@@ -11538,7 +11538,19 @@ def yazilim_guncellemeleri_uygula(db: Session = Depends(get_db),
     if not plan:
         raise HTTPException(400, "Otomatik uygulanacak güvenlik güncellemesi yok (önce tarayın)")
     yg.json_yaz("plan.json", plan)
-    basladi, aciklama = _guncelleme_betigini_baslat("uygula")
+    if not yg.yeniden_baslatma_gerekir(plan):
+        # Yalnız pip/wheel: PTS çalışırken kullanılmazlar; yeniden başlatma ve dış görev
+        # gerekmez, bu süreçten uygulanır (yine yedek + geri alma kurallarıyla).
+        def _arka_planda():
+            try:
+                if yg.uygula().get("basarili"):
+                    yg.main(["izleme-sonucu", "yeniden_baslatmasiz"])
+            except Exception:
+                logger.exception("Kurulum aracı güncellemesi başarısız")
+        threading.Thread(target=_arka_planda, name="yazilim-guncelleme", daemon=True).start()
+        basladi, aciklama = True, "Kurulum aracı güncelleniyor (PTS yeniden başlatılmayacak)"
+    else:
+        basladi, aciklama = _guncelleme_betigini_baslat("uygula")
     _denetim_kaydet(db, kullanici.kullanici_adi, "yazilim_guncelle",
                     ", ".join(f"{p['ad']} {p['eski']}->{p['yeni']}" for p in plan)[:250] + ("" if basladi else " (elle)"))
     return {"basladi": basladi, "aciklama": aciklama, "komut": _guncelleme_komutu("uygula"), "plan": plan}

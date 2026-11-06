@@ -40,8 +40,10 @@ PYPI = "https://pypi.org/pypi"
 # paketleriyle çakışır; otomatik yükseltilmez, ekranda "elle" diye gösterilir.
 TUTULAN = ("onnxruntime", "onnxruntime-directml", "onnxruntime-gpu", "opencv-python", "opencv-python-headless",
            "numpy", "fast-alpr", "fast-plate-ocr", "open-image-models")
-# Kurulum araçları: çalışan PTS'i etkilemez; açıkları gösterilir ama otomatik yükseltilmez.
-ARACLAR = ("pip", "setuptools", "wheel")
+# PTS çalışırken HİÇ kullanılmayan kurulum araçları: yalnız bunlar güncellenecekse PTS
+# yeniden başlatılmaz. pip ayrıca planın BAŞINA alınır -- diğer paketleri o kurar.
+# (setuptools bu listede DEĞİL: bazı kütüphaneler çalışırken pkg_resources'ını kullanır.)
+YENIDEN_BASLATMASIZ = ("pip", "wheel")
 _AD = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$")
 _SURUM = re.compile(r"^[0-9][0-9A-Za-z.+!-]{0,40}$")
 
@@ -157,7 +159,7 @@ def tara(paketler: Optional[dict] = None, getir: Callable = _pypi_getir, es_zama
         tutulan = anahtar in TUTULAN
         onerilen = onerilen_surum(surum, aciklar) if aciklar else None
         return {"ad": ad, "surum": surum, "en_yeni": en_yeni, "aciklar": aciklar, "onerilen": onerilen,
-                "tutulan": tutulan, "arac": anahtar in ARACLAR,
+                "tutulan": tutulan, "yeniden_baslatma": anahtar not in YENIDEN_BASLATMASIZ,
                 "guncel_degil": bool(en_yeni and _v(en_yeni) and _v(surum) and _v(en_yeni) > _v(surum))}
 
     with ThreadPoolExecutor(max_workers=es_zamanli) as havuz:
@@ -173,13 +175,19 @@ def tara(paketler: Optional[dict] = None, getir: Callable = _pypi_getir, es_zama
 
 
 def plan_olustur(tarama: dict) -> list:
-    """Otomatik uygulanacaklar: açığı olan, tutulmayan ve düzeltmesi olan paketler."""
+    """Otomatik uygulanacaklar: açığı olan, tutulmayan ve düzeltmesi olan paketler (pip önce)."""
     plan = []
     for p in (tarama or {}).get("paketler", []):
-        if p.get("aciklar") and p.get("onerilen") and not p.get("tutulan") and not p.get("arac"):
+        if p.get("aciklar") and p.get("onerilen") and not p.get("tutulan"):
             if _AD.match(p["ad"]) and _SURUM.match(p["onerilen"]):
-                plan.append({"ad": p["ad"], "eski": p["surum"], "yeni": p["onerilen"]})
+                plan.append({"ad": p["ad"], "eski": p["surum"], "yeni": p["onerilen"],
+                             "yeniden_baslatma": normalize(p["ad"]) not in YENIDEN_BASLATMASIZ})
+    plan.sort(key=lambda x: normalize(x["ad"]) != "pip")
     return plan
+
+
+def yeniden_baslatma_gerekir(plan: list) -> bool:
+    return any(normalize(p["ad"]) not in YENIDEN_BASLATMASIZ for p in plan)
 
 
 # ------------------------------------------------------------------ uygulama
@@ -340,6 +348,7 @@ _IZLEME_METINLERI = {
     "geri_al_yanit_yok": "Geri alma sonrası PTS yanıt vermiyor -- loglar\\pts.log dosyasına bakın",
     "servis_yok": "PTS servisi bulunamadı; PTS'i elle yeniden başlatın",
     "geri_al_basarisiz": "Geri alma tamamlanamadı; PTS yeniden başlatılmadı (ayrıntı yukarıda)",
+    "yeniden_baslatmasiz": "PTS'in yeniden başlatılması gerekmedi (yalnız kurulum aracı güncellendi)",
 }
 
 

@@ -9359,7 +9359,7 @@ def test_yazilim_guncellemeleri_tarama_alarm_ve_uygula(client, yetkili_header, m
     assert bos["tarama"] is None and bos["plan"] == [] and bos["siklik"] == "haftalik"
     # Elle tarama alarm üretmez; zamanlanmış tarama yeni açıkta bir kez üretir.
     r = client.post("/yazilim-guncellemeleri/tara", headers=yetkili_header).json()
-    assert r["plan"] == [{"ad": "pillow", "eski": "11.0.0", "yeni": "12.1.1"}]   # plaka motoru paketi plana girmez
+    assert [(p["ad"], p["yeni"]) for p in r["plan"]] == [("pillow", "12.1.1")]   # plaka motoru paketi plana girmez
     assert bildirim == []
     sonuc["paketler"][0]["aciklar"].append({"id": "CVE-Z", "ozet": "", "duzelten": ["12.1.1"]})
     pts_main._yazilim_taramasi_yap()
@@ -9387,7 +9387,7 @@ def test_yazilim_guncellemeleri_tarama_alarm_ve_uygula(client, yetkili_header, m
     monkeypatch.setattr(pts_main, "_guncelleme_betigini_baslat", lambda islem: (baslatilan.append(islem) or (True, "ok")))
     u = client.post("/yazilim-guncellemeleri/uygula", headers=yetkili_header).json()
     assert u["basladi"] is True and baslatilan == ["uygula"]
-    assert yg.json_oku("plan.json") == [{"ad": "pillow", "eski": "11.0.0", "yeni": "12.1.1"}]
+    assert [(p["ad"], p["yeni"]) for p in yg.json_oku("plan.json")] == [("pillow", "12.1.1")]
     # İşlem sürerken ikinci istek reddedilir; izleme bitince serbest.
     yg.json_yaz("durum.json", {"islem": "uygula", "baslangic": datetime.now().isoformat(), "bitis": None})
     assert client.post("/yazilim-guncellemeleri/uygula", headers=yetkili_header).status_code == 409
@@ -9413,3 +9413,30 @@ def test_yazilim_guncellemesi_demoda_uygulanamaz(client, yetkili_header, monkeyp
     assert client.get("/yazilim-guncellemeleri", headers=yetkili_header).json()["uygulama_kapali"] is True
     assert client.post("/yazilim-guncellemeleri/uygula", headers=yetkili_header).status_code == 403
     assert client.post("/yazilim-guncellemeleri/geri-al", headers=yetkili_header).status_code in (400, 403)
+
+
+def test_yalniz_pip_guncellemesi_yeniden_baslatmadan_uygulanir(client, yetkili_header, monkeypatch, tmp_path):
+    """2026-11-06 sahada: açıkların hepsi pip'teydi. pip PTS çalışırken kullanılmaz: dış görev
+    ve yeniden başlatma olmadan bu süreçten uygulanır."""
+    import time
+    from backend import yazilim_guncelleme as yg
+    monkeypatch.setenv("PTS_GUNCELLEME_KLASORU", str(tmp_path / "yg"))
+    monkeypatch.delenv("PTS_GUNCELLEME_UYGULAMA_KAPALI", raising=False)
+    yg.json_yaz("tarama.json", {"paketler": [{"ad": "pip", "surum": "25.0.1", "aciklar": [{"id": "CVE-P"}],
+                                             "onerilen": "26.2", "tutulan": False}]})
+    betik = []
+    monkeypatch.setattr(pts_main, "_guncelleme_betigini_baslat", lambda islem: betik.append(islem) or (True, ""))
+
+    def sahte_uygula():
+        yg.json_yaz("durum.json", {"islem": "uygula", "baslangic": "2026-11-06T13:00:00", "basarili": True,
+                                   "mesaj": "1 kütüphane güncellendi; PTS yeniden başlatılıp izlenecek"})
+        return {"basarili": True}
+    monkeypatch.setattr(yg, "uygula", sahte_uygula)
+    r = client.post("/yazilim-guncellemeleri/uygula", headers=yetkili_header).json()
+    assert r["basladi"] is True and "yeniden başlatılmayacak" in r["aciklama"] and betik == []
+    for _ in range(50):
+        if (yg.json_oku("durum.json") or {}).get("izleme_bitti"):
+            break
+        time.sleep(0.05)
+    d = yg.json_oku("durum.json")
+    assert d["izleme_bitti"] and "gerekmedi" in d["izleme"] and "izlenecek" not in d["mesaj"]

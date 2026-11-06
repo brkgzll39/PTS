@@ -436,7 +436,8 @@
         <ul>
           <li><span class="dugme">Güncellemeleri uygula</span>: yalnız açığı olan kütüphaneler, açığı kapatan <b>en düşük</b> sürüme yükseltilir.
             Plaka motoru kütüphaneleri (onnxruntime, opencv, fast-alpr…) otomatik güncellenmez. Önce kurulu sürümler yedeklenir; PTS yaklaşık
-            1 dakika yeniden başlar ve 3 dakika izlenir. Sorun görülürse kendiliğinden eski sürümlere dönülür. Sonuç <b>Son işlem</b> kartında görünür.</li>
+            1 dakika yeniden başlar ve 3 dakika izlenir. Sorun görülürse kendiliğinden eski sürümlere dönülür. Sonuç <b>Son işlem</b> kartında görünür.
+            Yalnız kurulum aracı <b>pip</b> güncellenecekse PTS yeniden başlatılmaz (pip, PTS çalışırken kullanılmaz); pip her zaman ilk sırada güncellenir.</li>
           <li><span class="dugme">Eski sürümlere geri al</span>: güncellemeden sonra bir sorun fark ederseniz son yedeğe döner.</li>
           <li>Güncelleme, PTS servisinden bağımsız bir Windows görevi olarak çalışır. Başlatılamazsa ekran, sunucuda Yönetici PowerShell'de
             çalıştırılacak tek satırlık komutu gösterir. Kayıt: <code>veritabani\yazilim_guncelleme\son_islem.log</code>.</li>

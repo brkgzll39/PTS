@@ -57,7 +57,7 @@ def test_tara_ve_plan():
     assert t["acik_paket"] == 2 and t["acik_sayisi"] == 3
     assert t["paketler"][0]["ad"] in ("pillow", "onnxruntime")    # açıklılar önce
     # Plaka motoru paketi plana girmez; en yeniye değil açığı kapatan sürüme.
-    assert yg.plan_olustur(t) == [{"ad": "pillow", "eski": "11.0.0", "yeni": "12.1.1"}]
+    assert yg.plan_olustur(t) == [{"ad": "pillow", "eski": "11.0.0", "yeni": "12.1.1", "yeniden_baslatma": True}]
 
 
 def test_plan_supheli_ad_ve_surumu_almaz():
@@ -164,6 +164,12 @@ def test_karisik_planda_uyumlu_olan_kalir_uyumsuz_olan_atlanir():
     assert "1 tanesi atlandı" in d["mesaj"]
 
 
-def test_kurulum_araclari_plana_girmez():
-    t = yg.tara({"pip": ("pip", "24.0")}, getir=_sahte_pypi({"pip": {"en_yeni": "26.2", "aciklar": [{"id": "CVE-P", "fixed_in": ["25.0"]}]}}))
-    assert t["paketler"][0]["arac"] is True and yg.plan_olustur(t) == []
+def test_pip_planin_basina_alinir_ve_yeniden_baslatma_gerektirmez():
+    """2026-11-06 sahada: taramada yalnız pip'te 6 açık çıktı."""
+    veriler = {"pip": {"en_yeni": "26.3", "aciklar": [{"id": "CVE-P1", "fixed_in": ["25.3"]}, {"id": "CVE-P2", "fixed_in": ["26.2"]}]},
+               "pillow": {"en_yeni": "13.0.0", "aciklar": [{"id": "CVE-A", "fixed_in": ["12.1.1"]}]}}
+    t = yg.tara({"pip": ("pip", "25.0.1"), "pillow": ("pillow", "11.0.0")}, getir=_sahte_pypi(veriler))
+    plan = yg.plan_olustur(t)
+    assert [(p["ad"], p["yeni"], p["yeniden_baslatma"]) for p in plan] == [("pip", "26.2", False), ("pillow", "12.1.1", True)]
+    assert yg.yeniden_baslatma_gerekir(plan) is True
+    assert yg.yeniden_baslatma_gerekir(plan[:1]) is False

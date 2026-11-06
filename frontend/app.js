@@ -7945,7 +7945,7 @@ function _yazilimTabloCiz() {
       ? `<span class="badge bg-danger" title="${escapeHtml(aciklar.map(a => a.id + (a.ozet ? ": " + a.ozet : "")).join("\n"))}">${aciklar.length} açık</span>`
       : p.hata ? '<span class="text-muted">sorgulanamadı</span>' : '<span class="text-success"><i class="bi bi-check-circle"></i></span>';
     const not = p.tutulan ? '<span class="text-muted">Plaka motoru: otomatik güncellenmez</span>'
-      : p.arac ? '<span class="text-muted">Kurulum aracı: çalışan sistemi etkilemez</span>'
+      : p.yeniden_baslatma === false && aciklar.length ? "Kurulum aracı (PTS yeniden başlatılmadan güncellenir)"
       : aciklar.length && !p.onerilen ? '<span class="text-warning">Henüz düzeltilmiş sürüm yok</span>'
       : aciklar.length ? "Güvenlik güncellemesi" : p.guncel_degil ? '<span class="text-muted">Yeni sürüm var (gerekmedikçe güncellenmez)</span>' : "";
     return `<tr><td class="fw-semibold">${escapeHtml(p.ad)}</td><td>${escapeHtml(p.surum)}</td>
@@ -7973,7 +7973,8 @@ function _yazilimCiz(v) {
   document.getElementById("yazilimSiklik").value = v.siklik || "haftalik";
   const planKutu = document.getElementById("yazilimPlan");
   planKutu.classList.toggle("d-none", !v.plan.length);
-  document.getElementById("yazilimPlanListe").innerHTML = v.plan.map(p => `<li>${escapeHtml(p.ad)} ${escapeHtml(p.eski)} → <b>${escapeHtml(p.yeni)}</b></li>`).join("");
+  document.getElementById("yazilimPlanListe").innerHTML = v.plan.map(p => `<li>${escapeHtml(p.ad)} ${escapeHtml(p.eski)} → <b>${escapeHtml(p.yeni)}</b>` +
+    (p.yeniden_baslatma === false ? ' <span class="text-muted">(yeniden başlatma gerekmez)</span>' : "") + "</li>").join("");
   document.getElementById("yazilimUygulaBtn").disabled = v.suruyor || v.uygulama_kapali;
   document.getElementById("yazilimUygulaBtn").title = v.uygulama_kapali ? "Bu kurulumda (demo) güncelleme uygulanamaz" : "";
   const d = v.durum, kart = document.getElementById("yazilimIslemKart");
@@ -8023,8 +8024,10 @@ async function yazilimUygula() {
   const plan = _yazilimVeri?.plan || [];
   if (!plan.length) return;
   const liste = plan.map(p => `${p.ad} ${p.eski} → ${p.yeni}`).join(", ");
-  if (!(await onayAl(`${liste}. PTS yaklaşık 1 dakika yeniden başlayacak (kameralar ve paneller kısa süre kesilir); ` +
-    "sonra 3 dakika izlenecek, sorun olursa eski sürümlere dönülecek. Yoğun olmayan bir saatte yapın.",
+  const yenidenBaslar = plan.some(p => p.yeniden_baslatma !== false);
+  if (!(await onayAl(`${liste}. ` + (yenidenBaslar
+    ? "PTS yaklaşık 1 dakika yeniden başlayacak (kameralar ve paneller kısa süre kesilir); sonra 3 dakika izlenecek, sorun olursa eski sürümlere dönülecek. Yoğun olmayan bir saatte yapın."
+    : "Yalnız kurulum aracı güncellenecek; PTS yeniden başlatılmayacak, kameralar ve paneller etkilenmez."),
     { baslik: "Güvenlik güncellemeleri uygulansın mı?", onayMetni: "Uygula", guvenli: true }))) return;
   try {
     const r = await apiCagir("/yazilim-guncellemeleri/uygula", { method: "POST" });
