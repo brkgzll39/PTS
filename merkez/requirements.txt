@@ -1,3 +1,4 @@
 # PTS Merkezi İzleme sunucusu -- yalnızca bunlar gerekir (PTS'in kendisi gerekmez).
-fastapi==0.115.0
+fastapi==0.162.0
+starlette==1.10.0
 uvicorn[standard]==0.30.6

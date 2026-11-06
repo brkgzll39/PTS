@@ -9,19 +9,19 @@
 # "Manuel Kurulum" bölümü). `kurulum.bat` (Windows) bunu `uv --python 3.12`
 # ile otomatik yönetir; elle kurulumda `py -3.12 -m venv .venv` kullanın.
 
-fastapi==0.115.0
+fastapi==0.162.0
 uvicorn[standard]==0.30.6
 sqlalchemy==2.0.35
 pyodbc==5.2.0
 pydantic==2.9.2
-python-multipart==0.0.9
+python-multipart==0.0.33
 openpyxl==3.1.5
 reportlab==4.2.5
 # "GEÇİŞ RAPORU" PDF'indeki araç görsellerini gömmeden önce küçültüp yeniden
 # sıkıştırmak için (bkz. backend/pdf_export.py::_kucuk_gorsel_akisi) --
 # reportlab'ın Image flowable'ı JPEG kodlamak için zaten dolaylı olarak
 # Pillow'a ihtiyaç duyar, burada doğrudan/açık bir bağımlılık olarak listelendi.
-Pillow==11.0.0
+Pillow==13.0.0
 # Kurumsal ağlarda (ör. TPAO) dış HTTPS trafiğini (Telegram, webhook)
 # bir SSL inceleme/proxy cihazından geçiren kurulumlarda Python'ın
 # kendi (OpenSSL/certifi) sertifika listesi yerine İŞLETİM SİSTEMİNİN
