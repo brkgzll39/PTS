@@ -282,6 +282,7 @@ def uygula(calistir: Callable = subprocess.run, paketler: Optional[Callable] = N
     elif not atlanan:
         adimlar.append("Uygulanacak geçerli paket yok")
     if ok:
+        _yeniden_tara(adimlar)
         mesaj = f"{len(uygulanan)} kütüphane güncellendi" + (f", {len(atlanan)} tanesi atlandı" if atlanan else "") \
             + "; PTS yeniden başlatılıp izlenecek"
     else:
@@ -289,6 +290,18 @@ def uygula(calistir: Callable = subprocess.run, paketler: Optional[Callable] = N
     _durum_yaz(bitis=datetime.now().isoformat(timespec="seconds"), basarili=ok, adimlar=adimlar, yedek=yedek_adi,
                uygulanan=uygulanan, atlanan=atlanan, mesaj=mesaj)
     return json_oku("durum.json")
+
+
+def _yeniden_tara(adimlar: list) -> None:
+    """Güncelleme/geri alma sonrası tablo eski taramayı göstermesin (2026-11-06 sahada:
+    pip 26.2'ye güncellendiği halde tablo 25.0.1 ve 6 açık göstermeye devam etti)."""
+    try:
+        t = tara()
+        json_yaz("tarama.json", t)
+        adimlar.append(f"Yeniden tarandı: {t['acik_paket']} kütüphanede açık kaldı" if t["acik_paket"]
+                       else "Yeniden tarandı: bilinen güvenlik açığı kalmadı")
+    except Exception as exc:  # internet yoksa güncelleme yine başarılıdır
+        adimlar.append(f"Yeniden taranamadı ({type(exc).__name__}); ekranda 'Şimdi tara' ile tarayın")
 
 
 def _geri_don(eski: dict, simdi: dict, calistir: Callable, adimlar: Optional[list] = None) -> bool:
@@ -335,6 +348,8 @@ def geri_al(yedek_adi: Optional[str] = None, calistir: Callable = subprocess.run
     if mesaj:
         adimlar.append(mesaj)
     if kaydet:
+        if ok:
+            _yeniden_tara(adimlar)
         _durum_yaz(bitis=datetime.now().isoformat(timespec="seconds"), basarili=ok, adimlar=adimlar,
                    mesaj="Eski sürümlere dönüldü" if ok else "Geri dönüş tamamlanamadı")
     return json_oku("durum.json") or {}

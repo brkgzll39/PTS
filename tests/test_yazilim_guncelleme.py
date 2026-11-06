@@ -6,11 +6,21 @@ import pytest
 
 from backend import yazilim_guncelleme as yg
 
+_GERCEK_YENIDEN_TARA = yg._yeniden_tara   # autouse taklitten önce saklanır
+
 
 @pytest.fixture(autouse=True)
 def ayri_klasor(tmp_path, monkeypatch):
     monkeypatch.setenv("PTS_GUNCELLEME_KLASORU", str(tmp_path / "yg"))
     return tmp_path / "yg"
+
+
+@pytest.fixture(autouse=True)
+def taramalar(monkeypatch):
+    """Güncelleme sonrası yeniden tarama ağa çıkmasın; çağrıları kaydet."""
+    cagrilar = []
+    monkeypatch.setattr(yg, "_yeniden_tara", lambda adimlar: (cagrilar.append(1), adimlar.append("Yeniden tarandı (test)")))
+    return cagrilar
 
 
 def test_onerilen_surum_en_dusuk_kapatan():
@@ -185,3 +195,31 @@ def test_izleme_sonucu_basari_durumu(kod, basarili):
     assert d["basarili"] is basarili and d["izleme_bitti"] is True
     if basarili:
         assert d["mesaj"] == "1 kütüphane güncellendi"
+
+
+def test_basarili_guncelleme_ve_geri_alma_sonrasi_yeniden_taranir(taramalar):
+    """2026-11-06 sahada: pip güncellendi ama tablo eski taramayı göstermeye devam etti."""
+    pip = SahtePip({"pip": ("pip", "25.0.1")})
+    yg.json_yaz("plan.json", [{"ad": "pip", "eski": "25.0.1", "yeni": "26.2"}])
+    assert yg.uygula(calistir=pip, paketler=pip.paketler)["basarili"] is True
+    assert len(taramalar) == 1
+    yg.geri_al(calistir=pip, paketler=pip.paketler)
+    assert len(taramalar) == 2
+    # Başarısız güncellemede yeniden tarama yapılmaz (eski sürümler yerinde).
+    pip2 = SahtePip({"x": ("x", "1.0")}, basarisiz=("x",))
+    yg.json_yaz("plan.json", [{"ad": "x", "eski": "1.0", "yeni": "2.0"}])
+    assert yg.uygula(calistir=pip2, paketler=pip2.paketler)["basarili"] is False
+    assert len(taramalar) == 2
+
+
+def test_yeniden_tarama_tabloyu_gunceller_internet_yoksa_bozmaz(monkeypatch):
+    adimlar = []
+    monkeypatch.setattr(yg, "tara", lambda: {"zaman": "z", "paketler": [], "acik_paket": 0, "acik_sayisi": 0, "hata": 0})
+    _GERCEK_YENIDEN_TARA(adimlar)
+    assert yg.json_oku("tarama.json")["zaman"] == "z" and "kalmadı" in adimlar[-1]
+
+    def ag_yok():
+        raise OSError("ağ yok")
+    monkeypatch.setattr(yg, "tara", ag_yok)
+    _GERCEK_YENIDEN_TARA(adimlar)
+    assert "Şimdi tara" in adimlar[-1] and yg.json_oku("tarama.json")["zaman"] == "z"
