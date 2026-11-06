@@ -2098,6 +2098,23 @@
             <tbody id="sunucuKesintiTablo"></tbody></table></div>
             <div class="small text-muted px-3 py-2">Sunucu 3 dakikadan uzun kapalı kalırsa (ya da uykuya alınırsa) kaydedilir ve bildirim gider.
               "Kameranın kendi plaka okuması" açık kameralardan o aralığın geçişleri kendiliğinden alınır.</div></div></div></div>
+        <!-- 2026-11-06: kamera ayar denetimi / sağlık bekçisi (bkz. main.py "KAMERA AYAR DENETİMİ"). -->
+        <div class="col-12"><div class="card"><div class="card-header d-flex justify-content-between align-items-center flex-wrap gap-2">
+          <span><i class="bi bi-heart-pulse me-1"></i>Kamera Ayar Denetimi</span>
+          <div class="d-flex gap-2 align-items-center">
+            <span id="kameraDenetimZaman" class="small text-muted"></span>
+            <button class="btn btn-sm btn-outline-secondary" id="kameraDenetimBtn" data-rol-min="yonetici" onclick="kameraDenetimiCalistir()"><i class="bi bi-arrow-repeat me-1"></i>Şimdi kontrol et</button>
+          </div>
+        </div><div class="card-body p-0">
+          <div class="table-responsive"><table class="table table-sm mb-0 align-middle">
+            <thead class="table-light"><tr>
+              <th>Kamera</th><th>Saat</th><th>NTP</th><th>Okuma yönü</th><th title="Dünkü gece mutabakatı: kameranın okuyup PTS'in kaçırdığı geçişler">Dün kaçırılan</th><th>Sorun / öneri</th>
+            </tr></thead>
+            <tbody id="kameraDenetimTablo"><tr><td colspan="6" class="text-center text-muted py-3">Yükleniyor…</td></tr></tbody>
+          </table></div>
+          <div class="small text-muted px-3 py-2">Her sabah 06:30'da kameralara yalnız okuma soruları sorulur (ayar değiştirilmez). Yeni bir sorun çıkınca alarm ve bildirim gelir.
+            Yalnız "kameranın kendi plaka okuması" (Dahua) açık kameralar denetlenebilir.</div>
+        </div></div></div>
         <!-- 2026-09-25: kamera başına okuma kalitesi (bkz. main.py::kamera_okuma_kalitesi,
              backend/okuma_kalitesi.py) -- hangi kameranın zayıf okuduğunu ve
              neyin düzeltilmesi gerektiğini tek bakışta gösterir. -->
@@ -2688,6 +2705,7 @@
                     <option value="sessiz_kamera">Sadece sessiz kamera (plaka okumayan kamera)</option>
                     <option value="bariyer_hatasi">Sadece bariyer açma hatası</option>
                     <option value="kamera_arizasi">Sadece kamera arızası</option>
+                    <option value="kamera_ayari">Sadece kamera ayar denetimi (saat / NTP / yön)</option>
                     <option value="disk_hatasi">Sadece disk/görsel yazma hatası</option>
                     <option value="disk_doluyor">Sadece disk doluluk erken uyarısı</option>
                     <option value="yedek_bozuk">Sadece otomatik yedek bozuk üretildi</option>

@@ -16,6 +16,7 @@ pyodbc==5.2.0
 pydantic==2.9.2
 python-multipart==0.0.33
 openpyxl==3.1.5
+cryptography==50.0.2   # kamera parolalarının şifrelenmesi (backend/gizli.py)
 reportlab==4.2.5
 # "GEÇİŞ RAPORU" PDF'indeki araç görsellerini gömmeden önce küçültüp yeniden
 # sıkıştırmak için (bkz. backend/pdf_export.py::_kucuk_gorsel_akisi) --

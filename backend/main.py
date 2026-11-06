@@ -95,6 +95,7 @@ from backend import led_panel
 from backend import vardiya_cizelgesi
 from backend import lisans as lisans_modulu
 from backend import totp
+from backend import gizli
 from backend import marka
 from backend.vardiya_eslestirme import kayitlari_oturumlarla_eslestir
 from backend import kucuk_gorsel
@@ -1411,6 +1412,24 @@ app.add_middleware(
 )
 
 
+_CSP = "; ".join((
+    "default-src 'self'",
+    "script-src 'self' 'unsafe-inline'",
+    "style-src 'self' 'unsafe-inline'",
+    "img-src 'self' data: blob:",
+    "font-src 'self' data:",
+    "connect-src 'self'",
+    "media-src 'self' blob:",
+    "worker-src 'self'",
+    "manifest-src 'self'",
+    "frame-src 'self' blob:",
+    "object-src 'none'",
+    "base-uri 'self'",
+    "form-action 'self'",
+    "frame-ancestors 'self'",
+))
+
+
 @app.middleware("http")
 async def _guvenlik_basliklarini_ekle(request: Request, call_next):
     """Her yanıta, tarayıcı tarafında ek bir savunma katmanı (defense in
@@ -1429,15 +1448,22 @@ async def _guvenlik_basliklarini_ekle(request: Request, call_next):
     yalnızca YANIT gerçekten HTTPS üzerinden geldiyse dikkate alınır (düz
     HTTP üzerinden gönderilirse tarayıcı onu sessizce yok sayar), bu yüzden
     ters vekil (reverse proxy) TLS sonlandırması olmayan kurulumlarda da
-    zararsızdır. Kapsamlı bir Content-Security-Policy BİLİNÇLİ OLARAK
-    eklenmedi -- panelin envanterini (inline script/style kullanımı dahil)
-    çıkarmadan eklenen bir CSP, test edilmeden üretimde paneli sessizce
-    bozabilir; bu, ayrı ve daha dikkatli bir çalışma gerektirir."""
+    zararsızdır. Content-Security-Policy 2026-11-06'da panelin kaynak
+    envanteri çıkarılıp tüm ekranlar tarayıcıda gezilerek eklendi (bkz. _CSP)."""
     yanit = await call_next(request)
     yanit.headers["X-Content-Type-Options"] = "nosniff"
     yanit.headers["X-Frame-Options"] = "SAMEORIGIN"
     yanit.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
     yanit.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+    # 2026-11-06 kullanıcı isteği ("panelde gelişmiş tarayıcı koruması"): CSP.
+    # Panel dışarıdan HİÇBİR dosya yüklemez (bootstrap, chart.js, yazı tipi
+    # frontend/vendor altında), bu yüzden kaynaklar yalnız bu sunucuyla sınırlı:
+    # sayfaya bir şekilde zararlı kod sızsa bile dış bir sunucudan betik
+    # yükleyemez ve veriyi (connect-src/img-src/form-action) dışarı gönderemez.
+    # 'unsafe-inline' script-src'de ŞİMDİLİK gerekli: arayüz ~250 satır içi
+    # onclick="..." işleyicisi kullanıyor; asıl XSS savunması her yerde
+    # escapeHtml + plaka_normalize'daki karakter kısıtlaması.
+    yanit.headers.setdefault("Content-Security-Policy", _CSP)
     return yanit
 
 
@@ -1706,6 +1732,10 @@ async def _kayit_kamera_adlarini_onar_baslangicta():
 @app.on_event("startup")
 async def _kameralari_otomatik_baslat():
     """Uygulama açılışında cameras.json'daki aktif kameralar için pipeline başlatır."""
+    try:
+        _kamera_parolalarini_sifrele()
+    except Exception as exc:  # şifreleme sorunu kameraların açılmasını engellemesin
+        logger.warning("Kamera parolaları şifreli biçime taşınamadı: %s", exc)
     for kamera in _kameralari_oku():
         if kamera.get("aktif", True):
             _pipeline_baslat(kamera)
@@ -3653,9 +3683,28 @@ def _kameralari_oku() -> list:
         return []
     try:
         with open(KAMERA_DOSYASI, "r", encoding="utf-8") as dosya:
-            return json.load(dosya)
+            kameralar = json.load(dosya)
     except (OSError, json.JSONDecodeError):
         return []
+    # 2026-11-06: RTSP parolaları diskte şifreli (bkz. backend/gizli.py); bellekte
+    # adres eskisi gibi parolalı kullanılır. Eski açık metin kayıtlar açılışta
+    # (_kamera_parolalarini_sifrele) şifreli biçime taşınır.
+    return [gizli.kamera_diskten(k) for k in kameralar]
+
+
+def _kamera_parolalarini_sifrele() -> int:
+    """cameras.json'da açık metin parola kalmışsa şifreler; taşınan kamera sayısını döner."""
+    if not gizli.kullanilabilir_mi() or not os.path.exists(KAMERA_DOSYASI):
+        return 0
+    with _kamera_dosya_kilit:
+        with open(KAMERA_DOSYASI, "r", encoding="utf-8") as dosya:
+            diskteki = json.load(dosya)
+        acik = sum(1 for k in diskteki if gizli.rtsp_parolasini_ayir(k.get("rtsp_url", ""))[1])
+        if not acik:
+            return 0
+        _kameralari_yaz(_kameralari_oku())
+    logger.info("cameras.json: %d kameranın parolası şifreli biçime taşındı", acik)
+    return acik
 
 
 def _kamera_id_listesini_dogrula(id_listesi: list) -> list:
@@ -3693,7 +3742,7 @@ def _kameralari_yaz(kameralar: list) -> None:
     with tempfile.NamedTemporaryFile(
         mode="w", encoding="utf-8", dir=dizin, prefix=".cameras_tmp_", suffix=".json", delete=False
     ) as gecici:
-        json.dump(kameralar, gecici, ensure_ascii=False, indent=2)
+        json.dump([gizli.kamera_diske(k) for k in kameralar], gecici, ensure_ascii=False, indent=2)
         gecici_yol = gecici.name
     os.replace(gecici_yol, KAMERA_DOSYASI)
 
@@ -3701,6 +3750,8 @@ def _kameralari_yaz(kameralar: list) -> None:
 def _kamera_guvenli_gorunum(kamera: dict) -> dict:
     """RTSP parolasını istemciye göndermeden kamera kaydını döndürür."""
     sonuc = dict(kamera)
+    sonuc.pop("_rtsp_parola_sifreli", None)
+    sonuc.pop("rtsp_parola", None)
     parcalar = urlsplit(str(sonuc.get("rtsp_url", "")))
     if parcalar.username or parcalar.password:
         host = parcalar.hostname or ""
@@ -10989,6 +11040,7 @@ async def _bozuk_arac_ozelliklerini_temizle():
 async def _gece_isleri_baslangic():
     """Gece mutabakatı, sessiz kamera kontrolü ve Telegram sorgu dinleyicisi (2026-10-31)."""
     asyncio.ensure_future(_mutabakat_dongu())
+    asyncio.ensure_future(_kamera_denetimi_dongu())
     asyncio.ensure_future(_sessiz_kamera_dongu())
     threading.Thread(target=_telegram_sorgu_dongu, name="telegram-sorgu", daemon=True).start()
 
@@ -11157,6 +11209,113 @@ def kamera_mutabakati_calistir(gun: Optional[date] = None, db: Session = Depends
     _denetim_kaydet(db, kullanici.kullanici_adi, "kamera_mutabakati", f"{gun:%d.%m.%Y} elle başlatıldı")
     threading.Thread(target=_mutabakat_calistir, args=(gun,), daemon=True).start()
     return {"basladi": True, "gun": gun.isoformat()}
+
+
+# ==================================================================
+# KAMERA AYAR DENETİMİ / SAĞLIK BEKÇİSİ (2026-11-06, kullanıcı isteği; bkz.
+# backend/kamera_saglik.py). Her sabah _KAMERA_DENETIM_SAATI'nde (gece mutabakatından
+# sonra) Dahua kameraların saatine, NTP'sine ve okuma yönüne bakılır; dünkü
+# mutabakatta kaçırma oranı yüksekse o da sorun sayılır. Kameraya hiçbir şey yazılmaz.
+# YENİ çıkan sorun için bir kez "kamera_ayari" alarmı + bildirim; düzelince sıfırlanır.
+# ==================================================================
+_KAMERA_DENETIM_DOSYASI = os.getenv("PTS_KAMERA_DENETIM_FILE") or os.path.join(
+    os.path.dirname(SISTEM_AYARLARI_DOSYASI), "kamera_denetimi.json")
+_KAMERA_DENETIM_SAATI = "06:30"
+_son_kamera_denetim_gunu = None
+_kamera_denetim_kilit = threading.Lock()
+
+
+def _kamera_denetimi_oku() -> dict:
+    try:
+        with open(_KAMERA_DENETIM_DOSYASI, encoding="utf-8") as f:
+            return json.load(f)
+    except (OSError, ValueError):
+        return {}
+
+
+def _kamera_denetimi_calistir(bildir: bool = True) -> dict:
+    from backend import kamera_saglik
+    with _kamera_denetim_kilit:
+        onceki = _kamera_denetimi_oku().get("kameralar") or {}
+        dahua = {k["id"] for k in _dahua_kayitli_kameralar()}
+        kameralar = [k for k in _kameralari_oku() if k.get("aktif", True)]
+        M = models.KameraMutabakati
+        sonuc, yeni_sorunlar = {}, []
+        db = SessionLocal()
+        try:
+            for k in kameralar:
+                ad = _kamera_adini_kayit_icin_temizle(k.get("ad"))
+                bilgi = (kamera_saglik.kameraya_sor(k.get("rtsp_url", ""), (k.get("dahua_anpr") or {}).get("http_port"))
+                         if k["id"] in dahua else None)
+                m = (db.query(M).filter(M.kamera_ad == ad, M.gun >= date.today() - timedelta(days=2))
+                     .order_by(desc(M.gun)).first())
+                mut = ({"gun": m.gun.isoformat(), "kamera_gecis": m.kamera_gecis, "eklenen": m.eklenen, "hata": m.hata}
+                       if m else None)
+                sorunlar = kamera_saglik.sorunlari_bul(bilgi, mut)
+                sonuc[k["id"]] = {"ad": ad, "dahua": bilgi is not None, "bilgi": bilgi, "mutabakat": mut, "sorunlar": sorunlar}
+                eski = {x["kod"] for x in (onceki.get(k["id"]) or {}).get("sorunlar", [])}
+                yeni = [x for x in sorunlar if x["kod"] not in eski]
+                if yeni:
+                    yeni_sorunlar.append((ad, yeni))
+            if bildir:
+                for ad, yeni in yeni_sorunlar:
+                    mesaj = f"KAMERA AYARI: {ad} -- " + "; ".join(x["mesaj"] for x in yeni)
+                    db.add(models.Alarm(plaka_no="-", alarm_tipi="kamera_ayari", mesaj=mesaj[:255]))
+                    db.commit()
+                    logger.warning(mesaj)
+                    tam = "\n".join([f"KAMERA AYARI: {ad}"] + [f"• {x['mesaj']}\n  → {x['oneri']}" for x in yeni])
+                    _bildirim_tetikle(db, "kamera_ayari", {
+                        "olay": "kamera_ayari", "alarm_tipi": "kamera_ayari", "kamera_ad": ad, "mesaj": tam})
+        finally:
+            db.close()
+        kayit = {"zaman": datetime.now().isoformat(timespec="seconds"), "kameralar": sonuc}
+        gecici = _KAMERA_DENETIM_DOSYASI + ".tmp"
+        with open(gecici, "w", encoding="utf-8") as f:
+            json.dump(kayit, f, ensure_ascii=False, indent=2)
+        os.replace(gecici, _KAMERA_DENETIM_DOSYASI)
+        return kayit
+
+
+def _kamera_denetimi_bir_kontrol(simdi: datetime) -> bool:
+    global _son_kamera_denetim_gunu
+    if simdi.strftime("%H:%M") < _KAMERA_DENETIM_SAATI or _son_kamera_denetim_gunu == simdi.date():
+        return False
+    _son_kamera_denetim_gunu = simdi.date()
+    if not _kameralari_oku():
+        return False
+    _kamera_denetimi_calistir()
+    return True
+
+
+async def _kamera_denetimi_dongu() -> None:
+    while True:
+        try:
+            await asyncio.to_thread(_kamera_denetimi_bir_kontrol, datetime.now())
+        except Exception:
+            logger.exception("[kamera-denetimi] Döngüde beklenmeyen hata")
+        await asyncio.sleep(60)
+
+
+def _kamera_denetimi_cevap(kayit: dict, kullanici: models.Kullanici) -> dict:
+    izinli = _kullanicinin_izinli_kameralari(kullanici)
+    kameralar = [{"id": kid, **v} for kid, v in (kayit.get("kameralar") or {}).items() if izinli is None or kid in izinli]
+    return {"zaman": kayit.get("zaman"), "saat": _KAMERA_DENETIM_SAATI, "kameralar": kameralar}
+
+
+@app.get("/kamera-ayar-denetimi")
+def kamera_ayar_denetimi(kullanici: models.Kullanici = Depends(_personel_girisi_gerekli)):
+    _rol_dogrula(kullanici, ROL_YONETICI, ROL_OPERATOR, ROL_IZLEYICI)
+    return _kamera_denetimi_cevap(_kamera_denetimi_oku(), kullanici)
+
+
+@app.post("/kamera-ayar-denetimi/calistir")
+async def kamera_ayar_denetimi_calistir(db: Session = Depends(get_db),
+                                        kullanici: models.Kullanici = Depends(_personel_girisi_gerekli)):
+    """Denetimi hemen yapar (kameralara yalnız okuma soruları; birkaç saniye sürer)."""
+    _rol_dogrula(kullanici, ROL_YONETICI)
+    _denetim_kaydet(db, kullanici.kullanici_adi, "kamera_ayar_denetimi", "elle başlatıldı")
+    kayit = await asyncio.to_thread(_kamera_denetimi_calistir)
+    return _kamera_denetimi_cevap(kayit, kullanici)
 
 
 # ==================================================================
@@ -11434,6 +11593,7 @@ _ALARM_ADLARI = {
     "yetkisiz_arac": "Yetkisiz araç", "kara_liste": "Kara liste geçişi", "suresi_dolmus": "Süresi dolmuş",
     "supheli_arac": "Şüpheli araç", "klon_plaka": "Klon plaka şüphesi", "resmi_arac": "Resmi araç",
     "sunucu_kesintisi": "Sunucu kapalı kaldı", "sessiz_kamera": "Sessiz kamera", "kamera_arizasi": "Kamera arızası",
+    "kamera_ayari": "Kamera ayarı",
     "bariyer_hatasi": "Bariyer hatası", "disk_hatasi": "Disk hatası",
 }
 
@@ -12112,7 +12272,7 @@ def _goruntu_temizle_calistir(gun: int, db: Session) -> tuple[int, "datetime"]:
 # yalnızca kişiyi belirleyen alanlar temizlenir. Geri alınamaz.
 KVKK_ANONIM_PLAKA = "ANONIM"
 _SISTEM_ALARM_TIPLERI = ("kamera_arizasi", "disk_hatasi", "disk_doluyor", "yedek_bozuk", "yedek_hatasi",
-                         "sertifika_bitiyor")
+                         "sertifika_bitiyor", "kamera_ayari")
 
 
 def _kayitlari_anonimlestir(gun: int, db: Session, parca: int = 1000) -> int:

@@ -1444,6 +1444,25 @@ def test_guvenlik_baslikları_her_yanitta_var(client):
     assert "max-age=31536000" in r.headers["Strict-Transport-Security"]
 
 
+def test_csp_paneli_yalniz_kendi_sunucusuyla_sinirlar(client):
+    """2026-11-06: Content-Security-Policy. Panel dış kaynak yüklemez; CSP dış
+    betik/bağlantı/form hedeflerini ve gömülmeyi engeller. frontend'de dış bir
+    adrese bağımlılık eklenirse bu test ve tarayıcı birlikte uyarır."""
+    import re
+    csp = client.get("/").headers["Content-Security-Policy"]
+    kurallar = dict(k.strip().split(" ", 1) for k in csp.split(";"))
+    assert kurallar["default-src"] == "'self'"
+    assert kurallar["connect-src"] == "'self'" and kurallar["form-action"] == "'self'"
+    assert kurallar["object-src"] == "'none'" and kurallar["frame-ancestors"] == "'self'"
+    assert "unsafe-eval" not in csp and "http" not in csp
+    # Panel dosyaları dış adresten script/stil/yazı tipi yüklememeli.
+    import pathlib
+    kok = pathlib.Path(__file__).resolve().parent.parent / "frontend"
+    for dosya in ("index.html", "kilavuz.html"):
+        metin = (kok / dosya).read_text(encoding="utf-8")
+        assert not re.search(r'<(script|link)[^>]+(src|href)="https?://', metin), dosya
+
+
 def test_api_dokumantasyonu_varsayilan_olarak_kapali(client):
     """2026-09-20 ("daha profesyonel neler yapabilirsin" denetimi): Swagger UI
     (/docs), ReDoc (/redoc) ve ham OpenAPI şeması (/openapi.json) FastAPI'de

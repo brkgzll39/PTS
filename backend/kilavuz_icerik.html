@@ -325,6 +325,14 @@
         <div class="ipucu">Aynı nizamiyenin kameralarına ortak bir başlangıç verin ("Nizamiye Giriş", "Nizamiye Çıkış"): sistem bunları tek
           nizamiye sayar, raporlarda birlikte gösterir.</div>
 
+        <h3 id="kamera-denetimi">Kamera Ayar Denetimi (sağlık bekçisi)</h3>
+        <p>Her sabah 06:30'da sistem, kendi plaka okuması (Dahua) açık kameralara <b>yalnız okuma</b> soruları sorar ve şunlara bakar:
+          kameranın <b>saati</b> sunucudan 30 saniyeden fazla sapmış mı, <b>NTP</b> (saat eşitleme) açık mı, ANPR kuralı plakayı
+          <b>iki yönde</b> de okuyor mu, dünkü mutabakatta geçişlerin %5'inden fazlası <b>kaçırılmış</b> mı. Sonuç Kameralar ekranındaki
+          <b>Kamera Ayar Denetimi</b> kartında görünür; <span class="dugme">Şimdi kontrol et</span> ile hemen yapılabilir.
+          Yeni bir sorun çıkınca "Kamera ayarı" alarmı ve bildirimi gelir; aynı sorun için tekrar gelmez, düzelip yeniden çıkarsa gelir.</p>
+        <div class="ipucu">Sistem kameraların ayarını değiştirmez; öneriyi kameranın kendi web arayüzünden siz uygularsınız.</div>
+
         <h3 id="mutabakat">Kamera mutabakatı ve sessiz kamera</h3>
         <p>"Kameranın kendi plaka okuması" (Dahua) açık her kameranın dünkü kayıtları her gece (varsayılan 03:30) sistemle karşılaştırılır.
           PTS'in kaçırdığı geçişler kameradan eklenir (listede "Kameradan eklendi" yazar). Kameralar ekranındaki <b>Kamera Mutabakatı</b>
@@ -408,6 +416,19 @@
           <li><b>Uygulama Logları</b>: teknik sorun ararken.</li>
         </ul>
         <div class="dikkat">KVKK silme süresini ayarlarsanız o günden eski geçişlerin plaka, kişi, not ve görüntü bilgileri <b>geri alınamaz</b> biçimde silinir.</div>
+
+        <h3 id="https">Güvenli bağlantı (HTTPS) ve kamera parolaları</h3>
+        <p>Panel başka bir bilgisayardan <b>http://</b> ile açılıyorsa giriş parolaları ağda şifresiz gider. Bu durumda Kontrol Merkezi'nde
+          yöneticiye <b>"Panel şifresiz bağlantıyla açıldı"</b> uyarısı çıkar. HTTPS'i açmak için sunucuda, PTS klasöründe:</p>
+        <ol>
+          <li><code>.venv\Scripts\python.exe -m backend.sertifika_olustur</code> — <code>sertifika\</code> klasörüne sertifikaları üretir.</li>
+          <li><code>.env</code> dosyasına <code>PTS_HTTPS=1</code> satırını ekleyin ve PTS'yi yeniden başlatın.</li>
+          <li>Paneli açan her bilgisayara <code>pts-ca.crt</code> dosyasını bir kez yükleyin (adres çubuğundaki uyarı kalkar).
+            Sonra panel <b>https://</b>sunucu-adresi:8000 ile açılır.</li>
+        </ol>
+        <p><b>Kamera parolaları</b> sunucuda şifreli saklanır (<code>veritabani\gizli_anahtar.key</code> anahtarıyla; Windows'ta bu anahtar
+          bilgisayara bağlıdır). Sunucu yeniden kurulur ya da başka bilgisayara taşınırsa kameraları parolalarıyla yeniden eklemeniz gerekir.</p>
+        <div class="dikkat"><code>gizli_anahtar.key</code> dosyasını silmeyin ve kimseyle paylaşmayın.</div>
 
         <h3 id="merkezi-izleme">Merkezi İzleme (bakım firmasına sağlık bildirimi)</h3>
         <p>Sistem sekmesindeki <b>Merkezi İzleme</b> kartı açıldığında sistem birkaç dakikada bir sağlık durumunu bakım firmasının

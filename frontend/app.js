@@ -767,6 +767,7 @@ function alarmTipiEtiketi(tip) {
     resmi_arac: "Resmi araç (görevsiz / mesai dışı / geç dönüş)",
     sunucu_kesintisi: "Sunucu kapalı kaldı",
     sessiz_kamera: "Sessiz kamera (plaka okumuyor)",
+    kamera_ayari: "Kamera ayarı (saat / NTP / yön / kaçırma)",
     bildirim_hatasi: "Bildirim gönderilemiyor",
     arac_uyusmazligi: "Plaka-araç uyuşmazlığı",
     kamera_arizasi: "Kamera arızası / bağlantı sorunu",
@@ -1446,13 +1447,17 @@ function _canliOlayHtml(k) {
 const _DIKKAT_IKON = { kara_liste: "bi-slash-circle", klon_plaka: "bi-copy", supheli_arac: "bi-exclamation-diamond",
   resmi_arac: "bi-briefcase", sessiz_kamera: "bi-camera-video-off", kamera_arizasi: "bi-camera-video-off",
   sunucu_kesintisi: "bi-power", bildirim_hatasi: "bi-bell-slash", bariyer_hatasi: "bi-door-closed",
-  disk_doluyor: "bi-hdd", disk_hatasi: "bi-hdd", yedek_bozuk: "bi-archive", sertifika_bitiyor: "bi-shield-exclamation" };
+  disk_doluyor: "bi-hdd", disk_hatasi: "bi-hdd", yedek_bozuk: "bi-archive", sertifika_bitiyor: "bi-shield-exclamation", kamera_ayari: "bi-sliders" };
 function _gecenSure(iso) {
   const dk = Math.max(0, Math.round((Date.now() - new Date(iso)) / 60000));
   if (dk < 1) return "az önce";
   if (dk < 60) return `${dk} dk önce`;
   if (dk < 1440) return `${Math.round(dk / 60)} sa önce`;
   return new Date(iso).toLocaleDateString("tr-TR");
+}
+function _sifresizAgBaglantisi() {
+  const h = location.hostname;
+  return location.protocol === "http:" && !["localhost", "127.0.0.1", "[::1]", "::1"].includes(h);
 }
 async function kontrolDikkatYukle(iceride) {
   const liste = document.getElementById("kmDikkatListe");
@@ -1462,6 +1467,10 @@ async function kontrolDikkatYukle(iceride) {
   try { alarmlar = await apiCagir("/alarmlar?sadece_acik=true&limit=8&haric_tip=yetkisiz_arac&haric_tip=suresi_dolmus"); }
   catch (e) { liste.innerHTML = `<li class="km-bos text-danger">${escapeHtml(e.message)}</li>`; return; }
   const satirlar = [];
+  // 2026-11-06: panel ağdan şifresiz (http://) açıldıysa yöneticiye söyle -- parolalar ağda açık gider.
+  if (_sifresizAgBaglantisi() && rolYeterli("yonetici")) satirlar.push(`<li><a class="km-satir kritik" href="/kilavuz#https" target="_blank" rel="noopener">
+      <i class="bi bi-unlock"></i><span><b>Panel şifresiz bağlantıyla açıldı (HTTP)</b>
+      <small>Ağdaki biri giriş parolalarını görebilir · HTTPS'i açma adımları</small></span></a></li>`);
   if (iceride?.uyarili_sayisi) satirlar.push(`<li><button type="button" class="km-satir uyari" data-km-sekme="#iceride-sekme">
       <i class="bi bi-hourglass-split"></i><span><b>${iceride.uyarili_sayisi} ziyaretçi uzun süredir içeride</b>
       <small>${iceride.uyari_saat} saatten uzun kalanlar · listeyi açın</small></span></button></li>`);
@@ -7487,8 +7496,48 @@ async function okumaKalitesiYukle() {
   }
 }
 
+// ---------------------- KAMERA AYAR DENETİMİ (2026-11-06) ----------------------
+function _kameraDenetimCiz(v) {
+  const tbody = document.getElementById("kameraDenetimTablo");
+  if (!tbody) return;
+  const zaman = document.getElementById("kameraDenetimZaman");
+  if (zaman) zaman.textContent = v.zaman ? `Son kontrol: ${new Date(v.zaman).toLocaleString("tr-TR", { dateStyle: "short", timeStyle: "short" })}` : "Henüz kontrol yapılmadı";
+  const tire = '<span class="text-muted">—</span>';
+  const iyi = (t) => `<span class="text-success"><i class="bi bi-check-circle me-1"></i>${t}</span>`;
+  const kotu = (t) => `<span class="text-danger fw-semibold"><i class="bi bi-exclamation-circle me-1"></i>${t}</span>`;
+  tbody.innerHTML = (v.kameralar || []).map(k => {
+    const b = k.bilgi, kod = new Set((k.sorunlar || []).map(s => s.kod));
+    let saat = tire, ntp = tire, yon = tire, kac = tire;
+    if (b?.ulasildi) {
+      if (b.saat_farki_sn != null) { const f = Math.abs(b.saat_farki_sn); const t = f < 120 ? `${b.saat_farki_sn > 0 ? "+" : "−"}${f} sn` : `${b.saat_farki_sn > 0 ? "+" : "−"}${Math.round(f / 60)} dk`; saat = kod.has("saat") ? kotu(t) : iyi(t); }
+      if (b.ntp_acik != null) ntp = b.ntp_acik ? iyi("Açık") : kotu("Kapalı");
+      if (b.yonler) yon = kod.has("yon") ? kotu("Tek yön") : iyi("İki yön");
+    }
+    if (k.mutabakat && !k.mutabakat.hata && k.mutabakat.kamera_gecis) {
+      const t = `${k.mutabakat.eklenen} / ${k.mutabakat.kamera_gecis}`;
+      kac = kod.has("kacirma") ? kotu(t) : iyi(t);
+    }
+    const sorunlar = (k.sorunlar || []).map(s => `<li><b>${escapeHtml(s.mesaj)}</b><br><span class="text-muted">${escapeHtml(s.oneri)}</span></li>`).join("");
+    const not = !k.dahua ? '<span class="text-muted">Kameranın kendi plaka okuması kapalı; denetlenemiyor</span>'
+      : sorunlar ? `<ul class="mb-0 ps-3">${sorunlar}</ul>` : iyi("Sorun yok");
+    return `<tr><td class="fw-semibold">${escapeHtml(k.ad || "—")}</td><td>${saat}</td><td>${ntp}</td><td>${yon}</td><td>${kac}</td><td class="small">${not}</td></tr>`;
+  }).join("") || '<tr><td colspan="6" class="text-center text-muted py-3">Henüz kontrol yapılmadı. "Şimdi kontrol et" ile başlatın.</td></tr>';
+}
+async function kameraDenetimiYukle() {
+  if (!document.getElementById("kameraDenetimTablo") || !rolYeterli("izleyici")) return;
+  try { _kameraDenetimCiz(await apiCagir("/kamera-ayar-denetimi")); }
+  catch (e) { document.getElementById("kameraDenetimTablo").innerHTML = `<tr><td colspan="6" class="text-center text-danger py-3">${escapeHtml(e.message)}</td></tr>`; }
+}
+async function kameraDenetimiCalistir() {
+  const btn = document.getElementById("kameraDenetimBtn");
+  if (btn) { btn.disabled = true; btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Kontrol ediliyor…'; }
+  try { _kameraDenetimCiz(await apiCagir("/kamera-ayar-denetimi/calistir", { method: "POST" })); toastGoster("Kamera denetimi tamamlandı", "basari"); }
+  catch (e) { toastGoster(e.message, "hata"); }
+  finally { if (btn) { btn.disabled = false; btn.innerHTML = '<i class="bi bi-arrow-repeat me-1"></i>Şimdi kontrol et'; } }
+}
+
 document.addEventListener("shown.bs.tab", (e) => {
-  if (e.target?.dataset?.bsTarget === "#kamera-sekme") { okumaKalitesiYukle(); dahuaKarsilastirmaYukle(); }
+  if (e.target?.dataset?.bsTarget === "#kamera-sekme") { kameraDenetimiYukle(); okumaKalitesiYukle(); dahuaKarsilastirmaYukle(); }
 });
 
 // ------------------ KAMERA KARŞILAŞTIRMA (Dahua Katkısı, 2026-09-25) ------------------
@@ -7786,7 +7835,7 @@ async function bildirimAyarlariYukle() {
     const tetikleyiciEtiketleri = {
       hepsi: "Hepsi", yetkisiz: "Yetkisiz araç", kara_liste: "Kara liste",
       suresi_dolmus: "Süresi dolmuş", supheli_arac: "Şüpheli araç", klon_plaka: "Klon plaka şüphesi",
-      resmi_arac: "Resmi araç uyarısı", sunucu_kesintisi: "Sunucu kapalı kaldı", sessiz_kamera: "Sessiz kamera", arac_uyusmazligi: "Plaka-araç uyuşmazlığı", bariyer_hatasi: "Bariyer hatası", kamera_arizasi: "Kamera arızası",
+      resmi_arac: "Resmi araç uyarısı", sunucu_kesintisi: "Sunucu kapalı kaldı", sessiz_kamera: "Sessiz kamera", kamera_ayari: "Kamera ayarı", arac_uyusmazligi: "Plaka-araç uyuşmazlığı", bariyer_hatasi: "Bariyer hatası", kamera_arizasi: "Kamera arızası",
       disk_hatasi: "Disk hatası", yedek_bozuk: "Otomatik yedek bozuk", yedek_hatasi: "Otomatik yedek alınamadı",
       disk_doluyor: "Disk doluluk erken uyarısı", sertifika_bitiyor: "HTTPS sertifikası bitiyor", gunluk_ozet: "Günlük özet (her sabah)",
     };
