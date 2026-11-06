@@ -9297,3 +9297,26 @@ def test_her_geciste_foto_ayari(tmp_path, monkeypatch):
     monkeypatch.setattr(pts_main, "_sistem_ayarlari_oku", lambda: {**ayarlar, "bildirim_her_geciste_foto": False})
     pts_main._bildirim_gonder_sync("telegram", "1", "POST", {"yetki_durumu": "yetkili", "goruntu_yolu": str(foto)})
     assert cagri == {"metin": True}
+
+
+def test_uzun_akislar_veritabani_baglantisi_tutmaz(client, yetkili_header):
+    """2026-11-06 saha hatası: FastAPI 0.118+ ile /olaylar/sse ve kamera akışı açık
+    kaldıkça havuzdan birer veritabanı bağlantısı tutuyordu; birkaç panel (SSE +
+    kamera akışları) 15'lik havuzu doldurunca tüm sayfalar dakikalarca açılmadı.
+    Akış dönerken havuzda ödünç bağlantı kalmamalı; uzun akış uçları get_db
+    bağımlılığı kullanmamalı."""
+    import asyncio
+    from backend.database import engine, get_db
+
+    class SahteIstek:
+        async def is_disconnected(self):
+            return True
+
+    onceki = len(pts_main._sse_istemcileri)
+    yanit = asyncio.run(pts_main.sse_baglantisi(SahteIstek(), authorization=yetkili_header["Authorization"]))
+    assert yanit.media_type == "text/event-stream"
+    assert engine.pool.checkedout() == 0
+    del pts_main._sse_istemcileri[onceki:]
+    for yol in ("/olaylar/sse", "/kameralar/{kamera_id}/akis"):
+        rota = next(r for r in app.routes if getattr(r, "path", None) == yol)
+        assert all(d.call is not get_db for d in rota.dependant.dependencies), yol

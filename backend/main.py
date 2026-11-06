@@ -4270,7 +4270,7 @@ async def kamera_goruntu_al(kamera_id: str, kullanici: models.Kullanici = Depend
 
 
 @app.get("/kameralar/{kamera_id}/akis")
-async def kamera_akis(kamera_id: str, request: Request, authorization: Optional[str] = Header(None), db: Session = Depends(get_db)):
+async def kamera_akis(kamera_id: str, request: Request, authorization: Optional[str] = Header(None)):
     """Kameradan GERÇEK ZAMANLI MJPEG akışı (multipart/x-mixed-replace).
 
     Panel eskiden bu kareyi 3 saniyede bir `fetch` ile "anlık görüntü" (snapshot)
@@ -4285,18 +4285,20 @@ async def kamera_akis(kamera_id: str, request: Request, authorization: Optional[
     if not authorization or not authorization.lower().startswith("bearer "):
         raise HTTPException(401, "Bearer token gerekli")
     kullanici_id, jti = _token_coz(authorization[7:].strip())
-    _oturum_dogrula_ve_guncelle(db, jti)
-
-    kamera = next((k for k in _kameralari_oku() if k["id"] == kamera_id), None)
-    if not kamera:
-        raise HTTPException(404, "Kamera bulunamadı")
-
-    # Kamera erişim kısıtlaması (2026-09-21) -- bu uç nokta yalnızca token'ı
-    # (kullanıcı ID'sini) doğruluyordu, hesabın kısıtlamasına hiç BAKMIYORDU;
-    # bkz. _kamera_erisimi_var_mi.
-    baglanan = db.query(models.Kullanici).filter(models.Kullanici.id == kullanici_id).first()
-    if not baglanan or not _kamera_erisimi_var_mi(baglanan, kamera_id):
-        raise HTTPException(403, "Bu kameraya erişim yetkiniz yok")
+    # Oturum yalnız yetki kontrolü süresince açık: akış boyunca havuzdan bağlantı
+    # tutulmaz (bkz. sse_baglantisi'nin notu, 2026-11-06).
+    db = SessionLocal()
+    try:
+        _oturum_dogrula_ve_guncelle(db, jti)
+        kamera = next((k for k in _kameralari_oku() if k["id"] == kamera_id), None)
+        if not kamera:
+            raise HTTPException(404, "Kamera bulunamadı")
+        # Kamera erişim kısıtlaması (2026-09-21) -- bkz. _kamera_erisimi_var_mi.
+        baglanan = db.query(models.Kullanici).filter(models.Kullanici.id == kullanici_id).first()
+        if not baglanan or not _kamera_erisimi_var_mi(baglanan, kamera_id):
+            raise HTTPException(403, "Bu kameraya erişim yetkiniz yok")
+    finally:
+        db.close()
 
     SINIR = b"ptsframe"
 
@@ -7599,13 +7601,33 @@ def kayit_getir(
     return kayit
 
 
+def _sse_baglanan_bilgisi(db: Session, kullanici_id: int, jti: str) -> tuple:
+    _oturum_dogrula_ve_guncelle(db, jti)
+    baglanan = db.query(models.Kullanici).filter(models.Kullanici.id == kullanici_id).first()
+    rol = baglanan.rol if baglanan else ROL_IZLEYICI
+    izinli_kameralar = _kullanicinin_izinli_kamera_adlari(baglanan) if baglanan else None
+    vardiya_adi = baglanan.vardiya_adi if baglanan else None
+    return rol, izinli_kameralar, vardiya_adi
+
+
 @app.get("/olaylar/sse")
-async def sse_baglantisi(request: Request, authorization: Optional[str] = Header(None), db: Session = Depends(get_db)):
-    """Server-Sent Events — yeni plaka geçişlerini anlık olarak istemciye iletir."""
+async def sse_baglantisi(request: Request, authorization: Optional[str] = Header(None)):
+    """Server-Sent Events — yeni plaka geçişlerini anlık olarak istemciye iletir.
+
+    VERİTABANI BAĞLANTISI (2026-11-06, sahada: kütüphane güncellemesinden sonra panel
+    dakikalarca açılmadı): `db: Session = Depends(get_db)` KULLANILMAZ. FastAPI
+    0.118+ yield'li bağımlılığı yanıt BİTİNCE kapatır; saatlerce açık kalan bu akış
+    havuzdan bir bağlantıyı da o kadar tutuyordu ve birkaç panel (SSE + kamera
+    akışları) 15'lik havuzu doldurunca diğer TÜM istekler bağlantı bekleyip
+    kalıyordu. Oturum yalnız yetki kontrolü için açılıp akış başlamadan kapatılır."""
     if not authorization or not authorization.lower().startswith("bearer "):
         raise HTTPException(401, "Bearer token gerekli")
     kullanici_id, jti = _token_coz(authorization[7:].strip())
-    _oturum_dogrula_ve_guncelle(db, jti)
+    db = SessionLocal()
+    try:
+        rol, izinli_kameralar, vardiya_adi = _sse_baglanan_bilgisi(db, kullanici_id, jti)
+    finally:
+        db.close()
     # Güvenlik personeli için canlı akışın da vardiya penceresine göre
     # filtrelenebilmesi (bkz. _sse_yayinla) için bağlı istemcinin rolü de
     # tutulur -- token yalnızca ID doğrular, rolü vermez. 2026-09-21: aynı
@@ -7617,10 +7639,6 @@ async def sse_baglantisi(request: Request, authorization: Optional[str] = Header
     # kullanılıyor çünkü burada karşılaştırılacak olan canlı olay payload'ının
     # `kamera_id` alanı da (bkz. _sse_yayinla) gerçek Kayit.kamera_id
     # değeridir -- yani "ad" (bkz. o fonksiyonun docstring'indeki kök neden).
-    baglanan = db.query(models.Kullanici).filter(models.Kullanici.id == kullanici_id).first()
-    rol = baglanan.rol if baglanan else ROL_IZLEYICI
-    izinli_kameralar = _kullanicinin_izinli_kamera_adlari(baglanan) if baglanan else None
-    vardiya_adi = baglanan.vardiya_adi if baglanan else None
 
     q: asyncio.Queue = asyncio.Queue(maxsize=100)
     istemci = {
