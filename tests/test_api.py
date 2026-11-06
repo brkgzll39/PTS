@@ -311,7 +311,7 @@ def test_suresi_dolmus_ziyaretci_dogru_isaretlenir(client, yetkili_header):
     ("ziyaretci", "34 LED 02", "ZİYARETÇİ"),   # tanımlı (süresi geçerli) ziyaretçi
     (None, "34 LED 03", "ZİYARETÇİ"),          # tanınmayan/yetkisiz araç
     ("vip", "34 LED 04", "BÖLGE MÜDÜRÜ"),      # 2026-10-15: VIP listesi
-    ("alt_isveren", "34 LED 05", "ZİYARETÇİ"),  # 2026-10-22: TPIC / servis
+    ("alt_isveren", "34 LED 05", "PERSONEL"),   # 2026-11-06: TPIC / servis tabelada PERSONEL
 ])
 def test_led_panel_ust_satiri_personel_ziyaretci(client, yetkili_header, monkeypatch, kisi_tip, plaka, beklenen):
     """2026-10-12 kullanıcı isteği: panelde "HOŞ GELDİNİZ" yerine yetkili araçta
@@ -7938,7 +7938,7 @@ def test_not_kisilere_aktar_tpic_ve_servis(client, yetkili_header, capsys):
 
 def test_not_kisilere_aktar_personel_acilmis_tpic_alt_isverene_cevrilir(client, yetkili_header):
     """2026-10-22: aracı daha önce personel olarak açılmış "TPIC" kişisi aktarımda
-    alt işverene çevrilir (LED'de PERSONEL yerine ZİYARETÇİ yazsın)."""
+    alt işverene çevrilir (panelde "Alt İşveren" olarak ayrı görünsün)."""
     from backend import not_kisilere_aktar as na, models as M
     from backend.database import SessionLocal
     db = SessionLocal()

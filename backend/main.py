@@ -4914,8 +4914,9 @@ def kisi_gecmis_kayitlarini_guncelle(
 
 _KISI_TIPLERI = ("abone", "personel", "ziyaretci", "vip", "alt_isveren")
 # Yetkili geçişte LED panelin üst satırı (bkz. kayit akışı); listede olmayan tip PERSONEL.
-# Alt işveren (TPIC, servis) 2026-10-22 kullanıcı isteği: tabelada PERSONEL değil ZİYARETÇİ.
-_LED_TIP_ETIKETI = {"ziyaretci": "ZİYARETÇİ", "alt_isveren": "ZİYARETÇİ"}   # "vip": marka.json (vip_etiketi)
+# Alt işveren (TPIC, servis): 2026-10-22'de ZİYARETÇİ yazıyordu; 2026-11-06 kullanıcı isteğiyle
+# tabelada PERSONEL yazar (panelde yine "Alt İşveren" olarak ayrı görünür).
+_LED_TIP_ETIKETI = {"ziyaretci": "ZİYARETÇİ"}   # "vip": marka.json (vip_etiketi)
 # SQL Server tek sorguda en fazla ~2100 parametre kabul eder; uzun `IN (...)`
 # listeleri bu boyutta parçalara bölünür.
 _IN_PARCA_BOYUTU = 500

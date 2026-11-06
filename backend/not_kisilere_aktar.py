@@ -13,7 +13,7 @@ Ne yapar:
     (İkisi birden geçen notta TPIC kazanır.)
   * Her plakayı en çok hangi grupta görüldüyse o gruba koyar.
   * "TPIC" ve "Servis" adlı kişileri bulur ya da oluşturur (tip: alt işveren --
-    geçiş izni var, LED tabelada ZİYARETÇİ, panelde "Alt İşveren" yazar;
+    geçiş izni var, LED tabelada PERSONEL, panelde "Alt İşveren" yazar;
     otomatik not: "TPIC" / "Servis") ve plakaları bu kişilere araç olarak
     ekler. Bu araçlar geçince nota otomatik "TPIC" / "Servis" yazılır.
     Bu adlarla daha önce "personel" olarak açılmış kişi varsa tipi alt
@@ -158,7 +158,7 @@ def uygula(db, plan: list, mevcut_kisilere_not: bool, kullanici_adi: str = "not_
         else:
             if not (kisi.otomatik_not or "").strip():
                 kisi.otomatik_not = otomatik
-            if kisi.tip == "personel":   # 2026-10-22: LED'de PERSONEL değil ZİYARETÇİ yazsın
+            if kisi.tip == "personel":   # 2026-10-22: panelde "Alt İşveren" olarak ayrı görünsün
                 kisi.tip = ALT_ISVEREN
                 ozet["tipi_degisen_kisi"] += 1
         for plaka in plakalar:
