@@ -59,6 +59,8 @@ _OPERATOR_GORMEMELI = {
     # taşıdığı için (bkz. main.py::denetim_kayitlarini_listele) yalnızca
     # yönetici görebilir.
     "#denetim-sekme",
+    # 2026-11-06: Yazılım Güncellemeleri -- kütüphane güncelleme/geri alma.
+    "#guncelleme-sekme",
     # 2026-11-02: Yönetim Paneli'nin açılış sayfası (Genel Bakış).
     "#yonetim-sekme",
 }

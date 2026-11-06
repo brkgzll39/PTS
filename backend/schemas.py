@@ -969,3 +969,8 @@ class MerkezIzlemeAyar(BaseModel):
     url: str = Field("", max_length=300)
     anahtar: Optional[str] = Field(None, max_length=200)   # boş/None: kayıtlı anahtar korunur
     aralik_sn: int = Field(300, ge=60, le=3600)
+
+
+class YazilimTaramaSiklik(BaseModel):
+    """Yazılım güncelleme taraması sıklığı (2026-11-06): haftalik | aylik | kapali."""
+    siklik: str

@@ -9339,3 +9339,77 @@ def test_uzun_akislar_veritabani_baglantisi_tutmaz(client, yetkili_header):
     for yol in ("/olaylar/sse", "/kameralar/{kamera_id}/akis"):
         rota = next(r for r in app.routes if getattr(r, "path", None) == yol)
         assert all(d.call is not get_db for d in rota.dependant.dependencies), yol
+
+
+def test_yazilim_guncellemeleri_tarama_alarm_ve_uygula(client, yetkili_header, monkeypatch, tmp_path):
+    """2026-11-06: Yönetim Paneli > Yazılım Güncellemeleri."""
+    from backend import yazilim_guncelleme as yg
+    from backend.database import SessionLocal
+    monkeypatch.setenv("PTS_GUNCELLEME_KLASORU", str(tmp_path / "yg"))
+    sonuc = {"zaman": "2026-11-06T10:00:00", "acik_paket": 1, "acik_sayisi": 1, "hata": 0, "paketler": [
+        {"ad": "pillow", "surum": "11.0.0", "en_yeni": "13.0.0", "onerilen": "12.1.1", "tutulan": False,
+         "guncel_degil": True, "aciklar": [{"id": "CVE-X", "ozet": "", "duzelten": ["12.1.1"]}]},
+        {"ad": "onnxruntime", "surum": "1.29.0", "en_yeni": "1.31.0", "onerilen": "1.30.0", "tutulan": True,
+         "guncel_degil": True, "aciklar": [{"id": "CVE-Y", "ozet": "", "duzelten": ["1.30.0"]}]}]}
+    monkeypatch.setattr(yg, "tara", lambda: dict(sonuc))
+    bildirim = []
+    monkeypatch.setattr(pts_main, "_bildirim_tetikle", lambda db, t, v: bildirim.append(t))
+
+    bos = client.get("/yazilim-guncellemeleri", headers=yetkili_header).json()
+    assert bos["tarama"] is None and bos["plan"] == [] and bos["siklik"] == "haftalik"
+    # Elle tarama alarm üretmez; zamanlanmış tarama yeni açıkta bir kez üretir.
+    r = client.post("/yazilim-guncellemeleri/tara", headers=yetkili_header).json()
+    assert r["plan"] == [{"ad": "pillow", "eski": "11.0.0", "yeni": "12.1.1"}]   # plaka motoru paketi plana girmez
+    assert bildirim == []
+    sonuc["paketler"][0]["aciklar"].append({"id": "CVE-Z", "ozet": "", "duzelten": ["12.1.1"]})
+    pts_main._yazilim_taramasi_yap()
+    pts_main._yazilim_taramasi_yap()
+    assert bildirim == ["yazilim_guncellemesi"]
+    db = SessionLocal()
+    try:
+        from backend import models as M
+        assert db.query(M.Alarm).filter(M.Alarm.alarm_tipi == "yazilim_guncellemesi").count() >= 1
+    finally:
+        db.close()
+
+    # Sıklık ayarı ve zamanlama.
+    assert client.put("/yazilim-guncellemeleri/ayar", headers=yetkili_header, json={"siklik": "her_gun"}).status_code == 400
+    assert client.put("/yazilim-guncellemeleri/ayar", headers=yetkili_header, json={"siklik": "aylik"}).json()["siklik"] == "aylik"
+    from datetime import datetime
+    assert pts_main._yazilim_taramasi_gerekli_mi(datetime(2026, 11, 20)) is False
+    assert pts_main._yazilim_taramasi_gerekli_mi(datetime(2026, 12, 7)) is True
+    client.put("/yazilim-guncellemeleri/ayar", headers=yetkili_header, json={"siklik": "kapali"})
+    assert pts_main._yazilim_taramasi_gerekli_mi(datetime(2027, 1, 1)) is False
+    client.put("/yazilim-guncellemeleri/ayar", headers=yetkili_header, json={"siklik": "haftalik"})
+
+    # Uygula: plan dosyası yazılır, betik başlatılır (burada taklit).
+    baslatilan = []
+    monkeypatch.setattr(pts_main, "_guncelleme_betigini_baslat", lambda islem: (baslatilan.append(islem) or (True, "ok")))
+    u = client.post("/yazilim-guncellemeleri/uygula", headers=yetkili_header).json()
+    assert u["basladi"] is True and baslatilan == ["uygula"]
+    assert yg.json_oku("plan.json") == [{"ad": "pillow", "eski": "11.0.0", "yeni": "12.1.1"}]
+    # İşlem sürerken ikinci istek reddedilir; izleme bitince serbest.
+    yg.json_yaz("durum.json", {"islem": "uygula", "baslangic": datetime.now().isoformat(), "bitis": None})
+    assert client.post("/yazilim-guncellemeleri/uygula", headers=yetkili_header).status_code == 409
+    yg.main(["izleme-sonucu", "ok", "180"])
+    assert yg.json_oku("durum.json")["izleme"] == "PTS yeniden başlatıldı; 180 sn izleme sorunsuz"
+    assert client.get("/yazilim-guncellemeleri", headers=yetkili_header).json()["suruyor"] is False
+    # Yedek yokken geri alma reddedilir.
+    assert client.post("/yazilim-guncellemeleri/geri-al", headers=yetkili_header).status_code == 400
+
+
+def test_yazilim_guncellemeleri_yalniz_yonetici(client, yetkili_header):
+    h = _rol_ile_kullanici_olustur_ve_giris_yap(client, yetkili_header, "yg_operator", "operatör")
+    assert client.get("/yazilim-guncellemeleri", headers=h).status_code == 403
+    assert client.post("/yazilim-guncellemeleri/uygula", headers=h).status_code == 403
+
+
+def test_yazilim_guncellemesi_demoda_uygulanamaz(client, yetkili_header, monkeypatch, tmp_path):
+    from backend import yazilim_guncelleme as yg
+    monkeypatch.setenv("PTS_GUNCELLEME_KLASORU", str(tmp_path / "yg"))
+    monkeypatch.setenv("PTS_GUNCELLEME_UYGULAMA_KAPALI", "1")
+    yg.json_yaz("tarama.json", {"paketler": [{"ad": "pillow", "surum": "11.0.0", "aciklar": [{"id": "X"}],
+                                             "onerilen": "12.1.1", "tutulan": False}]})
+    assert client.get("/yazilim-guncellemeleri", headers=yetkili_header).json()["uygulama_kapali"] is True
+    assert client.post("/yazilim-guncellemeleri/uygula", headers=yetkili_header).status_code == 403
+    assert client.post("/yazilim-guncellemeleri/geri-al", headers=yetkili_header).status_code in (400, 403)

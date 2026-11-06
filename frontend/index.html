@@ -1151,6 +1151,7 @@
     <button class="side-link" data-target="#site-sekme" data-rol-min="yonetici" data-rol-davranis="gizle"><i class="bi bi-diagram-3"></i>Site / Erişim Noktası</button>
     <button class="side-link" data-target="#kullanicilar-sekme" data-rol-min="yonetici" data-rol-davranis="gizle"><i class="bi bi-person-gear"></i>Kullanıcılar</button>
     <button class="side-link" data-target="#sistem-sekme" data-rol-min="yonetici" data-rol-davranis="gizle"><i class="bi bi-terminal"></i>Sistem / Log</button>
+    <button class="side-link" data-target="#guncelleme-sekme" data-rol-min="yonetici" data-rol-davranis="gizle"><i class="bi bi-arrow-up-circle"></i>Yazılım Güncellemeleri<span class="badge bg-danger ms-auto d-none" id="yazilimAcikRozet"></span></button>
     <button class="side-link" data-target="#denetim-sekme" data-rol-min="yonetici" data-rol-davranis="gizle"><i class="bi bi-journal-check"></i>Denetim Kayıtları</button>
     <button class="side-link" data-target="#test-sekme" data-rol-min="yonetici" data-rol-davranis="gizle"><i class="bi bi-plus-circle"></i>Elle Kayıt (Test)</button>
     </div>
@@ -1193,6 +1194,7 @@
     <li class="nav-item" data-rol-min="yonetici" data-rol-davranis="gizle"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#test-sekme" type="button"><i class="bi bi-plus-circle me-1"></i>Test</button></li>
     <li class="nav-item" data-rol-min="yonetici" data-rol-davranis="gizle"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#lisans-sekme" type="button"><i class="bi bi-key-fill me-1"></i>Lisans</button></li>
     <li class="nav-item" data-rol-min="yonetici" data-rol-davranis="gizle"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#sistem-sekme" type="button"><i class="bi bi-terminal me-1"></i>Sistem</button></li>
+    <li class="nav-item" data-rol-min="yonetici" data-rol-davranis="gizle"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#guncelleme-sekme" type="button"><i class="bi bi-arrow-up-circle me-1"></i>Yazılım Güncellemeleri</button></li>
     <li class="nav-item" data-rol-min="yonetici" data-rol-davranis="gizle"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#denetim-sekme" type="button"><i class="bi bi-journal-check me-1"></i>Denetim Kayıtları</button></li>
     <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#iletisim-sekme" type="button"><i class="bi bi-headset me-1"></i>İletişim</button></li>
   </ul>
@@ -2708,6 +2710,7 @@
                     <option value="kamera_arizasi">Sadece kamera arızası</option>
                     <option value="kamera_ayari">Sadece kamera ayar denetimi (saat / NTP / yön)</option>
                     <option value="anpr_motoru">Sadece plaka motoru ekran kartını kaybetti</option>
+                    <option value="yazilim_guncellemesi">Sadece yazılım güncellemesi (yeni güvenlik açığı)</option>
                     <option value="disk_hatasi">Sadece disk/görsel yazma hatası</option>
                     <option value="disk_doluyor">Sadece disk doluluk erken uyarısı</option>
                     <option value="yedek_bozuk">Sadece otomatik yedek bozuk üretildi</option>
@@ -2960,6 +2963,53 @@
          models.DenetimKaydi). Yalnızca yönetici görebilir -- hesap
          yönetimiyle ilgili hassas bilgiler (kimin parolası sıfırlandı,
          kim hangi role yükseltildi vb.) taşıyor. -->
+    <!-- 2026-11-06: Yazılım Güncellemeleri (bkz. main.py "YAZILIM GÜNCELLEMELERİ",
+         backend/yazilim_guncelleme.py, kutuphane_guncelle.ps1). -->
+    <div class="tab-pane fade" id="guncelleme-sekme">
+      <div class="dashboard-heading"><div>
+        <button class="btn btn-outline-secondary btn-sm" id="yazilimTaraBtn" onclick="yazilimTara()"><i class="bi bi-search me-1"></i>Şimdi tara</button>
+      </div></div>
+      <div class="row g-3">
+        <div class="col-lg-8"><div class="card h-100"><div class="card-body">
+          <div class="d-flex align-items-start gap-3">
+            <div id="yazilimDurumIkon" class="fs-2 text-muted"><i class="bi bi-shield"></i></div>
+            <div class="flex-grow-1">
+              <div class="fw-semibold fs-5" id="yazilimDurumBaslik">Henüz taranmadı</div>
+              <div class="text-muted small" id="yazilimDurumAlt">"Şimdi tara" ile kurulu kütüphaneleri bilinen güvenlik açıklarına karşı kontrol edin.</div>
+            </div>
+          </div>
+          <div id="yazilimPlan" class="mt-3 d-none">
+            <div class="small fw-semibold mb-1">Uygulanacak güvenlik güncellemeleri</div>
+            <ul class="small mb-2" id="yazilimPlanListe"></ul>
+            <button class="btn btn-primary btn-sm" id="yazilimUygulaBtn" onclick="yazilimUygula()"><i class="bi bi-arrow-up-circle me-1"></i>Güncellemeleri uygula</button>
+            <div class="form-text">Yalnız açığı olan kütüphaneler, açığı kapatan en düşük sürüme yükseltilir; plaka motoru kütüphanelerine dokunulmaz.
+              PTS yaklaşık 1 dakika yeniden başlar, sonra 3 dakika izlenir; sorun görülürse kendiliğinden eski sürümlere dönülür.</div>
+          </div>
+          <div id="yazilimElleKomut" class="alert alert-warning small mt-3 mb-0 d-none"></div>
+        </div></div></div>
+        <div class="col-lg-4"><div class="card h-100"><div class="card-body">
+          <label class="form-label small fw-semibold" for="yazilimSiklik">Otomatik tarama</label>
+          <select class="form-select form-select-sm" id="yazilimSiklik" onchange="yazilimSiklikKaydet()">
+            <option value="haftalik">Haftada bir</option><option value="aylik">Ayda bir</option><option value="kapali">Kapalı</option>
+          </select>
+          <div class="form-text">Yeni bir güvenlik açığı bulununca alarm ve bildirim ("Yazılım güncellemesi") gelir. Güncellemeler kendiliğinden uygulanmaz.</div>
+        </div></div></div>
+        <div class="col-12 d-none" id="yazilimIslemKart"><div class="card"><div class="card-header d-flex justify-content-between align-items-center">
+          <span><i class="bi bi-clock-history me-1"></i>Son işlem</span>
+          <button class="btn btn-sm btn-outline-danger d-none" id="yazilimGeriAlBtn" onclick="yazilimGeriAl()"><i class="bi bi-arrow-counterclockwise me-1"></i>Eski sürümlere geri al</button>
+        </div><div class="card-body small" id="yazilimIslem"></div></div></div>
+        <div class="col-12"><div class="card"><div class="card-header d-flex justify-content-between align-items-center flex-wrap gap-2">
+          <span><i class="bi bi-box-seam me-1"></i>Kütüphaneler</span>
+          <select class="form-select form-select-sm" style="width:auto" id="yazilimSuzgec" onchange="_yazilimTabloCiz()">
+            <option value="onemli">Açığı olan ve güncel olmayanlar</option><option value="acik">Yalnız açığı olanlar</option><option value="hepsi">Tümü</option>
+          </select>
+        </div><div class="card-body p-0"><div class="table-responsive"><table class="table table-sm mb-0 align-middle">
+          <thead class="table-light"><tr><th>Kütüphane</th><th>Kurulu</th><th>Önerilen</th><th>En yeni</th><th>Güvenlik açığı</th><th>Not</th></tr></thead>
+          <tbody id="yazilimTablo"><tr><td colspan="6" class="text-center text-muted py-3">Henüz taranmadı</td></tr></tbody>
+        </table></div></div></div></div>
+      </div>
+    </div>
+
     <div class="tab-pane fade" id="denetim-sekme">
       <div class="card">
         <div class="card-header d-flex justify-content-between align-items-center">

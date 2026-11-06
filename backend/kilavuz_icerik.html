@@ -430,6 +430,20 @@
           bilgisayara bağlıdır). Sunucu yeniden kurulur ya da başka bilgisayara taşınırsa kameraları parolalarıyla yeniden eklemeniz gerekir.</p>
         <div class="dikkat"><code>gizli_anahtar.key</code> dosyasını silmeyin ve kimseyle paylaşmayın.</div>
 
+        <h3 id="yazilim-guncellemeleri">Yazılım Güncellemeleri</h3>
+        <p>PTS'nin kullandığı kütüphaneler haftada bir (ya da ayda bir; ekrandaki <b>Otomatik tarama</b> ayarı) bilinen güvenlik açıklarına
+          karşı taranır. Yeni bir açık bulununca "Yazılım güncellemesi" alarmı ve bildirimi gelir; güncellemeler kendiliğinden uygulanmaz.</p>
+        <ul>
+          <li><span class="dugme">Güncellemeleri uygula</span>: yalnız açığı olan kütüphaneler, açığı kapatan <b>en düşük</b> sürüme yükseltilir.
+            Plaka motoru kütüphaneleri (onnxruntime, opencv, fast-alpr…) otomatik güncellenmez. Önce kurulu sürümler yedeklenir; PTS yaklaşık
+            1 dakika yeniden başlar ve 3 dakika izlenir. Sorun görülürse kendiliğinden eski sürümlere dönülür. Sonuç <b>Son işlem</b> kartında görünür.</li>
+          <li><span class="dugme">Eski sürümlere geri al</span>: güncellemeden sonra bir sorun fark ederseniz son yedeğe döner.</li>
+          <li>Güncelleme, PTS servisinden bağımsız bir Windows görevi olarak çalışır. Başlatılamazsa ekran, sunucuda Yönetici PowerShell'de
+            çalıştırılacak tek satırlık komutu gösterir. Kayıt: <code>veritabani\yazilim_guncelleme\son_islem.log</code>.</li>
+        </ul>
+        <div class="dikkat">Güncellemeyi yoğun olmayan bir saatte yapın: yeniden başlatma sırasında kameralar ve paneller kısa süre kesilir.
+          Sunucunun pypi.org adresine internet erişimi olmalıdır.</div>
+
         <h3 id="merkezi-izleme">Merkezi İzleme (bakım firmasına sağlık bildirimi)</h3>
         <p>Sistem sekmesindeki <b>Merkezi İzleme</b> kartı açıldığında sistem birkaç dakikada bir sağlık durumunu bakım firmasının
           izleme merkezine gönderir: kameralar görüntü veriyor mu, bugün kaç okuma yapıldı, gece mutabakatı sonucu, disk doluluğu,

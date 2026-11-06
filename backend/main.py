@@ -26,6 +26,8 @@ import logging
 from logging.handlers import RotatingFileHandler
 import secrets
 import shutil
+import subprocess
+import sys
 import threading
 import time
 import uuid
@@ -298,6 +300,9 @@ _VARSAYILAN_AYARLAR = {
     # SESSİZ KAMERA (2026-10-31): normalde trafik olan saatlerde bu kadar dakika
     # hiç plaka okumayan kamera için alarm (0 = kapalı).
     "sessiz_kamera_dk": 60,
+    # YAZILIM GÜNCELLEMELERİ (2026-11-06): kütüphanelerin bilinen güvenlik açığı
+    # taraması: "haftalik" | "aylik" | "kapali" (bkz. backend/yazilim_guncelleme.py).
+    "yazilim_tarama_sikligi": "haftalik",
     # TELEGRAM SORGU (2026-10-31): kayıtlı Telegram sohbetlerinden plaka/özet sorgusu.
     "telegram_sorgu_aktif": False,
     # RESMİ ARAÇ (2026-10-30) -- bkz. _resmi_arac_kontrol. Mesai saatleri ve
@@ -9740,6 +9745,12 @@ def _ayar_gunler_dogrula(v) -> str:
     return ",".join(sorted(set(parcalar)))
 
 
+def _ayar_secenek_dogrula(v, secenekler) -> str:
+    if v not in secenekler:
+        raise HTTPException(400, f"Şunlardan biri olmalı: {', '.join(secenekler)}")
+    return v
+
+
 def _ayar_bool_dogrula(v) -> bool:
     if isinstance(v, bool):
         return v
@@ -9783,6 +9794,7 @@ _AYAR_DOGRULAYICILAR = {
     "klon_sure_dk": lambda v: _ayar_int_dogrula(v, 0, 720),
     "gece_mutabakati_saat": lambda v: "" if not str(v or "").strip() else _ayar_saat_dogrula(v),
     "sessiz_kamera_dk": lambda v: _ayar_int_dogrula(v, 0, 1440),
+    "yazilim_tarama_sikligi": lambda v: _ayar_secenek_dogrula(v, _TARAMA_SIKLIKLARI),
     "telegram_sorgu_aktif": _ayar_bool_dogrula,
     "resmi_mesai_baslangic": lambda v: _ayar_saat_dogrula(v),
     "resmi_mesai_bitis": lambda v: _ayar_saat_dogrula(v),
@@ -11043,6 +11055,7 @@ async def _gece_isleri_baslangic():
     asyncio.ensure_future(_kamera_denetimi_dongu())
     asyncio.ensure_future(_sessiz_kamera_dongu())
     threading.Thread(target=_anpr_motor_kontrol_ve_alarm, name="anpr-motor-kontrol", daemon=True).start()
+    asyncio.ensure_future(_yazilim_tarama_dongu())
     threading.Thread(target=_telegram_sorgu_dongu, name="telegram-sorgu", daemon=True).start()
 
 
@@ -11371,6 +11384,183 @@ async def kamera_ayar_denetimi_calistir(db: Session = Depends(get_db),
 
 
 # ==================================================================
+# YAZILIM GÜNCELLEMELERİ (2026-11-06, kullanıcı isteği; bkz. backend/yazilim_guncelleme.py
+# ve kutuphane_guncelle.ps1). Haftalık/aylık arka planda kurulu kütüphaneler PyPI'nin
+# güvenlik açığı kayıtlarıyla karşılaştırılır; yeni açık çıkınca alarm + bildirim.
+# "Güncellemeleri uygula" yalnız açığı olan paketleri açığı kapatan EN DÜŞÜK sürüme
+# yükseltir (plaka motoru paketlerine dokunmaz), servisi yeniden başlatır, 3 dk izler
+# ve sorun olursa kendiliğinden eski sürümlere döner. Bu iş PTS servisinin DIŞINDA,
+# bir Windows zamanlanmış görevi olarak çalışır: servis yeniden başlarken (NSSM alt
+# süreçleri de kapatır) güncelleme yarıda kesilmesin.
+# ==================================================================
+_TARAMA_SIKLIKLARI = ("haftalik", "aylik", "kapali")
+_TARAMA_GUN = {"haftalik": 7, "aylik": 30}
+_GUNCELLEME_GOREV_ADI = "PTS Kutuphane Guncelleme"
+_yazilim_tarama_kilit = threading.Lock()
+
+
+def _yazilim_taramasi_yap(bildir: bool = True) -> dict:
+    from backend import yazilim_guncelleme as yg
+    with _yazilim_tarama_kilit:
+        onceki = yg.json_oku("tarama.json", {}) or {}
+        sonuc = yg.tara()
+        yg.json_yaz("tarama.json", sonuc)
+    eski = {(p["ad"], a["id"]) for p in onceki.get("paketler", []) for a in p.get("aciklar") or []}
+    yeni = [(p, a) for p in sonuc["paketler"] for a in p.get("aciklar") or [] if (p["ad"], a["id"]) not in eski]
+    if bildir and yeni:
+        paketler = sorted({p["ad"] for p, _ in yeni})
+        mesaj = (f"YAZILIM GÜNCELLEMESİ: {len(paketler)} kütüphanede yeni güvenlik açığı bulundu "
+                 f"({', '.join(paketler[:6])}{'…' if len(paketler) > 6 else ''}). Yönetim Paneli > Yazılım Güncellemeleri.")
+        db = SessionLocal()
+        try:
+            db.add(models.Alarm(plaka_no="SISTEM", alarm_tipi="yazilim_guncellemesi", mesaj=mesaj[:255]))
+            db.commit()
+            _bildirim_tetikle(db, "yazilim_guncellemesi", {"olay": "yazilim_guncellemesi",
+                                                           "alarm_tipi": "yazilim_guncellemesi", "mesaj": mesaj})
+        finally:
+            db.close()
+        logger.warning(mesaj)
+    logger.info("Yazılım taraması: %d paket, %d açıklı paket, %d açık, %d hata", len(sonuc["paketler"]),
+                sonuc["acik_paket"], sonuc["acik_sayisi"], sonuc["hata"])
+    return sonuc
+
+
+def _yazilim_taramasi_gerekli_mi(simdi: datetime) -> bool:
+    from backend import yazilim_guncelleme as yg
+    gun = _TARAMA_GUN.get(_sistem_ayarlari_oku().get("yazilim_tarama_sikligi"))
+    if not gun:
+        return False
+    son = (yg.json_oku("tarama.json", {}) or {}).get("zaman")
+    try:
+        return son is None or simdi - datetime.fromisoformat(son) >= timedelta(days=gun)
+    except ValueError:
+        return True
+
+
+async def _yazilim_tarama_dongu() -> None:
+    await asyncio.sleep(600)          # açılışın hemen ardından ağı meşgul etmesin
+    while True:
+        try:
+            if await asyncio.to_thread(_yazilim_taramasi_gerekli_mi, datetime.now()):
+                await asyncio.to_thread(_yazilim_taramasi_yap)
+        except Exception:
+            logger.exception("[yazilim-tarama] Döngüde beklenmeyen hata")
+        await asyncio.sleep(3600)
+
+
+def _guncelleme_komutu(islem: str) -> str:
+    return (f'powershell -ExecutionPolicy Bypass -File "{os.path.join(PROJE_KOKU, "kutuphane_guncelle.ps1")}" '
+            f'-Islem {islem}')
+
+
+def _guncelleme_uygulama_kapali() -> bool:
+    return os.environ.get("PTS_GUNCELLEME_UYGULAMA_KAPALI", "").strip().lower() in ("1", "true", "evet")
+
+
+def _guncelleme_betigini_baslat(islem: str) -> tuple:
+    """(başladı_mı, açıklama). Windows'ta SYSTEM hesabıyla tek seferlik zamanlanmış görev."""
+    if _guncelleme_uygulama_kapali():
+        raise HTTPException(403, "Bu kurulumda (demo) kütüphane güncellemesi uygulanamaz")
+    if sys.platform != "win32":
+        return False, "Otomatik başlatma yalnız Windows kurulumunda; komutu elle çalıştırın."
+    komut = _guncelleme_komutu(islem).replace("powershell ", "powershell.exe -NoProfile ", 1)
+    try:
+        olustur = subprocess.run(["schtasks", "/Create", "/F", "/TN", _GUNCELLEME_GOREV_ADI, "/SC", "ONCE", "/ST", "00:00",
+                                  "/RU", "SYSTEM", "/RL", "HIGHEST", "/TR", komut], capture_output=True, text=True, timeout=30)
+        if olustur.returncode != 0:
+            return False, f"Zamanlanmış görev oluşturulamadı: {(olustur.stderr or olustur.stdout).strip()[:200]}"
+        calistir = subprocess.run(["schtasks", "/Run", "/TN", _GUNCELLEME_GOREV_ADI], capture_output=True, text=True, timeout=30)
+        if calistir.returncode != 0:
+            return False, f"Zamanlanmış görev başlatılamadı: {(calistir.stderr or calistir.stdout).strip()[:200]}"
+    except (OSError, subprocess.SubprocessError) as exc:
+        return False, f"Zamanlanmış görev çalıştırılamadı: {exc}"
+    return True, "Güncelleme arka planda başladı"
+
+
+def _guncelleme_suruyor_mu() -> bool:
+    from backend import yazilim_guncelleme as yg
+    d = yg.json_oku("durum.json", {}) or {}
+    if not d.get("baslangic") or d.get("izleme_bitti") or (d.get("bitis") and d.get("basarili") is False):
+        return False
+    try:
+        return datetime.now() - datetime.fromisoformat(d["baslangic"]) < timedelta(minutes=20)
+    except ValueError:
+        return False
+
+
+def _yazilim_guncelleme_cevap() -> dict:
+    from backend import yazilim_guncelleme as yg
+    tarama = yg.json_oku("tarama.json", None)
+    return {"tarama": tarama, "plan": yg.plan_olustur(tarama or {}), "durum": yg.json_oku("durum.json", None),
+            "siklik": _sistem_ayarlari_oku().get("yazilim_tarama_sikligi"), "suruyor": _guncelleme_suruyor_mu(),
+            "yedek_var": bool(yg.son_yedek()), "otomatik": sys.platform == "win32",
+            "uygulama_kapali": _guncelleme_uygulama_kapali(),
+            "komut_uygula": _guncelleme_komutu("uygula"), "komut_geri_al": _guncelleme_komutu("geri-al"),
+            "tutulan": list(yg.TUTULAN)}
+
+
+@app.get("/yazilim-guncellemeleri")
+def yazilim_guncellemeleri(kullanici: models.Kullanici = Depends(_personel_girisi_gerekli)):
+    _rol_dogrula(kullanici, ROL_YONETICI)
+    return _yazilim_guncelleme_cevap()
+
+
+@app.post("/yazilim-guncellemeleri/tara")
+async def yazilim_guncellemeleri_tara(db: Session = Depends(get_db),
+                                      kullanici: models.Kullanici = Depends(_personel_girisi_gerekli)):
+    _rol_dogrula(kullanici, ROL_YONETICI)
+    _denetim_kaydet(db, kullanici.kullanici_adi, "yazilim_tarama", "elle başlatıldı")
+    await asyncio.to_thread(_yazilim_taramasi_yap, False)
+    return _yazilim_guncelleme_cevap()
+
+
+@app.put("/yazilim-guncellemeleri/ayar")
+def yazilim_guncellemeleri_ayar(istek: schemas.YazilimTaramaSiklik, db: Session = Depends(get_db),
+                                kullanici: models.Kullanici = Depends(_personel_girisi_gerekli)):
+    _rol_dogrula(kullanici, ROL_YONETICI)
+    ayarlar = _sistem_ayarlari_oku()
+    ayarlar["yazilim_tarama_sikligi"] = _ayar_secenek_dogrula(istek.siklik, _TARAMA_SIKLIKLARI)
+    _sistem_ayarlari_yaz(ayarlar)
+    _denetim_kaydet(db, kullanici.kullanici_adi, "yazilim_tarama_sikligi", istek.siklik)
+    return _yazilim_guncelleme_cevap()
+
+
+@app.post("/yazilim-guncellemeleri/uygula")
+def yazilim_guncellemeleri_uygula(db: Session = Depends(get_db),
+                                  kullanici: models.Kullanici = Depends(_personel_girisi_gerekli)):
+    from backend import yazilim_guncelleme as yg
+    _rol_dogrula(kullanici, ROL_YONETICI)
+    if _guncelleme_uygulama_kapali():
+        raise HTTPException(403, "Bu kurulumda (demo) kütüphane güncellemesi uygulanamaz")
+    if _guncelleme_suruyor_mu():
+        raise HTTPException(409, "Bir güncelleme işlemi zaten sürüyor")
+    plan = yg.plan_olustur(yg.json_oku("tarama.json", {}) or {})
+    if not plan:
+        raise HTTPException(400, "Otomatik uygulanacak güvenlik güncellemesi yok (önce tarayın)")
+    yg.json_yaz("plan.json", plan)
+    basladi, aciklama = _guncelleme_betigini_baslat("uygula")
+    _denetim_kaydet(db, kullanici.kullanici_adi, "yazilim_guncelle",
+                    ", ".join(f"{p['ad']} {p['eski']}->{p['yeni']}" for p in plan)[:250] + ("" if basladi else " (elle)"))
+    return {"basladi": basladi, "aciklama": aciklama, "komut": _guncelleme_komutu("uygula"), "plan": plan}
+
+
+@app.post("/yazilim-guncellemeleri/geri-al")
+def yazilim_guncellemeleri_geri_al(db: Session = Depends(get_db),
+                                   kullanici: models.Kullanici = Depends(_personel_girisi_gerekli)):
+    from backend import yazilim_guncelleme as yg
+    _rol_dogrula(kullanici, ROL_YONETICI)
+    if _guncelleme_uygulama_kapali():
+        raise HTTPException(403, "Bu kurulumda (demo) kütüphane güncellemesi uygulanamaz")
+    if _guncelleme_suruyor_mu():
+        raise HTTPException(409, "Bir güncelleme işlemi zaten sürüyor")
+    if not yg.son_yedek():
+        raise HTTPException(400, "Geri dönülecek yedek yok")
+    basladi, aciklama = _guncelleme_betigini_baslat("geri-al")
+    _denetim_kaydet(db, kullanici.kullanici_adi, "yazilim_geri_al", yg.son_yedek() + ("" if basladi else " (elle)"))
+    return {"basladi": basladi, "aciklama": aciklama, "komut": _guncelleme_komutu("geri-al")}
+
+
+# ==================================================================
 # SESSİZ KAMERA ALARMI (2026-10-31, kullanıcı isteği; sahada .74 kamerası bağlıydı
 # ama 30 saattir plaka okumuyordu ve fark edilmemişti). Görüntüsü gelen (pipeline
 # çalışan) bir kamera `sessiz_kamera_dk` dakikadır hiç plaka kaydetmediyse VE son 14
@@ -11646,6 +11836,7 @@ _ALARM_ADLARI = {
     "supheli_arac": "Şüpheli araç", "klon_plaka": "Klon plaka şüphesi", "resmi_arac": "Resmi araç",
     "sunucu_kesintisi": "Sunucu kapalı kaldı", "sessiz_kamera": "Sessiz kamera", "kamera_arizasi": "Kamera arızası",
     "kamera_ayari": "Kamera ayarı", "anpr_motoru": "Plaka motoru ekran kartını kullanamıyor",
+    "yazilim_guncellemesi": "Yazılım güncellemesi (güvenlik açığı)",
     "bariyer_hatasi": "Bariyer hatası", "disk_hatasi": "Disk hatası",
 }
 
@@ -12324,7 +12515,8 @@ def _goruntu_temizle_calistir(gun: int, db: Session) -> tuple[int, "datetime"]:
 # yalnızca kişiyi belirleyen alanlar temizlenir. Geri alınamaz.
 KVKK_ANONIM_PLAKA = "ANONIM"
 _SISTEM_ALARM_TIPLERI = ("kamera_arizasi", "disk_hatasi", "disk_doluyor", "yedek_bozuk", "yedek_hatasi",
-                         "sertifika_bitiyor", "kamera_ayari", "anpr_motoru")
+                         "sertifika_bitiyor", "kamera_ayari", "anpr_motoru",
+                         "yazilim_guncellemesi")
 
 
 def _kayitlari_anonimlestir(gun: int, db: Session, parca: int = 1000) -> int:

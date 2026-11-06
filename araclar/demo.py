@@ -67,6 +67,10 @@ def _ortami_hazirla(demo: str, marka: str, port: int) -> None:
         "PTS_HOST": "127.0.0.1",
         "PTS_PORT": str(port),
         "PTS_OTOMATIK_GIRIS_PORTU": "0",
+        # Yazılım güncellemeleri (2026-11-06): demo kendi klasörünü kullanır ve kütüphane
+        # güncellemesi UYGULAYAMAZ (aynı Python ortamını paylaştığı gerçek kurulumu bozmasın).
+        "PTS_GUNCELLEME_KLASORU": os.path.join(demo, "yazilim_guncelleme"),
+        "PTS_GUNCELLEME_UYGULAMA_KAPALI": "1",
         "PTS_IC_PORT": str(port + 1),
     })
 

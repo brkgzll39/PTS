@@ -235,8 +235,9 @@ async function yonetimGenelBakisYukle() {
   const izgara = document.getElementById("ygIzgara");
   if (!izgara) return;
   const al = yol => apiCagir(yol).catch(() => null);
-  const [saglik, lisans, merkez, bildirim, kullanicilar, denetim] = await Promise.all([
-    al("/saglik"), al("/lisans"), al("/merkez-izleme"), al("/bildirim/ayarlar"), al("/kullanicilar"), al("/denetim-kayitlari?limit=6")]);
+  const [saglik, lisans, merkez, bildirim, kullanicilar, denetim, yazilim] = await Promise.all([
+    al("/saglik"), al("/lisans"), al("/merkez-izleme"), al("/bildirim/ayarlar"), al("/kullanicilar"), al("/denetim-kayitlari?limit=6"),
+    al("/yazilim-guncellemeleri")]);
   const kutu = (hedef, ikon, baslik, deger, alt, durum) => `<button type="button" class="yg-kutu ${durum}" data-yg-hedef="${hedef}">
       <span class="yg-ikon"><i class="bi ${ikon}"></i></span><span class="yg-metin"><small>${baslik}</small><b>${deger}</b><span>${alt}</span></span>
       <i class="bi bi-chevron-right yg-ok"></i></button>`;
@@ -266,6 +267,15 @@ async function yonetimGenelBakisYukle() {
   if (merkez) k.push(kutu("#sistem-sekme", "bi-broadcast", "Merkezi izleme", !merkez.aktif ? "Kapalı" : merkez.son_hata ? "Gönderilemiyor" : "Bağlı",
     merkez.aktif && merkez.son_basarili ? `son gönderim ${new Date(merkez.son_basarili).toLocaleTimeString("tr-TR", { hour: "2-digit", minute: "2-digit" })}` : "bakım firmasına sağlık bilgisi",
     !merkez.aktif ? "notr" : merkez.son_hata ? "sorun" : "iyi"));
+  if (yazilim) {
+    const t = yazilim.tarama;
+    const rozet = document.getElementById("yazilimAcikRozet");
+    if (rozet) { rozet.textContent = t?.acik_paket || ""; rozet.classList.toggle("d-none", !t?.acik_paket); }
+    k.push(kutu("#guncelleme-sekme", "bi-arrow-up-circle", "Yazılım güncellemeleri",
+      !t ? "Taranmadı" : t.acik_paket ? `${t.acik_paket} açık` : "Güncel",
+      !t ? "kütüphane güvenlik taraması" : `son tarama ${new Date(t.zaman).toLocaleDateString("tr-TR")}`,
+      !t ? "uyari" : t.acik_paket ? "sorun" : "iyi"));
+  }
   if (kullanicilar) k.push(kutu("#kullanicilar-sekme", "bi-people", "Kullanıcılar", `${kullanicilar.filter(u => u.aktif).length} hesap`,
     `${kullanicilar.filter(u => u.rol === "yonetici" && u.aktif).length} yönetici`, "notr"));
   izgara.innerHTML = k.join("");
@@ -304,6 +314,7 @@ const SAYFA_BASLIKLARI = {
   "#site-sekme": ["Site ve Erişim Noktaları", "Siteler, nizamiyeler ve kameraların bağlı olduğu noktalar", "Yönetim Paneli"],
   "#kullanicilar-sekme": ["Kullanıcılar", "Hesaplar, roller ve ekran yetkileri", "Yönetim Paneli"],
   "#sistem-sekme": ["Sistem", "Sistem durumu, ayarlar, yedek ve uygulama kayıtları", "Yönetim Paneli"],
+  "#guncelleme-sekme": ["Yazılım Güncellemeleri", "Kütüphanelerdeki güvenlik açıkları ve güncellemeler", "Yönetim Paneli"],
   "#denetim-sekme": ["Denetim Kayıtları", "Kim, ne zaman, neyi değiştirdi", "Yönetim Paneli"],
   "#test-sekme": ["Elle Kayıt", "Deneme amaçlı ya da kameranın göremediği bir geçişi elle girin", "Yönetim Paneli"],
   "#iletisim-sekme": ["İletişim ve Arıza Bildirimi", "Destek ekibine ulaşın"],
@@ -769,6 +780,7 @@ function alarmTipiEtiketi(tip) {
     sessiz_kamera: "Sessiz kamera (plaka okumuyor)",
     kamera_ayari: "Kamera ayarı (saat / NTP / yön / kaçırma)",
     anpr_motoru: "Plaka motoru ekran kartını kullanamıyor",
+    yazilim_guncellemesi: "Yazılım güncellemesi (güvenlik açığı)",
     bildirim_hatasi: "Bildirim gönderilemiyor",
     arac_uyusmazligi: "Plaka-araç uyuşmazlığı",
     kamera_arizasi: "Kamera arızası / bağlantı sorunu",
@@ -1448,7 +1460,7 @@ function _canliOlayHtml(k) {
 const _DIKKAT_IKON = { kara_liste: "bi-slash-circle", klon_plaka: "bi-copy", supheli_arac: "bi-exclamation-diamond",
   resmi_arac: "bi-briefcase", sessiz_kamera: "bi-camera-video-off", kamera_arizasi: "bi-camera-video-off",
   sunucu_kesintisi: "bi-power", bildirim_hatasi: "bi-bell-slash", bariyer_hatasi: "bi-door-closed",
-  disk_doluyor: "bi-hdd", disk_hatasi: "bi-hdd", yedek_bozuk: "bi-archive", sertifika_bitiyor: "bi-shield-exclamation", kamera_ayari: "bi-sliders", anpr_motoru: "bi-gpu-card" };
+  disk_doluyor: "bi-hdd", disk_hatasi: "bi-hdd", yedek_bozuk: "bi-archive", sertifika_bitiyor: "bi-shield-exclamation", kamera_ayari: "bi-sliders", anpr_motoru: "bi-gpu-card", yazilim_guncellemesi: "bi-arrow-up-circle" };
 function _gecenSure(iso) {
   const dk = Math.max(0, Math.round((Date.now() - new Date(iso)) / 60000));
   if (dk < 1) return "az önce";
@@ -7841,7 +7853,7 @@ async function bildirimAyarlariYukle() {
     const tetikleyiciEtiketleri = {
       hepsi: "Hepsi", yetkisiz: "Yetkisiz araç", kara_liste: "Kara liste",
       suresi_dolmus: "Süresi dolmuş", supheli_arac: "Şüpheli araç", klon_plaka: "Klon plaka şüphesi",
-      resmi_arac: "Resmi araç uyarısı", sunucu_kesintisi: "Sunucu kapalı kaldı", sessiz_kamera: "Sessiz kamera", kamera_ayari: "Kamera ayarı", anpr_motoru: "Plaka motoru (ekran kartı)", arac_uyusmazligi: "Plaka-araç uyuşmazlığı", bariyer_hatasi: "Bariyer hatası", kamera_arizasi: "Kamera arızası",
+      resmi_arac: "Resmi araç uyarısı", sunucu_kesintisi: "Sunucu kapalı kaldı", sessiz_kamera: "Sessiz kamera", kamera_ayari: "Kamera ayarı", anpr_motoru: "Plaka motoru (ekran kartı)", yazilim_guncellemesi: "Yazılım güncellemesi", arac_uyusmazligi: "Plaka-araç uyuşmazlığı", bariyer_hatasi: "Bariyer hatası", kamera_arizasi: "Kamera arızası",
       disk_hatasi: "Disk hatası", yedek_bozuk: "Otomatik yedek bozuk", yedek_hatasi: "Otomatik yedek alınamadı",
       disk_doluyor: "Disk doluluk erken uyarısı", sertifika_bitiyor: "HTTPS sertifikası bitiyor", gunluk_ozet: "Günlük özet (her sabah)",
     };
@@ -7916,6 +7928,123 @@ async function bildirimSil(id) {
 // Denetim Kayıtları sekmesi açıldığında otomatik yükle (bkz. yukarıdaki
 // denetimKayitlariniYukle -- aynı sistem-sekme deseni).
 document.querySelector('[data-bs-target="#denetim-sekme"]')?.addEventListener("click", denetimKayitlariniYukle);
+
+// ---------------------- YAZILIM GÜNCELLEMELERİ (2026-11-06) ----------------------
+let _yazilimVeri = null, _yazilimIzleyici = null;
+const _tarihSaat = (iso) => iso ? new Date(iso).toLocaleString("tr-TR", { dateStyle: "short", timeStyle: "short" }) : "—";
+function _yazilimTabloCiz() {
+  const tbody = document.getElementById("yazilimTablo");
+  if (!tbody) return;
+  const t = _yazilimVeri?.tarama;
+  if (!t) { tbody.innerHTML = '<tr><td colspan="6" class="text-center text-muted py-3">Henüz taranmadı</td></tr>'; return; }
+  const suzgec = document.getElementById("yazilimSuzgec")?.value || "onemli";
+  const satirlar = t.paketler.filter(p => suzgec === "hepsi" || (p.aciklar || []).length || (suzgec === "onemli" && p.guncel_degil) || p.hata);
+  tbody.innerHTML = satirlar.map(p => {
+    const aciklar = p.aciklar || [];
+    const acik = aciklar.length
+      ? `<span class="badge bg-danger" title="${escapeHtml(aciklar.map(a => a.id + (a.ozet ? ": " + a.ozet : "")).join("\n"))}">${aciklar.length} açık</span>`
+      : p.hata ? '<span class="text-muted">sorgulanamadı</span>' : '<span class="text-success"><i class="bi bi-check-circle"></i></span>';
+    const not = p.tutulan ? '<span class="text-muted">Plaka motoru: otomatik güncellenmez</span>'
+      : p.arac ? '<span class="text-muted">Kurulum aracı: çalışan sistemi etkilemez</span>'
+      : aciklar.length && !p.onerilen ? '<span class="text-warning">Henüz düzeltilmiş sürüm yok</span>'
+      : aciklar.length ? "Güvenlik güncellemesi" : p.guncel_degil ? '<span class="text-muted">Yeni sürüm var (gerekmedikçe güncellenmez)</span>' : "";
+    return `<tr><td class="fw-semibold">${escapeHtml(p.ad)}</td><td>${escapeHtml(p.surum)}</td>
+      <td>${p.onerilen ? `<b>${escapeHtml(p.onerilen)}</b>` : "—"}</td><td>${escapeHtml(p.en_yeni || "—")}</td><td>${acik}</td><td class="small">${not}</td></tr>`;
+  }).join("") || '<tr><td colspan="6" class="text-center text-muted py-3">Gösterilecek kütüphane yok</td></tr>';
+}
+function _yazilimCiz(v) {
+  _yazilimVeri = v;
+  const t = v.tarama, ikon = document.getElementById("yazilimDurumIkon");
+  const baslik = document.getElementById("yazilimDurumBaslik"), alt = document.getElementById("yazilimDurumAlt");
+  if (!baslik) return;
+  const rozet = document.getElementById("yazilimAcikRozet");
+  if (rozet) { rozet.textContent = t?.acik_paket || ""; rozet.classList.toggle("d-none", !t?.acik_paket); }
+  if (!t) {
+    ikon.innerHTML = '<i class="bi bi-shield"></i>'; ikon.className = "fs-2 text-muted";
+    baslik.textContent = "Henüz taranmadı";
+  } else if (t.acik_paket) {
+    ikon.innerHTML = '<i class="bi bi-shield-exclamation"></i>'; ikon.className = "fs-2 text-danger";
+    baslik.textContent = `${t.acik_paket} kütüphanede ${t.acik_sayisi} bilinen güvenlik açığı`;
+  } else {
+    ikon.innerHTML = '<i class="bi bi-shield-check"></i>'; ikon.className = "fs-2 text-success";
+    baslik.textContent = "Bilinen güvenlik açığı yok";
+  }
+  if (t) alt.textContent = `Son tarama: ${_tarihSaat(t.zaman)} · ${t.paketler.length} kütüphane` + (t.hata ? ` · ${t.hata} tanesi sorgulanamadı (internet bağlantısı?)` : "");
+  document.getElementById("yazilimSiklik").value = v.siklik || "haftalik";
+  const planKutu = document.getElementById("yazilimPlan");
+  planKutu.classList.toggle("d-none", !v.plan.length);
+  document.getElementById("yazilimPlanListe").innerHTML = v.plan.map(p => `<li>${escapeHtml(p.ad)} ${escapeHtml(p.eski)} → <b>${escapeHtml(p.yeni)}</b></li>`).join("");
+  document.getElementById("yazilimUygulaBtn").disabled = v.suruyor || v.uygulama_kapali;
+  document.getElementById("yazilimUygulaBtn").title = v.uygulama_kapali ? "Bu kurulumda (demo) güncelleme uygulanamaz" : "";
+  const d = v.durum, kart = document.getElementById("yazilimIslemKart");
+  kart.classList.toggle("d-none", !d);
+  document.getElementById("yazilimGeriAlBtn").classList.toggle("d-none", !v.yedek_var || v.suruyor);
+  if (d) {
+    const sonuc = v.suruyor ? '<span class="badge bg-info text-dark"><span class="spinner-border spinner-border-sm me-1"></span>Sürüyor</span>'
+      : d.basarili === false ? '<span class="badge bg-danger">Başarısız</span>' : d.basarili ? '<span class="badge bg-success">Tamamlandı</span>' : '<span class="badge bg-secondary">—</span>';
+    document.getElementById("yazilimIslem").innerHTML = `<div class="mb-2">${sonuc} <b>${d.islem === "geri_al" ? "Geri alma" : "Güncelleme"}</b>
+      · ${_tarihSaat(d.baslangic)}${d.mesaj ? ` · ${escapeHtml(d.mesaj)}` : ""}</div>
+      <ul class="mb-1">${(d.adimlar || []).map(a => `<li>${escapeHtml(a)}</li>`).join("")}</ul>
+      ${d.izleme ? `<div class="text-muted"><i class="bi bi-activity me-1"></i>${escapeHtml(d.izleme)}</div>` : ""}`;
+  }
+  clearTimeout(_yazilimIzleyici);
+  if (v.suruyor) _yazilimIzleyici = setTimeout(yazilimGuncellemeleriYukle, 10000);
+  _yazilimTabloCiz();
+}
+async function yazilimGuncellemeleriYukle() {
+  if (!rolYeterli("yonetici")) return;
+  try { _yazilimCiz(await apiCagir("/yazilim-guncellemeleri")); }
+  catch (e) {
+    // Güncelleme sırasında PTS yeniden başlarken istek düşebilir: biraz sonra yeniden dene.
+    if (_yazilimVeri?.suruyor) { clearTimeout(_yazilimIzleyici); _yazilimIzleyici = setTimeout(yazilimGuncellemeleriYukle, 10000); }
+    else toastGoster(e.message, "hata");
+  }
+}
+async function yazilimTara() {
+  const btn = document.getElementById("yazilimTaraBtn");
+  btn.disabled = true; btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Taranıyor…';
+  try { _yazilimCiz(await apiCagir("/yazilim-guncellemeleri/tara", { method: "POST" })); toastGoster("Tarama tamamlandı", "basari"); }
+  catch (e) { toastGoster(e.message, "hata"); }
+  finally { btn.disabled = false; btn.innerHTML = '<i class="bi bi-search me-1"></i>Şimdi tara'; }
+}
+async function yazilimSiklikKaydet() {
+  try {
+    _yazilimCiz(await apiCagir("/yazilim-guncellemeleri/ayar", { method: "PUT", body: JSON.stringify({ siklik: document.getElementById("yazilimSiklik").value }) }));
+    toastGoster("Otomatik tarama ayarı kaydedildi", "basari");
+  } catch (e) { toastGoster(e.message, "hata"); }
+}
+function _yazilimElleKomut(r) {
+  const kutu = document.getElementById("yazilimElleKomut");
+  kutu.classList.toggle("d-none", r.basladi);
+  if (!r.basladi) kutu.innerHTML = `<b>Otomatik başlatılamadı.</b> ${escapeHtml(r.aciklama || "")}<br>Sunucuda, <b>Yönetici</b> PowerShell'de çalıştırın:
+    <code class="d-block mt-1 user-select-all">${escapeHtml(r.komut)}</code>`;
+}
+async function yazilimUygula() {
+  const plan = _yazilimVeri?.plan || [];
+  if (!plan.length) return;
+  const liste = plan.map(p => `${p.ad} ${p.eski} → ${p.yeni}`).join(", ");
+  if (!(await onayAl(`${liste}. PTS yaklaşık 1 dakika yeniden başlayacak (kameralar ve paneller kısa süre kesilir); ` +
+    "sonra 3 dakika izlenecek, sorun olursa eski sürümlere dönülecek. Yoğun olmayan bir saatte yapın.",
+    { baslik: "Güvenlik güncellemeleri uygulansın mı?", onayMetni: "Uygula", guvenli: true }))) return;
+  try {
+    const r = await apiCagir("/yazilim-guncellemeleri/uygula", { method: "POST" });
+    _yazilimElleKomut(r);
+    if (r.basladi) toastGoster("Güncelleme başladı; bu sayfa durumu kendiliğinden gösterecek", "basari");
+    yazilimGuncellemeleriYukle();
+  } catch (e) { toastGoster(e.message, "hata"); }
+}
+async function yazilimGeriAl() {
+  if (!(await onayAl("Son güncellemeden önceki kütüphane sürümlerine dönülecek ve PTS yeniden başlatılacak.",
+    { baslik: "Eski sürümlere geri alınsın mı?", onayMetni: "Geri al" }))) return;
+  try {
+    const r = await apiCagir("/yazilim-guncellemeleri/geri-al", { method: "POST" });
+    _yazilimElleKomut(r);
+    yazilimGuncellemeleriYukle();
+  } catch (e) { toastGoster(e.message, "hata"); }
+}
+document.addEventListener("shown.bs.tab", (e) => {
+  if (e.target?.dataset?.bsTarget === "#guncelleme-sekme") yazilimGuncellemeleriYukle();
+});
 
 // ================================================================
 // KAMERA DUVARI — TAM EKRAN
