@@ -1435,8 +1435,7 @@ _CSP = "; ".join((
 ))
 
 
-@app.middleware("http")
-async def _guvenlik_basliklarini_ekle(request: Request, call_next):
+class _GuvenlikBasliklari:
     """Her yanıta, tarayıcı tarafında ek bir savunma katmanı (defense in
     depth) sağlayan birkaç standart güvenlik başlığı ekler.
 
@@ -1454,22 +1453,53 @@ async def _guvenlik_basliklarini_ekle(request: Request, call_next):
     HTTP üzerinden gönderilirse tarayıcı onu sessizce yok sayar), bu yüzden
     ters vekil (reverse proxy) TLS sonlandırması olmayan kurulumlarda da
     zararsızdır. Content-Security-Policy 2026-11-06'da panelin kaynak
-    envanteri çıkarılıp tüm ekranlar tarayıcıda gezilerek eklendi (bkz. _CSP)."""
-    yanit = await call_next(request)
-    yanit.headers["X-Content-Type-Options"] = "nosniff"
-    yanit.headers["X-Frame-Options"] = "SAMEORIGIN"
-    yanit.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
-    yanit.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
-    # 2026-11-06 kullanıcı isteği ("panelde gelişmiş tarayıcı koruması"): CSP.
-    # Panel dışarıdan HİÇBİR dosya yüklemez (bootstrap, chart.js, yazı tipi
-    # frontend/vendor altında), bu yüzden kaynaklar yalnız bu sunucuyla sınırlı:
-    # sayfaya bir şekilde zararlı kod sızsa bile dış bir sunucudan betik
-    # yükleyemez ve veriyi (connect-src/img-src/form-action) dışarı gönderemez.
-    # 'unsafe-inline' script-src'de ŞİMDİLİK gerekli: arayüz ~250 satır içi
-    # onclick="..." işleyicisi kullanıyor; asıl XSS savunması her yerde
-    # escapeHtml + plaka_normalize'daki karakter kısıtlaması.
-    yanit.headers.setdefault("Content-Security-Policy", _CSP)
-    return yanit
+    envanteri çıkarılıp tüm ekranlar tarayıcıda gezilerek eklendi (bkz. _CSP).
+
+    DÜZ ASGI ARA KATMANI (2026-11-09 saha hatası: sayfalar ve araç görselleri ~30 sn'de
+    açılıyordu, plaka okuma süresi 90 ms'den 250 ms'ye çıkmıştı). Önceden
+    `@app.middleware("http")` (BaseHTTPMiddleware) idi. starlette 1.x, uzun akışların
+    (canlı görüntü MJPEG, SSE) kapandığını sunucunun "kapalı bağlantıya yazma" hatasından
+    anlıyor; uvicorn 0.30.6 bu durumda hata vermeyip yazmayı sessizce yok sayıyor, ve
+    BaseHTTPMiddleware araya girdiği için akışların kendi `request.is_disconnected()`
+    denetimi de kapanmayı hiç görmüyordu. Her sayfa yenilemesi/sekme kapatma sunucuda
+    sonsuza kadar dönen "hayalet" akışlar bıraktı; günler içinde sunucu boğuldu. Düz
+    ASGI ara katmanı `receive`'e dokunmaz: kapanma bilgisi akışa doğrudan ulaşır."""
+
+    _BASLIKLAR = (
+        (b"x-content-type-options", b"nosniff"),
+        (b"x-frame-options", b"SAMEORIGIN"),
+        (b"referrer-policy", b"strict-origin-when-cross-origin"),
+        (b"strict-transport-security", b"max-age=31536000; includeSubDomains"),
+    )
+
+    def __init__(self, app):   # starlette ara katmanı "app=" anahtarıyla kurar
+        self.uygulama = app
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http":
+            await self.uygulama(scope, receive, send)
+            return
+
+        async def basliklarla_gonder(mesaj):
+            if mesaj["type"] == "http.response.start":
+                basliklar = [(a, d) for a, d in mesaj.get("headers", [])
+                             if a.lower() not in {b for b, _ in self._BASLIKLAR}]
+                basliklar += list(self._BASLIKLAR)
+                # 2026-11-06 kullanıcı isteği ("panelde gelişmiş tarayıcı koruması"): CSP.
+                # Panel dışarıdan HİÇBİR dosya yüklemez (bootstrap, chart.js, yazı tipi
+                # frontend/vendor altında), bu yüzden kaynaklar yalnız bu sunucuyla sınırlı.
+                # 'unsafe-inline' script-src'de ŞİMDİLİK gerekli: arayüz ~250 satır içi
+                # onclick="..." işleyicisi kullanıyor; asıl XSS savunması her yerde
+                # escapeHtml + plaka_normalize'daki karakter kısıtlaması.
+                if not any(a.lower() == b"content-security-policy" for a, _ in basliklar):
+                    basliklar.append((b"content-security-policy", _CSP.encode()))
+                mesaj = {**mesaj, "headers": basliklar}
+            await send(mesaj)
+
+        await self.uygulama(scope, receive, basliklarla_gonder)
+
+
+app.add_middleware(_GuvenlikBasliklari)
 
 
 # ================================================================
@@ -7709,14 +7739,19 @@ async def sse_baglantisi(request: Request, authorization: Optional[str] = Header
     async def _akis():
         try:
             yield ": bağlandı\n\n"
+            son_kalp = time.monotonic()
             while True:
+                # 2026-11-09: kapanma 2 sn'de bir denetlenir (önceden 25 sn); kalp atışı
+                # yine 25 sn'de bir. Bkz. _GuvenlikBasliklari'ndaki "hayalet akış" notu.
                 if await request.is_disconnected():
                     break
                 try:
-                    payload = await asyncio.wait_for(q.get(), timeout=25.0)
+                    payload = await asyncio.wait_for(q.get(), timeout=2.0)
                     yield payload
                 except asyncio.TimeoutError:
-                    yield ": kalp-atisi\n\n"
+                    if time.monotonic() - son_kalp >= 25:
+                        son_kalp = time.monotonic()
+                        yield ": kalp-atisi\n\n"
         finally:
             try:
                 _sse_istemcileri.remove(istemci)

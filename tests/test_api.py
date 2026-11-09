@@ -9442,3 +9442,59 @@ def test_yalniz_pip_guncellemesi_yeniden_baslatmadan_uygulanir(client, yetkili_h
     assert d["izleme_bitti"] and "gerekmedi" in d["izleme"]
     # 2026-11-06 saha hatası: başarılı pip güncellemesi "Başarısız" görünüyordu.
     assert d["basarili"] is True and d["mesaj"] == "1 kütüphane güncellendi"
+
+
+def test_kapanan_akislar_sunucuda_hayalet_kalmaz(client, yetkili_header):
+    """2026-11-09 saha hatası: starlette 1.x + uvicorn 0.30.6 + BaseHTTPMiddleware ile
+    tarayıcı sekmesi kapanınca canlı görüntü (MJPEG) ve SSE akışları sunucuda dönmeye
+    devam ediyordu; günler içinde yüzlercesi birikip sayfaları ~30 sn'ye, plaka okumayı
+    yavaşlattı. Gerçek bir uvicorn sunucusunda bağlantı aniden kapatılır; akışlar
+    birkaç saniye içinde durmalı."""
+    import socket
+    import threading
+    import time
+    import uvicorn
+
+    okuma = {"n": 0}
+
+    class SahtePipeline:
+        calisiyor = True
+        def __init__(self):
+            self.i = 0
+        def son_goruntu_al(self):
+            okuma["n"] += 1
+            self.i += 1
+            return b"kare" * 100 + self.i.to_bytes(8, "big")
+
+    with socket.socket() as s:
+        s.bind(("127.0.0.1", 0))
+        port = s.getsockname()[1]
+    sunucu = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=port, log_level="error", lifespan="off"))
+    threading.Thread(target=sunucu.run, daemon=True).start()
+    for _ in range(100):
+        if sunucu.started:
+            break
+        time.sleep(0.05)
+    kamera = {"id": "hayalet-kam", "ad": "Hayalet", "rtsp_url": "rtsp://10.0.0.1/s", "yon": "giris", "aktif": False}
+    eski_oku = pts_main._kameralari_oku
+    pts_main._kameralari_oku = lambda: [kamera]
+    pts_main._aktif_pipelineler["hayalet-kam"] = SahtePipeline()
+    sse_once = len(pts_main._sse_istemcileri)
+    try:
+        def ac_kapat(yol):
+            b = socket.create_connection(("127.0.0.1", port))
+            b.sendall(f"GET {yol} HTTP/1.1\r\nHost: x\r\nAuthorization: {yetkili_header['Authorization']}\r\n\r\n".encode())
+            b.recv(1024)
+            b.close()
+        for _ in range(3):
+            ac_kapat("/kameralar/hayalet-kam/akis")
+            ac_kapat("/olaylar/sse")
+        time.sleep(4)
+        n = okuma["n"]
+        time.sleep(1)
+        assert okuma["n"] == n, "kapanmış canlı görüntü akışı hâlâ kare okuyor"
+        assert len(pts_main._sse_istemcileri) == sse_once, "kapanmış SSE bağlantısı listede kaldı"
+    finally:
+        pts_main._kameralari_oku = eski_oku
+        pts_main._aktif_pipelineler.pop("hayalet-kam", None)
+        sunucu.should_exit = True
