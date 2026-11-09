@@ -103,6 +103,7 @@ def _sistem_islemci_zamanlari() -> Optional[tuple]:
             import ctypes
             from ctypes import wintypes
             bos, cekirdek, kullanici = wintypes.FILETIME(), wintypes.FILETIME(), wintypes.FILETIME()
+            ctypes.windll.kernel32.GetSystemTimes.restype = wintypes.BOOL
             if not ctypes.windll.kernel32.GetSystemTimes(ctypes.byref(bos), ctypes.byref(cekirdek), ctypes.byref(kullanici)):
                 return None
             deger = lambda f: (f.dwHighDateTime << 32) | f.dwLowDateTime  # noqa: E731
@@ -132,8 +133,12 @@ def bellek_mb() -> Optional[int]:
                             ("PagefileUsage", ctypes.c_size_t), ("PeakPagefileUsage", ctypes.c_size_t)]
             s = SAYAC()
             s.cb = ctypes.sizeof(SAYAC)
-            surec = ctypes.windll.kernel32.GetCurrentProcess()
-            if ctypes.windll.psapi.GetProcessMemoryInfo(surec, ctypes.byref(s), s.cb):
+            # 64 bit Windows'ta tutamak (HANDLE) 64 bittir: tipler açıkça verilmeli.
+            kernel32, psapi = ctypes.windll.kernel32, ctypes.windll.psapi
+            kernel32.GetCurrentProcess.restype = wintypes.HANDLE
+            psapi.GetProcessMemoryInfo.argtypes = [wintypes.HANDLE, ctypes.POINTER(SAYAC), wintypes.DWORD]
+            psapi.GetProcessMemoryInfo.restype = wintypes.BOOL
+            if psapi.GetProcessMemoryInfo(kernel32.GetCurrentProcess(), ctypes.byref(s), s.cb):
                 return round(s.WorkingSetSize / 1048576)
         except Exception:
             return None
