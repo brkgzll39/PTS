@@ -235,9 +235,9 @@ async function yonetimGenelBakisYukle() {
   const izgara = document.getElementById("ygIzgara");
   if (!izgara) return;
   const al = yol => apiCagir(yol).catch(() => null);
-  const [saglik, lisans, merkez, bildirim, kullanicilar, denetim, yazilim] = await Promise.all([
+  const [saglik, lisans, merkez, bildirim, kullanicilar, denetim, yazilim, perf] = await Promise.all([
     al("/saglik"), al("/lisans"), al("/merkez-izleme"), al("/bildirim/ayarlar"), al("/kullanicilar"), al("/denetim-kayitlari?limit=6"),
-    al("/yazilim-guncellemeleri")]);
+    al("/yazilim-guncellemeleri"), al("/performans")]);
   const kutu = (hedef, ikon, baslik, deger, alt, durum) => `<button type="button" class="yg-kutu ${durum}" data-yg-hedef="${hedef}">
       <span class="yg-ikon"><i class="bi ${ikon}"></i></span><span class="yg-metin"><small>${baslik}</small><b>${deger}</b><span>${alt}</span></span>
       <i class="bi bi-chevron-right yg-ok"></i></button>`;
@@ -267,6 +267,12 @@ async function yonetimGenelBakisYukle() {
   if (merkez) k.push(kutu("#sistem-sekme", "bi-broadcast", "Merkezi izleme", !merkez.aktif ? "Kapalı" : merkez.son_hata ? "Gönderilemiyor" : "Bağlı",
     merkez.aktif && merkez.son_basarili ? `son gönderim ${new Date(merkez.son_basarili).toLocaleTimeString("tr-TR", { hour: "2-digit", minute: "2-digit" })}` : "bakım firmasına sağlık bilgisi",
     !merkez.aktif ? "notr" : merkez.son_hata ? "sorun" : "iyi"));
+  if (perf) {
+    const s = perf.sorunlar || [];
+    k.push(kutu("#sistem-sekme", "bi-activity", "Performans", !perf.son ? "Ölçülüyor" : s.length ? "Sorun var" : "Normal",
+      s.length ? s[0].mesaj.slice(0, 60) : perf.son ? `sayfa yanıtı ${perf.son.istek_p95_ms ?? "-"} ms · veritabanı ${perf.son.veritabani_ms ?? "-"} ms` : "ilk ölçüm 1 dk içinde",
+      !perf.son ? "notr" : s.length ? "sorun" : "iyi"));
+  }
   if (yazilim) {
     const t = yazilim.tarama;
     const rozet = document.getElementById("yazilimAcikRozet");
@@ -781,6 +787,7 @@ function alarmTipiEtiketi(tip) {
     kamera_ayari: "Kamera ayarı (saat / NTP / yön / kaçırma)",
     anpr_motoru: "Plaka motoru ekran kartını kullanamıyor",
     yazilim_guncellemesi: "Yazılım güncellemesi (güvenlik açığı)",
+    performans: "Performans sorunu",
     bildirim_hatasi: "Bildirim gönderilemiyor",
     arac_uyusmazligi: "Plaka-araç uyuşmazlığı",
     kamera_arizasi: "Kamera arızası / bağlantı sorunu",
@@ -1460,7 +1467,7 @@ function _canliOlayHtml(k) {
 const _DIKKAT_IKON = { kara_liste: "bi-slash-circle", klon_plaka: "bi-copy", supheli_arac: "bi-exclamation-diamond",
   resmi_arac: "bi-briefcase", sessiz_kamera: "bi-camera-video-off", kamera_arizasi: "bi-camera-video-off",
   sunucu_kesintisi: "bi-power", bildirim_hatasi: "bi-bell-slash", bariyer_hatasi: "bi-door-closed",
-  disk_doluyor: "bi-hdd", disk_hatasi: "bi-hdd", yedek_bozuk: "bi-archive", sertifika_bitiyor: "bi-shield-exclamation", kamera_ayari: "bi-sliders", anpr_motoru: "bi-gpu-card", yazilim_guncellemesi: "bi-arrow-up-circle" };
+  disk_doluyor: "bi-hdd", disk_hatasi: "bi-hdd", yedek_bozuk: "bi-archive", sertifika_bitiyor: "bi-shield-exclamation", kamera_ayari: "bi-sliders", anpr_motoru: "bi-gpu-card", yazilim_guncellemesi: "bi-arrow-up-circle", performans: "bi-activity" };
 function _gecenSure(iso) {
   const dk = Math.max(0, Math.round((Date.now() - new Date(iso)) / 60000));
   if (dk < 1) return "az önce";
@@ -7747,6 +7754,72 @@ async function dogrulukTestiCalistir(olay) {
 }
 
 // Sistem sekmesi açıldığında logları ve sağlık bilgisini otomatik yükle
+// ---------------------- PERFORMANS (2026-11-09) ----------------------
+let _pfGrafik = null;
+const _PF_KUTULAR = [
+  ["veritabani_ms", "Veritabanı", "bi-database", v => `${v} ms`],
+  ["havuz_kullanim", "Bağlantı havuzu", "bi-diagram-2", (v, o) => `${o.havuz_dolu ?? "-"} / ${o.havuz_kapasite ?? "-"}`],
+  ["istek_p95_ms", "Sayfa yanıtı (%95)", "bi-speedometer", v => `${v} ms`],
+  ["dongu_ms", "İç gecikme", "bi-hourglass-split", v => `${v} ms`],
+  ["akis_sayisi", "Açık canlı akış", "bi-camera-video", v => `${v}`],
+  ["kayit_hatasi", "Kayıt gönderim hatası", "bi-exclamation-octagon", v => `${v} (son dk)`],
+  ["islemci_sistem", "İşlemci", "bi-cpu", (v, o) => `%${Math.round(v)}` + (o.islemci_pts != null ? ` · PTS %${Math.round(o.islemci_pts)}` : "")],
+  ["bellek_mb", "Bellek (PTS)", "bi-memory", v => `${v} MB`],
+];
+function _pfDurum(kod, v, esikler) {
+  if (v == null) return "notr";
+  const e = kod === "kayit_hatasi" ? 1 : esikler?.[kod];
+  if (e == null) return "notr";
+  return v > e ? "sorun" : v > e * 0.6 ? "uyari" : "iyi";
+}
+function _pfCiz(d) {
+  const izgara = document.getElementById("pfIzgara");
+  if (!izgara) return;
+  const o = d.son, sorunlar = d.sorunlar || [];
+  const rozet = document.getElementById("pfRozet");
+  rozet.textContent = !o ? "Ölçülüyor" : sorunlar.length ? "Sorun var" : "Normal";
+  rozet.className = `badge ms-1 ${!o ? "bg-secondary" : sorunlar.length ? "bg-danger" : "bg-success"}`;
+  document.getElementById("pfZaman").textContent = o ? `Son ölçüm ${new Date(o.zaman).toLocaleTimeString("tr-TR", { hour: "2-digit", minute: "2-digit" })}` : "";
+  const sk = document.getElementById("pfSorunlar");
+  sk.classList.toggle("d-none", !sorunlar.length);
+  sk.innerHTML = sorunlar.map(s => `<div><i class="bi bi-exclamation-triangle-fill me-1"></i>${escapeHtml(s.mesaj)}</div>`).join("");
+  if (!o) return;
+  izgara.innerHTML = _PF_KUTULAR.map(([kod, ad, ikon, bicim]) => {
+    const v = o[kod];
+    return `<div class="pf-kutu ${_pfDurum(kod, v, d.esikler)}"><i class="bi ${ikon}"></i><span><small>${ad}</small><b>${v == null ? "—" : escapeHtml(bicim(v, o))}</b></span></div>`;
+  }).join("");
+  const ctx = document.getElementById("pfGrafik");
+  if (!ctx || typeof Chart === "undefined") return;
+  if (_pfGrafik) _pfGrafik.destroy();
+  const g = d.gecmis || [];
+  _pfGrafik = new Chart(ctx, {
+    type: "line",
+    data: {
+      labels: g.map(x => new Date(x.zaman).toLocaleTimeString("tr-TR", { hour: "2-digit", minute: "2-digit" })),
+      datasets: [
+        { label: "Sayfa yanıtı (ms)", data: g.map(x => x.istek_p95_ms), borderColor: "#3b6fd4", backgroundColor: "#3b6fd422", pointRadius: 0, tension: .2, yAxisID: "ms" },
+        { label: "Veritabanı (ms)", data: g.map(x => x.veritabani_ms), borderColor: "#c0392b", pointRadius: 0, tension: .2, yAxisID: "ms" },
+        { label: "İşlemci (%)", data: g.map(x => x.islemci_sistem), borderColor: "#8a94a6", borderDash: [4, 3], pointRadius: 0, tension: .2, yAxisID: "yuzde" },
+      ],
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false, animation: false,
+      interaction: { mode: "index", intersect: false },
+      plugins: { legend: { position: "bottom", labels: { boxWidth: 12 } } },
+      scales: { ms: { beginAtZero: true, position: "left", title: { display: true, text: "ms" } },
+                yuzde: { beginAtZero: true, max: 100, position: "right", grid: { drawOnChartArea: false }, title: { display: true, text: "%" } },
+                x: { ticks: { maxTicksLimit: 12 } } },
+    },
+  });
+}
+async function performansYukle() {
+  if (!rolYeterli("yonetici")) return;
+  try { _pfCiz(await apiCagir("/performans")); } catch (e) { /* PTS yeniden başlarken düşebilir */ }
+}
+document.addEventListener("shown.bs.tab", (e) => {
+  if (e.target?.dataset?.bsTarget === "#sistem-sekme") performansYukle();
+});
+
 document.querySelector('[data-bs-target="#sistem-sekme"]')?.addEventListener("click", () => {
   sistemSagliginiYukle(); loglariYukle(); sistemAyarlariYukle(); diskBilgisiYukle(); anprModelleriniYukle();
   bildirimAyarlariYukle(); merkezIzlemeYukle();
@@ -7853,7 +7926,7 @@ async function bildirimAyarlariYukle() {
     const tetikleyiciEtiketleri = {
       hepsi: "Hepsi", yetkisiz: "Yetkisiz araç", kara_liste: "Kara liste",
       suresi_dolmus: "Süresi dolmuş", supheli_arac: "Şüpheli araç", klon_plaka: "Klon plaka şüphesi",
-      resmi_arac: "Resmi araç uyarısı", sunucu_kesintisi: "Sunucu kapalı kaldı", sessiz_kamera: "Sessiz kamera", kamera_ayari: "Kamera ayarı", anpr_motoru: "Plaka motoru (ekran kartı)", yazilim_guncellemesi: "Yazılım güncellemesi", arac_uyusmazligi: "Plaka-araç uyuşmazlığı", bariyer_hatasi: "Bariyer hatası", kamera_arizasi: "Kamera arızası",
+      resmi_arac: "Resmi araç uyarısı", sunucu_kesintisi: "Sunucu kapalı kaldı", sessiz_kamera: "Sessiz kamera", kamera_ayari: "Kamera ayarı", anpr_motoru: "Plaka motoru (ekran kartı)", yazilim_guncellemesi: "Yazılım güncellemesi", performans: "Performans sorunu", arac_uyusmazligi: "Plaka-araç uyuşmazlığı", bariyer_hatasi: "Bariyer hatası", kamera_arizasi: "Kamera arızası",
       disk_hatasi: "Disk hatası", yedek_bozuk: "Otomatik yedek bozuk", yedek_hatasi: "Otomatik yedek alınamadı",
       disk_doluyor: "Disk doluluk erken uyarısı", sertifika_bitiyor: "HTTPS sertifikası bitiyor", gunluk_ozet: "Günlük özet (her sabah)",
     };

@@ -128,6 +128,13 @@ def sorunlari_hesapla(ozet: Optional[dict], son_nabiz: Optional[float], simdi: f
         if alarmlar.get(tip):
             sorunlar.append(_s(f"alarm:{tip}", "uyari", f"{mesaj} ({alarmlar[tip]} kez)"))
 
+    # 2026-11-09: kurulumun performans bekçisinin süren sorunları. Kayıt kaybına yol
+    # açanlar (veritabanı, havuz, kamera kayıt gönderimi) kritik, diğerleri uyarı.
+    for p in (ozet.get("performans") or {}).get("sorunlar") or []:
+        kod = str(p.get("kod") or "")
+        seviye = "kritik" if kod in ("veritabani_ms", "havuz_kullanim", "kayit_hatasi") else "uyari"
+        sorunlar.append(_s(f"performans:{kod}", seviye, str(p.get("mesaj") or kod)[:200]))
+
     try:
         ozet_zamani = datetime.fromisoformat(ozet.get("zaman") or "")
     except ValueError:

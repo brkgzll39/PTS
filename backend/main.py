@@ -98,6 +98,7 @@ from backend import vardiya_cizelgesi
 from backend import lisans as lisans_modulu
 from backend import totp
 from backend import gizli
+from backend import performans
 from backend import marka
 from backend.vardiya_eslestirme import kayitlari_oturumlarla_eslestir
 from backend import kucuk_gorsel
@@ -1500,6 +1501,40 @@ class _GuvenlikBasliklari:
 
 
 app.add_middleware(_GuvenlikBasliklari)
+
+
+class _IstekOlcer:
+    """Performans bekçisi için her isteğin süresini ölçer (2026-11-09, bkz. backend/performans.py).
+    Uzun akışlar (MJPEG, SSE) süre istatistiğine KATILMAZ: saatlerce açık kalırlar ve
+    p95'i anlamsızlaştırırlar; onlar ayrıca sayılır. Düz ASGI: receive'e dokunmaz."""
+
+    _AKIS_TURLERI = (b"text/event-stream", b"multipart/x-mixed-replace")
+
+    def __init__(self, app):
+        self.uygulama = app
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http":
+            await self.uygulama(scope, receive, send)
+            return
+        bas = time.perf_counter()
+        akis = False
+
+        async def olcerek_gonder(mesaj):
+            nonlocal akis
+            if mesaj["type"] == "http.response.start":
+                tur = next((d for a, d in mesaj.get("headers", []) if a.lower() == b"content-type"), b"")
+                akis = tur.startswith(self._AKIS_TURLERI)
+            await send(mesaj)
+
+        try:
+            await self.uygulama(scope, receive, olcerek_gonder)
+        finally:
+            if not akis:
+                performans.SAYACLAR.istek_bitti(time.perf_counter() - bas)
+
+
+app.add_middleware(_IstekOlcer)
 
 
 # ================================================================
@@ -4390,24 +4425,28 @@ async def kamera_akis(kamera_id: str, request: Request, authorization: Optional[
 
     async def _akis():
         son_kare_kimligi = None
-        while True:
-            if await request.is_disconnected():
-                break
-            pipeline = _aktif_pipelineler.get(kamera_id)
-            if not pipeline or not pipeline.calisiyor:
-                await asyncio.sleep(0.5)
-                continue
-            kare = pipeline.son_goruntu_al()
-            if kare is None or id(kare) == son_kare_kimligi:
-                await asyncio.sleep(0.08)  # ~12/sn kontrol — yeni kare geldiği an hemen yakalanır
-                continue
-            son_kare_kimligi = id(kare)
-            yield (
-                b"--" + SINIR + b"\r\n"
-                b"Content-Type: image/jpeg\r\n"
-                b"Content-Length: " + str(len(kare)).encode("ascii") + b"\r\n\r\n"
-                + kare + b"\r\n"
-            )
+        performans.SAYACLAR.akis_acildi("mjpeg")
+        try:
+            while True:
+                if await request.is_disconnected():
+                    break
+                pipeline = _aktif_pipelineler.get(kamera_id)
+                if not pipeline or not pipeline.calisiyor:
+                    await asyncio.sleep(0.5)
+                    continue
+                kare = pipeline.son_goruntu_al()
+                if kare is None or id(kare) == son_kare_kimligi:
+                    await asyncio.sleep(0.08)  # ~12/sn kontrol — yeni kare geldiği an hemen yakalanır
+                    continue
+                son_kare_kimligi = id(kare)
+                yield (
+                    b"--" + SINIR + b"\r\n"
+                    b"Content-Type: image/jpeg\r\n"
+                    b"Content-Length: " + str(len(kare)).encode("ascii") + b"\r\n\r\n"
+                    + kare + b"\r\n"
+                )
+        finally:
+            performans.SAYACLAR.akis_kapandi("mjpeg")
 
     return StreamingResponse(
         _akis(),
@@ -7737,6 +7776,7 @@ async def sse_baglantisi(request: Request, authorization: Optional[str] = Header
     _sse_istemcileri.append(istemci)
 
     async def _akis():
+        performans.SAYACLAR.akis_acildi("sse")
         try:
             yield ": bağlandı\n\n"
             son_kalp = time.monotonic()
@@ -7753,6 +7793,7 @@ async def sse_baglantisi(request: Request, authorization: Optional[str] = Header
                         son_kalp = time.monotonic()
                         yield ": kalp-atisi\n\n"
         finally:
+            performans.SAYACLAR.akis_kapandi("sse")
             try:
                 _sse_istemcileri.remove(istemci)
             except ValueError:
@@ -11090,6 +11131,9 @@ async def _gece_isleri_baslangic():
     asyncio.ensure_future(_kamera_denetimi_dongu())
     asyncio.ensure_future(_sessiz_kamera_dongu())
     threading.Thread(target=_anpr_motor_kontrol_ve_alarm, name="anpr-motor-kontrol", daemon=True).start()
+    global _ana_dongu
+    _ana_dongu = asyncio.get_running_loop()
+    threading.Thread(target=_performans_bekci_dongu, name="performans-bekcisi", daemon=True).start()
     asyncio.ensure_future(_yazilim_tarama_dongu())
     threading.Thread(target=_telegram_sorgu_dongu, name="telegram-sorgu", daemon=True).start()
 
@@ -11416,6 +11460,122 @@ async def kamera_ayar_denetimi_calistir(db: Session = Depends(get_db),
     _denetim_kaydet(db, kullanici.kullanici_adi, "kamera_ayar_denetimi", "elle başlatıldı")
     kayit = await asyncio.to_thread(_kamera_denetimi_calistir)
     return _kamera_denetimi_cevap(kayit, kullanici)
+
+
+# ==================================================================
+# PERFORMANS BEKÇİSİ (2026-11-09, kullanıcı isteği; bkz. backend/performans.py).
+# Sahada sayfalar ~30 sn'de açılırken ve kameralar kayıt gönderemezken kimse fark
+# etmemişti. Dakikada bir: veritabanı yanıt süresi, bağlantı havuzu, iç gecikme,
+# istek süreleri, açık akışlar, kayıt gönderim hataları, işlemci, bellek. Bir eşik
+# birkaç dakika üst üste aşılırsa alarm + bildirim; düzelince "normale döndü".
+# Veritabanı sorunluyken de bildirim gidebilsin diye bildirim hedefleri veritabanı
+# sağlıklıyken belleğe alınır.
+# ==================================================================
+_PERFORMANS_ARALIK_SN = max(1, int(os.getenv("PTS_PERFORMANS_ARALIK_SN") or 60))
+_PERFORMANS_LOG_DK = 10
+_performans_bekcisi = performans.Bekci()
+_performans_bildirim_hedefleri: list = []
+_ana_dongu = None
+
+
+def _performans_ornegi_al(islemci_olcer: performans.IslemciOlcer) -> dict:
+    o = {"zaman": datetime.now().isoformat(timespec="seconds")}
+    bas = time.perf_counter()
+    try:
+        with engine.connect() as baglanti:
+            baglanti.execute(text("SELECT 1"))
+    except Exception as exc:  # havuz tükendiyse burada ~30 sn bekleyip düşer
+        o["veritabani_hata"] = type(exc).__name__
+    o["veritabani_ms"] = round(1000 * (time.perf_counter() - bas))
+    havuz = engine.pool
+    try:
+        kapasite = havuz.size() + max(0, int(getattr(havuz, "_max_overflow", 0)))
+        dolu = havuz.checkedout()
+        o.update(havuz_dolu=dolu, havuz_kapasite=kapasite, havuz_kullanim=round(dolu / kapasite, 2) if kapasite else None)
+    except Exception:
+        o["havuz_kullanim"] = None
+    if _ana_dongu is not None and _ana_dongu.is_running():
+        bas = time.perf_counter()
+        try:
+            asyncio.run_coroutine_threadsafe(asyncio.sleep(0), _ana_dongu).result(timeout=30)
+            o["dongu_ms"] = round(1000 * (time.perf_counter() - bas))
+        except Exception:
+            o["dongu_ms"] = 30000
+    o.update(performans.SAYACLAR.bosalt())
+    sistem, pts = islemci_olcer.olc()
+    o.update(islemci_sistem=sistem, islemci_pts=pts, bellek_mb=performans.bellek_mb())
+    return o
+
+
+def _performans_bildirim_hedeflerini_yenile() -> None:
+    global _performans_bildirim_hedefleri
+    if not _modul_acik_mi("bildirim"):
+        _performans_bildirim_hedefleri = []
+        return
+    db = SessionLocal()
+    try:
+        B = models.BildirimAyarlari
+        _performans_bildirim_hedefleri = [
+            (a.id, a.ad, a.tip, a.hedef, a.http_metot) for a in
+            db.query(B).filter(B.aktif == True, or_(B.tetikleyici == "hepsi", B.tetikleyici == "performans")).all()]  # noqa: E712
+    finally:
+        db.close()
+
+
+def _performans_bildir(mesaj: str, alarm: bool) -> None:
+    veri = {"olay": "performans", "alarm_tipi": "performans", "mesaj": mesaj}
+    for ayar_id, ad, tip, hedef, metot in list(_performans_bildirim_hedefleri):
+        threading.Thread(target=_bildirim_gonder_izle, args=(ayar_id, ad, tip, hedef, metot, veri), daemon=True).start()
+    logger.warning(mesaj)
+    if alarm:
+        db = SessionLocal()
+        try:
+            db.add(models.Alarm(plaka_no="SISTEM", alarm_tipi="performans", mesaj=mesaj[:255]))
+            db.commit()
+        except Exception as exc:  # veritabanı sorunun kendisiyse alarm yazılamaz; bildirim yine gitti
+            logger.error("Performans alarmı veritabanına yazılamadı: %s", exc)
+        finally:
+            db.close()
+
+
+def _performans_bir_olcum(islemci_olcer: performans.IslemciOlcer) -> dict:
+    o = _performans_ornegi_al(islemci_olcer)
+    if not o.get("veritabani_hata") and o["veritabani_ms"] < 2000:
+        try:
+            _performans_bildirim_hedeflerini_yenile()
+        except Exception:
+            logger.exception("Bildirim hedefleri okunamadı")
+    yeni, duzelen, _ = _performans_bekcisi.ekle(o)
+    if yeni:
+        _performans_bildir("PERFORMANS SORUNU: " + " · ".join(s["mesaj"] for s in yeni), alarm=True)
+    if duzelen and not _performans_bekcisi.aktif:
+        _performans_bildir("PERFORMANS NORMALE DÖNDÜ: " + " · ".join(s["mesaj"].split(":")[0] for s in duzelen), alarm=False)
+    if len(_performans_bekcisi.ornekler) % _PERFORMANS_LOG_DK == 1:
+        logger.info("Performans: veritabanı %s ms, havuz %s/%s, istek p95 %s ms (%s istek), iç gecikme %s ms, akış %s, "
+                    "kayıt hatası %s, işlemci %%%s (PTS %%%s), bellek %s MB",
+                    o.get("veritabani_ms"), o.get("havuz_dolu"), o.get("havuz_kapasite"), o.get("istek_p95_ms"),
+                    o.get("istek_sayisi"), o.get("dongu_ms"), o.get("akis_sayisi"), o.get("kayit_hatasi"),
+                    o.get("islemci_sistem"), o.get("islemci_pts"), o.get("bellek_mb"))
+    return o
+
+
+def _performans_bekci_dongu() -> None:
+    olcer = performans.IslemciOlcer()
+    while True:
+        time.sleep(_PERFORMANS_ARALIK_SN)
+        try:
+            _performans_bir_olcum(olcer)
+        except Exception:
+            logger.exception("[performans] Ölçümde beklenmeyen hata")
+
+
+@app.get("/performans")
+def performans_durumu(kullanici: models.Kullanici = Depends(_personel_girisi_gerekli)):
+    _rol_dogrula(kullanici, ROL_YONETICI)
+    b = _performans_bekcisi
+    return {"son": b.ornekler[-1] if b.ornekler else None, "sorunlar": list(b.aktif.values()),
+            "gecmis": b.ozet(), "aralik_sn": _PERFORMANS_ARALIK_SN,
+            "esikler": {k: v[0] for k, v in performans.ESIKLER.items()}}
 
 
 # ==================================================================
@@ -11886,7 +12046,7 @@ _ALARM_ADLARI = {
     "supheli_arac": "Şüpheli araç", "klon_plaka": "Klon plaka şüphesi", "resmi_arac": "Resmi araç",
     "sunucu_kesintisi": "Sunucu kapalı kaldı", "sessiz_kamera": "Sessiz kamera", "kamera_arizasi": "Kamera arızası",
     "kamera_ayari": "Kamera ayarı", "anpr_motoru": "Plaka motoru ekran kartını kullanamıyor",
-    "yazilim_guncellemesi": "Yazılım güncellemesi (güvenlik açığı)",
+    "yazilim_guncellemesi": "Yazılım güncellemesi (güvenlik açığı)", "performans": "Performans sorunu",
     "bariyer_hatasi": "Bariyer hatası", "disk_hatasi": "Disk hatası",
 }
 
@@ -12566,7 +12726,7 @@ def _goruntu_temizle_calistir(gun: int, db: Session) -> tuple[int, "datetime"]:
 KVKK_ANONIM_PLAKA = "ANONIM"
 _SISTEM_ALARM_TIPLERI = ("kamera_arizasi", "disk_hatasi", "disk_doluyor", "yedek_bozuk", "yedek_hatasi",
                          "sertifika_bitiyor", "kamera_ayari", "anpr_motoru",
-                         "yazilim_guncellemesi")
+                         "yazilim_guncellemesi", "performans")
 
 
 def _kayitlari_anonimlestir(gun: int, db: Session, parca: int = 1000) -> int:
@@ -12922,6 +13082,11 @@ def _merkez_saglik_ozeti(db: Session) -> dict:
         "alarmlar_24s": {str(t): int(n) for t, n in alarmlar.items()},
         "okunmamis_alarm": int(db.query(func.count(A.id)).filter(A.okundu == False).scalar() or 0),  # noqa: E712
         "kesintiler_7g": kesintiler,
+        # 2026-11-09: performans bekçisi (yalnız sayılar ve sorun metinleri).
+        "performans": {"sorunlar": [{"kod": s["kod"], "mesaj": s["mesaj"]} for s in _performans_bekcisi.aktif.values()],
+                       "son": {k: v for k, v in (_performans_bekcisi.ornekler[-1] if _performans_bekcisi.ornekler else {}).items()
+                               if k in ("veritabani_ms", "havuz_kullanim", "istek_p95_ms", "dongu_ms", "akis_sayisi",
+                                        "kayit_hatasi", "islemci_sistem", "bellek_mb")}},
     }
 
 

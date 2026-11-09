@@ -417,6 +417,15 @@
         </ul>
         <div class="dikkat">KVKK silme süresini ayarlarsanız o günden eski geçişlerin plaka, kişi, not ve görüntü bilgileri <b>geri alınamaz</b> biçimde silinir.</div>
 
+        <h3 id="performans">Performans bekçisi</h3>
+        <p>PTS kendini dakikada bir ölçer; sonuçlar <b>Sistem / Log</b> ekranının başındaki <b>Performans</b> kartında ve Genel Bakış'ta görünür:
+          veritabanı yanıt süresi, veritabanı bağlantı havuzunun doluluğu, sayfaların yanıt süresi, sunucunun iç gecikmesi, açık canlı görüntü/bildirim
+          akışı sayısı, kameraların kayıt gönderememe sayısı, işlemci ve bellek. Bir değer birkaç dakika üst üste sınırı aşarsa "Performans sorunu"
+          alarmı ve bildirimi gelir (aynı sorun için en fazla saatte bir); düzelince "normale döndü" bildirimi gelir. Veritabanı yanıt vermese de
+          bildirim gider. Ayrıca her 10 dakikada bir özet satırı <code>loglar\pts.log</code>'a yazılır.</p>
+        <div class="ipucu">"Kayıt gönderim hatası" sıfırdan büyükse kameralar geçişleri PTS'e iletemiyor demektir; kaçan geçişler gece mutabakatında
+          kameradan alınır ama sebebine hemen bakın. "Açık canlı akış" sayısı panel sayısının çok üstündeyse kapanmayan bağlantı birikiyor olabilir.</div>
+
         <h3 id="https">Güvenli bağlantı (HTTPS) ve kamera parolaları</h3>
         <p>Panel başka bir bilgisayardan <b>http://</b> ile açılıyorsa giriş parolaları ağda şifresiz gider. Bu durumda Kontrol Merkezi'nde
           yöneticiye <b>"Panel şifresiz bağlantıyla açıldı"</b> uyarısı çıkar. HTTPS'i açmak için sunucuda, PTS klasöründe:</p>

@@ -9494,6 +9494,8 @@ def test_kapanan_akislar_sunucuda_hayalet_kalmaz(client, yetkili_header):
         time.sleep(1)
         assert okuma["n"] == n, "kapanmış canlı görüntü akışı hâlâ kare okuyor"
         assert len(pts_main._sse_istemcileri) == sse_once, "kapanmış SSE bağlantısı listede kaldı"
+        from backend import performans as pf
+        assert pf.SAYACLAR.akislar() == {"mjpeg": 0, "sse": 0}, "performans bekçisinin akış sayacı sıfıra dönmedi"
     finally:
         pts_main._kameralari_oku = eski_oku
         pts_main._aktif_pipelineler.pop("hayalet-kam", None)
@@ -9510,3 +9512,55 @@ def test_sabitlenmis_paket_acigi_alarm_uretmez(client, yetkili_header, monkeypat
     monkeypatch.setattr(pts_main, "_bildirim_tetikle", lambda db, t, v: bildirim.append(t))
     pts_main._yazilim_taramasi_yap()
     assert bildirim == []
+
+
+def test_performans_bekcisi_olcer_alarm_verir_ve_duzelmeyi_bildirir(client, yetkili_header, monkeypatch):
+    """2026-11-09: performans bekçisi. Ara katman istekleri ölçer, akışları süreye katmaz;
+    veritabanı üst üste yavaşsa (sahadaki gibi) bildirim, veritabanına bağımlı olmadan,
+    önbellekteki hedeflere gider; düzelince 'normale döndü' gönderilir."""
+    from backend import performans as pf
+    monkeypatch.setattr(pts_main, "_performans_bekcisi", pf.Bekci())
+    pf.SAYACLAR.bosalt()
+    for _ in range(5):
+        client.get("/saglik")
+    o = pts_main._performans_bir_olcum(pf.IslemciOlcer())
+    assert o["istek_sayisi"] >= 5 and o["veritabani_ms"] < 2000 and o.get("havuz_kapasite")
+    assert 0 <= o["havuz_kullanim"] <= 1 and "bellek_mb" in o
+
+    gonderilen = []
+    monkeypatch.setattr(pts_main, "_bildirim_gonder_izle", lambda *a: gonderilen.append(a[-1]["mesaj"]))
+    monkeypatch.setattr(pts_main, "_performans_bildirim_hedefleri", [(1, "tg", "telegram", "123", "POST")])
+    monkeypatch.setattr(pts_main, "_performans_bildirim_hedeflerini_yenile", lambda: None)
+    yavas = {"zaman": "z", "veritabani_ms": 30000, "havuz_kullanim": 1.0, "havuz_dolu": 15, "havuz_kapasite": 15}
+    monkeypatch.setattr(pts_main, "_performans_ornegi_al", lambda olcer: dict(yavas))
+    for _ in range(3):
+        pts_main._performans_bir_olcum(None)
+    import time
+    for _ in range(50):
+        if gonderilen:
+            break
+        time.sleep(0.02)
+    assert len(gonderilen) == 1 and gonderilen[0].startswith("PERFORMANS SORUNU") and "havuzu %100" in gonderilen[0]
+    d = client.get("/performans", headers=yetkili_header).json()
+    assert {s["kod"] for s in d["sorunlar"]} == {"veritabani_ms", "havuz_kullanim"} and d["son"]["veritabani_ms"] == 30000
+    monkeypatch.setattr(pts_main, "_performans_ornegi_al", lambda olcer: {"zaman": "z", "veritabani_ms": 30})
+    pts_main._performans_bir_olcum(None)
+    for _ in range(50):
+        if len(gonderilen) == 2:
+            break
+        time.sleep(0.02)
+    assert gonderilen[1].startswith("PERFORMANS NORMALE DÖNDÜ")
+    # Merkeze giden özette performans bilgisi var, kişisel veri yok.
+    from backend import merkez_istemci
+    from backend.database import SessionLocal
+    db = SessionLocal()
+    try:
+        ozet = pts_main._merkez_saglik_ozeti(db)
+    finally:
+        db.close()
+    assert "performans" in ozet and merkez_istemci.yasakli_alan_var_mi(ozet) is None
+
+
+def test_performans_ucu_yalniz_yonetici(client, yetkili_header):
+    h = _rol_ile_kullanici_olustur_ve_giris_yap(client, yetkili_header, "perf_operator", "operatör")
+    assert client.get("/performans", headers=h).status_code == 403

@@ -156,6 +156,17 @@ def _test_motoru_al(dedektor_modeli: str, ocr_modeli: str) -> "ANPREngine":
 
 logger = logging.getLogger("pts.camera")
 
+
+def _performans_kayit_hatasi() -> None:
+    """Performans bekçisine: kamera bir kaydı PTS'e gönderemedi (2026-11-09, bkz.
+    backend/performans.py). Sahada bu hatalar sayfalar yavaşlarken saatte ~40 kez
+    loglanmış ama kimse fark etmemişti."""
+    try:
+        from backend import performans
+        performans.SAYACLAR.kayit_gonderim_hatasi()
+    except Exception:
+        pass
+
 PLAKA_REGEX = re.compile(r'^(\d{2})([A-PR-VYZ]{1,3})(\d{2,4})$')
 
 
@@ -1497,6 +1508,7 @@ class KameraPipeline:
                     # ılıyordu — "araç net görünüyor, API'ye gönderilemedi hatası
                     # da yok ama yine de kayda düşmüyor" gibi iz bırakmayan bir
                     # kayıp sınıfına yol açabiliyordu.
+                    _performans_kayit_hatasi()
                     logger.error(
                         "[%s] API isteği sunucu tarafından reddedildi (HTTP %d): %s — plaka: %s",
                         self.kamera_id, yanit.status_code, yanit.text[:200], plaka,
@@ -1522,6 +1534,7 @@ class KameraPipeline:
                             self.kamera_id, oturum["farkli_okuma_sayisi"], plaka, oturum["guven"], oturum["toplam_oy"],
                         )
             except Exception as e:
+                _performans_kayit_hatasi()
                 logger.error("[%s] API'ye gönderilemedi: %s", self.kamera_id, e)
             finally:
                 try:

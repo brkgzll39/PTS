@@ -381,6 +381,63 @@ def canli_uretici(port: int, havuz: dict, aralik: float) -> None:
         time.sleep(aralik * random.uniform(0.6, 1.4))
 
 
+class SahteKamera:
+    """Yük testi için: kamera hattının yerine saniyede ~4 kare JPEG üreten nesne
+    (gerçek bir demo görselini döndürür; canlı izleme akışı gerçek boyutta veri taşır)."""
+
+    def __init__(self, kareler: list):
+        self.calisiyor = True
+        self._kareler, self._i, self._son = kareler, 0, kareler[0]
+        threading.Thread(target=self._uret, daemon=True).start()
+
+    def _uret(self):
+        while True:
+            self._i += 1
+            self._son = self._kareler[self._i % len(self._kareler)] + b"\x00" * (self._i % 7)
+            time.sleep(0.25)
+
+    def son_goruntu_al(self):
+        return self._son
+
+    def son_tespitler_al(self):
+        return []
+
+    # Sunucunun kamera hattından beklediği diğer yöntemler (backend/camera_reader.py::KameraPipeline).
+    def thread_canli_mi(self):
+        return True
+
+    def son_kare_yasi_sn(self):
+        return 0.2
+
+    def dahua_durumu(self):
+        return None
+
+    def durum_bilgisi(self):
+        return {"calisiyor": True, "son_kare_yasi_sn": 0.2, "baglaniyor": False, "donmus": False,
+                "yeniden_baglanma_sayisi": 0, "calisma_suresi_sn": 60, "dahua": None}
+
+    def baslat(self):
+        pass
+
+    def durdur(self):
+        pass
+
+
+def sahte_kameralari_baslat(m, demo: str, adet: int) -> None:
+    klasor = os.path.join(demo, "goruntuler")
+    dosyalar = sorted(f for f in os.listdir(klasor) if f.endswith(".jpg"))[:20] if os.path.isdir(klasor) else []
+    kareler = [open(os.path.join(klasor, f), "rb").read() for f in dosyalar] or [b"\xff\xd8" + os.urandom(120_000) + b"\xff\xd9"]
+    with open(os.environ["PTS_CAMERAS_FILE"], encoding="utf-8") as f:
+        kameralar = json.load(f)
+    if len(kameralar) < adet:     # demo 2 kamera tanımlar; yük testi daha fazlasını isteyebilir
+        kameralar += [{"id": f"sahte-{i}", "ad": f"Sahte Kamera {i}", "rtsp_url": "rtsp://demo/kamera", "yon": "giris",
+                       "aktif": False} for i in range(len(kameralar), adet)]
+        m._kameralari_yaz(kameralar)
+    for k in kameralar[:adet]:
+        m._aktif_pipelineler[k["id"]] = SahteKamera(kareler)
+    print(f"{min(adet, len(kameralar))} sahte kamera görüntü üretiyor", flush=True)
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description="PTS demo ortamı (gerçek sisteme dokunmaz)")
     ap.add_argument("--port", type=int, default=8100)
@@ -390,6 +447,10 @@ def main(argv=None) -> int:
     ap.add_argument("--canli-aralik", type=float, default=25, help="canlı geçişler arası ortalama sn (0 = kapalı)")
     ap.add_argument("--fotograflar", help="gerçek araç fotoğrafları klasörü (jpg/png); yoksa çizim kullanılır")
     ap.add_argument("--yalniz-hazirla", action="store_true", help=argparse.SUPPRESS)
+    # Yük testi (araclar/yuk_testi.py) için, 2026-11-09:
+    ap.add_argument("--sahte-kamera", type=int, default=0, help="görüntü üreten sahte kamera sayısı (canlı izleme yükü)")
+    ap.add_argument("--yavas-db-ms", type=float, default=0, help="her veritabanı sorgusuna eklenecek gecikme (ms)")
+    ap.add_argument("--performans-aralik", type=int, default=0, help="performans bekçisi ölçüm aralığı (sn)")
     args = ap.parse_args(argv)
     demo = os.path.abspath(args.klasor)
     if args.fotograflar:
@@ -404,6 +465,8 @@ def main(argv=None) -> int:
             raise SystemExit(f"{demo} bir demo klasörü değil (pts_demo.db yok); silinmedi")
         shutil.rmtree(demo)
     _ortami_hazirla(demo, args.marka, args.port)
+    if args.performans_aralik:
+        os.environ["PTS_PERFORMANS_ARALIK_SN"] = str(args.performans_aralik)
     sys.path.insert(0, KOK)
     from backend import main as m   # noqa: E402 - ortam değişkenlerinden sonra
 
@@ -418,6 +481,15 @@ def main(argv=None) -> int:
         return 0
     if args.canli_aralik > 0:
         threading.Thread(target=canli_uretici, args=(args.port, havuz, args.canli_aralik), daemon=True).start()
+    if args.yavas_db_ms > 0:
+        from sqlalchemy import event
+        gecikme = args.yavas_db_ms / 1000
+
+        @event.listens_for(m.engine, "before_cursor_execute")
+        def _yavas_sorgu(*_a, **_k):   # SQL Server'ın ağ/disk gecikmesine benzetmek için
+            time.sleep(gecikme)
+    if args.sahte_kamera:
+        sahte_kameralari_baslat(m, demo, args.sahte_kamera)
     print(f"\nPTS DEMO: http://127.0.0.1:{args.port}\n"
           f"  demo / Demo12345  (yönetici)   kapi / Kapi12345  (Kapı Modu)\n"
           f"  Veriler: {demo}  (gerçek sisteme dokunulmaz)\n", flush=True)

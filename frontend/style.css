@@ -1019,3 +1019,16 @@ body.yonetim-modu .genel-arama-tetik { background: #262c37; border-color: #3a414
 .ga-etiket.kritik { background: #fdecec; color: #b3261e; }
 .ga-tum { border-top: 1px solid #eef1f5; margin-top: .35rem; }
 @media (max-width: 768px) { .genel-arama-tetik { width: auto; margin-left: .5rem; } .genel-arama-tetik .gat-metin, .genel-arama-tetik kbd { display: none; } }
+
+
+/* Performans kartı (2026-11-09) */
+.pf-izgara { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: .6rem; }
+.pf-kutu { display: flex; align-items: center; gap: .7rem; border: 1px solid #e1e5ec; border-radius: 10px; padding: .6rem .8rem; background: #fff; min-width: 0; }
+.pf-kutu > i { width: 32px; height: 32px; flex: none; border-radius: 8px; display: grid; place-items: center; background: #eef2f7; color: #4a5a72; }
+.pf-kutu span { display: flex; flex-direction: column; min-width: 0; }
+.pf-kutu small { color: #6b778c; font-size: .75rem; }
+.pf-kutu b { font-size: 1rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pf-kutu.iyi > i { background: #e7f6ee; color: #1e8a52; }
+.pf-kutu.uyari > i { background: #fff3dc; color: #b45f00; }
+.pf-kutu.sorun { border-color: #f1b8b2; }
+.pf-kutu.sorun > i { background: #fdecec; color: #c0392b; }

@@ -206,3 +206,14 @@ def test_istemci_url_dogrulama():
         with pytest.raises(ValueError):
             merkez_istemci.url_dogrula(kotu)
     assert merkez_istemci.anahtari_maskele("abcdefghijklmnop") == "abcd…mnop"
+
+
+def test_performans_sorunlari_merkezde_gorunur():
+    """2026-11-09: kurulumun performans bekçisinin süren sorunları."""
+    simdi = time.time()
+    o = _ozet()
+    o["performans"] = {"sorunlar": [{"kod": "havuz_kullanim", "mesaj": "Veritabanı bağlantı havuzu %100 dolu"},
+                                    {"kod": "islemci_sistem", "mesaj": "İşlemci uzun süredir %97 dolu"}]}
+    s = {x["kod"]: x for x in sorunlari_hesapla(o, simdi - 60, simdi)}
+    assert s["performans:havuz_kullanim"]["seviye"] == "kritik"
+    assert s["performans:islemci_sistem"]["seviye"] == "uyari"
