@@ -223,3 +223,14 @@ def test_yeniden_tarama_tabloyu_gunceller_internet_yoksa_bozmaz(monkeypatch):
     monkeypatch.setattr(yg, "tara", ag_yok)
     _GERCEK_YENIDEN_TARA(adimlar)
     assert "Şimdi tara" in adimlar[-1] and yg.json_oku("tarama.json")["zaman"] == "z"
+
+
+def test_web_katmani_sabitlenmis_ve_plana_girmez():
+    """2026-11-09: fastapi 0.162 / starlette 1.10 sahada havuz tükenmesine yol açtı; sürümler
+    geri alındı. Güncelleme ekranı bunları yeniden yükseltmeye çalışmamalı."""
+    veriler = {ad: {"en_yeni": "9.9", "aciklar": [{"id": f"CVE-{ad}", "fixed_in": ["9.0"]}]}
+               for ad in ("fastapi", "starlette", "uvicorn")}
+    t = yg.tara({ad: (ad, "0.38.6") for ad in veriler}, getir=_sahte_pypi(veriler))
+    assert all(p["tutulan"] and "Web katmanı" in p["tutulma_nedeni"] for p in t["paketler"])
+    assert t["acik_paket"] == 3 and t["tutulan_acik_paket"] == 3
+    assert yg.plan_olustur(t) == []

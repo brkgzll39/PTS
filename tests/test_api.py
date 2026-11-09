@@ -9498,3 +9498,15 @@ def test_kapanan_akislar_sunucuda_hayalet_kalmaz(client, yetkili_header):
         pts_main._kameralari_oku = eski_oku
         pts_main._aktif_pipelineler.pop("hayalet-kam", None)
         sunucu.should_exit = True
+
+
+def test_sabitlenmis_paket_acigi_alarm_uretmez(client, yetkili_header, monkeypatch, tmp_path):
+    from backend import yazilim_guncelleme as yg
+    monkeypatch.setenv("PTS_GUNCELLEME_KLASORU", str(tmp_path / "yg"))
+    sonuc = {"zaman": "z", "acik_paket": 1, "tutulan_acik_paket": 1, "acik_sayisi": 1, "hata": 0, "paketler": [
+        {"ad": "starlette", "surum": "0.38.6", "onerilen": "1.3.1", "tutulan": True, "aciklar": [{"id": "CVE-S"}]}]}
+    monkeypatch.setattr(yg, "tara", lambda: dict(sonuc))
+    bildirim = []
+    monkeypatch.setattr(pts_main, "_bildirim_tetikle", lambda db, t, v: bildirim.append(t))
+    pts_main._yazilim_taramasi_yap()
+    assert bildirim == []

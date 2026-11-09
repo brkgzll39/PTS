@@ -11441,7 +11441,10 @@ def _yazilim_taramasi_yap(bildir: bool = True) -> dict:
         sonuc = yg.tara()
         yg.json_yaz("tarama.json", sonuc)
     eski = {(p["ad"], a["id"]) for p in onceki.get("paketler", []) for a in p.get("aciklar") or []}
-    yeni = [(p, a) for p in sonuc["paketler"] for a in p.get("aciklar") or [] if (p["ad"], a["id"]) not in eski]
+    # Sabitlenmiş (TUTULAN) paketlerin açıkları ekranda gösterilir ama alarm üretmez:
+    # yönetici bunlar için bir şey yapamaz, her hafta aynı uyarı gürültü olur.
+    yeni = [(p, a) for p in sonuc["paketler"] if not p.get("tutulan")
+            for a in p.get("aciklar") or [] if (p["ad"], a["id"]) not in eski]
     if bildir and yeni:
         paketler = sorted({p["ad"] for p, _ in yeni})
         mesaj = (f"YAZILIM GÜNCELLEMESİ: {len(paketler)} kütüphanede yeni güvenlik açığı bulundu "

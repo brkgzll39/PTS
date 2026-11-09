@@ -270,11 +270,11 @@ async function yonetimGenelBakisYukle() {
   if (yazilim) {
     const t = yazilim.tarama;
     const rozet = document.getElementById("yazilimAcikRozet");
-    if (rozet) { rozet.textContent = t?.acik_paket || ""; rozet.classList.toggle("d-none", !t?.acik_paket); }
+    if (rozet) { const _n = (t?.acik_paket || 0) - (t?.tutulan_acik_paket || 0); rozet.textContent = _n || ""; rozet.classList.toggle("d-none", !_n); }
     k.push(kutu("#guncelleme-sekme", "bi-arrow-up-circle", "Yazılım güncellemeleri",
-      !t ? "Taranmadı" : t.acik_paket ? `${t.acik_paket} açık` : "Güncel",
+      !t ? "Taranmadı" : t.acik_paket - (t.tutulan_acik_paket || 0) ? `${t.acik_paket - (t.tutulan_acik_paket || 0)} açık` : t.acik_paket ? "Sabitlenmiş" : "Güncel",
       !t ? "kütüphane güvenlik taraması" : `son tarama ${new Date(t.zaman).toLocaleDateString("tr-TR")}`,
-      !t ? "uyari" : t.acik_paket ? "sorun" : "iyi"));
+      !t ? "uyari" : t.acik_paket - (t.tutulan_acik_paket || 0) ? "sorun" : t.acik_paket ? "uyari" : "iyi"));
   }
   if (kullanicilar) k.push(kutu("#kullanicilar-sekme", "bi-people", "Kullanıcılar", `${kullanicilar.filter(u => u.aktif).length} hesap`,
     `${kullanicilar.filter(u => u.rol === "yonetici" && u.aktif).length} yönetici`, "notr"));
@@ -7944,7 +7944,7 @@ function _yazilimTabloCiz() {
     const acik = aciklar.length
       ? `<span class="badge bg-danger" title="${escapeHtml(aciklar.map(a => a.id + (a.ozet ? ": " + a.ozet : "")).join("\n"))}">${aciklar.length} açık</span>`
       : p.hata ? '<span class="text-muted">sorgulanamadı</span>' : '<span class="text-success"><i class="bi bi-check-circle"></i></span>';
-    const not = p.tutulan ? '<span class="text-muted">Plaka motoru: otomatik güncellenmez</span>'
+    const not = p.tutulan ? `<span class="text-muted">${escapeHtml(p.tutulma_nedeni || "Otomatik güncellenmez")}</span>`
       : p.yeniden_baslatma === false && aciklar.length ? "Kurulum aracı (PTS yeniden başlatılmadan güncellenir)"
       : aciklar.length && !p.onerilen ? '<span class="text-warning">Henüz düzeltilmiş sürüm yok</span>'
       : aciklar.length ? "Güvenlik güncellemesi" : p.guncel_degil ? '<span class="text-muted">Yeni sürüm var (gerekmedikçe güncellenmez)</span>' : "";
@@ -7958,10 +7958,14 @@ function _yazilimCiz(v) {
   const baslik = document.getElementById("yazilimDurumBaslik"), alt = document.getElementById("yazilimDurumAlt");
   if (!baslik) return;
   const rozet = document.getElementById("yazilimAcikRozet");
-  if (rozet) { rozet.textContent = t?.acik_paket || ""; rozet.classList.toggle("d-none", !t?.acik_paket); }
+  if (rozet) { const _n = (t?.acik_paket || 0) - (t?.tutulan_acik_paket || 0); rozet.textContent = _n || ""; rozet.classList.toggle("d-none", !_n); }
   if (!t) {
     ikon.innerHTML = '<i class="bi bi-shield"></i>'; ikon.className = "fs-2 text-muted";
     baslik.textContent = "Henüz taranmadı";
+  } else if (t.acik_paket && t.acik_paket === t.tutulan_acik_paket) {
+    // Açıklar yalnız sabitlenmiş kütüphanelerde: yöneticinin yapacağı bir şey yok.
+    ikon.innerHTML = '<i class="bi bi-shield-exclamation"></i>'; ikon.className = "fs-2 text-warning";
+    baslik.textContent = `Açıklar yalnız sabitlenmiş ${t.acik_paket} kütüphanede`;
   } else if (t.acik_paket) {
     ikon.innerHTML = '<i class="bi bi-shield-exclamation"></i>'; ikon.className = "fs-2 text-danger";
     baslik.textContent = `${t.acik_paket} kütüphanede ${t.acik_sayisi} bilinen güvenlik açığı`;

@@ -38,8 +38,18 @@ from packaging.version import InvalidVersion, Version
 PYPI = "https://pypi.org/pypi"
 # Plaka motoru zinciri: sürümü okuma kalitesini doğrudan etkiler ve ekran kartı
 # paketleriyle çakışır; otomatik yükseltilmez, ekranda "elle" diye gösterilir.
-TUTULAN = ("onnxruntime", "onnxruntime-directml", "onnxruntime-gpu", "opencv-python", "opencv-python-headless",
-           "numpy", "fast-alpr", "fast-plate-ocr", "open-image-models")
+_PLAKA_MOTORU = "Plaka motoru: okuma kalitesini etkiler, otomatik güncellenmez"
+_WEB_KATMANI = ("Web katmanı: 2026-11 sahada yeni sürümler sayfaların açılmamasına yol açtı; "
+                "test edilmiş bir yazılım güncellemesiyle (yama) yükseltilecek")
+# Otomatik yükseltilmeyen paketler ve nedeni (ekranda gösterilir).
+TUTULAN_NEDEN = {
+    **{ad: _PLAKA_MOTORU for ad in ("onnxruntime", "onnxruntime-directml", "onnxruntime-gpu", "opencv-python",
+                                    "opencv-python-headless", "numpy", "fast-alpr", "fast-plate-ocr", "open-image-models")},
+    # 2026-11-09: fastapi 0.118+ veritabanı bağlantısını yanıt tamamen gönderilene kadar
+    # tutuyor; yoğun sunucuda havuz tükendi (bkz. main.py _GuvenlikBasliklari notu).
+    **{ad: _WEB_KATMANI for ad in ("fastapi", "starlette", "uvicorn")},
+}
+TUTULAN = tuple(TUTULAN_NEDEN)
 # PTS çalışırken HİÇ kullanılmayan kurulum araçları: yalnız bunlar güncellenecekse PTS
 # yeniden başlatılmaz. pip ayrıca planın BAŞINA alınır -- diğer paketleri o kurar.
 # (setuptools bu listede DEĞİL: bazı kütüphaneler çalışırken pkg_resources'ını kullanır.)
@@ -157,9 +167,10 @@ def tara(paketler: Optional[dict] = None, getir: Callable = _pypi_getir, es_zama
         aciklar = _aciklari_tekillestir((bu or {}).get("vulnerabilities") or [])
         en_yeni = ((genel or {}).get("info") or {}).get("version")
         tutulan = anahtar in TUTULAN
+        tutulma_nedeni = TUTULAN_NEDEN.get(anahtar)
         onerilen = onerilen_surum(surum, aciklar) if aciklar else None
         return {"ad": ad, "surum": surum, "en_yeni": en_yeni, "aciklar": aciklar, "onerilen": onerilen,
-                "tutulan": tutulan, "yeniden_baslatma": anahtar not in YENIDEN_BASLATMASIZ,
+                "tutulan": tutulan, "tutulma_nedeni": tutulma_nedeni, "yeniden_baslatma": anahtar not in YENIDEN_BASLATMASIZ,
                 "guncel_degil": bool(en_yeni and _v(en_yeni) and _v(surum) and _v(en_yeni) > _v(surum))}
 
     with ThreadPoolExecutor(max_workers=es_zamanli) as havuz:
@@ -169,6 +180,7 @@ def tara(paketler: Optional[dict] = None, getir: Callable = _pypi_getir, es_zama
         "zaman": datetime.now().isoformat(timespec="seconds"),
         "paketler": sonuclar,
         "acik_paket": sum(1 for p in sonuclar if p.get("aciklar")),
+        "tutulan_acik_paket": sum(1 for p in sonuclar if p.get("aciklar") and p.get("tutulan")),
         "acik_sayisi": sum(len(p.get("aciklar") or []) for p in sonuclar),
         "hata": sum(1 for p in sonuclar if p.get("hata")),
     }
