@@ -432,7 +432,12 @@ def sahte_kameralari_baslat(m, demo: str, adet: int) -> None:
     if len(kameralar) < adet:     # demo 2 kamera tanımlar; yük testi daha fazlasını isteyebilir
         kameralar += [{"id": f"sahte-{i}", "ad": f"Sahte Kamera {i}", "rtsp_url": "rtsp://demo/kamera", "yon": "giris",
                        "aktif": False} for i in range(len(kameralar), adet)]
-        m._kameralari_yaz(kameralar)
+    # Canlı İzleme yalnız etkin kameraları gösterir: sahte kameralar etkin sayılır, gerçek
+    # kamera hattı (plaka okuma) onların yerine başlatılmaz.
+    for k in kameralar[:adet]:
+        k["aktif"] = True
+    m._kameralari_yaz(kameralar)
+    m._pipeline_baslat = lambda kamera: kamera["id"] in m._aktif_pipelineler
     for k in kameralar[:adet]:
         m._aktif_pipelineler[k["id"]] = SahteKamera(kareler)
     print(f"{min(adet, len(kameralar))} sahte kamera görüntü üretiyor", flush=True)
